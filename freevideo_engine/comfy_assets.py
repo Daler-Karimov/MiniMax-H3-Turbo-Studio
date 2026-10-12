@@ -25,6 +25,7 @@ EXTENSIONS = {
     'video': {'.mp4', '.mov', '.webm', '.mkv', '.m4v'},
     'audio': {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.opus'},
 }
+REFERENCE_INPUTS = ('reference', *(f'reference_{i}' for i in range(2, 9)))
 
 
 def resolve_loras(serialized, names, resolve, previous=None):
@@ -105,18 +106,26 @@ def resolve_assets(serialized, input_directory):
     return result
 
 
-def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None):
+def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None, **images):
     """Keep connected IMAGE/AUDIO values native until request input export."""
     result = dict(assets)
+    if set(images) - set(REFERENCE_INPUTS[1:]):
+        raise TypeError('Unknown reference image input')
+    images = dict(reference=reference, **images)
     connected = {name: value for name, value in (('first', first), ('last', last),
-                 ('reference', reference), ('reference_audio', reference_audio))
+                 *((name, images.get(name)) for name in REFERENCE_INPUTS), ('reference_audio', reference_audio))
                  if value is not None}
     for name in ('first', 'last'):
         if name in result and name in connected:
             raise ValueError('Choose the connected ' + name + ' frame or the uploaded one; disable the duplicate')
-    count = len(result.get('references', [])) + int(reference is not None) + int(reference_audio is not None)
+    count = len(result.get('references', [])) + int(reference_audio is not None)
+    for value in images.values():
+        if value is not None:
+            shape = getattr(value, 'shape', ())
+            count += int(shape[0]) if len(shape) == 4 else 1
     if count > 32:
-        raise ValueError('Use at most 32 references, including connected inputs')
+        raise ValueError(f'There are {count} references and the limit is 32. '
+                         'For a long image batch, connect a clip to the Reference node\'s video input; a clip counts as one reference.')
     if count and any(
             name in result or name in connected for name in ('first', 'last')):
         raise ValueError('Choose keyframes or references; disable the unused inputs')

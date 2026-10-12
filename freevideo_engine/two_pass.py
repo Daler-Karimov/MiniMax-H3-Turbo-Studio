@@ -128,10 +128,45 @@ def checkpoint_path():
     return earlier if earlier.is_file() and not installed.is_file() else installed
 
 
+def verified_checkpoint(path):
+    """Whether setup's ledger of verified models covers this copy, unchanged since.
+
+    Every two-pass request used to hash the whole checkpoint before sampling:
+    one more full read of the file, which the upscaler then read again. The
+    ledger keeps the identity of each file whose content was hashed; a copy
+    it does not know yet is hashed once here and recorded. An unreadable
+    ledger is left alone and the caller hashes as before.
+    """
+    from .paths import data_root
+    import json
+    ledger = data_root() / 'verified-models.json'
+    try:
+        stamps = json.loads(ledger.read_text(encoding='utf-8')) if ledger.is_file() else {}
+    except (OSError, ValueError):
+        return False
+    if not isinstance(stamps, dict):
+        return False
+    from . import provision
+    # Setup records a file under its resolved folder and its own name.
+    try:
+        key = path.parent.resolve() / path.name
+        recorded = stamps.get(str(key))
+        if not provision.verified(key, dict(bytes=UPSCALER['bytes'], sha256=UPSCALER['sha256']), stamps):
+            return False
+        if stamps.get(str(key)) != recorded:
+            from .monitoring import save
+            save(ledger, stamps)
+    except OSError:
+        return False
+    return True
+
+
 def ensure_checkpoint():
     """Also upgrade existing installations lazily; retain invalid local files."""
     from .network import download, model_urls
     path = checkpoint_path()
+    if verified_checkpoint(path):
+        return path
     network = {}
     from .paths import data_root
     import json

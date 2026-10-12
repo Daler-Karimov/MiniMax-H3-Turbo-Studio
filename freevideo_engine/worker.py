@@ -203,10 +203,14 @@ def generate(request, resident=None):
                 from .resident_models import gpu_bytes
                 foreign_sample_bytes = max(0, torch.cuda.memory_allocated() - gpu_bytes(engine))
             from .decode_prefetch import DecoderReadAhead
-            decode_read_ahead = DecoderReadAhead(engine.base, ram_budget_bytes=request.get('ram_budget_bytes'))
+            decode_read_ahead = DecoderReadAhead(engine.base, ram_budget_bytes=request.get('ram_budget_bytes'),
+                                                 budget_is_estimate=request.get('ram_budget_is_estimate') is True)
             decoder_cached = resident is not None and 'video_vae' in resident.entries
             if decoder_cached:
                 decode_read_ahead.result.update(state='skipped', reason='Video VAE is already resident on the GPU')
+            def read_decoder_ahead():
+                # Every offloaded layer in memory and none read in the last step.
+                decode_read_ahead.start(drive_idle=getattr(engine, 'drive_idle', False) is True)
             from .sampling_memory import SamplingMemory
             memory_diagnostics = SamplingMemory(torch, Path(request['output']).with_suffix('.sampling-memory.json')).start()
             def sample_finalize_phase(name):
@@ -402,7 +406,7 @@ def generate(request, resident=None):
                         sampled = dict(first, sampling_plan=sampling_plan, sampling_passes=[dict(first)],
                                        step_seconds=list(first['step_seconds']), sample_seconds=first['sample_seconds'])
                         if not decoder_cached:
-                            decode_read_ahead.start()
+                            read_decoder_ahead()
                     else:
                         metrics['sample_stage'] = 'refine'
                         save(request['metrics'], metrics)
@@ -420,7 +424,7 @@ def generate(request, resident=None):
                         latents, audio, second = engine.sample(request['conditioning'], restart_seed,
                             **sampling_plan['second'], initial_latents=(latents, audio), refine_steps=sampling_plan['refine_steps'],
                             refine_schedule=sampling_plan.get('refine_schedule'),
-                            final_step_callback=None if decoder_cached else decode_read_ahead.start,
+                            final_step_callback=None if decoder_cached else read_decoder_ahead,
                             step_callback=memory_diagnostics.complete, sampling_complete_callback=refined_complete,
                             progress_offset=sampling_plan['base_steps'], progress_total=sampling_plan['total_steps'],
                             gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
@@ -430,7 +434,7 @@ def generate(request, resident=None):
                 else:
                     latents, audio, sampled = engine.sample(request['conditioning'], request['seed'],
                         frames=canvas.get('frames', 243), width=canvas.get('width', 1344), height=canvas.get('height', 768),
-                        final_step_callback=None if decoder_cached else decode_read_ahead.start,
+                        final_step_callback=None if decoder_cached else read_decoder_ahead,
                         step_callback=memory_diagnostics.complete, sampling_complete_callback=sampling_complete,
                         gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
                         budget_refresh=refresh_budget if live_budget is not None else None)

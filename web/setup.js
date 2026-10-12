@@ -2,6 +2,7 @@ import { api } from "../../scripts/api.js";
 import { wordmark } from './wordmark.js';
 import { openCompatibility } from './compatibility.js';
 import { animateDetails, closeDialog } from './motion.js';
+import { agentConnect } from './agent_connect.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./setup.css', import.meta.url).href;
@@ -147,7 +148,7 @@ export async function openSetup() {
     // Why Install / repair is unavailable, so it never looks like a broken button.
     const blocked = note(""); blocked.classList.add("fv-setup-why"); blocked.setAttribute("aria-live", "polite"); blocked.hidden = true;
     installation.append(blocked);
-    dialog.append(heading, installation, downloads, advanced);
+    dialog.append(heading, installation, downloads, agentConnect(t, api), advanced);
     const motions = [...dialog.querySelectorAll('details')].map(animateDetails);
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     document.body.append(dialog); dialog.showModal();

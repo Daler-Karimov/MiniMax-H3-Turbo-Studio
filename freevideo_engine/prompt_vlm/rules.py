@@ -290,3 +290,115 @@ def user_text(value):
         text += '\n\nSpoken lines to keep verbatim inside <d>[Language] ...</d>:\n' + '\n'.join(
             '- [%s] %s' % (language(line), line) for line in lines)
     return text
+
+
+ASK_SYSTEM = """You are a precise visual assistant for video production. The user supplies images
+labelled <Image 1>, <Image 2>, etc. in the order given, then a question about them. Answer the
+question directly and concretely from what is actually visible: subjects, faces, clothing,
+colours, setting, framing, camera angle, lighting, motion cues and any visible text. Say plainly
+when something is not visible or cannot be determined from the images; never invent details.
+Answer in the language of the question unless it asks for another language."""
+ASK_JSON = ('Return only one valid JSON value that answers the question. No markdown fences, '
+            'no commentary before or after it.')
+ASK_JSON_RETRY = ('Your previous reply was not valid JSON. Return only the corrected JSON value, '
+                  'with no markdown fences or commentary.')
+
+
+def ask_request(value):
+    """Questions about images for agents; images are ComfyUI input files."""
+    if not isinstance(value, dict) or set(value) - {'questions', 'format', 'max_tokens', 'system', 'mode'}:
+        raise ValueError('invalid_request')
+    if value.get('mode', 'ask') != 'ask':
+        raise ValueError('invalid_request')
+    questions = value.get('questions')
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 8:
+        raise ValueError('invalid_request')
+    answer_format = value.get('format', 'text')
+    if answer_format not in ('text', 'json'):
+        raise ValueError('invalid_request')
+    max_tokens = value.get('max_tokens', 600)
+    if type(max_tokens) is not int or not 16 <= max_tokens <= 1500:
+        raise ValueError('invalid_request')
+    system = value.get('system')
+    if system is not None and (not isinstance(system, str) or not system.strip() or len(system) > 4000):
+        raise ValueError('invalid_prompt')
+    rows, total = [], 0
+    for question in questions:
+        if not isinstance(question, dict) or set(question) - {'text', 'images'}:
+            raise ValueError('invalid_request')
+        text, images = question.get('text'), question.get('images', [])
+        if not isinstance(text, str) or not text.strip() or len(text) > 8000:
+            raise ValueError('invalid_prompt')
+        if not isinstance(images, list) or len(images) > 16:
+            raise ValueError('too_many_images')
+        selected = []
+        for image in images:
+            if (not isinstance(image, dict) or set(image) - {'file', 'label'}
+                    or not isinstance(image.get('file'), str) or not image['file']):
+                raise ValueError('unsupported_media')
+            label = image.get('label')
+            if label is not None and (not isinstance(label, str) or len(label) > 80):
+                raise ValueError('invalid_request')
+            # One line: a label cannot add instructions after its image.
+            label = ' '.join(label.split()) if label else ''
+            selected.append(dict(file=image['file'], **({'label': label} if label else {})))
+        total += len(selected)
+        rows.append(dict(text=text, images=selected))
+    if total > 24:
+        raise ValueError('too_many_images')
+    return dict(mode='ask', questions=rows, format=answer_format, max_tokens=max_tokens,
+                system=system.strip() if system else None)
+
+
+def ask_instruction(value):
+    system = value.get('system') or ASK_SYSTEM
+    return system + ('\n' + ASK_JSON if value['format'] == 'json' else '')
+
+
+def image_tokens(count):
+    """Vision tokens per image, so up to 16 frames fit the input limit."""
+    return max(64, min(512, 4800 // max(1, count)))
+
+
+def parse_json(text):
+    """The JSON value in a reply, tolerating fences or a short preface."""
+    if not isinstance(text, str):
+        raise ValueError('invalid_json')
+    text = text.strip()
+    if text.startswith('```'):
+        lines = text.splitlines()[1:]
+        if lines and lines[-1].strip().startswith('```'):
+            lines = lines[:-1]
+        text = '\n'.join(lines).strip()
+    import json
+    try:
+        return text, json.loads(text)
+    except ValueError:
+        pass
+    starts = [index for index in (text.find('{'), text.find('[')) if index >= 0]
+    if starts:
+        start = min(starts)
+        end = text.rfind('}' if text[start] == '{' else ']')
+        if end > start:
+            try:
+                return text[start:end + 1], json.loads(text[start:end + 1])
+            except ValueError:
+                pass
+    raise ValueError('invalid_json')
+
+
+ANSWER_KEYS = {'text', 'json', 'tokens', 'seconds', 'error', 'truncated', 'retried'}
+
+
+def validate_answers(answers, value):
+    """Worker output shape for an ask job: one answer per question, in order."""
+    if not isinstance(answers, list) or len(answers) != len(value['questions']):
+        raise ValueError('invalid_output')
+    for answer in answers:
+        if not isinstance(answer, dict) or set(answer) - ANSWER_KEYS or not isinstance(answer.get('text', ''), str):
+            raise ValueError('invalid_output')
+        if 'error' not in answer and not answer.get('text', '').strip():
+            raise ValueError('invalid_output')
+        if 'error' in answer and answer['error'] not in ('invalid_json', 'context_length'):
+            raise ValueError('invalid_output')
+    return answers

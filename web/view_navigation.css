@@ -9,7 +9,7 @@
 .fv-view-guide::before{content:'i';flex:none;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--fv-accent);color:var(--fv-bg);font:600 11px/1 Georgia,serif}
 .fv-view-guide>span{flex:1}
 .fv-view-guide button{flex:none;color:var(--fv-accent);padding:4px 8px;font-weight:var(--fv-semibold)}.fv-view-guide button:hover{background:#ffffff0f}.fv-view-navigation .fv-view-settings{font-size:12px;padding:6px}
-.fv-studio .fv-header:has(.fv-view-switch){grid-template-columns:1fr auto 1fr}.fv-studio .fv-header>.fv-header-actions{justify-self:end}.fv-studio .fv-view-switch button{padding:5px 14px;min-height:var(--fv-h-sm)}
+.fv-studio .fv-header:has(.fv-view-switch){grid-template-columns:1fr auto 1fr}.fv-studio .fv-header>.fv-header-actions{justify-self:end;min-width:0}.fv-studio .fv-view-switch button{padding:5px 14px;min-height:var(--fv-h-sm)}
 @media(max-width:680px){.fv-view-navigation{top:68px;max-width:calc(100vw - 16px)}.fv-view-row{gap:6px}.fv-view-row>.fv-wordmark{width:90px}.fv-view-switch button{padding:7px 10px}.fv-studio .fv-header:has(.fv-view-switch){grid-template-columns:1fr auto 1fr;gap:8px}.fv-studio .fv-header:has(.fv-view-switch) .fv-wordmark{width:90px}.fv-studio .fv-view-switch{justify-self:center}.fv-studio .fv-view-switch button{padding:6px 9px}}
 
 .fv-view-navigation{animation:fv-panel-enter .25s ease}
@@ -23,3 +23,11 @@ html.fv-toolbar-dragging,html.fv-toolbar-dragging *{cursor:grabbing!important;us
 .fv-view-row{position:relative}.fv-view-grip{position:absolute;left:-14px;top:50%;translate:0 -50%;width:8px;height:12px;opacity:0;pointer-events:none;color:var(--fv-muted);transition:opacity .2s,color .2s;background:radial-gradient(circle,currentColor 1.1px,transparent 1.5px) 0 0/4px 4px}
 .fv-view-navigation:hover .fv-view-grip{opacity:.75}.fv-view-navigation.fv-dragging .fv-view-grip{opacity:1;color:var(--fv-ink)}@media(hover:none){.fv-view-grip{opacity:.5}}
 @media(max-width:480px){.fv-view-navigation .fv-version-info{display:none}}
+
+/* Reserve the selected label's width so bold English text cannot move the switch. */
+.fv-view-switch button,.fv-studio .fv-view-switch button{display:grid;gap:0}
+.fv-view-switch button>span,.fv-view-switch button::after{grid-area:1/1}
+.fv-view-switch button::after{content:attr(data-label);font-weight:var(--fv-semibold);visibility:hidden;pointer-events:none}
+
+/* A long export hint must not enlarge the shared header's internal grid row. */
+@media(min-width:681px){.fv-studio .fv-header:has(.fv-view-switch){grid-template-rows:minmax(0,1fr)}}

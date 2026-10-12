@@ -175,3 +175,8 @@ TinyCC in triton-windows
     python/Lib/site-packages/triton/runtime/tcc/lib/user32.def
     python/Lib/site-packages/triton/runtime/tcc/libtcc.dll
     python/Lib/site-packages/triton/runtime/tcc/tcc.exe
+
+QuickJS Python binding 1.19.4 and embedded QuickJS
+  License: MIT; full notices in ../quickjs-MIT.txt
+  Binding author: Petter Strandmark. Engine copyright: Fabrice Bellard and Charlie Gordon.
+  Files: python/Lib/site-packages/quickjs*, python/Lib/site-packages/_quickjs*

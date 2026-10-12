@@ -26,12 +26,17 @@ export function viewChanged(view, node) {
     refreshNavigation();
 }
 
-export function viewSwitch(view, onStudio, onNodes) {
+export function viewSwitch(view, onStudio, onNodes, onEditor) {
     const group = document.createElement('div'); group.className = 'fv-view-switch';
     group.setAttribute('role', 'group'); group.setAttribute('aria-label', t('FreeVideo view', 'FreeVideo 视图'));
-    for (const [id, label, action] of [['studio', t('Create', '创作面板'), onStudio], ['nodes', t('Nodes', '节点视图'), onNodes]]) {
+    for (const [id, label, action] of [['studio', t('Create', '创作面板'), onStudio], ['nodes', t('Nodes', '节点视图'), onNodes], ['editor', t('Edit', '剪辑视图'), onEditor]]) {
         const button = document.createElement('button'); button.type = 'button';
-        button.textContent = label; button.dataset.view = id;
+        const text = document.createElement('span'); text.textContent = label; button.append(text);
+        button.dataset.label = label; button.dataset.view = id;
+        button.title = {studio: t('Describe a video and generate it', '写一句描述，生成一段视频'),
+            nodes: t('Build and adjust the workflow as a node graph', '用节点图搭建和调整工作流'),
+            editor: t('Join several video and audio parts into one video', '把多段画面和声音接成一条视频')}[id];
+        if (id === 'editor') button.dataset.fvGuide = 'longer';
         button.setAttribute('aria-pressed', String(view === id)); button.onclick = action;
         group.append(button);
     }
@@ -42,7 +47,7 @@ export function refreshNavigation() {
     if (!toolbar) return;
     const nodes = (app.graph?._nodes || []).filter(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
     if (!nodes.includes(selected)) selected = nodes[0];
-    toolbar.hidden = !selected || currentView === 'studio';
+    toolbar.hidden = !selected || currentView !== 'nodes';
     for (const button of toolbar.querySelectorAll('[data-view]')) {
         button.setAttribute('aria-pressed', String(button.dataset.view === currentView));
     }
@@ -57,19 +62,20 @@ export function installNavigation(openStudio) {
     // The whole bar drags like a window; these dots say so on hover.
     const grip = document.createElement('span'); grip.className = 'fv-view-grip'; grip.setAttribute('aria-hidden', 'true');
     const brand = wordmark();
-    const choose = () => {
+    const choose = action => {
         const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
-        refreshNavigation(); if (focused || selected) open(focused || selected);
+        refreshNavigation(); if (focused || selected) return action(focused || selected);
     };
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
-    row.append(grip, brand, viewSwitch('nodes', choose, () => {}), createVersionInfo(cn).element, settings); toolbar.append(row);
+    row.append(grip, brand, viewSwitch('nodes', () => choose(open), () => {}, () => choose(node =>
+        import('./editor_entry.js').then(({openEditorView}) => openEditorView(node)))), createVersionInfo(cn).element, settings); toolbar.append(row);
     let shown = false;
     try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }
     if (!shown) {
         const guide = document.createElement('div'); guide.className = 'fv-view-guide';
         const text = document.createElement('span');
-        text.textContent = t('Create here, connect tools in Nodes. Switching keeps your inputs and results.', '在创作面板生成，在节点视图连接工具。切换会保留输入和结果。');
+        text.textContent = t('Switching views keeps the content of each view.', '切换视图时，各视图的内容都会保留。');
         const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.textContent = t('Got it', '知道了');
         dismiss.onclick = () => {
             try { localStorage.setItem('freevideo.view-guide', '1'); } catch {}
@@ -98,7 +104,7 @@ export function installNavigation(openStudio) {
     // health.js asks for this before it reports the toolbar missing. A
     // workspace removed without closing must not keep the toolbar hidden.
     globalThis.window?.addEventListener('freevideo-navigation-refresh', () => {
-        if (currentView === 'studio' && !document.querySelector('dialog.fv-studio[open]')) currentView = 'nodes';
+        if (currentView !== 'nodes' && !document.querySelector('dialog.fv-studio[open]')) currentView = 'nodes';
         refreshNavigation();
     });
 }

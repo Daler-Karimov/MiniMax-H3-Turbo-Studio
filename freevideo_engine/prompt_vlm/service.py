@@ -1,4 +1,4 @@
-"""Optional rewrite jobs; prompts stay in memory and never enter job reports."""
+"""Optional rewrite and ask jobs; prompts, questions and answers stay in memory, never in job reports."""
 import atexit
 import json
 import os
@@ -262,7 +262,7 @@ class Service:
 
     def start(self, action, value):
         received_epoch = time.time()
-        if action not in ('install', 'rewrite'):
+        if action not in ('install', 'rewrite', 'ask'):
             raise ValueError('invalid_request')
         if self.busy():
             raise ValueError('busy')
@@ -270,6 +270,10 @@ class Service:
         if action == 'install':
             if value.get('accept_download') is not True:
                 raise ValueError('consent_required')
+        elif action == 'ask':
+            if not assets.ready(root):
+                raise ValueError('model_missing')
+            value = self.ask_images(rules.ask_request(value))
         else:
             if not assets.ready(root):
                 raise ValueError('model_missing')
@@ -286,8 +290,8 @@ class Service:
         with self.mutex:
             if self.busy():
                 raise ValueError('busy')
-            if action == 'rewrite':
-                self.prestart_ticket += 1  # Invalidate pending imports before the rewrite starts.
+            if action in ('rewrite', 'ask'):
+                self.prestart_ticket += 1  # Invalidate pending imports before the worker starts.
             self.key = secrets.token_urlsafe(24)
             self.stop.clear()
             self.result_expires = 0.
@@ -299,12 +303,29 @@ class Service:
             self.thread.start()
         return dict(job=self.key)
 
+    def ask_images(self, value):
+        """Resolve every question's images inside ComfyUI input; images only."""
+        from ..comfy_assets import resolve_assets, media_kind
+        rows = [image for question in value['questions'] for image in question['images']]
+        if not rows:
+            return value
+        resolved = resolve_assets(json.dumps([dict(file=row['file'], role='reference') for row in rows]),
+                                  self.input_directory())
+        paths = iter(row['path'] for row in resolved['references'])
+        for question in value['questions']:
+            for image in question['images']:
+                image['path'] = next(paths)
+                if media_kind(image['path']) != 'image':
+                    raise ValueError('unsupported_media')
+        return value
+
     def status(self, key):
         if not isinstance(key, str) or not self.key or not secrets.compare_digest(key, self.key):
             raise ValueError('unknown_job')
         with self.mutex:
             if self.result_expires and time.monotonic() > self.result_expires:
                 self.state.pop('text', None)
+                self.state.pop('answers', None)
                 self.state.update(phase='failed', error='expired')
             row = dict(self.state)
             # The browser may immediately queue video work or the next rewrite.
@@ -312,6 +333,7 @@ class Service:
             if self.busy() and row.get('phase') in ('complete', 'failed', 'cancelled'):
                 row['phase'] = 'finishing'
                 row.pop('text', None)
+                row.pop('answers', None)
             return row
 
     def cancel(self, key):
@@ -335,7 +357,7 @@ class Service:
         try:
             from ..background_compile import COMPILE
             COMPILE.stop()
-            if action == 'rewrite':
+            if action in ('rewrite', 'ask'):
                 from ..resident_process import OWNER
                 if OWNER.active:
                     raise BlockingIOError('busy')
@@ -357,10 +379,11 @@ class Service:
         except Exception as error:
             known = {'disk_space', 'ram_space', 'rewrite_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
             self.progress(dict(phase='failed', error=str(error) if str(error) in known
-                               else 'download_failed' if action == 'install' else 'rewrite_failed',
+                               else 'download_failed' if action == 'install'
+                               else 'ask_failed' if action == 'ask' else 'rewrite_failed',
                                exception=type(error).__name__))
         finally:
-            if action == 'rewrite':
+            if action in ('rewrite', 'ask'):
                 self.stop_prestart(self.prewarm_state.get('reason', 'none'))
             if self.stop.is_set():
                 self.progress(dict(phase='cancelled'))
@@ -495,7 +518,7 @@ class Service:
                 if row.get('phase') in ('complete', 'failed'):
                     result.update(row)
                     result_received_at[:] = [time.monotonic()]
-                elif row.get('phase') in ('loading', 'rewriting'):
+                elif row.get('phase') in ('loading', 'rewriting', 'answering'):
                     self.progress(row)
         try:
             writer.start()
@@ -527,7 +550,10 @@ class Service:
             if session.reader.is_alive() or not result or child.returncode and result.get('phase') == 'complete':
                 raise RuntimeError('worker_exit')
             if result.get('phase') == 'complete':
-                rules.validate_output(result.get('text'), value)
+                if value.get('mode') == 'ask':
+                    rules.validate_answers(result.get('answers'), value)
+                else:
+                    rules.validate_output(result.get('text'), value)
             self.progress(dict(result, worker_returncode=child.returncode))
         finally:
             releasing = result_received_at[0] if result_received_at else time.monotonic()
@@ -600,12 +626,14 @@ def register():
         if not secrets.compare_digest(request.headers.get('X-FreeVideo-Prompt', ''), token):
             return web.json_response(dict(error='reload'), status=403)
         try:
-            if request.content_length and request.content_length > 128 * 1024:
+            name = request.match_info['action']
+            # Ask jobs carry up to eight questions; rewrite keeps its smaller limit.
+            limit = (512 if name == 'ask' else 128) * 1024
+            if request.content_length and request.content_length > limit:
                 raise ValueError('invalid_request')
             value = await request.json()
             if not isinstance(value, dict):
                 raise ValueError('invalid_request')
-            name = request.match_info['action']
             if name == 'status':
                 result = service.status(value.get('job'))
             elif name == 'cancel':

@@ -20,13 +20,14 @@ const key = name => FAMILIES[name] ? name : 'sans';
 export const fontWeight = weight => Number(weight) >= 550 ? 700 : 400;
 export function fontFamily(name) { return FAMILIES[key(name)].family; }
 // The CSS font list for a family: itself, the sans for what it lacks, then the box.
-export function fontStack(name) {
+// Alone, the family goes straight to the box, so what it lacks shows as missing.
+export function fontStack(name, {alone = false} = {}) {
     const k = key(name), names = [FAMILIES[k].family];
-    if (k !== 'sans') names.push(FAMILIES.sans.family);
+    if (k !== 'sans' && !alone) names.push(FAMILIES.sans.family);
     names.push(BOX.family);
     return names.map(family => `"${family}"`).join(',');
 }
-export const fontCSS = (name, weight, size) => `${fontWeight(weight)} ${size}px ${fontStack(name)}`;
+export const fontCSS = (name, weight, size, options) => `${fontWeight(weight)} ${size}px ${fontStack(name, options)}`;
 
 const faces = new Map(), ready = new Set();
 function face(family, file, weight, descriptor = String(weight)) {

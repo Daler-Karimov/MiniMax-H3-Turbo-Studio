@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 
+from .agent import enabled as agent_enabled
 from .bootstrap import DEFAULT_ROOT
 from . import __version__
 from .locking import runtime_lock, LOCK_ENV
@@ -64,7 +65,12 @@ def _main(argv=None):
               '  resource-history  Inspect attempts and acknowledged retries\n'
               '  doctor     Check dependencies and GPU kernels\n'
               '  diagnose   Collect a small local report, including failed installs\n'
-              '  bench      Compare attention backends\n\n'
+              '  bench      Compare attention backends\n'
+              + ('  agent      Drive a running FreeVideo through its agent API (JSON)\n'
+                 '  projects   Read and edit shared editor timelines (JSON)\n'
+                 '  sessions   Share work messages and plans with the user (JSON)\n'
+                 '  mcp        Serve FreeVideo to AI agents over MCP (stdio); --print-config for setup\n'
+                 if agent_enabled() else '') + '\n'
               'Examples:\n  ./freevideo\n  ./freevideo server --listen 0.0.0.0\n  ./freevideo setup --plan\n'
               '  ./freevideo test --suite quick\n  ./freevideo generate --prompt-file prompt.txt --out video.mp4\n\n'
               'Use COMMAND --help for options. Windows: .\\setup.ps1 / .\\test.ps1 / .\\freevideo.ps1; Linux: ./setup.sh / ./test.sh / ./freevideo.')
@@ -81,6 +87,12 @@ def _main(argv=None):
     if command == 'diagnose':
         from .diagnostics import main as diagnose
         return diagnose(['--root', str(args.root), *(['--config', str(args.config)] if args.config else []), *tail])
+    if command in ('agent', 'mcp', 'projects', 'sessions') and agent_enabled():
+        # Clients of the running ComfyUI: no engine lock, no engine environment.
+        from .agent.cli import main as agent
+        from .agent.mcp import main as mcp
+        return (mcp if command == 'mcp' else agent)(['--root', str(args.root),
+            *([command] if command in ('projects', 'sessions') else []), *tail])
     if command == 'resource-history':
         from .resource_cli import main as history
         if not any(flag.split('=', 1)[0] == '--history' for flag in tail):

@@ -179,6 +179,7 @@ def host_repair_pending(python):
 
 def managed_python(engine, comfy):
     """Find our previously completed frontend without requiring its full disk budget again."""
+    from .comfy_host import NODE_PACKAGES
     engine, comfy = io_path(engine), io_path(comfy)
     try:
         record = json.loads((engine / 'launcher/comfy-host.json').read_text(encoding='utf-8'))
@@ -187,6 +188,8 @@ def managed_python(engine, comfy):
         machine = json.loads((engine / 'machine.json').read_text(encoding='utf-8'))
         if (identity['comfy'] != plain(comfy) or identity['engine_python'] != machine['python']
                 or identity['requirements'] != hashlib.sha256((comfy / 'requirements.txt').read_bytes()).hexdigest()
+                # Packages our nodes need beyond ComfyUI's own, added since the environment was made.
+                or identity.get('nodes', []) != list(NODE_PACKAGES)
                 or environment.resolve().parent != (engine / 'envs').resolve()
                 or python != environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
                 or json.loads((environment / 'freevideo-host.json').read_text(encoding='utf-8')) != identity

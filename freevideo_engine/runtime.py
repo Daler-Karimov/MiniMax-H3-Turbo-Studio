@@ -602,7 +602,16 @@ class Engine:
         prefetch_step = max(1, active_steps - 2)
         prefetch_timing = dict(trigger_step=None, steps_remaining=None,
                                estimated_remaining_seconds=None,
-                               trigger_elapsed_seconds=None)
+                               trigger_elapsed_seconds=None,
+                               drive_reads_last_step=None, drive_layers=None)
+        # Layers the step just completed read from the weight files, and
+        # offloaded layers that still depend on those files; both unknown
+        # until this pass completes a step. Sampling leaves the drive to the
+        # reader only when both are zero: a layer served by a cached device
+        # copy goes back to its file once that copy is released.
+        self.step_drive_reads = self.drive_layers = None
+        self.drive_idle = False
+        drive_reads = [0]
 
         def trigger_prefetch():
             if final_step_callback is None or prefetch_timing['trigger_step'] is not None:
@@ -616,12 +625,19 @@ class Engine:
                 steps_remaining=remaining,
                 estimated_remaining_seconds=(average * remaining
                                              if average is not None else None),
-                trigger_elapsed_seconds=time.perf_counter() - started)
+                trigger_elapsed_seconds=time.perf_counter() - started,
+                drive_reads_last_step=self.step_drive_reads, drive_layers=self.drive_layers)
             final_step_callback()
 
         class StepTimes(list):
             def append(self, value):
                 super().append(value)
+                count = getattr(offloader, 'drive_reads', None)
+                total = count() if count is not None else None
+                if total is None:
+                    owner.step_drive_reads = None
+                else:
+                    owner.step_drive_reads, drive_reads[0] = total - drive_reads[0], total
                 cached = offloader.cached_bytes() if budget_refresh is not None else 0
                 peak = owner.device_backend.max_memory_reserved()
                 if budget_refresh is not None:
@@ -678,6 +694,10 @@ class Engine:
                         allow_growth=len(self) + 1 < active_steps)
                 if owner.config.get('residual_offload'):
                     residual_steps.append(dict(owner.transformer._freevideo_residual_stats))
+                # After the cache changes above: what the remaining steps need.
+                waiting = getattr(offloader, 'drive_layers', None)
+                owner.drive_layers = waiting() if waiting is not None else None
+                owner.drive_idle = owner.step_drive_reads == 0 and owner.drive_layers == 0
                 progress.complete(value)
                 if step_callback is not None:
                     step_callback(value)

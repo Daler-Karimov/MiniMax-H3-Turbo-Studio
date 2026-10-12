@@ -259,7 +259,8 @@ def decoder_read_ahead(value):
     if sampling:
         result['sampling'] = numbers(sampling, ('trigger_step', 'steps_remaining',
                                                 'estimated_remaining_seconds',
-                                                'trigger_elapsed_seconds'))
+                                                'trigger_elapsed_seconds', 'drive_reads_last_step',
+                                                'drive_layers'))
     return result
 
 

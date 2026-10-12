@@ -1477,8 +1477,13 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
     # autocast casts to on each call. On an RTX PRO 6000 a 1344x768x243
     # decode measured 19.2 s without it and 15.4 s with it, 4.2 GiB lower,
     # bit-identical; Hopper and Ampere cast the same way.
+    # Windows Ampere takes the same values, so it uses the cache as well. Its
+    # half-size blocks also let 8 and 12 GB cards keep more of the decoder on
+    # the GPU: at a 7.13 GB limit, 1344x768x243 keeps 27 blocks instead of 13,
+    # and decoded in 15.3 s instead of 24.6 s on the RTX PRO 6000, with peaks
+    # of 4.65 and 4.67 GiB reserved.
     decoder_linear_cache = (hardware.system == 'Linux'
-                            or (hardware.architecture in ('ada', 'blackwell-rtx')
+                            or (hardware.architecture in ('ampere', 'ada', 'blackwell-rtx')
                                 and hardware.system == 'Windows'))
     # Temporal streaming bounds the live clip workspace, so use spare VRAM for
     # the repeatedly-read decoder blocks before spending RAM on host copies. At

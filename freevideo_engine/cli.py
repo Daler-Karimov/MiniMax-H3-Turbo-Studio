@@ -27,6 +27,9 @@ def resource_arguments(parser):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ('projects', 'sessions'):
+        from .agent.cli import main as agent
+        return agent(sys.argv[1:])
     if len(sys.argv) > 1 and sys.argv[1] == 'predict':
         from .prediction_cli import main as predict
         raise SystemExit(predict(sys.argv[2:]))

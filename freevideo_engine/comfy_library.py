@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .agent import enabled as agent_enabled
 from .comfy_assets import output_summary
 from .runtime_alias import is_junction, checked_real_path, AliasUnavailable
 from .long_paths import io_path, plain
@@ -41,6 +42,21 @@ def _report(path):
     return report
 
 
+def _agent(folder):
+    """The agent job that made this run, from the small record agent requests leave in workflow.json."""
+    try:
+        with (folder / 'workflow.json').open('rb') as stream:
+            data = stream.read(64 * 1024 + 1)
+        if len(data) > 64 * 1024 or b'"freevideo_agent"' not in data:
+            return None
+        value = json.loads(data).get('freevideo_agent')
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return {key: str(value[key])[:120] for key in ('job', 'label', 'project', 'client') if value.get(key)}
+
+
 def list_videos(output_directory, *, before=None, limit=24):
     """Return a stable newest-first page, with only relative output paths."""
     if not 1 <= limit <= 48:
@@ -52,6 +68,8 @@ def list_videos(output_directory, *, before=None, limit=24):
             raise ValueError('Invalid page cursor')
         cursor = (int(stamp), identity)
     root = Path(output_directory).resolve()
+    from .comfy_chain import hidden_outputs
+    hidden = hidden_outputs(root)
     candidates = []
     for path in (root / 'FreeVideo').glob('*/*/video.mp4'):
         identity = path.parent.relative_to(root / 'FreeVideo').as_posix()
@@ -68,6 +86,8 @@ def list_videos(output_directory, *, before=None, limit=24):
         try:
             report = _report(path)
             relative = Path('FreeVideo') / key[1] / 'video.mp4'
+            if relative.as_posix() in hidden:
+                continue
             summary = output_summary(report, relative)
             # Geometry may gain input metadata in future reports. Keep this API
             # an explicit allowlist, not an export of the retained report.
@@ -80,6 +100,9 @@ def list_videos(output_directory, *, before=None, limit=24):
                 summary['encoder_file'].pop('path', None)
             if not (root / summary['report']).is_file():
                 summary['report'] = None
+            agent = _agent(path.parent) if agent_enabled() else None
+            if agent:
+                summary['agent'] = agent
             rows.append(dict(summary, id=key[1], bytes=info.st_size,
                              created_at=datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(),
                              cursor=str(key[0]) + ':' + key[1]))
@@ -99,10 +122,17 @@ def list_videos(output_directory, *, before=None, limit=24):
 
 def thumbnail(output_directory, identity):
     path = _video(output_directory, identity)
-    _report(path)
     saved = path.with_suffix('.thumbnail.jpg')
+    root = Path(output_directory).resolve() / 'FreeVideo'
+    def check_sidecar(sidecar):
+        if sidecar.is_symlink() or not sidecar.resolve().is_relative_to(root):
+            raise ValueError('Saved thumbnail sidecar is outside the library or is a symbolic link')
+    check_sidecar(path.with_suffix('.request.json'))
+    check_sidecar(saved)
+    _report(path)
     if saved.is_file() and saved.stat().st_mtime_ns >= path.stat().st_mtime_ns:
-        data = saved.read_bytes()
+        with os.fdopen(os.open(saved, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0)), 'rb') as stream:
+            data = stream.read(512 * 1024 + 1)
         if data.startswith(b'\xff\xd8') and len(data) <= 512 * 1024:
             return data
     # CPU decoding only. Grid thumbnails must not take CUDA memory from a
@@ -117,9 +147,13 @@ def thumbnail(output_directory, identity):
     buffer = io.BytesIO()
     image.save(buffer, format='JPEG', quality=80)
     data = buffer.getvalue()
+    check_sidecar(saved)
     try:
-        saved.write_bytes(data)
+        with os.fdopen(os.open(saved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_NOFOLLOW', 0)
+                                | getattr(os, 'O_BINARY', 0), 0o666), 'wb') as stream:
+            stream.write(data)
     except OSError:
+        check_sidecar(saved)
         pass  # A read-only output directory still supports browsing.
     return data
 
@@ -371,6 +405,13 @@ def delete_video(output_directory, identity):
         raise DeleteRefused('not-freevideo')
     # Not while the startup release is deleting files in this folder.
     with _RELEASING:
+        from .comfy_editor import reference_users
+        try:
+            users = reference_users(output_directory, identity)
+        except (OSError, ValueError):
+            raise DeleteRefused('editor-unavailable') from None
+        if users:
+            raise DeleteRefused('editor-in-use', users)
         kept = _foreign(folder)
         if kept:
             raise DeleteRefused('foreign-files', kept)

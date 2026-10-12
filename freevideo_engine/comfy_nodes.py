@@ -85,6 +85,10 @@ class FreeVideoGenerate(io.ComfyNode):
     def execute(cls, text, width, height, seconds, seed, first=None, last=None,
                 references=None, loras=None, conditioning=None, media=None, two_pass=True,
                 force_regenerate=False, base_steps=8, refine_steps=3, preview=False, refine_from=''):
+        from server import PromptServer
+        from .comfy_chain import block_context, block_finished, report_fields
+        node_id = cls.hidden.unique_id
+        chain = block_context(PromptServer.instance, node_id)
         from .two_pass import validate_steps
         if not refine_from:
             validate_steps(base_steps, refine_steps, two_pass)
@@ -95,7 +99,6 @@ class FreeVideoGenerate(io.ComfyNode):
         import folder_paths
         import comfy.model_management as memory
         from comfy.utils import ProgressBar
-        from server import PromptServer
         from .comfy_progress import publish
         from .encoder_prewarm import IDLE
         from .resident_process import OWNER
@@ -103,7 +106,7 @@ class FreeVideoGenerate(io.ComfyNode):
         stop_prestart_for_generation(PromptServer.instance)
         prewarm = {}
         result_reused = [False]
-        node_id = cls.hidden.unique_id
+        result_report = [None]
         bar = ProgressBar(base_steps + (refine_steps if two_pass and not preview else 0), node_id=node_id)
         last_message = [None]
         last_count = [None]
@@ -116,6 +119,8 @@ class FreeVideoGenerate(io.ComfyNode):
             PromptServer.instance.send_progress_text(notice, node_id)
         notice = notice + '\n' if notice else ''
         def progress(message):
+            if message.get('report_id'):
+                result_report[0] = message['report_id']
             if message.get('result_cache_hit'):
                 result_reused[0] = True
             # The sampling label also serves terminal readers and can contain
@@ -168,13 +173,15 @@ class FreeVideoGenerate(io.ComfyNode):
                 preview=bool(preview), refine_from=refine_from or None,
                 interrupted=memory.throw_exception_if_processing_interrupted, release_models=release,
                 export_inputs=lambda run, canvas: export(run, canvas, first=first, last=last,
-                    references=references, loras=loras, conditioning=conditioning, assets=media))
+                    references=references, loras=loras, conditioning=conditioning, assets=media),
+                **({'report_extra': {'chain': report_fields(chain)}} if chain is not None else {}))
             relative = output.relative_to(output_root)
             report = output.with_suffix('.request.json').read_text(encoding='utf-8')
             import json
+            measured = json.loads(report)
             from .comfy_assets import output_summary, saved_video
             preview = ui.PreviewVideo([saved_video(output, output_root)]).as_dict()
-            preview['freevideo_summary'] = [output_summary(json.loads(report), relative)]
+            preview['freevideo_summary'] = [output_summary(measured, relative)]
             preview['freevideo_summary'][0]['result_cache_hit'] = result_reused[0]
         except BaseException as error:
             cancelled = isinstance(error, KeyboardInterrupt) or type(error).__name__ in ('InterruptProcessingException', 'CancelledError')
@@ -184,7 +191,7 @@ class FreeVideoGenerate(io.ComfyNode):
             raise
         publish(PromptServer.instance, node_id, {'label': 'Reused previous result' if result_reused[0] else 'Video saved', 'phase': 'complete',
                 'overall': {'status': 'complete', 'fraction': 1.}, 'result': preview['freevideo_summary'][0]})
-        measured = json.loads(report)
+        block_finished(chain, node_id, relative.as_posix(), result_report[0], measured.get('continuation'))
         from .encoder_prewarm import warm_target
         target = warm_target(measured)
         from .resident_process import OWNER
@@ -219,16 +226,19 @@ class FreeVideoGenerate(io.ComfyNode):
 class FreeVideoMedia(io.ComfyNode):
     @classmethod
     def define_schema(cls):
+        from .comfy_assets import REFERENCE_INPUTS
         return io.Schema(node_id='FreeVideoMedia', display_name='FreeVideo · Media', category='FreeVideo',
             description='Connect IMAGE or AUDIO outputs from generation, editing or loading nodes, or upload files. '
+                        'Several reference images can be connected; uploaded references come first, then connected images from top to bottom. '
                         'Choose first/last frames or experimental references. Empty media means text to video.',
             inputs=[io.String.Input('assets', default='[]'),
                     io.Image.Input('first', display_name='First frame', optional=True,
                         tooltip='Connect any compatible IMAGE output. Select one frame from a batch first.'),
                     io.Image.Input('last', display_name='Last frame', optional=True,
                         tooltip='Connect an IMAGE output for the last frame.'),
-                    io.Image.Input('reference', display_name='Reference image', optional=True,
-                        tooltip='One reference image; appended after uploaded references. Experimental.'),
+                    *[io.Image.Input(name, display_name=f'Reference image {index}', optional=True,
+                        tooltip='When one input receives several images, each counts as one reference.')
+                      for index, name in enumerate(REFERENCE_INPUTS, 1)],
                     io.Audio.Input('reference_audio', display_name='Reference audio', optional=True,
                         tooltip='Voice, music or rhythm reference, up to 15 seconds. Connect a Load Audio '
                                 'or other AUDIO output. Describe its role using <Audio 1> in the prompt. '
@@ -251,12 +261,12 @@ class FreeVideoMedia(io.ComfyNode):
         return float('nan')
 
     @classmethod
-    def execute(cls, assets, first=None, last=None, reference=None, reference_audio=None):
+    def execute(cls, assets, first=None, last=None, reference=None, reference_audio=None, **images):
         from .comfy_assets import resolve_assets, connect_assets
         import folder_paths
         return io.NodeOutput(connect_assets(resolve_assets(assets, folder_paths.get_input_directory()),
                                             first=first, last=last, reference=reference,
-                                            reference_audio=reference_audio))
+                                            reference_audio=reference_audio, **images))
 
 
 class FreeVideoReference(io.ComfyNode):

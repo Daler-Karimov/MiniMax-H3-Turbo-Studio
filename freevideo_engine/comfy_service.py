@@ -251,7 +251,7 @@ def request(url, *, headers=None, timeout=3):
         return error.code
 
 
-def start_proxy(record, *, listen, port, upstream, token_file, tls):
+def start_proxy(record, *, listen, port, upstream, token_file, tls, hop_secret=None):
     """Run the access proxy with ComfyUI's Python, which brings aiohttp."""
     from . import processes
     code = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
@@ -261,6 +261,10 @@ def start_proxy(record, *, listen, port, upstream, token_file, tls):
     if tls:
         command += ['--tls-cert', str(tls[0]), '--tls-key', str(tls[1])]
     env = dict(os.environ, PYTHONUTF8='1', PYTHONNOUSERSITE='1')
+    from .proxy_identity import ENV
+    env.pop(ENV, None)
+    if hop_secret:
+        env[ENV] = hop_secret
     for name in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
         env.pop(name, None)
     log = folder(record['engine']) / 'access-proxy.log'
@@ -312,6 +316,12 @@ def serve(root, *, port=DEFAULT_PORT, listen='127.0.0.1', tls=None):
             proxied = not loopback(listen)
             internal = free_port() if proxied else port
             controller = Controller(Path(record['source']))
+            hop_secret = secrets.token_urlsafe(32) if proxied else None
+            if proxied:
+                from .proxy_identity import ENV
+                from .comfy_launcher_runtime import isolated_environment
+                controller.child_environment = lambda: dict(
+                    isolated_environment(record['engine'], record['source']), **{ENV: hop_secret})
             controller.move_when_taken = False  # Serve the port that was asked for, or say it is taken.
             for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                 previous[name] = signal.signal(name, lambda *_: (stopping.set(), controller.cancelled.set()))
@@ -341,7 +351,7 @@ def serve(root, *, port=DEFAULT_PORT, listen='127.0.0.1', tls=None):
                 secret = token(root)
                 scheme = 'https' if tls else 'http'
                 proxy = start_proxy(record, listen=listen, port=port, upstream=local,
-                                    token_file=folder(root) / TOKEN, tls=tls)
+                                    token_file=folder(root) / TOKEN, tls=tls, hop_secret=hop_secret)
                 check_proxy(proxy, scheme=scheme, port=port, secret=secret)
                 state.update(access=dict(scheme=scheme, port=port))
             save(state_file, dict(state, status='open'))

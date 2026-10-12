@@ -85,8 +85,8 @@ async function workflowBackfill(collection, t) {
 }
 
 // ``upscale`` queues the second pass of a first-pass preview (the studio's node).
-export function openLibrary(t, {upscale = null} = {}) {
-    if (opened?.open) { opened.focus(); return; }
+export function openLibrary(t, {upscale = null, selectedWork = null} = {}) {
+    if (opened?.open) { if (selectedWork) opened.close(); else { opened.focus(); return; } }
     const dialog = el('dialog', null, 'fv-studio fv-library'); opened = dialog;
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
     const header = el('header', null, 'fv-library-header');
@@ -198,6 +198,8 @@ export function openLibrary(t, {upscale = null} = {}) {
             if (!disposed && selected === row.video) mountPlayer(row);
             throw new Error(error.message === 'foreign-files'
                 ? t('Not deleted: the folder also holds files FreeVideo did not write: ', '未删除：文件夹里还有不是 FreeVideo 生成的文件：') + (value.kept || []).join(', ')
+                : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
+                : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
                 : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
                 : t('Could not delete this creation.', '无法删除这条作品。'));
         }
@@ -232,7 +234,13 @@ export function openLibrary(t, {upscale = null} = {}) {
         image.onerror = () => { image.hidden = true; };
         picture.append(image);
         if (row.preview) picture.append(el('span', t('First-pass preview', '一采预览'), 'fv-preview-badge'));
-        card.append(picture, el('span', timestamp(row)), el('small', dimensions(row)));
+        // Made by an AI agent: say so, with the name the agent gave the shot.
+        if (row.agent) {
+            const badge = el('span', 'Agent', 'fv-agent-badge');
+            badge.title = [row.agent.label, row.agent.project, row.agent.client].filter(Boolean).join(' · ');
+            picture.append(badge);
+        }
+        card.append(picture, el('span', row.agent?.label || timestamp(row)), el('small', row.agent?.label ? timestamp(row) : dimensions(row)));
         cards.set(row.video, card); first ? grid.prepend(card) : grid.append(card); thumbnails.observe(image);
     }
     async function load(appendPage) {
@@ -252,6 +260,7 @@ export function openLibrary(t, {upscale = null} = {}) {
                 if (!narrow.matches && rows.size) select(rows.values().next().value, false);
                 else dialog.dataset.detail = 'false';
             } else select(rows.get(selected), false);
+            if (selectedWork) { const row = [...rows.values()].find(row => row.id === selectedWork || row.video === selectedWork); if (row) { select(row); selectedWork = null; } else if (next) queueMicrotask(() => load(true)); }
         } catch (error) { if (!disposed && error.name !== 'AbortError') message.textContent = error.message; }
         finally { if (!disposed) { loading = false; refresh.disabled = more.disabled = false; } }
     }

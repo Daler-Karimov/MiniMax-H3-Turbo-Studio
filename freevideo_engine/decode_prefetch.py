@@ -7,6 +7,16 @@ The sampler starts this reader before its last two steps; the reader can still
 stop immediately when the live RAM/Commit allowance is insufficient. When the
 allowance covers only part of the decoder, that part is read and the loader
 reads the rest itself.
+
+The allowance is live RAM beside the system reserve and, as a rule, what the
+request's RAM budget has left. A planner's estimate of that budget is spent by
+design once every layer it could afford is pinned, while RAM it did not plan
+with stays free. Then live RAM alone bounds the read, provided sampling leaves
+the drive alone: the step before read no layer from the weight files and every
+offloaded layer is pinned or held as a view in RAM. The reader then neither
+shares the drive with sampling nor displaces layers that sampling keeps in the
+file cache. An explicit capacity stays a strict bound, as it is for the RAM
+guard.
 """
 import json
 import os
@@ -46,18 +56,21 @@ def decoder_ranges(base):
 
 
 class DecoderReadAhead:
-    def __init__(self, base, *, ram_budget_bytes=None):
+    def __init__(self, base, *, ram_budget_bytes=None, budget_is_estimate=False):
         self.base = base
         self.ram_budget_bytes = ram_budget_bytes
+        self.budget_is_estimate = bool(budget_is_estimate)
+        self.drive_idle = False
         self.cancelled = threading.Event()
         self.thread = None
         self.result = dict(state='not-started', read_bytes=0, elapsed_seconds=0.,
                            gpu_allocation_bytes=0, private_buffer_bytes=CHUNK,
                            scope='Decoder-only checkpoint pages; reclaimable OS cache, no GPU residency')
 
-    def start(self):
+    def start(self, *, drive_idle=False):
         if self.thread is not None:
             return
+        self.drive_idle = bool(drive_idle)
         if os.environ.get('FREEVIDEO_DECODE_READ_AHEAD', 'auto').lower() in ('off', '0', 'false'):
             self.result.update(state='skipped', reason='Disabled by FREEVIDEO_DECODE_READ_AHEAD')
             return
@@ -71,7 +84,7 @@ class DecoderReadAhead:
             total = sum(hi - lo for _, spans, _ in plans for lo, hi in spans)
             available, complete = available_memory()
             allowance = max(0, available - 2 * GiB)
-            if self.ram_budget_bytes is not None:
+            if self.ram_budget_bytes is not None and not (self.budget_is_estimate and self.drive_idle):
                 from .ram import ProcessMemory
                 from .system import memory_sample
                 sample = ProcessMemory().sample(os.getpid())

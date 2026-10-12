@@ -715,6 +715,7 @@ def _run(args):
                 selected_env = inference_environment(engine_env, selected['inference_ram_budget_gb'] * 1e9)
                 request.update(engine_options=selected['engine'], decoder_options=selected['decoder'],
                                ram_budget_bytes=round(selected['inference_ram_budget_gb'] * 1e9),
+                               ram_budget_is_estimate=ram_budget_is_estimate(args),
                                gpu_budget_bytes=round(selected['gpu_budget_gb'] * 1e9),
                                gpu_reserve_bytes=selected.get('policy', {}).get('gpu_system_reserve_bytes', 0),
                                capacity_trial=bool(selected.get('policy', {}).get('capacity_trial')),

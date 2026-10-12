@@ -7,15 +7,16 @@ FreeVideo code uses [Apache-2.0](LICENSE). Its dependencies and models retain th
 | Qt, PySide6 and Shiboken6 | LGPL-3.0; [component notices](freevideo_engine/launcher/licenses/NOTICE.txt) |
 | PyInstaller bootloader | GPL-2.0 with the bootloader exception |
 | CPython / psutil | PSF / BSD-3-Clause |
+| [QuickJS Python binding](https://github.com/PetterS/quickjs) 1.19.4 (author: Petter Strandmark) and QuickJS (© 2017–2021 Fabrice Bellard and Charlie Gordon) | [MIT notices](freevideo_engine/licenses/quickjs-MIT.txt) |
 | [ComfyUI](https://github.com/Comfy-Org/ComfyUI), including the H3 text encoder code | GPL-3.0 |
 | [VDN-H3](https://github.com/OpenVDN/vdn-minimax-h3), [Diffusers](https://github.com/huggingface/diffusers), [SageAttention](https://github.com/thu-ml/SageAttention) | Apache-2.0 |
 | [VDN-H3 and H3 model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3-edge/blob/main/LICENSE) | MiniMax H3 Community License |
 | [MiniMax H3 latent upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) | [MIT](freevideo_engine/licenses/latent-upscaler-MIT.txt) |
 | [FreeToken](https://github.com/FlashML-org/FreeToken) prompt VLM operators, [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) optional weights | [Apache-2.0](freevideo_engine/licenses/FreeToken-Apache-2.0.txt) |
 | [Lucide](https://lucide.dev) icons (image editor: eyedropper, hand, crop) | [ISC](freevideo_engine/licenses/Lucide-ISC.txt) |
-| [Noto Sans CJK SC and Noto Sans Mono CJK SC](https://github.com/notofonts/noto-cjk) 2.004, © 2014-2021 Adobe: subsets renamed FreeVideo Sans SC and FreeVideo Mono SC (image editor text, share card, Linux launcher) | [SIL OFL 1.1](freevideo_engine/licenses/Noto-CJK-Sans-OFL.txt) |
-| [Noto Serif CJK SC](https://github.com/notofonts/noto-cjk) 2.003, © 2017-2024 Adobe: subset renamed FreeVideo Serif SC (image editor text) | [SIL OFL 1.1](freevideo_engine/licenses/Noto-CJK-Serif-OFL.txt) |
-| [LXGW WenKai](https://github.com/lxgw/LxgwWenKai) v1.522, © 2021-2026 LXGW, © 2020 The Klee Project Authors: subset renamed FreeVideo Kai SC (image editor text) | [SIL OFL 1.1](freevideo_engine/licenses/LXGW-WenKai-OFL.txt) |
+| [Noto Sans CJK SC and Noto Sans Mono CJK SC](https://github.com/notofonts/noto-cjk) 2.004, © 2014-2021 Adobe: subsets renamed FreeVideo Sans SC and FreeVideo Mono SC (image editor text, editor text and subtitles / 剪辑视图的文字和字幕, share card, Linux launcher) | [SIL OFL 1.1](freevideo_engine/licenses/Noto-CJK-Sans-OFL.txt) |
+| [Noto Serif CJK SC](https://github.com/notofonts/noto-cjk) 2.003, © 2017-2024 Adobe: subset renamed FreeVideo Serif SC (image editor text, editor text and subtitles / 剪辑视图的文字和字幕) | [SIL OFL 1.1](freevideo_engine/licenses/Noto-CJK-Serif-OFL.txt) |
+| [LXGW WenKai](https://github.com/lxgw/LxgwWenKai) v1.522, © 2021-2026 LXGW, © 2020 The Klee Project Authors: subset renamed FreeVideo Kai SC (image editor text, editor text and subtitles / 剪辑视图的文字和字幕) | [SIL OFL 1.1](freevideo_engine/licenses/LXGW-WenKai-OFL.txt) |
 
 Original launcher license texts are included in Windows packages. Other runtime dependencies are listed in [constraints](constraints), with their license information in the installed packages.
 

@@ -12,13 +12,16 @@ import { createPreviewScene } from './preview_scene.js?v=20260929-swell';
 import { animateDetails, closeDialog } from './motion.js';
 import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
+import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed } from './studio_queue.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { rememberPromptDraft } from './prompt_draft.js';
-import { canvasDimensions, imageSizeSelection } from './studio_size.js';
+import { openEditorView } from './editor_entry.js';
+import { frameShapes, frameSize } from './frame_sizes.js';
+import { imageSizeSelection } from './studio_size.js';
 import { createCapabilityView } from './capability_view.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -121,32 +124,38 @@ export function loraPanel(node, panel) {
 }
 
 let current;
+// Both top bars use the same exit and canvas fit.
+export function showNodes(node, dialog = null) {
+    if (dialog?.open) closeDialog(dialog);
+    viewChanged('nodes', node);
+    // Fit the graph in the visible canvas; never rewrite users' node positions.
+    const nodes = node.graph?._nodes || [], canvas = app.canvas?.canvas;
+    if (!nodes.length || !canvas) return;
+    const left = Math.min(...nodes.map(n => n.pos[0])), top = Math.min(...nodes.map(n => n.pos[1] - 32));
+    const width = Math.max(...nodes.map(n => n.pos[0] + n.size[0])) - left;
+    const height = Math.max(...nodes.map(n => n.pos[1] + n.size[1])) - top;
+    const scale = Math.min(1, (canvas.clientWidth - 96) / width, (canvas.clientHeight - 96) / height);
+    if (scale > 0) {
+        app.canvas.ds.scale = scale;
+        app.canvas.ds.offset = [-left + (canvas.clientWidth / scale - width) / 2, -top + (canvas.clientHeight / scale - height) / 2];
+        app.canvas.setDirty(true, true);
+    }
+}
+
 const studioQueues = new WeakMap();
 export function openStudio(node) {
-    if (current?.node === node && current.dialog.open) { current.dialog.focus(); return; }
+    if (current?.node === node && current.dialog.open) { current.dialog.focus(); viewChanged('studio', node); return current.dialog; }
     current?.dialog.close();
     const dialog = el('dialog', null, 'fv-studio'); dialog.setAttribute('aria-label', t('FreeVideo creative workspace', 'FreeVideo 创作面板'));
     current = {node, dialog}; const cleanup = [];
     const header = el('header', null, 'fv-header'), brand = el('div', null, 'fv-brand');
     brand.append(wordmark());
     const tools = el('div', null, 'fv-header-actions');
+    const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
     tools.append(button(t('Settings', '设置'), openSetup, 'fv-quiet'));
-    const navigation = viewSwitch('studio', () => {}, () => {
-        closeDialog(dialog);
-        // Fit the graph in the visible canvas; never rewrite users' node positions.
-        const nodes = node.graph?._nodes || [], canvas = app.canvas?.canvas;
-        if (!nodes.length || !canvas) return;
-        const left = Math.min(...nodes.map(n => n.pos[0])), top = Math.min(...nodes.map(n => n.pos[1] - 32));
-        const width = Math.max(...nodes.map(n => n.pos[0] + n.size[0])) - left;
-        const height = Math.max(...nodes.map(n => n.pos[1] + n.size[1])) - top;
-        const scale = Math.min(1, (canvas.clientWidth - 96) / width, (canvas.clientHeight - 96) / height);
-        if (scale > 0) {
-            app.canvas.ds.scale = scale;
-            app.canvas.ds.offset = [-left + (canvas.clientWidth / scale - width) / 2, -top + (canvas.clientHeight / scale - height) / 2];
-            app.canvas.setDirty(true, true);
-        }
-    });
+    const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
+        () => openEditorView(node, {studio: dialog}));
     header.append(brand, navigation, tools);
     const body = el('div', null, 'fv-body'), controls = el('div', null, 'fv-controls'), output = el('div', null, 'fv-preview-column');
     dialog.append(header, body); body.append(controls, output);
@@ -283,7 +292,7 @@ export function openStudio(node) {
     cleanup.push(() => { clearTimeout(effortEstimateTimer); effortEstimateRequest?.abort(); });
     const mediaNode = upstream(node, 'media');
     const [mediaDetails, mediaMount] = expand(t('Media', '素材'));
-    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false) || mediaNode.inputs?.some(input => ['first', 'last', 'reference', 'reference_audio'].includes(input.name) && input.link != null); }
+    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false) || mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null); }
     else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板，即可在这里上传。'), 'fv-legacy'));
     const loraNode = upstream(node, 'loras');
     if (loraNode) {
@@ -423,7 +432,8 @@ export function openStudio(node) {
     seedFields.append(field(t('Seed', '种子'), seed), field(t('After generation', '生成后'), mode)); advanced.append(seedFields);
     const previewHead = el('div', null, 'fv-preview-head'); previewHead.append(el('strong', t('Preview', '预览')));
     const previewCaption = el('span'), previewTools = el('div', null, 'fv-preview-tools');
-    previewTools.append(previewCaption, button(t('Creations', '作品'), () => {
+    previewTools.append(previewCaption);
+    previewTools.append(button(t('Creations', '作品'), () => {
         stage.querySelector('video')?.pause(); openLibrary(t, {upscale: value => node.freevideoUpscaleResult(value)});
     })); previewHead.append(previewTools); output.append(previewHead);
     const previewSpace = el('div', null, 'fv-preview-space'); output.append(previewSpace);
@@ -603,6 +613,7 @@ export function openStudio(node) {
         },
     }));
     const queueController = studioQueues.get(node);
+    node.freevideoEditorLooping = () => queueController.state().looping;
     if (!node.freevideoQueueCleanup) {
         node.freevideoQueueCleanup = true;
         const removed = node.onRemoved;
@@ -795,7 +806,7 @@ export function openStudio(node) {
     }
     function applySize() {
         if (dimensionsLinked) return;
-        const [w, h] = canvasDimensions(pixels, ratio);
+        const {width: w, height: h} = frameSize(pixels, ratio);
         if (w < 256 || h < 256 || w > 4096 || h > 4096) throw new Error(t('This aspect ratio and pixel count exceed the supported dimensions. Use custom dimensions.', '该比例与像素数超出尺寸范围，请使用自定义宽高。'));
         set(node, 'width', w); set(node, 'height', h); node.properties.freevideo_aspect = selected; node.properties.freevideo_pixels = pixels; updateCanvas();
     }
@@ -809,7 +820,7 @@ export function openStudio(node) {
         if (disposed || !image.naturalWidth || !image.naturalHeight) return;
         if (selected === 'input') { ratio = image.naturalWidth / image.naturalHeight; applySize(); }
     }
-    for (const [id, label, r] of [['16:9', t('Landscape', '横屏'), 16 / 9], ['9:16', t('Portrait', '竖屏'), 9 / 16], ['1:1', t('Square', '方形'), 1], ['input', t('Match image', '跟随图片'), null]]) {
+    for (const [id, label, r] of [...frameShapes(t), ['input', t('Match image', '跟随图片'), null]]) {
         const b = button('', async () => { const previous = selected; try { selected = id; pixels = Number(mp.value); if (id === 'input') await inputRatio(true); else { ratio = r; applySize(); } status.textContent = ''; status.dataset.error = 'false'; } catch (error) { selected = previous; updateCanvas(); status.dataset.error = 'true'; status.textContent = error.message; } }, 'fv-shape');
         b.dataset.ratio = id; b.setAttribute('aria-label', label); b.disabled = dimensionsLinked;
         b.append(el('span', null, 'fv-shape-icon'), el('span', label)); shapes.append(b);
@@ -890,5 +901,6 @@ export function openStudio(node) {
             if (!disposed && !busy && !result && saved) showResult(saved);
         }
     }).catch(() => {});
-    requestAnimationFrame(() => generate.focus({preventScroll: true}));
+    requestAnimationFrame(() => { if (!document.querySelector('dialog.fv-editor[open]')) generate.focus({preventScroll: true}); });
+    return dialog;
 }

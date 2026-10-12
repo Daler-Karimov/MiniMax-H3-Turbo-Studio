@@ -10,7 +10,7 @@
       "On Windows, the first video at the Max quality level, or at some custom step counts, no longer downloads about 26 GB of extra model files.",
       "A generation interrupted once no longer slows down later generations. The compatibility level is raised automatically only after two interruptions in a row or a graphics card error, and goes back down after three generations complete normally.",
       "Closing FreeVideo during a generation now cancels it instead of counting as an interruption. While the compatibility level is raised automatically, the progress says so and shows how many more completed generations are needed before it speeds up.",
-      "The creation panel has a new Available sizes and lengths row under Frame & duration. It opens a map of the picture sizes and lengths that can be generated; hovering shows the estimated time, and clicking fills in the size and length. Not shown on Mac."
+      "The creation panel has a new Available sizes and lengths row under Frame & duration. It opens a map of the picture sizes and lengths that can be generated; hovering shows the estimated time, and clicking fills in the size and length."
     ]
   },
   "zh": {
@@ -22,7 +22,7 @@
       "在 Windows 上第一次用“极致”档（以及部分自定义步数）生成时，不再额外下载约 26 GB 的模型文件。",
       "生成被意外中断一次后，之后的生成不再因此变慢：只有连续两次中断或显卡报错，才会自动提高兼容档位；之后连续三次正常完成，档位会自动调回。",
       "生成过程中关掉 FreeVideo，现在会取消这次生成，不算作中断；兼容档位被自动提高时，生成进度上会说明这一点，并显示再完成几次后会加快。",
-      "创作面板“画幅与时长”下面新增“可生成范围”：展开是一张图，显示可以生成的画面大小和时长；鼠标移到图上会显示预计用时，点击图中的位置会填入对应的大小和时长。Mac 上不显示。"
+      "创作面板“画幅与时长”下面新增“可生成范围”：展开是一张图，显示可以生成的画面大小和时长；鼠标移到图上会显示预计用时，点击图中的位置会填入对应的大小和时长。"
     ]
   },
   "history": [

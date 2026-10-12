@@ -45,6 +45,7 @@ def code_identity():
                  'backends/mps_delta.py', 'backends/mps_features.py', 'backends/mps_qk.py',
                  'backends/mps_mlx_attention.py', 'backends/mps_vae_encode.py', 'backends/mps_modulation.py',
                  'macos_compute.py', 'macos_decode_tiles.py',
+                 'macos_encoder_attention.py', 'macos_encoder_linear.py',
                  'macos_memory.py', 'macos_conditions.py', 'macos_process_memory.py',
                  'attention.py', 'refine.py', 'reference_sampler.py', 'adaln.py', 'latent_upscale.py',
                  'media_encoding.py', 'media_conditioning.py', 'encoder_checkpoint.py', 'system.py')
