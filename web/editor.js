@@ -103,6 +103,16 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     headerActions.append(exportBox, button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     top.append(brand, navigation, headerActions);
     const menu = el('div', 'fv-ed-name-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
+    // Up and Down move through the name box and the items; Home and End go to either end.
+    menu.onkeydown = event => {
+        if (event.defaultPrevented || event.isComposing || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)
+            || (['Home', 'End'].includes(event.key) && event.target.matches('input'))) return;
+        const items = [...menu.querySelectorAll('input, [role=menuitem], [role=menuitemradio]')].filter(node => !node.disabled && !node.closest('[hidden]'));
+        if (!items.length) return;
+        event.preventDefault(); event.stopPropagation();
+        const at = items.indexOf(document.activeElement), step = event.key === 'ArrowDown' ? 1 : -1;
+        items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : at < 0 ? 0 : (at + step + items.length) % items.length].focus();
+    };
     const saveWarning = el('span', 'fv-ed-save-warning'); saveWarning.hidden = true; saveWarning.setAttribute('role', 'status'); exportBox.prepend(saveWarning);
     const notice = el('div', 'fv-ed-notice'); notice.hidden = true; notice.setAttribute('role', 'status');
     transport.append(drawer);

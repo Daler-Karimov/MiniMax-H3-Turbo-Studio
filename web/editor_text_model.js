@@ -118,3 +118,24 @@ export function importSRT(record, text) {
     row.clips = entries.map(entry => ({id: `c${++next.serial}`, start: entry.at, frames: entry.frames, text: entry.text}));
     return model.parse(next);
 }
+// Writes subtitle lines in one edit that one undo reverses (auto subtitles, an agent).
+// cues: [{start, frames, text}] in timeline frames; a bilingual line is one cue of two
+// lines (text with one "\n"). replace: true swaps out the whole subtitle track; otherwise
+// the lines join it and any overlap with a line already there refuses the whole call.
+// Every line takes the track's one style (changeSubtitleStyle); a line placed on its own is a text part.
+export function addSubtitles(record, cues, {replace = false} = {}) {
+    check(Array.isArray(cues) && cues.length >= 1 && cues.length <= 500 && typeof replace === 'boolean', 'subtitles');
+    const lines = cues.map(cue => {
+        check(object(cue) && Object.keys(cue).every(k => ['start', 'frames', 'text'].includes(k)), 'subtitles');
+        check(whole(cue.start) && whole(cue.frames, 1) && whole(cue.start + cue.frames), 'range');
+        check(typeof cue.text === 'string' && cue.text.trim() !== '' && cue.text.split('\n').length <= 2);
+        return {start: cue.start, frames: cue.frames, text: cue.text};
+    }).sort((a, b) => a.start - b.start);
+    const next = model.serialize(record);
+    let row = next.tracks.find(t => t.kind === 'subtitle'); check(!row?.locked, 'locked');
+    if (!row) { row = {id: 's1', kind: 'subtitle', clips: []}; next.tracks.push(row); }
+    const kept = replace ? [] : row.clips, all = [...kept, ...lines.map(line => ({id: `c${++next.serial}`, ...line}))].sort((a, b) => a.start - b.start);
+    for (let i = 1; i < all.length; i++) check(all[i].start >= all[i - 1].start + all[i - 1].frames, 'overlap');
+    row.clips = all;
+    return model.parse(next);
+}
