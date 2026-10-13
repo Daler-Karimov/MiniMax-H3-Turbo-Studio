@@ -401,6 +401,8 @@ def register():
                 if startup_failed:
                     raise JobError('not_ready', 'Agent startup unavailable')
                 suffix = request.match_info.route.resource.canonical
+                # ComfyUI serves every route again under /api, and its page calls that copy.
+                suffix = suffix[4:] if suffix.startswith('/api/freevideo/agent') else suffix
                 suffix = suffix[len(PREFIX):] if suffix.startswith(PREFIX) else suffix
                 method = 'GET' if request.method == 'HEAD' else request.method
                 definition = contracts.get((method, suffix))
@@ -607,8 +609,12 @@ def register():
     def session_client(request, by):
         return (request.headers.get('X-FreeVideo-Client', '')[:80] or None) if by == 'agent' else None
 
+    def agent_path(path):
+        path = path[4:] if path.startswith('/api/') else path
+        return path == '/freevideo/agent' or path.startswith('/freevideo/agent/')
+
     async def no_cross_site_headers(request, response):
-        if request.path.startswith('/freevideo/agent'):
+        if agent_path(request.path):
             for key in list(response.headers):
                 if key.lower().startswith('access-control-'):
                     del response.headers[key]
@@ -617,7 +623,7 @@ def register():
 
         @web.middleware
         async def unregistered(request, handler):
-            if request.path == '/freevideo/agent' or request.path.startswith('/freevideo/agent/'):
+            if agent_path(request.path):
                 exception = request.match_info.http_exception
                 if exception is not None:
                     return problem('method_not_allowed' if exception.status == 405 else 'not_found')
@@ -652,8 +658,9 @@ def register():
                 page_sessions.pop(next(iter(page_sessions)))
             page_sessions[current] = (secrets.token_urlsafe(32), stamp + 12 * 3600)
         response = reply(dict(csrf=page_sessions[current][0]))
-        response.set_cookie('freevideo_agent_page', current, httponly=True, samesite='Strict',
-                            secure=request.secure, path='/freevideo/agent', max_age=12 * 3600)
+        # The cookie follows the copy the page asked: its later calls go to the same one.
+        response.set_cookie('freevideo_agent_page', current, httponly=True, samesite='Strict', secure=request.secure,
+                            path=('/api' if request.path.startswith('/api/') else '') + '/freevideo/agent', max_age=12 * 3600)
         return response
 
     @routes.get('/freevideo/agent/activity')
