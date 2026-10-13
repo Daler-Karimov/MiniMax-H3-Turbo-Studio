@@ -613,8 +613,11 @@ def register():
         # Unauthenticated: tells a client where to look, reveals nothing else.
         from ..comfy_bridge import installation_root
         from .guide import connection_discovery
-        return reply(connection_discovery(installation_root(), request.scheme + '://' + request.host,
-                                          request[query_key].get('lang')))
+        root = installation_root()
+        if root in token_failures:
+            # No token this startup: the same single answer as when it is off, so the page shows no agent controls.
+            return reply({'enabled': False})
+        return reply(connection_discovery(root, request.scheme + '://' + request.host, request[query_key].get('lang')))
 
     @routes.get('/freevideo/agent/session')
     @guarded
