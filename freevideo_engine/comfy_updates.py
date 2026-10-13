@@ -61,6 +61,7 @@ class UpdateStatus:
         self.client_seen = -1e9
         self.lock = threading.Lock()
         self.thread = None
+        self.failures = 0
 
     def launcher(self):
         if not self.bridge:
@@ -110,13 +111,18 @@ class UpdateStatus:
             available = public_details(candidate) if newer else None
             with self.lock:
                 self.state.update(status='available' if available else 'current', available=available)
+                self.failures = 0
                 self.next_check = time.monotonic() + 15 * 60
-        except Exception:
+        except Exception as error:
             # Offline/rate-limited checks must not interrupt a running server.
             # Keep a previously verified notice and retry without a user action.
             with self.lock:
+                self.failures += 1
                 self.state['status'] = 'unavailable'
-                self.next_check = time.monotonic() + 60
+                delay = max(min(launcher_update.MAX_RETRY_SECONDS,
+                                launcher_update.RETRY_SECONDS * 2**min(self.failures - 1, 4)),
+                            launcher_update.retry_after(error))
+                self.next_check = time.monotonic() + delay
 
 
 def register():

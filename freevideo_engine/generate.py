@@ -596,6 +596,11 @@ def _run(args):
                             'diagnostic_output': str(destination)}
                 if media:
                     encoding.update(media=media, geometry=canvas, base=profile['engine'].get('base'))
+                # Lets the encoder child read the video model while it computes, on a slow drive.
+                from .model_read_ahead import request_fields
+                if getattr(args, 'cache', None):
+                    encoding.update(request_fields(args.cache, profile['engine'],
+                                                   budget_is_estimate=ram_budget_is_estimate(args)))
                 conditioning_key = cache_key(encoding['prompt'], media, canvas)
                 encode_request = temporary / 'encode.json'
                 encode_request.write_text(json.dumps(encoding) + '\n', encoding='utf-8')

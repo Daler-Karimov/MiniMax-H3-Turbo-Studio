@@ -740,8 +740,10 @@ class Session:
             self.update_snoozed = dict(self.update_snoozed, **{key: time.monotonic() + SNOOZE_SECONDS})
         self.update_intent = None
         self.update_waiting = False
-        if self.updater and self.updater.state['status'] == 'downloading':
+        if self.updater and (self.updater.state['status'] == 'downloading'
+                             or self.updater.state.get('retry_operation') == 'download'):
             self.updater.cancelled.set()
+            self.updater.stop()
 
     def _unsnooze(self):
         key = self.update_key()
@@ -888,7 +890,10 @@ class Session:
     def _tick_updates(self):
         now = time.monotonic()
         updater = self.updater
+        if updater:
+            updater.poll(allow_download=not (self.controller.busy or self.importer.busy or self.cleaner.busy))
         if (updater and self.update_intent is None and not updater.busy and now - self.update_checked >= CHECK_SECONDS
+                and not updater.retry
                 and updater.state.get('status') in ('idle', 'current', 'available', 'error', 'cancelled')):
             self.update_checked = now
             updater.run('check', background=True)
@@ -913,7 +918,7 @@ class Session:
         elif self.update_intent == 'launcher' and updater and not updater.busy:
             if row.get('status') == 'ready':
                 self._restart_when_idle()
-            elif row.get('status') != 'downloading':
+            elif row.get('status') != 'downloading' and not row.get('retry_at'):
                 self.update_intent, self.update_waiting = None, False
         elif self.update_intent == 'engine':
             self._update_engine_when_idle()
@@ -1026,6 +1031,10 @@ class Session:
         row = dict(self.updater.state) if self.updater else dict(status='development')
         # Only display fields from the update manifest, never access tokens.
         view = {k: row[k] for k in ('status', 'error', 'progress', 'candidate') if k in row}
+        from .launcher_update import error_text, release_page
+        if row.get('error_code'):
+            view['error'] = error_text(row, self.language.startswith('zh'))
+        view['release_page'] = release_page(self.updater.current) if self.updater else ''
         key = self.update_key()
         view.update(engine=self.engine_update_pending(), current=__version__,
                     current_release=public_details(self.updater.current) if self.updater else self.release_details,
