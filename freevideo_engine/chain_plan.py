@@ -1,8 +1,9 @@
 """How a requested length becomes one generation or a chain of blocks.
 
-One rule for the creation panel, the editor and the server: up to 30 s is one
-generation when this device can do it; longer videos, and lengths this device
-cannot do at once, are cut into blocks that continue one another.
+One rule for the creation panel, the editor and the server: under 30 s is one
+generation when this device can do it; 30 s and longer, and lengths this device
+cannot do at once, are cut into blocks that continue one another. A block
+length given explicitly also cuts a video under 30 s.
 """
 import math
 
@@ -45,8 +46,8 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
         else:
             limit = _first_frames(BLOCK_SECONDS if single_limit_seconds is None
                                   else _number(single_limit_seconds, 'The single generation limit'))
-        if seconds > SINGLE_SECONDS:
-            seconds = math.floor(seconds + .5)  # longer videos are planned in whole seconds
+        if seconds >= SINGLE_SECONDS:
+            seconds = math.floor(seconds + .5)  # 30 s and longer are planned in whole seconds
         frames = _first_frames(seconds)
     except PlanError:
         raise
@@ -69,10 +70,12 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
         if block > first:
             raise PlanError('block_too_long', 'This device cannot generate a block of this length')
     fits = frames <= limit
-    # The block length only matters once a video is split: up to 30 s stays one generation.
-    if fits and (single or seconds <= SINGLE_SECONDS or seconds <= min(block, following if continued else first)):
-        return dict(seconds=seconds, frames=new, single=True, hide_frames=0,
-                    blocks=[dict(seconds=seconds, frames=frames, new_frames=new)])
+    alone = dict(seconds=seconds, frames=new, single=True, hide_frames=0,
+                 blocks=[dict(seconds=seconds, frames=frames, new_frames=new)])
+    # Under 30 s stays one generation unless a block length was asked for; 30 s is two blocks of 15 s.
+    if fits and (single or block_seconds is None and seconds < SINGLE_SECONDS
+                 or seconds <= min(block, following if continued else first)):
+        return alone
     first, following = min(block, following if continued else first), min(block, following)
     if first < SHORTEST_BLOCK or following < SHORTEST_BLOCK:
         raise PlanError('device_limit', 'This device cannot generate this length at this size')
@@ -86,6 +89,8 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
         # No short tail: the last two blocks share their length, the earlier one gets the odd second.
         pair = lengths[-2] + lengths[-1]
         lengths[-2:] = [pair - pair // 2, pair // 2]
+    if fits and block_seconds is not None and total < SINGLE_SECONDS and min(lengths) < SHORTEST_BLOCK:
+        return alone  # a requested block length never makes a part under 5 s
     blocks, shown = [], 0
     for index, length in enumerate(lengths):
         target = FPS * sum(lengths[:index + 1])
