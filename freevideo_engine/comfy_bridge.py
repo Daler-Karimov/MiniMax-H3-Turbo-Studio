@@ -75,648 +75,172 @@ def progress_history_forecast(root, machine, canvas):
         return {}  # A progress estimate cannot prevent generation.
 
 
-class _SafeProgress:
-    """Any failure of the estimate falls back to plain progress messages."""
-    def __init__(self, inner):
-        self.inner = inner
-
-    def _call(self, name, *args, **kwargs):
-        try:
-            return getattr(self.inner, name)(*args, **kwargs)
-        except Exception:
-            self.inner = _PlainProgress()  # A progress estimate cannot prevent generation.
-            return getattr(self.inner, name)(*args, **kwargs)
-
-    def annotate(self, message, *, event=None):
-        return self._call('annotate', message, event=event)
-
-    def observe(self, event):
-        return self._call('observe', event)
-
-    def heartbeat(self):
-        return self._call('heartbeat')
-
-    def configure(self, **facts):
-        return self._call('configure', **facts)
-
-
-class _PlainProgress:
-    """Pass engine messages through unchanged when no estimate can be built."""
-    def annotate(self, message, *, event=None):
-        return dict(message)
-
-    def observe(self, event):
-        pass
-
-    def heartbeat(self):
-        return None
-
-    def configure(self, **facts):
-        pass
-
-
-def _engine_version():
-    from . import __version__
-    return __version__
-
-
 class WholeVideoProgress:
-    """One elapsed/remaining clock, bounded by evidence of completed work.
+    """Annotate phase events with one report-weighted whole-video progress.
 
-    This display estimator never changes the inference plan. Stage predictions
-    set the initial ruler; only real events release its count ceiling. Replay
-    options control smoothing, silent countdown and the ceiling's time shares.
+    Local reports take precedence. Without history, live sampling supplies a
+    rough decoder estimate which real decoded-frame timings then replace.
+    These presentation estimates never change resource admission or placement.
     """
-    def __init__(self, clock=time.perf_counter, *, hardware=None, request=None,
-                 cold_flags=None, records=(), rate=.005, smoothing='track',
-                 silence='stage', ceiling='stretch', tau=10., max_rise=.019, final=.98, slow_start=True, started=None):
-        from . import stage_estimate
-        from .progress_history import stage_forecast
-        if not math.isfinite(rate) or rate < 0:
-            raise ValueError('Progress smoothing rate must be finite and nonnegative')
-        for name, value, choices in (('smoothing', smoothing, ('countdown', 'hold', 'track')),
-                                     ('silence', silence, ('freeze', 'stage')),
-                                     ('ceiling', ceiling, ('prior', 'current', 'stretch'))):
-            if value not in choices:
-                raise ValueError(f'Invalid progress {name}: {value!r}')
-        self.clock, self.rate = clock, rate
-        self.smoothing, self.silence, self.ceiling = smoothing, silence, ceiling
-        # tau: time constant of a downward correction ('track'); max_rise: the
-        # most the shown fraction may rise per published second (None: no cap).
-        self.tau, self.max_rise = tau, max_rise
-        # final: once every frame is decoded, the bar approaches this fraction
-        # over the predicted audio and save time (None: no approach).
-        self.final = final
-        # slow_start: on a 16 GB machine, a load much slower than predicted
-        # scales the later stages until history or measured speed takes over.
-        self.slow_start = slow_start
-        self.started = self.phase_started = self.last_tick = self.last_event = clock() if started is None else started
-        self.last_publish = self.started
-        self.hardware = dict(hardware or {})
-        self.request = dict(width=1344, height=768, frames=243, base_steps=8,
-                            refine_steps=3, two_pass=True, flow='full', task='t2va')
-        self.request.update({k: v for k, v in (request or {}).items() if v is not None})
-        self.cold_flags = dict(cold_flags or {})
-        self.records = records
-        self.params = stage_estimate._params(None)
-        self.prior = stage_estimate.predict_prior(self.hardware, self.request, self.cold_flags, self.params)
-        self.weights = {k: self.prior['stages'][k]['seconds'] for k in stage_estimate.STAGES}
-        local = stage_forecast(records, self.request, self.cold_flags, self.weights, version=_engine_version())
-        self.remaining_source = 'local' if local.get('stages') else 'similar'
-        self.typical = local['typical']
-        self.local = local
-        self.weights.update(local.get('stages', {}))
-        self.completed = {k for k, v in self.weights.items() if v == 0}
+    def __init__(self, clock=time.perf_counter):
+        self.clock = clock
+        self.started = clock()
+        self.phase_started = self.started
+        self.phase = None
+        self.completed = set()
+        self.weights = {}
         self.measured = {}
-        self.phase = 'encode'
-        self.completed.discard(self.phase)
+        self.total = 0.
+        self.forecast_ready = False
+        self.failed = False
         self.sampling_plan = {}
-        self.steps = {'pass1': {}, 'pass2': {}}
-        self.live_calibration = True
-        self.count = None
-        self.fraction = 0.
-        self.ceiling_base = 0.
-        self.last_ceiling = 0.
-        self.ceiling_weights = dict(self.weights)
-        self.remaining_target = self.remaining_shown = sum(self.weights.values())
-        self.total = self.remaining_target
-        self.last_message = {}
-        self.finished = False
-        self.decode_remaining = None
-        self.decode_tail = max(0., self.weights['decode_save'] - self.prior['stages']['video_decode']['seconds'])
-        self.retry_decode_only = False
-        self.retry_reuse_first = False
-        self.history = None  # (output directory, machine, opened): read late by _late_history.
-        self.shown_source = self.remaining_source
+        self.decode_from_sampling = False
+        self.sampling_time_weighted = False
+        self.decode_tail = 0.
 
-    @classmethod
-    def for_request(cls, machine, canvas, output_directory, *, base_steps=8,
-                    refine_steps=3, two_pass=True, preview=False, upscale=False,
-                    encoder_prewarm=None, options=None):
-        import platform
-        from .progress_history import start_context
-        started, opened = time.perf_counter(), time.monotonic()
-        observed, records = start_context(output_directory, machine)
-        hardware = cls._hardware(observed, machine)
-        # machine.vram_gib/ram_gib can be user policy caps, not physical totals.
-        # A worker process being alive is not proof that a model is resident.
-        warm = encoder_prewarm or {}
-        flags = {'encode_cached': True if upscale else None}
-        if warm.get('gpu_preload') is True and warm.get('state') in ('ready', 'complete') and not warm.get('worker_released'):
-            flags['encoder_cold'] = False
-        tracker = cls(hardware=hardware, records=records, cold_flags=flags, started=started,
-                      request=dict(canvas, base_steps=base_steps, refine_steps=refine_steps,
-                                   two_pass=two_pass, flow='upscale' if upscale else 'preview' if preview else 'full'),
-                      **(options or {}))
-        tracker.history = (output_directory, machine, opened)
-        return tracker
+    def _sampling_estimate(self, message, now):
+        estimate = _timing_seconds(message.get('estimated_step_seconds'))
+        done, total = message.get('done'), message.get('total')
+        if estimate is None or type(done) is not int or type(total) is not int or not 0 <= done <= total:
+            return
+        # Within a pass's first step, a layer event extrapolates the whole step
+        # from the first layers, which can include compilation and read-ahead
+        # (one slow layer once became a 142-minute estimate). With an estimate
+        # already in hand, use layer-based step times only after the pass has
+        # completed a step; a first run without one still gets its first number.
+        base = self.sampling_plan.get('base_steps')
+        if (self.forecast_ready and message.get('stage') == 'layers'
+                and (done == 0 or type(base) is int and 0 < base == done < total)):
+            return
+        full_step = estimate
+        remaining = (total - done) * estimate
+        if message.get('uniform_remaining_steps') is False:
+            plan = self.sampling_plan
+            first, second = plan.get('first', {}), plan.get('second') or {}
+            area = first.get('width', 0) * first.get('height', 0)
+            if not area or not second.get('width') or not second.get('height'):
+                return  # Do not treat the two larger refinement NFEs as small NFEs.
+            full_step *= second['width'] * second['height'] / area
+            remaining = max(0, plan['base_steps'] - done) * estimate + plan['refine_steps'] * full_step
+        remaining = max(0., remaining - (_timing_seconds(message.get('step_elapsed_seconds')) or 0.))
+        self.weights['sampling'] = max(.001, now - self.phase_started + remaining)
+        self.sampling_time_weighted = True
+        if 'decode' not in self.weights or self.decode_from_sampling:
+            # Windows 1344x768x243 measurements: decode/save was 1.71, 1.90
+            # and 2.01 final-resolution warm NFEs on 4060 Ti / 5060 Ti / 5090.
+            # This is an approximate first-run ruler, not a GPU speed claim.
+            # It scales with this request's work, then yields to frame timing.
+            self.weights['decode'] = 1.9 * full_step
+            self.decode_from_sampling = True
+        self.forecast_ready = True
 
     @staticmethod
-    def _hardware(observed, machine):
-        import platform
-        observed = dict(observed)
-        if isinstance(machine.get('hardware'), dict):
-            observed.update(machine['hardware'])
-        device = machine.get('device_identity')
-        device = device if isinstance(device, dict) else {}
-        hardware = dict(gpu_name=observed.get('gpu_name') or machine.get('gpu_name') or device.get('name'),
-                        compute_capability=observed.get('capability'),
-                        os=observed.get('system') or machine.get('system') or platform.system())
-        for target, source in (('ram_total_gib', 'ram_total'), ('vram_total_gib', 'vram_total')):
-            value = observed.get(source) or device.get('unified_ram_bytes')
-            if _timing_seconds(value):
-                hardware[target] = value / 2**30
-        return hardware
-
-    def _late_history(self):
-        """Use history the background read finished after this request began."""
-        from .progress_history import start_context, history_read_at
-        if self.history is None or self.remaining_source == 'measured':
-            return
-        output_directory, machine, opened = self.history
-        if (history_read_at(output_directory, machine) or 0.) < opened:
-            return
-        self.history = None  # One late update per request.
-        # Work on the live state, but restore all of it if anything fails.
-        saved = {key: dict(value) if isinstance(value, dict) else value for key, value in vars(self).items()}
-        try:
-            observed, rows = start_context(output_directory, machine, timeout=0.)
-            for key, value in self._hardware(observed, machine).items():
-                if value is not None and self.hardware.get(key) is None:
-                    self.hardware[key] = value
-            self.records = rows
-            self._reforecast()
-            self.remaining_target = self._target(self.clock())
-        except Exception:
-            # Damaged history keeps the estimate the request already has.
-            vars(self).clear()
-            vars(self).update(saved)
-
-    def configure(self, *, plan=None, canvas=None, media=None, conditioning=False, placement=None):
-        """Use facts already obtained by the bridge; never inspect media/models."""
-        self._late_history()
-        from .media_request import task_for
-        if canvas:
-            self.request.update({key: canvas[key] for key in ('width', 'height', 'frames')})
-        if plan:
-            self.sampling_plan = plan
-            self.request.update(two_pass=bool(plan.get('enabled')), base_steps=plan.get('base_steps', 8),
-                                refine_steps=plan.get('refine_steps', 0),
-                                sampling_geometry={k: plan[k] for k in ('first', 'second') if plan.get(k)})
-            for key in ('pass1_resident_blocks', 'pass2_resident_blocks'):
-                value = plan.get(key)
-                if type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 50:
-                    self.request[key] = value
-        if placement:
-            # generate.py's video_start/decode_resume carry the selected full
-            # canvas engine/decoder plan. Pass 1 can admit extra temporary
-            # cache, so its residency stays unknown for a two-pass request.
-            engine, decoder = placement.get('engine'), placement.get('decoder')
-            engine = engine if isinstance(engine, dict) else {}
-            decoder = decoder if isinstance(decoder, dict) else {}
-            blocks = engine.get('resident_blocks')
-            if type(blocks) in (int, float) and math.isfinite(blocks) and 0 <= blocks <= 50:
-                key = 'pass2_resident_blocks' if self.request['two_pass'] else 'pass1_resident_blocks'
-                self.request[key] = blocks
-            blocks = decoder.get('resident_blocks')
-            if type(blocks) in (int, float) and math.isfinite(blocks) and 0 <= blocks <= 36:
-                self.request['decoder_resident_blocks'] = blocks
-            if type(decoder.get('offload')) is bool:
-                self.request['decoder_offload'] = decoder['offload']
-        if media is not None:
-            self.request.update(task=task_for(media), lora_count=len(media.get('loras') or []),
-                                reference_count=len(media.get('references') or []) +
-                                sum(bool(media.get(k)) for k in ('first', 'last')))
-        if conditioning:
-            self.cold_flags['encode_cached'] = True
-        self._reforecast()
-
-    def _reforecast(self, *, reset_source=False):
-        from .stage_estimate import predict_prior, STAGES
-        from .progress_history import stage_forecast
-        self.prior = predict_prior(self.hardware, self.request, self.cold_flags, self.params)
-        weights = {k: self.prior['stages'][k]['seconds'] for k in STAGES}
-        local = stage_forecast(self.records, self.request, self.cold_flags, weights, version=_engine_version())
-        weights.update(local.get('stages', {}))
-        self.typical = local['typical']
-        self.local = local
-        if reset_source or self.remaining_source != 'measured':
-            self.remaining_source = 'local' if local.get('stages') else 'similar'
-        for key, value in weights.items():
-            if key not in self.completed:
-                self.weights[key] = value
-        self.decode_tail = max(0., self.weights['decode_save'] - self.prior['stages']['video_decode']['seconds'])
+    def _forecast_weights(forecast):
+        stages = forecast.get('stages') if isinstance(forecast, dict) else None
+        if not isinstance(stages, dict):
+            return {}
+        values = {
+            'encoding': _timing_seconds(stages.get('text_encode_seconds')),
+            'load': _timing_seconds(stages.get('load_seconds')),
+            'sampling': _timing_seconds(stages.get('sample_seconds')),
+            'decode': _timing_seconds(stages.get('decode_save_seconds')),
+        }
+        values = {key: value for key, value in values.items() if value is not None}
+        # Sparse phase forecasts expose work_seconds plus its independently
+        # predicted components.  Keep the measured residual as the final
+        # save/cleanup tail instead of silently dropping it or double-counting
+        # the worker total.
+        work = _timing_seconds(stages.get('work_seconds'))
+        residual = work - sum(values.get(key, 0.) for key in ('load', 'sampling', 'decode')) if work is not None else 0.
+        if residual > 0:
+            values['decode'] = values.get('decode', 0.) + residual
+        return values
 
     def forecast(self, value):
-        """Consume older worker forecasts without closing or crediting a phase."""
-        value = value.get('forecast', value) if isinstance(value, dict) else {}
-        if not isinstance(value, dict):
-            return
-        stages = value.get('stages') or {}
-        if not isinstance(stages, dict):
-            return
-        # Worker predictions lack the bridge's two-record similarity evidence;
-        # they must never create a local typical or replace live measurements.
-        if self.remaining_source == 'measured':
-            return
-        mapping = {'encode': 'text_encode_seconds', 'load': 'load_seconds', 'decode_save': 'decode_save_seconds'}
-        for key, source in mapping.items():
-            seconds = _timing_seconds(stages.get(source))
-            if seconds is not None and key not in self.completed:
-                self.weights[key] = seconds
-        sample = _timing_seconds(stages.get('sample_seconds'))
-        if sample:
-            keys = [k for k in ('pass1', 'upscale', 'pass2') if k not in self.completed]
-            total = sum(self.weights[k] for k in keys)
-            if total:
-                for key in keys:
-                    self.weights[key] *= sample / total
-        work = _timing_seconds(stages.get('work_seconds'))
-        parts = [_timing_seconds(stages.get(k)) for k in ('load_seconds', 'sample_seconds', 'decode_save_seconds')]
-        if work and all(v is not None for v in parts) and 'decode_save' not in self.completed:
-            self.weights['decode_save'] += max(0., work - sum(parts))
+        value = value.get('forecast') if isinstance(value, dict) and 'forecast' in value else value
+        weights = self._forecast_weights(value)
+        if weights:
+            # The prediction is emitted after prompt encoding has completed.
+            # Close that phase before the first video-model event so its
+            # measured weight is credited instead of starting a second timer.
+            if self.phase == 'encoding':
+                self.measured['encoding'] = max(.001, self.clock() - self.phase_started)
+                self.completed.add('encoding')
+                self.phase = None
+            self.weights.update(weights)
+            if 'decode' in weights:
+                self.decode_from_sampling = False
+            self.weights.update(self.measured)
+            self.total = sum(self.weights.values())
+            self.forecast_ready = all(name in self.weights for name in ('sampling', 'decode'))
 
-    def _enter(self, phase, now):
-        from .stage_estimate import STAGES
-        if phase == self.phase:
-            return
-        self._late_history()
-        if self.phase is not None and STAGES.index(phase) < STAGES.index(self.phase):
-            # Logs are drained per file, not chronologically. An older encoder
-            # line must not reopen a stage after video work has already begun.
-            # Explicit retries reset phase/completed in _retry instead.
-            return
-        if self.phase is not None:
-            self.measured[self.phase] = max(.001, now - self.phase_started)
-            self.weights[self.phase] = self.measured[self.phase]
-            self.completed.add(self.phase)
-        # Forward transitions also finish stages skipped by caches or lost logs.
-        for key in STAGES[:STAGES.index(phase)]:
-            self.completed.add(key)
-        self.completed.discard(phase)  # Re-entered stages are pending again.
-        self.phase, self.phase_started = phase, now
-        self.count = self._initial_count()
-        self.decode_remaining = None
+    def _base(self):
+        return sum(self.weights.get(name, 0.) for name in self.completed)
 
-    def _initial_count(self):
-        from .stage_estimate import canvases, step_counts
-        if self.phase == 'load':
-            return (0, 50, 1)
-        if self.phase in ('pass1', 'pass2'):
-            count = step_counts(self.request)[0 if self.phase == 'pass1' else 1]
-            return (0, count * 50, 1)
-        if self.phase == 'decode_save':
-            return (0, canvases(self.request)[2]['frames'], 1)
-        return None
+    def _message_phase(self, message):
+        if message.get('timing_phase') in ('encoding', 'load', 'sampling', 'decode'):
+            return message['timing_phase']
+        phase = message.get('phase')
+        return {'sampling': 'sampling', 'sample_finalize': 'decode',
+                'complete': 'decode'}.get(phase)
 
-    def _set_count(self, done, total, margin=1):
-        # Duplicate/delayed logs cannot undo already witnessed counts. Using
-        # the smallest known unit avoids lowering the ceiling on the first
-        # counted event after an uncounted stage-start notification.
-        candidate = (max(0, done), total, margin)
-        old = self.count
-        if old is None or (candidate[0] + margin) / max(total, 1) >= (old[0] + old[2]) / max(old[1], 1):
-            self.count = candidate
-
-    def _phase_for(self, message, event):
-        name = event.get('event')
-        if self.retry_decode_only:
-            return 'decode_save'
-        if name == 'decode_resume' or message.get('phase') == 'sample_finalize':
-            return 'decode_save'
-        if message.get('stage') in ('latent_upscale', 'first_pass_reused'):
-            return 'upscale'
-        phase = message.get('timing_phase') or message.get('phase')
-        if phase == 'sampling':
-            # `loaded` falsely looks like sampling 0/N in the legacy converter.
-            if name == 'loaded':
-                return 'load'
-            done = message.get('done', 0)
-            base = self.request['base_steps']
-            if self.request['flow'] == 'upscale' or self.retry_reuse_first:
-                return 'pass2'
-            if self.request['flow'] != 'preview' and self.request['two_pass']:
-                if done > base or (done == base and (name == 'sampling_start' or message.get('stage') in ('layers', 'inputs'))):
-                    return 'pass2'
-            return 'pass1'
-        return {'encoding': 'encode', 'load': 'load', 'decode': 'decode_save'}.get(phase)
-
-    def _retry(self, retry, now):
-        # A retry changes the plan; the earlier load no longer says how fast
-        # this machine is, and measured steps arrive again soon.
-        self.slow_start = False
-        self.retry_decode_only = retry.get('reuse_sampling') is True
-        self.retry_reuse_first = retry.get('reuse_first_pass') is True
-        start = 'decode_save' if self.retry_decode_only else 'load'
-        if not self.retry_decode_only:
-            self.steps['pass2'].clear()
-            if not retry.get('reuse_first_pass'):
-                self.steps['pass1'].clear()
-        from .stage_estimate import STAGES
-        self.completed = set(STAGES[:STAGES.index(start)])
-        if self.retry_reuse_first and not self.retry_decode_only:
-            self.completed.add('pass1')
-        self.phase, self.phase_started = start, now
-        self.count, self.decode_remaining = self._initial_count(), None
-        self.live_calibration = False
-        # Recovery can change placement. Wait for the new attempt's plan;
-        # retained step durations are not new measurements of pending work.
-        for key in ('pass1_resident_blocks', 'pass2_resident_blocks',
-                    'decoder_resident_blocks', 'decoder_offload'):
-            self.request.pop(key, None)
-        self._reforecast(reset_source=True)
-        self.ceiling_base = self.fraction
-        self.ceiling_weights = {k: v for k, v in self.weights.items() if k not in self.completed}
-
-    def _counts_and_live(self, message, event, now):
-        from .stage_estimate import predict_live, step_counts
-        phase = self.phase
-        done, total = message.get('done'), message.get('total')
-        if phase in ('pass1', 'pass2'):
-            index = 0 if phase == 'pass1' else 1
-            count = step_counts(self.request)[index]
-            offset = self.request['base_steps'] if index else 0
-            if type(done) is int:
-                local_done = max(0, min(count, done - offset))
-                blocks, block = message.get('blocks'), message.get('block')
-                if type(blocks) is int and blocks > 0 and type(block) is int:
-                    # One step of margin: layer events are dispatch estimates,
-                    # steps are the synchronized counts (a first step may compile).
-                    self._set_count(local_done * blocks + max(0, block - 1), count * blocks,
-                                    blocks if self.ceiling == 'stretch' else 1)
-                else:
-                    # Keep the same one-layer margin across step boundaries;
-                    # changing from one step to one layer could lower a ceiling.
-                    self._set_count(local_done * 50, count * 50, 50 if self.ceiling == 'stretch' else 1)
-                seconds = _timing_seconds(message.get('last_step_seconds'))
-                if seconds and local_done > 0:
-                    self.steps[phase][local_done] = seconds
-                    if 1 in self.steps[phase] and 2 in self.steps[phase]:
-                        self.live_calibration = True
-        elif phase == 'load':
-            if event.get('event') == 'loaded':
-                done, total = 50, 50
-            elif event.get('event') == 'prepared_blocks':
-                done, total = event.get('blocks'), 50
-            elif event.get('event') == 'model_load_phase':
-                done, total = event.get('done'), event.get('total')
-            # LoRA groups describe a substage, not completion of the whole load.
-            if type(done) is int and type(total) is int and total > 0 and message.get('unit') != 'bytes':
-                self._set_count(done, total)
-        elif phase == 'decode_save' and message.get('stage') == 'video':
-            elapsed = _timing_seconds(message.get('elapsed_seconds'))
-            if type(done) is int and type(total) is int and 0 <= done <= total and total > 0:
-                self._set_count(done, total)
-                if elapsed and done > 0:
-                    self.decode_remaining = elapsed * (total - done) / done + self._after_frames(total)
-                    self.weights[phase] = now - self.phase_started + self.decode_remaining
-                    self.remaining_source = 'measured'
-        elif phase == 'decode_save' and event.get('event') == 'decode_phase':
-            # These real transitions finish video frames even for a decoder
-            # that does not stream progress callbacks.
-            if event.get('phase') in ('Loading and decoding audio', 'Saving MP4 and audio'):
-                total = self.count[1] if self.count else self.request['frames']
-                self._set_count(total, total)
-                if self.decode_remaining is None:
-                    # Without frame callbacks this is the first sign that the
-                    # video is decoded; only the measured tail remains.
-                    self.decode_remaining = self._after_frames(total)
-                    self.weights[phase] = now - self.phase_started + self.decode_remaining
-                    self.remaining_source = 'measured'
-        # Only contiguous, actually completed steps calibrate the model.
-        steps = {}
-        for key, values in self.steps.items():
-            steps[key] = []
-            for i in range(1, len(values) + 1):
-                if i not in values:
-                    break
-                steps[key].append(values[i])
-        if self.live_calibration and any(len(v) >= 2 for v in steps.values()):
-            done_stages = [('decode' if k == 'decode_save' else k) for k in self.completed]
-            live = predict_live(dict(hardware=self.hardware, request=self.request, cold_flags=self.cold_flags,
-                pass1_steps=steps['pass1'], pass2_steps=steps['pass2'], completed_stages=done_stages,
-                current_stage=phase, step_elapsed_seconds=message.get('step_elapsed_seconds', 0.),
-                pass_wall_overhead_done=[k for k, v in steps.items() if v]), self.params)
-            # With matching history on this machine, scale its own stage times
-            # by the measured warm step instead of the general model.
-            from statistics import median
-            history, warm, ratio = self.local.get('stages') or {}, self.local.get('warm') or {}, None
-            for key in ('pass2', 'pass1'):
-                if len(steps[key]) >= 2 and warm.get(key):
-                    ratio = min(2., max(.5, median(steps[key][1:]) / warm[key]))
-                    break
-            for key in ('pass1', 'upscale', 'pass2', 'decode_save'):
-                if key in self.completed or (key == 'decode_save' and self.decode_remaining is not None):
-                    continue
-                if ratio is not None and key in history:
-                    self.weights[key] = history[key] * (1. if key == 'decode_save' else ratio)
-                    continue
-                remaining = live['stages'][key]['seconds']
-                if key == phase:
-                    if key == 'decode_save':
-                        # decode/save prediction is a full duration until frames arrive.
-                        self.weights[key] = remaining
-                    else:
-                        self.weights[key] = now - self.phase_started + remaining
-                else:
-                    self.weights[key] = remaining
-            self.decode_tail = max(0., live['stages']['decode_save']['seconds'] - live['stages']['video_decode']['seconds'])
-            self.remaining_source = 'measured'
-
-    def _after_frames(self, frames):
-        # Audio, MP4 and saving after the last decoded frame: about 2 s plus
-        # 0.03 s per frame (measured, slightly below the median, so the bar
-        # rarely jumps at saving), never more than the model's tail.
-        return min(self.decode_tail, 2. + .03 * frames)
-
-    def _slow_factor(self, now):
-        # A disk-bound 16 GB machine that loads much slower than predicted is
-        # slower in every later stage too (reports: about the square root of
-        # the load ratio). Larger memory or a slow encode does not predict it.
-        if not self.slow_start or self.remaining_source != 'similar':
-            return 1.
-        ram = self.hardware.get('ram_total_gib')
-        if ram is None or ram > 16.5:
-            return 1.
-        predicted = self.prior['stages']['load']['seconds']
-        actual = self.measured.get('load') or (now - self.phase_started if self.phase == 'load' else None)
-        if not actual or predicted <= 1 or actual / predicted <= 2:
-            return 1.
-        return min(4., math.sqrt(actual / predicted))
-
-    def _target(self, now):
-        factor = self._slow_factor(now)
-        later = ('pass1', 'upscale', 'pass2', 'decode_save')
-        remaining = sum(v * (factor if k in later else 1.)
-                        for k, v in self.weights.items() if k not in self.completed and k != self.phase)
-        elapsed = max(0., now - self.phase_started)
-        # The stage under way is scaled too until its speed is measured.
-        current = self.weights.get(self.phase, 0.) * (factor if self.phase in later else 1.) - elapsed
-        if current < 0:
-            current = max(3., .1 * elapsed)
-        return max(0., remaining + current)
-
-    def _ceiling(self, now):
-        weights = (self.ceiling_weights if self.ceiling == 'prior' else
-                   {k: self.weights[k] for k in self.ceiling_weights})
-        stretch = self.ceiling == 'stretch' and (self.count is None or self.count[0] <= 0)
-        if stretch and self.phase in weights:
-            # An overrunning stage without counted work keeps its end ahead of
-            # it, by the same remainder the remaining-time target assumes.
-            elapsed = max(0., now - self.phase_started)
-            weights[self.phase] = max(weights[self.phase], elapsed + max(3., .1 * elapsed))
-        total = sum(weights.values())
-        if total <= 0:
-            if self.ceiling in ('current', 'stretch'):
-                self.last_ceiling = .99
-            return .99
-        credit = sum(v for k, v in weights.items() if k in self.completed)
-        # An uncounted stage earns its allowance over time, not at its entry.
-        # This also avoids releasing all of upscale's share at a boundary.
-        duration = weights.get(self.phase, 0.)
-        fraction = min(1., max(0., now - self.phase_started) / max(duration, .001))
-        if self.count is not None and not stretch:
-            done, count, margin = self.count
-            fraction = min(1., max(0., (done + margin) / max(count, 1)))
-        credit += duration * fraction
-        value = min(.99, self.ceiling_base + (1. - self.ceiling_base) * credit / total)
-        if self.ceiling in ('current', 'stretch'):
-            self.last_ceiling = max(self.last_ceiling, value)
-            value = self.last_ceiling
-        return value
-
-    def _smooth(self, dt):
-        if self.smoothing == 'track':
-            shown, target = self.remaining_shown, self.remaining_target
-            if target > shown:
-                # Slower than predicted: stop counting down, then rise gently.
-                self.remaining_shown = min(target, shown + self.rate * shown * dt)
-            else:
-                shown = max(target, shown - dt)
-                self.remaining_shown = max(0., shown - (shown - target) * (1. - math.exp(-dt / max(self.tau, .001))))
-            return
-        # Hold suppresses countdown only for an upward target correction.
-        # Both policies approach the target without crossing it by correction;
-        # countdown itself can pass below it. Keep a positive running remainder.
-        if self.smoothing == 'hold' and self.remaining_target > self.remaining_shown:
-            shown = self.remaining_shown
-        else:
-            floor = 3. if self.smoothing == 'countdown' else min(3., self.remaining_shown)
-            shown = max(floor, self.remaining_shown - dt)
-        limit = self.rate * shown * dt
-        self.remaining_shown = max(0., shown + max(-limit, min(limit, self.remaining_target - shown)))
-
-    def _render(self, message, now, *, heartbeat=False):
-        if self.remaining_source == 'local' and self.shown_source == 'similar':
-            # History read after the start replaces the general estimate: the
-            # page drops "initial estimate" and corrects once, so do not smooth.
-            # (A first measurement keeps smoothing; two steps are still noisy.)
-            self.remaining_shown = self.remaining_target
-        self.shown_source = self.remaining_source
-        elapsed = max(0., now - self.started)
-        candidate = elapsed / max(elapsed + self.remaining_shown, .001)
-        if (self.final is not None and self.phase == 'decode_save' and self.count
-                and self.count[0] >= self.count[1] > 0):
-            # Every frame is decoded; only audio, MP4 and saving remain, often
-            # for a few seconds only. Move there as fast as the rise limit allows.
-            candidate = max(candidate, self.final)
-        ceiling = self._ceiling(now)
-        limit = .99
-        if self.max_rise is not None:
-            limit = min(limit, self.fraction + self.max_rise * max(0., min(1., now - self.last_publish)))
-        self.fraction = max(self.fraction, min(limit, candidate, ceiling))
-        overall = dict(status='complete' if self.finished else 'running', estimated=True,
-                       fraction=1. if self.finished else self.fraction,
-                       remaining_seconds=0. if self.finished else self.remaining_shown,
-                       elapsed_seconds=elapsed, remaining_source=self.remaining_source,
-                       phase_start_fraction=self.fraction, phase_weight=0., remaining_floor_seconds=0.,
-                       at_ceiling=not self.finished and candidate >= ceiling,
-                       sampling_time_weighted=True)
-        key = self.phase
-        if key in self.steps:
-            key += '_first' if not self.steps[key] else '_warm'
-        if key in self.typical:
-            overall.update(typical_seconds=self.typical[key], typical_source='local')
-        if heartbeat:
-            overall['heartbeat'] = True
-        self.last_publish = now
-        return dict(message, overall=overall)
-
-    def annotate(self, message, *, event=None):
-        message, event = dict(message), event or {}
-        now = self.clock()
-        if self.finished:
-            return self._render(message, now)
-        dt = max(0., now - self.last_tick)
-        plan = event if event.get('event') == 'sampling_plan' else message.get('sampling_plan')
-        if isinstance(plan, dict):
-            self.configure(plan=plan)
+    def annotate(self, message):
+        message = dict(message)
+        if isinstance(message.get('sampling_plan'), dict):
+            self.sampling_plan = message['sampling_plan']
         if isinstance(message.get('prediction'), dict):
             self.forecast(message['prediction'])
-        retried = isinstance(message.get('retry'), dict) or message.get('stage') == 'preview_mismatch'
-        if isinstance(message.get('retry'), dict):
-            self._retry(message['retry'], now)
-        if message.get('stage') == 'preview_mismatch':
-            self.request['flow'] = 'full'
-            self._retry({}, now)
-        if event.get('event') in ('video_start', 'decode_resume'):
-            self.configure(placement=event)
-        phase = self._phase_for(message, event)
-        if phase:
-            self._enter(phase, now)
-        if event.get('event') == 'conditioning_cache_hit':
-            self.cold_flags['encode_cached'] = True
-        if event.get('event') == 'conditioning_reused':
-            self.cold_flags['encode_cached'] = True
-        if event.get('event') == 'encoder_device_reuse':
-            self.cold_flags['encoder_cold'] = False
-        if event.get('event') == 'compute_device':
-            self.hardware.update(gpu_name=event.get('name') or self.hardware.get('gpu_name'))
-            if _timing_seconds(event.get('vram_total_bytes')):
-                self.hardware['vram_total_gib'] = event['vram_total_bytes'] / 2**30
-            self._reforecast()
-        if not retried:
-            self._counts_and_live(message, event, now)
-        self.remaining_target = self._target(now)
-        self._smooth(dt)
-        self.last_tick = self.last_event = now
-        self.total = sum(self.weights.values())
-        self.finished = message.get('phase') == 'complete' or message.get('overall', {}).get('status') == 'complete'
-        if self.finished:
-            self.measured[self.phase] = max(.001, now - self.phase_started)
-            self.weights[self.phase] = self.measured[self.phase]
-            self.total = sum(self.weights.values())
-            self.completed.update(self.weights)
-            self.remaining_target = self.remaining_shown = 0.
-            self.fraction = 1.
-        if message.keys() - {'report_id'}:
-            self.last_message = {k: v for k, v in message.items() if k not in ('overall', 'reset', 'new_request', 'prediction', 'sampling_plan')}
-        else:
-            message = dict(self.last_message, **message)
-        return self._render(message, now)
-
-    def observe(self, event):
-        """Use an engine event that has no progress message, without publishing."""
-        published = self.last_publish
-        self.annotate({}, event=event)
-        self.last_publish = published
-
-    def heartbeat(self):
+        retry = message.get('retry') if isinstance(message.get('retry'), dict) else {}
+        if retry.get('reuse_sampling') is True:
+            self.completed.add('sampling')
+        phase = self._message_phase(message)
         now = self.clock()
-        if self.finished or now - self.last_publish < 1.:
-            return None
-        if self.silence == 'stage':
-            # Admit only the part of this interval inside the predicted stage.
-            # Crossing its end freezes at the boundary, even with sparse polls.
-            end = self.phase_started + self.weights.get(self.phase, 0.)
-            dt = max(0., min(now, end) - max(self.last_tick, self.phase_started))
-            if dt:
-                self.remaining_target = max(0., self.remaining_target - dt)
-                self._smooth(dt)
-            self.last_tick = max(self.last_tick, min(now, end))
-        # Silent time is not counted down until the next engine event shows
-        # the engine is still working; that event then counts all of it.
-        return self._render(self.last_message, now, heartbeat=True)
+        if phase and phase != self.phase:
+            if self.phase is not None:
+                self.completed.add(self.phase)
+                self.measured[self.phase] = max(.001, now - self.phase_started)
+                self.weights[self.phase] = self.measured[self.phase]
+            self.phase, self.phase_started = phase, now
+        if phase == 'sampling':
+            self._sampling_estimate(message, now)
+        if phase == 'decode' and message.get('stage') == 'video':
+            done, total = message.get('done'), message.get('total')
+            elapsed = _timing_seconds(message.get('elapsed_seconds'))
+            if elapsed and type(done) is int and type(total) is int and 0 < done <= total:
+                video_seconds = elapsed * total / done
+                # Reports put audio/MP4/post-decode cleanup at about 6-8% of
+                # video decode time. Retain this tail until audio/save starts.
+                self.decode_tail = video_seconds * .08
+                self.weights['decode'] = now - self.phase_started + video_seconds - elapsed + self.decode_tail
+                self.forecast_ready = True
+        elif phase == 'decode':
+            self.decode_tail = 0.
+        self.total = sum(self.weights.values())
+        if message.get('phase') == 'complete' or message.get('overall', {}).get('status') == 'complete':
+            message['overall'] = {'status': 'complete', 'fraction': 1., 'estimated': False,
+                                  'elapsed_seconds': now - self.started, 'remaining_seconds': 0.}
+            return message
+        overall = {'status': 'running', 'estimated': self.forecast_ready,
+                   'elapsed_seconds': now - self.started}
+        if self.forecast_ready and self.total > 0:
+            start = self._base() / self.total
+            weight = self.weights.get(self.phase, 0.)
+            elapsed = max(0., now - self.phase_started)
+            seconds = self.weights.get(self.phase)
+            fraction = start
+            if weight:
+                fraction += weight / self.total * min(.95, elapsed / max(seconds, 1e-9))
+            remaining = max(0., self.total - self._base() - min(elapsed, seconds or 0.))
+            future = sum(value for name, value in self.weights.items()
+                         if name not in self.completed and name != self.phase)
+            overall.update(fraction=fraction, phase_start_fraction=start,
+                           phase_weight=weight / self.total if self.total else 0.,
+                           phase_elapsed_seconds=elapsed, phase_seconds=seconds,
+                           remaining_seconds=remaining,
+                           remaining_floor_seconds=max(future, self.decode_tail),
+                           sampling_time_weighted=self.sampling_time_weighted)
+        message['overall'] = overall
+        return message
 
 
 def source_root():
@@ -1155,22 +679,12 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     state['encoder_prewarm'] = prewarm_summary(encoder_prewarm)
     save(run / 'comfy-request.json', state)
     started = time.monotonic()
-    try:
-        whole_progress = WholeVideoProgress.for_request(machine, canvas, output_directory,
-            base_steps=base_steps, refine_steps=refine_steps, two_pass=two_pass,
-            preview=preview, upscale=bool(upscale), encoder_prewarm=state['encoder_prewarm'])
-    except Exception:
-        # A progress estimate cannot prevent generation, even without its parameters.
-        try:
-            whole_progress = WholeVideoProgress()
-        except Exception:
-            whole_progress = _PlainProgress()
-    whole_progress = _SafeProgress(whole_progress)
+    whole_progress = WholeVideoProgress()
     from .comfy_progress import REPORTS
     report_id = REPORTS.register(output)
-    def send_progress(message, event=None):
+    def send_progress(message):
         if progress:
-            progress(whole_progress.annotate(dict(message, report_id=report_id), event=event))
+            progress(whole_progress.annotate(dict(message, report_id=report_id)))
     process = None
     from .result_cache import ResultCache, request_key, inspect_bounded
     cache = ResultCache(output_directory)
@@ -1185,14 +699,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                     tails[2].reset()
                 message = progress_message(event)
                 if message:
-                    send_progress(message, event)
-                else:
-                    whole_progress.observe(event)
-        heartbeat = whole_progress.heartbeat()
-        if progress and heartbeat:
-            progress(heartbeat)
+                    send_progress(message)
     try:
-        send_progress({'label': 'Preparing video'})
         if interrupted:
             interrupted()
         extra = {}
@@ -1276,9 +784,10 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         state['sampling_cache_install'] = preparation
         if preparation['seconds']:
             started += preparation['seconds']
+            whole_progress = WholeVideoProgress()
             send_progress({'reset': True, 'label': 'Preparing video'})
-        whole_progress.configure(plan=planned, canvas=sampled, media=extra.get('media', {}),
-                                 conditioning=bool(extra.get('conditioning')))
+        whole_progress.sampling_plan = planned
+        whole_progress.forecast(progress_history_forecast(root, machine, dict(sampled, sampling_plan=planned)))
         send_progress({'label': 'Preparing %.3f s video + audio · %d × %d' %
                        (canvas['seconds'], width, height)})
         if release_models:
