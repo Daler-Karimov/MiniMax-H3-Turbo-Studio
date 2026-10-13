@@ -107,21 +107,57 @@ export function loraPanel(node, panel) {
             note.textContent = loraWarning();
         } catch (error) { note.textContent = error.message; }
     }
-    const add = button(t('+ Add LoRA', '+ 添加 LoRA'), () => {
-        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put H3 safetensors adapters in your ComfyUI LoRA folders, then refresh.', '将 H3 safetensors LoRA 放入 ComfyUI 的 LoRA 目录，然后刷新。')); rows.push({name: names[0], strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
+    const add = button(t('Add', '添加'), async () => {
+        await refresh(); // The folder may have changed since the list was last read.
+        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '请把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); rows.push({name: names[0], strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
     });
     async function refresh() {
-        try { const response = await api.fetchApi('/object_info/FreeVideoLoRA'); if (!response.ok) throw new Error(response.statusText); const info = await response.json(); const spec = info.FreeVideoLoRA?.input?.required?.lora; const options = Array.isArray(spec?.[0]) ? spec[0] : spec?.[1]?.options || []; names = options.filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
+        try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
         catch (error) { if (!disposed) note.textContent = error.message; }
     }
-    actions.append(add, button(t('Refresh', '刷新'), refresh));
+    actions.append(add);
     const changed = e => { if (String(e.detail) === String(node.id)) render(); };
     window.addEventListener('freevideo-loras', changed);
     const configure = node.onConfigure;
     // Only the persistent node panel participates in graph loading.
     if (panel.classList.contains('fv-lora-panel')) node.onConfigure = function (...args) { const result = configure?.apply(this, args); render(); return result; };
     render(); refresh();
-    return () => { disposed = true; window.removeEventListener('freevideo-loras', changed); };
+    const dispose = () => { disposed = true; window.removeEventListener('freevideo-loras', changed); };
+    dispose.refresh = refresh;
+    return dispose;
+}
+
+// A workflow without a LoRA node can still take LoRAs from the creation panel: the first one adds a FreeVideoLoRAStack node
+// wired to `loras`, and clearing the list removes it with the graph counters it had, so a request with no LoRA is unchanged.
+// The node keeps those counters in its properties, so the same holds after the workflow is saved and opened again.
+const CREATED_BY_PANEL = 'freevideo_creation_lora';
+function pendingLoras(node, existing = null) {
+    const slot = node.inputs?.findIndex(input => input.name === 'loras');
+    const LiteGraph = globalThis.LiteGraph;
+    if (!(slot >= 0) || !node.graph || (!existing && !LiteGraph?.registered_node_types?.FreeVideoLoRAStack)) return null;
+    let stack = existing;
+    const adapters = {name: 'adapters', value: existing ? value(existing, 'adapters') || '[]' : '[]', callback(next) {
+        let rows; try { rows = JSON.parse(next); } catch { return; }
+        const graph = node.graph, active = Array.isArray(rows) && rows.length > 0;
+        if (active && !stack) {
+            stack = LiteGraph.createNode('FreeVideoLoRAStack');
+            stack.properties = {...stack.properties, [CREATED_BY_PANEL]: {node: graph.last_node_id, link: graph.last_link_id}};
+            stack.pos = [node.pos[0] - 500, node.pos[1] + node.size[1] - 240];
+            graph.add(stack); stack.connect(0, node, slot);
+        } else if (!active && stack) {
+            const counters = stack.properties?.[CREATED_BY_PANEL];
+            graph.remove(stack);
+            // Ids are numbers in the graph's counters but may be strings on the node.
+            if (counters && Number(graph.last_node_id) === Number(stack.id)) { graph.last_node_id = counters.node; graph.last_link_id = counters.link; }
+            stack = null; graph.change?.(); return;
+        }
+        if (!stack) return;
+        const target = widget(stack, 'adapters');
+        if (target) { target.value = next; target.callback?.(next); }
+        graph.change?.();
+        window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: stack.id}));
+    }};
+    return {id: 'creation-lora', graph: node.graph, widgets: [adapters], inputs: []};
 }
 
 let current;
@@ -301,18 +337,21 @@ export function openStudio(node) {
     const [mediaDetails, mediaMount] = expand(t('Media', '素材'));
     if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false) || mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null); }
     else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板，即可在这里上传。'), 'fv-legacy'));
-    const loraNode = upstream(node, 'loras');
-    if (loraNode) {
-    const [loraDetails, loraMount] = expand(t('LoRAs', 'LoRA 组合'));
-    if (widget(loraNode, 'adapters')) { cleanup.push(loraPanel(loraNode, loraMount)); loraDetails.open = JSON.parse(value(loraNode, 'adapters') || '[]').length > 0; }
-    else if (widget(loraNode, 'lora')) {
+    const connectedLora = upstream(node, 'loras');
+    const loraNode = connectedLora?.properties?.[CREATED_BY_PANEL] ? pendingLoras(node, connectedLora) : connectedLora || pendingLoras(node);
+    const [loraDetails, loraMount] = expand(t('LoRA', 'LoRA'));
+    if (loraNode && widget(loraNode, 'adapters')) {
+        const stop = loraPanel(loraNode, loraMount); cleanup.push(stop);
+        loraDetails.addEventListener('toggle', () => { if (loraDetails.open) stop.refresh(); });
+        loraDetails.open = JSON.parse(value(loraNode, 'adapters') || '[]').length > 0;
+    }
+    else if (loraNode && widget(loraNode, 'lora')) {
         const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
         for (const name of widget(loraNode, 'lora').options?.values || ['None']) { const o = el('option', name); o.value = name; select.append(o); }
         select.value = value(loraNode, 'lora'); select.onchange = () => set(loraNode, 'lora', select.value);
         const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = value(loraNode, 'strength'); strength.onchange = () => { if (strength.reportValidity()) set(loraNode, 'strength', Number(strength.value)); };
         loraMount.append(field(t('LoRA', 'LoRA'), select), field(t('Strength', '强度'), strength), el('p', loraWarning(), 'fv-lora-note'));
     } else loraMount.append(el('p', loraWarning(), 'fv-lora-note'));
-    }
     const [, advanced] = expand(t('Advanced', '高级选项'));
     const custom = el('div', null, 'fv-fields');
     const width = el('input'), height = el('input');
