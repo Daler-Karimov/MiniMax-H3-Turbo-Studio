@@ -1517,7 +1517,8 @@ class Installer:
 
     def packages(self, label, args, family='pypi'):
         return network.package_command(self.network, family,
-            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env), self.env)
+            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
+            self.env, notice=lambda message: self.ui.write(message + '\n'))
 
     def python_install(self, uv):
         from .system import bootstrap_root
@@ -1542,24 +1543,21 @@ class Installer:
                                      'import sys; print("Reusing verified bootstrap Python: " + sys.executable)'])
                         return
         custom = self.env.get('UV_PYTHON_INSTALL_MIRROR') if self.network.get('mode') != 'official' else None
-        sources = (['user-python'] if custom else []) + network.ordered(self.network, 'github')
         isolation = ['--no-bin', '--no-registry']
-        for source in sources:
-            for route in network.route_order(self.network, 'github', source, self.env):
-                env = network.route_environment(self.network, 'github', source, self.env, route)
-                env.update(UV_HTTP_TIMEOUT='20', UV_HTTP_RETRIES='1')
-                env['UV_PYTHON_INSTALL_MIRROR'] = custom if source == 'user-python' else network.source_url('github', source, self.env) + '/astral-sh/python-build-standalone/releases/download'
-                try:
-                    result = self.command('python-' + source + '-' + route, [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
-                    network.route_health(self.network, 'github', source, route)
-                    return result
-                except RuntimeError as error:
-                    if not network.retryable(error):
-                        raise
-                    network.event(self.network, category='python', source=source, route=route, action='fallback', reason='network-download-failed')
-                    if not network.connection_failure(error):
-                        break
-        raise RuntimeError('Python download failed on every route; see retained logs')
+        def attempt(source, route, retry_mode):
+            env = network.download_environment(
+                network.route_environment(self.network, 'github', source, self.env, route), retry_mode)
+            env['UV_PYTHON_INSTALL_MIRROR'] = custom if source == 'user-python' else network.source_url('github', source, self.env) + '/astral-sh/python-build-standalone/releases/download'
+            return self.command('python-' + source + '-' + route,
+                                [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
+        try:
+            return network.download_command(self.network, 'github', attempt, self.env, category='python',
+                                            extra_sources=['user-python'] if custom else [],
+                                            notice=lambda message: self.ui.write(message + '\n'))
+        except network.PackageSourcesError as error:
+            failure = RuntimeError('Python download failed on every route; see retained logs')
+            failure.package_attempts = error.attempts
+            raise failure from error
 
     def install_sage(self, uv, python):
         if self.system == 'Windows':

@@ -92,8 +92,6 @@ try {
                 -EngineRoot $freevideoRoot -LogPath $bootstrapLog -GithubSources $routes `
                 -ProxyRoutes $proxyRoutes -OfficialOnly:$officialOnly
             $env:UV_PYTHON_INSTALL_DIR = Join-Path $bootstrapRoot 'python'
-            $env:UV_HTTP_TIMEOUT = '20'
-            $env:UV_HTTP_RETRIES = '1'
             $env:UV_NO_CONFIG = '1'
             $installed = $false
             $pythonRoutes = @($routes | ForEach-Object { "$_/astral-sh/python-build-standalone/releases/download" })
@@ -101,18 +99,40 @@ try {
                 $pythonRoutes = @($freevideoSavedEnvironment['UV_PYTHON_INSTALL_MIRROR']) + $pythonRoutes
             }
             $attempt = 0
-            foreach ($route in $pythonRoutes) {
-              foreach ($proxyRoute in $proxyRoutes) {
-                if ($installed) { break }
-                $attempt++
-                $env:UV_PYTHON_INSTALL_MIRROR = $route
-                Write-Progress -Activity 'FreeVideo bootstrap' -Status ('Install isolated Python ' + $versions.python)
-                $pythonExit = Invoke-FreeVideoBootstrapCommand -Executable $uv `
-                    -Arguments @('python', 'install', '--no-bin', '--no-registry', '--no-progress', '--color', 'never', $versions.python) `
-                    -LogPath $bootstrapLog -Label ("Install Python $($versions.python), attempt $attempt ($proxyRoute connection)") `
-                    -Direct:($proxyRoute -eq 'direct')
-                if ($pythonExit -eq 0) { $installed = $true; break }
-                Write-Host "Python install source $attempt returned exit code $pythonExit. Details retained in $bootstrapLog"
+            $allNetworkFailures = $true
+            # Keep these defaults and the notice in sync with network.py (CPU tests).
+            $pythonRetryProfiles = @(
+                @{Mode='fast'; UV_HTTP_TIMEOUT='20'; UV_HTTP_RETRIES='1'},
+                @{Mode='patient'; UV_HTTP_TIMEOUT='120'; UV_HTTP_RETRIES='5'}
+            )
+            foreach ($profile in $pythonRetryProfiles) {
+              if ($installed) { break }
+              if ($profile.Mode -eq 'patient') {
+                if (-not $allNetworkFailures) { break }
+                Write-Host 'The network is slow. Downloading again; this may take a while.'
+              }
+              foreach ($name in @('UV_HTTP_TIMEOUT', 'UV_HTTP_RETRIES')) {
+                $value = $freevideoSavedEnvironment[$name]
+                if ($null -eq $value) { $value = $profile[$name] }
+                [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+              }
+              foreach ($route in $pythonRoutes) {
+                foreach ($proxyRoute in $proxyRoutes) {
+                  if ($installed) { break }
+                  $attempt++
+                  $env:UV_PYTHON_INSTALL_MIRROR = $route
+                  Write-Progress -Activity 'FreeVideo bootstrap' -Status ('Install isolated Python ' + $versions.python)
+                  $pythonOutput = ''
+                  $pythonLabel = "Install Python $($versions.python), attempt $attempt ($proxyRoute connection)"
+                  if ($profile.Mode -eq 'patient') { $pythonLabel += ", $($profile.Mode)" }
+                  $pythonExit = Invoke-FreeVideoBootstrapCommand -Executable $uv `
+                      -Arguments @('python', 'install', '--no-bin', '--no-registry', '--no-progress', '--color', 'never', $versions.python) `
+                      -LogPath $bootstrapLog -Label $pythonLabel `
+                      -Direct:($proxyRoute -eq 'direct') -OutputTail ([ref]$pythonOutput)
+                  if ($pythonExit -eq 0) { $installed = $true; break }
+                  if (-not (Test-FreeVideoSlowDownloadFailure $pythonOutput)) { $allNetworkFailures = $false }
+                  Write-Host "Python install source $attempt returned exit code $pythonExit. Details retained in $bootstrapLog"
+                }
               }
             }
             if (-not $installed) { throw "Python installation failed (uv exit $pythonExit). Check your network or connection mode in Downloads. See $bootstrapLog and retry." }
@@ -122,6 +142,11 @@ try {
             $bootstrapLock.Dispose()
             Write-Progress -Activity 'FreeVideo bootstrap' -Completed
         }
+    }
+    # Restore only our download defaults before Python determines user overrides.
+    # A null saved value removes the variable from the child environment.
+    foreach ($name in @('UV_HTTP_TIMEOUT', 'UV_HTTP_RETRIES')) {
+        [Environment]::SetEnvironmentVariable($name, $freevideoSavedEnvironment[$name], 'Process')
     }
     & $freevideoPython @freevideoPythonPrefix -B -X utf8 -m freevideo_engine.managed @freevideoArguments
     $freevideoExit = $LASTEXITCODE

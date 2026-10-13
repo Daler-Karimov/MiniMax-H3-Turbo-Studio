@@ -42,6 +42,10 @@ SAMPLE_BYTES = 256 * 1024
 SPEED_SAMPLE_BYTES = 32 * 2**20
 SPEED_SAMPLE_SECONDS = 3.
 MIN_TRANSFER_LIMIT = 1024 * 1024
+# One quick pass over sources/routes, followed by at most one patient pass.
+# These are inactivity timeouts, not deadlines for an entire installation.
+DOWNLOAD_RETRY_PROFILES = (('fast', '20', '1'), ('patient', '120', '5'))
+PATIENT_DOWNLOAD_NOTICE = 'The network is slow. Downloading again; this may take a while.'
 
 
 def proxy_environment(environ=None):
@@ -564,57 +568,136 @@ def _package_attempt(error, source, route):
                 returncode=getattr(error, 'returncode', None), detail=detail, summary=summary)
 
 
-def package_environment(network, family, name, environ=None, *, route=None):
+def download_environment(environ, retry_mode='fast'):
+    """Apply shared uv/pip defaults without replacing any user setting."""
+    _, timeout, retries = next(row for row in DOWNLOAD_RETRY_PROFILES if row[0] == retry_mode)
+    env = dict(environ)
+    for key, value in (('UV_HTTP_TIMEOUT', timeout), ('UV_HTTP_RETRIES', retries),
+                       ('PIP_DEFAULT_TIMEOUT', timeout), ('PIP_RETRIES', retries)):
+        env.setdefault(key, value)
+    return env
+
+
+# Only a validation failure counts: a package or service that merely has
+# "checksum" in its name must stay eligible for the slow-network retry. Keep in
+# sync with fv_slow_download_failure in scripts/bootstrap_linux.sh.
+_INTEGRITY_FAILURE = re.compile(
+    r"\b(?:invalid|bad|wrong|incorrect|mismatched?)\s+checksums?\b"
+    r"|\bchecksums?\s+(?:mismatch|error|failed|failure)\b"
+    r"|\bchecksums?\s+(?:verification|validation)\s+(?:failed|failure|error)\b"
+    r"|\bchecksums?\s+(?:does not|doesn't|did not|didn't|do not|don't)\s+match\b"
+    r"|\b(?:does not|doesn't|did not|didn't|do not|don't)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b"
+    r"|\bhash\s+(?:mismatch|check\s+failed|does\s+not\s+match)\b|\bhashes\s+(?:do\s+not|didn't)\s+match\b"
+    r"|\bsha-?256\s+mismatch\b|\bdigest\s+mismatch\b"
+    r"|\bintegrity\s+(?:check|verification)\s+failed\b")
+
+
+def _download_integrity_failure(detail):
+    # URL paths may contain validation words without a validation failure.
+    detail = re.sub(r'https?://\S+', '', detail.lower())
+    return bool(_INTEGRITY_FAILURE.search(detail))
+
+
+def slow_download_failure(detail):
+    """Mirror fallback is broader than permission to retry a whole slow pass."""
+    return (connection_failure(detail) and not _download_integrity_failure(detail)
+            and not re.search(r'\b(?:401|403|404|410)\b', detail)
+            and not any(word in detail.lower() for word in
+                        ('certificate verify failed', 'certificate_verify_failed',
+                         'invalid peer certificate', 'unknown issuer', 'not found',
+                         'resolutionimpossible', 'failed to build', 'invalid wheel',
+                         'permission denied', 'no space left on device', 'disk full')))
+
+
+def package_environment(network, family, name, environ=None, *, route=None, retry_mode='fast'):
     env = route_environment(network, family, name, environ, route)
+    env = download_environment(env, retry_mode)
     endpoint = source_url(family, name, environ)
     if family.startswith('torch-'):
         endpoint += '/' + family.split('-')[1]
-    env.update(UV_DEFAULT_INDEX=endpoint, UV_INDEX_URL=endpoint, PIP_INDEX_URL=endpoint,
-               UV_HTTP_TIMEOUT='20', UV_HTTP_RETRIES='1', PIP_DEFAULT_TIMEOUT='20', PIP_RETRIES='1',
-               UV_NO_CONFIG='1')
+    env.update(UV_DEFAULT_INDEX=endpoint, UV_INDEX_URL=endpoint, PIP_INDEX_URL=endpoint, UV_NO_CONFIG='1')
     for key in ('UV_INDEX', 'UV_EXTRA_INDEX_URL', 'PIP_EXTRA_INDEX_URL'):
         env.pop(key, None)
     return env
 
 
-def package_command(network, family, run, env=None):
+def download_command(network, family, run, env=None, *, category=None, extra_sources=(), notice=None):
+    """Run a source/route callback with the same bounded policy for uv and pip.
+
+    Callbacks receive (source, route, retry_mode); each builds its child env from
+    the original environment, so our fast defaults never become user overrides.
+    """
+    category = category or family
+    operation = 'python' if category == 'python' else 'package'
     attempts = []
-    for name in ordered(network, family):
-        for route in route_order(network, family, name, env):
-            event(network, category=family, source=name, route=route, action='package-attempt')
-            try:
-                attempt_env = package_environment(network, family, name, env, route=route)
-                # The host setup uses these private markers to retain one log
-                # per source/route instead of overwriting the first failure.
-                # They are never included in a report or sent to a package
-                # manager as configuration.
-                attempt_env['FREEVIDEO_PACKAGE_SOURCE'] = name
-                attempt_env['FREEVIDEO_PACKAGE_ROUTE'] = route
-                result = run(attempt_env, name)
-                source_health(network, family, name, True)
-                route_health(network, family, name, route)
-                return result
-            except (RuntimeError, subprocess.CalledProcessError) as error:
-                attempt = _package_attempt(error, name, route)
-                attempts.append(attempt)
-                event(network, category=family, source=name, route=route, action='package-failed',
-                      error_type=attempt['error_type'], returncode=attempt['returncode'],
-                      detail=attempt['detail'], summary=attempt['summary'])
-                detail = attempt['detail']
-                if not retryable(detail):
-                    # Preserve the original exception type and traceback for
-                    # build/configuration errors, but make the attempt data
-                    # available to the local report collector.
-                    try:
-                        error.package_attempts = attempts
-                    except Exception:
-                        pass
-                    raise
-                event(network, category=family, source=name, route=route, action='package-fallback', reason='network-or-unavailable-pinned-package')
-                if not connection_failure(detail):
-                    break
-        source_health(network, family, name, False)
-    raise PackageSourcesError(family, attempts)
+    for retry_mode, timeout, retries in DOWNLOAD_RETRY_PROFILES:
+        if retry_mode == 'patient':
+            if not attempts or not all(slow_download_failure(row['detail']) for row in attempts):
+                break
+            event(network, category=category, action='download-round-result', retry_mode='fast',
+                  result='failed', attempts=len(attempts))
+            event(network, category=category, action='download-patient-retry', retry_mode=retry_mode,
+                  default_timeout_seconds=int(timeout), default_retries=int(retries))
+            if notice is None:
+                print(PATIENT_DOWNLOAD_NOTICE, flush=True)
+            else:
+                notice(PATIENT_DOWNLOAD_NOTICE)
+        round_start = len(attempts)
+        retry_details = {'retry_mode': retry_mode} if retry_mode == 'patient' else {}
+        if retry_mode == 'patient':
+            event(network, category=category, action='download-round-start', retry_mode=retry_mode)
+        # Re-read health and allowed routes after the fast pass. Equal failures
+        # retain the existing probe order; no new connectivity probes are made.
+        for name in [*extra_sources, *ordered(network, family)]:
+            for route in route_order(network, family, name, env):
+                if operation == 'package' or retry_mode == 'patient':
+                    event(network, category=category, source=name, route=route,
+                          action=operation + '-attempt', **retry_details)
+                try:
+                    result = run(name, route, retry_mode)
+                    source_health(network, family, name, True)
+                    route_health(network, family, name, route)
+                    if retry_mode == 'patient':
+                        event(network, category=category, action='download-round-result', retry_mode=retry_mode,
+                              result='success', attempts=len(attempts)-round_start+1)
+                    return result
+                except (RuntimeError, subprocess.CalledProcessError) as error:
+                    attempt = dict(_package_attempt(error, name, route), retry_mode=retry_mode)
+                    attempts.append(attempt)
+                    event(network, category=category, source=name, route=route, action=operation + '-failed',
+                          error_type=attempt['error_type'], returncode=attempt['returncode'],
+                          detail=attempt['detail'], summary=attempt['summary'], **retry_details)
+                    detail = attempt['detail']
+                    if (not retryable(detail)
+                            or (retry_mode == 'patient' and not slow_download_failure(detail))):
+                        if retry_mode == 'patient':
+                            event(network, category=category, action='download-round-result', retry_mode=retry_mode,
+                                  result='failed', attempts=len(attempts)-round_start, reason='non-network-error')
+                        # Retain original build/configuration/integrity errors.
+                        try:
+                            error.package_attempts = attempts
+                        except Exception:
+                            pass
+                        raise
+                    event(network, category=category, source=name, route=route, action=operation + '-fallback',
+                          reason='network-or-unavailable-pinned-package', **retry_details)
+                    if not connection_failure(detail):
+                        break
+            source_health(network, family, name, False)
+        if retry_mode == 'patient':
+            event(network, category=category, action='download-round-result', retry_mode=retry_mode,
+                  result='failed', attempts=len(attempts)-round_start)
+    raise PackageSourcesError(category, attempts)
+
+
+def package_command(network, family, run, env=None, *, notice=None):
+    def attempt(name, route, retry_mode):
+        attempt_env = package_environment(network, family, name, env, route=route, retry_mode=retry_mode)
+        # Private markers retain per-source/route logs; no package configuration.
+        attempt_env['FREEVIDEO_PACKAGE_SOURCE'] = name
+        attempt_env['FREEVIDEO_PACKAGE_ROUTE'] = route
+        return run(attempt_env, name)
+    return download_command(network, family, attempt, env, notice=notice)
 
 
 def hash_file(path, algorithm='sha256', git_blob=False, *, discard_cache=False, progress=None):
