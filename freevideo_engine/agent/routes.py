@@ -158,6 +158,7 @@ def features(continuation, vlm):
 
 def capabilities(port, jobs):
     from .. import __version__
+    from ..desktop_runtime import source_release
     from ..comfy_assets import EXTENSIONS
     from ..comfy_bridge import installation
     from .guide import GUIDE
@@ -177,8 +178,11 @@ def capabilities(port, jobs):
     from ..chain_plan import BLOCK_SECONDS
     # One block is the limit when the backend cannot continue a video; plan and submit refuse the same requests.
     continuation = jobs.continuation_ready()
+    # Users know the release (0.4.0), not the build number; a source checkout has no release stamp.
+    release = source_release(Path(__file__).resolve().parents[2]).get('product_version')
     return dict(
-        api_version=API_VERSION, freevideo_version=__version__, ready=ready, problem=problem, continuation=continuation,
+        api_version=API_VERSION, freevideo_version=release or __version__, build=__version__, ready=ready, problem=problem,
+        continuation=continuation,
         features=features(continuation, vlm),
         device=dict(backend=machine.get('device_backend', 'cuda') if machine else None,
                     vram_limit_gib=machine.get('vram_gib'), ram_limit_gib=machine.get('ram_gib')),
@@ -753,7 +757,9 @@ def register():
         from .guide import connection_guide, connection_text
         root = installation_root()
         prepare_token(root)
-        value = connection_guide(root, request.scheme + '://' + request.host, request[query_key].get('lang'))
+        from .editor_runtime import available
+        value = connection_guide(root, request.scheme + '://' + request.host, request[query_key].get('lang'),
+                                 dict(continuation=await asyncio.to_thread(jobs.continuation_ready), editing=available()))
         if request[query_key].get('format') == 'json':
             return reply(value)
         return web.Response(text=connection_text(value), content_type='text/plain', headers={'Cache-Control': 'no-store'})

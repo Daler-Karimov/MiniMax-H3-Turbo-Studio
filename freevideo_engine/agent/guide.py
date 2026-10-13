@@ -311,7 +311,19 @@ def connection_discovery(root, base, lang=None):
         if lang == 'zh' else 'GET ' + connect + ' for plain-text connection instructions and follow them.')
 
 
-def connection_guide(root, base, lang=None):
+def introduction(zh, offers):
+    """What the agent tells the user first: only what this installation is known to carry through."""
+    rows = ['按描述生成视频，可以给首帧图片或参考图' if zh else
+            'Make a video from a description, optionally from a first-frame picture or reference pictures']
+    if offers.get('continuation'):
+        rows.append('把一条视频接着往下生成，做成更长的一条' if zh else 'Continue a video into a longer one')
+    if offers.get('editing'):
+        rows.append('剪辑：把片段排上时间线，分割、裁剪、删除，再导出成片' if zh else
+                    'Edit: put clips on a timeline, split, trim and remove them, then export the finished video')
+    return rows
+
+
+def connection_guide(root, base, lang=None, offers=None):
     """Public bootstrap text contains locations and commands, never credential values."""
     import json
     from pathlib import Path
@@ -332,6 +344,7 @@ def connection_guide(root, base, lang=None):
         '        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})',
         '    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))',
         '    with opener.open(req) as response: return json.load(response)',
+        '# client is the name the user sees as connected: put your own, for example "Claude Code" or "Codex".',
         'call("POST", "/connect/hello", {"client": "Local Agent", "via": "http"})',
         'print(call("GET", ""))',
         '# Only after the user asks for a video:',
@@ -354,12 +367,14 @@ def connection_guide(root, base, lang=None):
                            description=CAPABILITIES_ZH.get((method, suffix), row['summary']) if zh else row['summary'])
                       for (method, suffix), row in contracts().items()
                       if not suffix.startswith('/freevideo/') and not suffix.startswith('/connect')],
-        first_reply='用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话介绍这里列出的可用功能，'
-                    '并举两三个用户可以提出的要求。不要自行启动任务，等待用户提出要求。' if zh else
+        first_reply='用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话告诉用户你能做“先介绍这几样”里的事，'
+                    '只说这几样，并举两三个用户可以提出的要求。不要报版本号，不要念接口名。'
+                    '不要自行启动任务，等待用户提出要求。' if zh else
                     'Reply to the user in English; if the user switches languages, follow their language. '
-                    'After connecting, first reply in plain words: explain the available '
-                    'features listed here and give two or three requests they can say. Do not start any task yourself; '
-                    'wait for the user to ask.',
+                    'After connecting, first reply in plain words: tell the user you can do the things under '
+                    '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
+                    'numbers or endpoint names. Do not start any task yourself; wait for the user to ask.',
+        introduce=introduction(zh, offers or {}),
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
                  '“我连接不到你电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
@@ -382,6 +397,7 @@ def connection_text(value):
         value['session'], '', '本机 HTTP（Python）：' if zh else 'Local HTTP (Python):', value['http_example'], '',
         '当前版本可用的功能：' if zh else 'Available in this version:',
         *['- ' + row['description'] for row in value['capabilities']], '',
+        '先介绍这几样：' if zh else 'Introduce these:', *['- ' + row for row in value['introduce']], '',
         value['first_reply'], value['fallback'], '',
         '用户提出要求后的做事规则：' if zh else 'How to work once the user has asked for something:',
         *['%d. %s' % (number, rule) for number, rule in enumerate(value['rules'], 1)], '',
