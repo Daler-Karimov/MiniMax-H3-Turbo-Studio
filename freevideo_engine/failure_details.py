@@ -9,6 +9,68 @@ from .diagnostics import Redactor
 
 
 STEP_OUTPUT = '\n\nFull step output:\n'
+QUALITY_LEVELS = (('Light', '轻量'), ('Medium', '标准'), ('High', '精细'), ('Max', '极致'))
+
+
+def sampling_table_details(value):
+    """Read the worker's bounded, numeric sampling-table failure metadata."""
+    from .sampling_assets import UNAVAILABLE
+    for match in re.finditer(r'^(?:(?:[\w.]*(?:Error|Exception)|(?:[\w.]+\.)?SamplingTableUnavailable):\s*)?'
+                             + re.escape(UNAVAILABLE) + r'(\{[^\n]*\})$',
+                             str(value)[:65536], re.M):
+        try:
+            details = json.loads(match[1])
+            if (type(details['base_steps']) is int and 1 <= details['base_steps'] <= 32
+                    and type(details['two_pass']) is bool
+                    and type(details['refine_steps']) is int and 0 <= details['refine_steps'] <= 31
+                    and type(details['missing_bytes']) is int and details['missing_bytes'] > 0
+                    and type(details['decimal_sizes']) is bool and isinstance(details['available'], list)
+                    and all(type(i) is int and 0 <= i <= 3 for i in details['available'])):
+                return {key: details[key] for key in
+                        ('base_steps', 'two_pass', 'refine_steps', 'missing_bytes', 'available', 'decimal_sizes')}
+        except (ValueError, KeyError, TypeError):
+            pass
+    return None
+
+
+def sampling_table_failure(value, *, zh=False):
+    details = sampling_table_details(value)
+    if details is None:
+        return None
+    from .launcher_copy import size_text
+    language = 1 if zh else 0
+    index = next((i for i, steps in enumerate((8, 12, 16, 20))
+                  if details['base_steps'] == steps and details['two_pass'] == (i == 0)
+                  and (i != 0 or details['refine_steps'] == 3)), None)
+    names = [('“%s”' if zh else '%s') % QUALITY_LEVELS[i][language] for i in sorted(set(details['available']))]
+    available = ''
+    if names:
+        available = names[0] if len(names) == 1 else ('、' if zh else ', ').join(names[:-1]) + ('或' if zh else ' or ') + names[-1]
+    size = size_text(details['missing_bytes'], details['decimal_sizes'])
+    # A custom step count is not a quality level (Iris): no "档" / "quality level" for it.
+    if zh:
+        if index is None:
+            title = '“自定义（%d 步）”的采样表还没有下载' % details['base_steps']
+            what = '这个步数的采样表'
+        else:
+            title = '“%s”档的采样表还没有下载' % QUALITY_LEVELS[index][1]
+            what = '这一档的采样表'
+        detail = ('这次生成需要先下载%s（约 %s），但这次没能下载。'
+                  '请确认网络连接后再生成一次，FreeVideo 会自动下载。') % (what, size)
+        if available:
+            detail += '也可以改用已经可以使用的%s档。' % available
+    else:
+        if index is None:
+            title = 'The sampling table for Custom (%d steps) is not downloaded yet' % details['base_steps']
+            what = 'the sampling table for this step count'
+        else:
+            title = "The %s quality level's sampling table is not downloaded yet" % QUALITY_LEVELS[index][0]
+            what = "that level's sampling table"
+        detail = ('This video first needs %s (about %s), and it could not be downloaded this time. '
+                  'Check the network connection and generate again; FreeVideo downloads it automatically.') % (what, size)
+        if available:
+            detail += ' You can also switch to a quality level that is already available: %s.' % available
+    return dict(kind='sampling-table', title=title, detail=detail, action='')
 
 
 def redacted_launcher_error(value, replacements=()):
@@ -320,6 +382,9 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         return dict(title='GPU 检查未通过' if zh else 'GPU validation failed', detail=detail,
                     action='展开详情或导出报告，查看完整检查结果。' if zh else
                            'Open the details or export the report for the complete results.', kind='kernels')
+    if 'Download list error: read' in text.splitlines():
+        from .model_guidance import DOWNLOAD_COPY
+        return dict(title=DOWNLOAD_COPY['error_read'][zh], detail='', action='', kind='download-list-read')
     rules = (
         (r'The previous video has no usable continuation data', 'continuation-missing',
          ('This video cannot be continued', '这个视频暂时不能接续'),
@@ -578,7 +643,16 @@ def generation_failure(run, exit_code=None, *, repair=None):
     if len(lines) == 1:
         lines.append('The worker ended without a readable error report.')
     lines.append('\nRetained outputs: ' + str(run))
+    # The table failure can be in a retained child log rather than the report.
+    # Keep its numeric metadata ahead of technical output for all interactive callers.
+    sampling = sampling_table_details('\n'.join(lines))
     value = redactor.text('\n'.join(lines))
+    if sampling:
+        from .sampling_assets import UNAVAILABLE
+        marker = UNAVAILABLE + json.dumps(sampling, separators=(',', ':'))
+        card = sampling_table_failure(marker)
+        first, _, rest = value.partition('\n')
+        value = '\n'.join((first, marker, card['title'], card['detail'], rest))
     if explained:
         from .runtime_libraries import REINSTALL
         value = value.replace(REPAIR_MARK, repair or REINSTALL, 1)

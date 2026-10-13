@@ -50,7 +50,18 @@ const PLAIN_ERRORS = [
 function knownError(text) {
     const lines = String(text).slice(0, 65536).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const index = /^FreeVideo generation failed(?: \(exit -?\d+\))?$/.test(lines[0] ?? '') ? 1 : 0;
-    const line = (lines[index] ?? '').replace(/^[A-Za-z_][\w.]*(?:Error|Exception):\s*/, '');
+    const line = (lines[index] ?? '').replace(/^(?:[A-Za-z_][\w.]*(?:Error|Exception)|(?:[\w.]+\.)?SamplingTableUnavailable):\s*/, '');
+    if (line.startsWith('SAMPLING_TABLE_UNAVAILABLE: ')) {
+        try {
+            const d = JSON.parse(line.slice('SAMPLING_TABLE_UNAVAILABLE: '.length));
+            if (Number.isInteger(d.base_steps) && d.base_steps >= 1 && d.base_steps <= 32
+                && typeof d.two_pass === 'boolean' && Number.isInteger(d.refine_steps) && d.refine_steps >= 0 && d.refine_steps <= 31
+                && Number.isSafeInteger(d.missing_bytes) && d.missing_bytes > 0 && typeof d.decimal_sizes === 'boolean'
+                && Array.isArray(d.available) && d.available.every(i => Number.isInteger(i) && i >= 0 && i <= 3))
+                return {kind: 'sampling-table', base_steps: d.base_steps, two_pass: d.two_pass, refine_steps: d.refine_steps,
+                    missing_bytes: d.missing_bytes, decimal_sizes: d.decimal_sizes, available: [...new Set(d.available)].sort()};
+        } catch { /* Malformed metadata stays in technical details. */ }
+    }
     return PLAIN_ERRORS.find(error => line === error.message || error.aliases?.includes(line))?.key ?? null;
 }
 
@@ -230,6 +241,37 @@ export function createErrorReport(detail, context = {}) {
 export function failureAdvice(value, t, known = knownError(value)) {
     const text = String(value).slice(0, 65536);
     const row = (kind, title, summary, action) => ({kind, title: t(...title), summary: t(...summary), action: t(...action)});
+    if (known?.kind === 'sampling-table') {
+        // Names and plan matching follow sampling_effort.js; metadata carries no user text.
+        const levels = [['Light', '轻量'], ['Medium', '标准'], ['High', '精细'], ['Max', '极致']];
+        const index = [8, 12, 16, 20].findIndex((steps, i) => known.base_steps === steps
+            && known.two_pass === (i === 0) && (i !== 0 || known.refine_steps === 3));
+        const custom = index < 0;
+        // Iris: a level name and its 档 never break apart. The summary is set as text,
+        // so word joiners (U+2060) keep each group on one line instead of markup.
+        const keep = value => [...value].join('\u2060');
+        const join = language => {
+            const names = known.available.map(i => language ? `“${levels[i][1]}”` : levels[i][0]);
+            if (language) names[names.length - 1] += '档';
+            const kept = language ? names.map(keep) : names;
+            return kept.length < 2 ? kept[0] || '' : kept.slice(0, -1).join(language ? '、' : ', ') + (language ? '或' : ' or ') + kept.at(-1);
+        };
+        const bytes = known.missing_bytes;
+        // As launcher_copy.size_text: one decimal for GiB, whole MiB; decimal units on macOS.
+        let size = bytes >= 2**30 ? (bytes / 2**30).toFixed(1) + ' GiB' : Math.floor(bytes / 2**20) + ' MiB';
+        if (known.decimal_sizes) {
+            const unit = [[1e12, 'TB', 2], [1e9, 'GB', 2], [1e6, 'MB', 1]].find(([scale]) => bytes >= scale);
+            size = unit ? Number((bytes / unit[0]).toFixed(unit[2])) + ' ' + unit[1] : Math.round(bytes / 1e3) + ' KB';
+        }
+        // A custom step count is not a quality level: no "档" / "quality level" for it.
+        const title = custom
+            ? [`The sampling table for Custom (${known.base_steps} steps) is not downloaded yet`, `“自定义（${known.base_steps} 步）”的采样表还没有下载`]
+            : [`The ${levels[index][0]} quality level's sampling table is not downloaded yet`, `${keep(`“${levels[index][1]}”档`)}的采样表还没有下载`];
+        const what = custom ? ['the sampling table for this step count', '这个步数的采样表'] : ["that level's sampling table", '这一档的采样表'];
+        return {...row('sampling-table', title,
+            [`This video first needs ${what[0]} (about ${size}), and it could not be downloaded this time. Check the network connection and generate again; FreeVideo downloads it automatically.${known.available.length ? ` You can also switch to a quality level that is already available: ${join(0)}.` : ''}`,
+             `这次生成需要先下载${what[1]}（约 ${size}），但这次没能下载。请确认网络连接后再生成一次，FreeVideo 会自动下载。${known.available.length ? `也可以改用已经可以使用的${join(1)}。` : ''}`], ['', '']), plain: true};
+    }
     // ComfyUI and worker tracebacks carry English exceptions. Translate these
     // actionable failures through the existing signature/advice path.
     for (const {key, title, summary} of PLAIN_ERRORS) {
@@ -471,7 +513,7 @@ export function createErrorPanel(t) {
             ? t('Use Download report in the preview or node panel for the diagnostic report.', '完整诊断请使用预览区或节点面板中的“下载报告”。')
             : t('Known input text, paths and common credentials are removed. Export saves a local error summary; review it before sharing.',
                 '已去除已知输入文本、路径和常见凭据。导出会保存本地错误摘要，分享前可查看内容。');
-        copy.textContent = t('Copy error', '复制错误');
+        copy.textContent = advice.kind === 'sampling-table' ? t('Copy full details', '复制完整详情') : t('Copy error', '复制错误');
         if (popup) showFailureDialog(report, t);
         return report;
     }, clear() { currentReport = null; details.value = ''; element.hidden = true; }};

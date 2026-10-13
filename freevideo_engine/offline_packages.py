@@ -404,9 +404,14 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
         except OSError:
             copy_progress(src, target, file_progress(progress, 'copy_bytes', src.stat().st_size))
 
+    included = []
     for row in model['files']:
         target, src = runtime / row['path'], source_for(row)
         if src is None:
+            if pack_name(row['path']) == '采样缓存':
+                total -= row['bytes']
+                progress(done=done, total=total, detail='检查配套包', activity='')
+                continue
             raise ValueError('还需导入「%s」包，缺少文件：%s' % (pack_name(row['path']), row['path']))
         if row['path'] in here:
             if not os.path.samefile(target, src) and hash_file(target,
@@ -414,6 +419,7 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
                 raise ValueError('离线安装已有不同模型，未覆盖：' + plain(target))
         else:
             place(src, target)
+        included.append(row)
         done += row['bytes']
         progress(done=done, total=total, detail='检查配套包', activity='')
     listed = {row['path'] for row in model['files']}
@@ -431,7 +437,8 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
             place(io_path(root) / row['path'], runtime / row['path'])
             listed.add(row['path'])
     progress(done=done, total=total, detail='检查配套包', activity='')
-    return finish(runtime, config, model, source, here)
+    # Only placed rows are recorded: a skipped Sampling caches table is fetched when needed.
+    return finish(runtime, config, dict(model, files=included), source, here)
 
 
 def runtime_config(runtime):

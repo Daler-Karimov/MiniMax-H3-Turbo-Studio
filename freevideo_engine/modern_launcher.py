@@ -77,10 +77,12 @@ def create_ui(session, *, show=True):
 
     class Bridge(QObject):
         changed = Signal()
+        downloadsChanged = Signal()
         def __init__(self):
             super().__init__(engine)
             self.alerted = None
             self.value = session.snapshot()
+            self.download_value = session.downloads_view()
             self.timer = QTimer(self)
             self.timer.setInterval(250)
             self.timer.timeout.connect(self.refresh)
@@ -89,6 +91,10 @@ def create_ui(session, *, show=True):
         @Property('QVariantMap', notify=changed)
         def state(self):
             return self.value
+
+        @Property('QVariantMap', notify=downloadsChanged)
+        def downloadList(self):
+            return self.download_value
 
         def invoke(self, function, *args, **kwargs):
             try:
@@ -105,6 +111,10 @@ def create_ui(session, *, show=True):
                 if value != self.value:
                     self.value = value
                     self.changed.emit()
+                downloads = session.downloads_view()
+                if downloads is not self.download_value:
+                    self.download_value = downloads
+                    self.downloadsChanged.emit()
                 update = value.get('update') or {}
                 if update.get('remind') and update.get('key') != self.alerted and engine.rootObjects():
                     # Flash the taskbar button once per new reminder when the
@@ -165,6 +175,26 @@ def create_ui(session, *, show=True):
                 str(session.form.get(key) or ''), QFileDialog.ShowDirsOnly)
             if path:
                 self.invoke(session.add_folder, path) if key == 'model_dirs' else self.invoke(session.edit, key, path)
+
+        @Slot()
+        def prepareDownloadList(self):
+            self.invoke(session.prepare_download_list)
+
+        @Slot()
+        def exportDownloadList(self):
+            if session.controller.busy:
+                return
+            path = QFileDialog.getExistingDirectory(None, session.downloads_view()['copy']['export'], '', QFileDialog.ShowDirsOnly)
+            if path:
+                self.invoke(session.export_downloads, path)
+
+        @Slot()
+        def useDownloadedFolder(self):
+            if session.controller.busy or session.importer.busy:
+                return
+            path = QFileDialog.getExistingDirectory(None, session.downloads_view()['copy']['use_folder'], '', QFileDialog.ShowDirsOnly)
+            if path:
+                self.invoke(session.use_downloaded_folder, path)
 
         @Slot()
         def browsePackages(self):
@@ -237,6 +267,13 @@ def create_ui(session, *, show=True):
             else:
                 self.invoke(open_browser, value)
 
+        @Slot()
+        def openDownloadFolder(self):
+            from PySide6.QtGui import QDesktopServices
+            folder = session.download_export
+            if folder and Path(folder).is_dir():
+                self.invoke(QDesktopServices.openUrl, QUrl.fromLocalFile(str(Path(folder).resolve())))
+
         @Slot(str)
         def selectSource(self, value):
             self.invoke(session.select_source, value)
@@ -292,17 +329,11 @@ def create_ui(session, *, show=True):
             self.timer.stop()
             session.close()
 
-    from .model_guidance import links, cloud_models
-    from .launcher_copy import display
+    from .model_guidance import cloud_models
     engine = QQmlApplicationEngine()
     bridge = Bridge()
     engine.rootContext().setContextProperty('backend', bridge)
     engine.rootContext().setContextProperty('initialState', bridge.value)
-    # Nested Python tuples remain opaque objects in QML. Named maps become
-    # QVariantMaps, so both the displayed label and clicked URL are available.
-    engine.rootContext().setContextProperty('modelLinks', {
-        component: [dict(label=label, label_zh=display(label, True), url=url) for label, url in rows]
-        for component, rows in links().items()})
     engine.rootContext().setContextProperty('cloudLinks', cloud_models())
     engine.rootContext().setContextProperty('theme', theme())
     engine.load(QUrl.fromLocalFile(str(Path(__file__).parent / 'launcher/Main.qml')))

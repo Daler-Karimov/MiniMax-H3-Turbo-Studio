@@ -7,10 +7,10 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, CancelledError
 
-from .bootstrap import PACKAGE, model_target
+from .bootstrap import PACKAGE, model_target, installation_model_files
 from .locking import runtime_lock
 from .monitoring import save
-from .install_tuning import required_models, hf_receipt, unchanged_before
+from .install_tuning import hf_receipt, unchanged_before
 from . import network
 from .storage import record_download, compact_sources, fingerprint
 from . import model_transfer
@@ -68,13 +68,8 @@ def models(plan):
     ledger = root / 'verified-models.json'
     stamps = json.loads(ledger.read_text(encoding='utf-8')) if ledger.is_file() else {}
     model_dir, encoder_dir = (Path(plan[name]).expanduser().resolve() for name in ('model_dir', 'encoder_dir'))
-    from . import prepared_model
     prepared = plan.get('prepared_model')
-    files = list(required_models(json.loads((PACKAGE / 'model_files.json').read_text(encoding='utf-8')), plan.get('reuse_cache') or prepared))
-    files += prepared_model.files(prepared)
-    from .sampling_assets import install_files, usable_with
-    if prepared or (plan.get('reuse_cache') and usable_with(plan['reuse_cache'])):
-        files += install_files(bool(plan.get('sampling_caches')))
+    files = installation_model_files(prepared, plan.get('reuse_cache'), plan.get('sampling_caches'))
     mode = plan.get('verification', 'auto')
     from .local_models import key as local_key, import_file
     lock = threading.RLock()

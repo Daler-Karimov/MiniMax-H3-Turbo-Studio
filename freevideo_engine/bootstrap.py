@@ -354,6 +354,18 @@ def model_target(row, model_dir, encoder_dir, prepared_dir=None):
     return (model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir) / row['file']
 
 
+def installation_model_files(prepared, reuse_cache, sampling_caches):
+    """The file selection shared by planning and provisioning."""
+    from . import prepared_model
+    from .sampling_assets import install_files, usable_with
+    files = list(required_models(json.loads((PACKAGE / 'model_files.json').read_text(encoding='utf-8')),
+                                 reuse_cache or prepared))
+    files += prepared_model.files(prepared)
+    if prepared or (reuse_cache and usable_with(reuse_cache)):
+        files += install_files(bool(sampling_caches))
+    return files
+
+
 def resolve_prepared_format(requested, saved, hardware):
     """The prepared model format of this setup run: 'int8_convrot' or 'fp8'.
 
@@ -530,18 +542,13 @@ def plan(args, *, local_progress=None, stage=None):
     prepared_dir = prepared['directory'] if prepared else None
     if mac_target and reuse_cache is None and prepared is None:
         errors.append('No verified native-compatible prepared model is available. Source conversion is not supported on Mac.')
-    files = required_models(json.loads((PACKAGE / 'model_files.json').read_text(encoding='utf-8')), reuse_cache or prepared)
-    files += prepared_model.files(prepared)
     # New installations prepare every quality level; an existing one keeps its
     # earlier choice (off if it predates the option) unless the flag says otherwise.
     sampling_caches = getattr(args, 'sampling_caches', None)
     if sampling_caches is None:
         sampling_caches = prior['sampling_caches'] if isinstance(prior.get('sampling_caches'), bool) else not saved.get('ready')
     sampling_caches = bool(sampling_caches)
-    from .sampling_assets import install_files, usable_with
-    if prepared or (reuse_cache and usable_with(reuse_cache)):
-        # Published tables match these weights; other caches compute their own.
-        files += install_files(sampling_caches)
+    files = installation_model_files(prepared, reuse_cache, sampling_caches)
     local_reuse = None
     local_folder = getattr(args, 'reuse_models', None)
     local_manifest = getattr(args, 'reuse_models_manifest', None)
@@ -559,9 +566,19 @@ def plan(args, *, local_progress=None, stage=None):
             if not isinstance(libraries, dict) or libraries.get('version') != 1 or not isinstance(libraries.get('roots'), list):
                 raise ValueError('Invalid model library manifest')
             directories = ([str(local_folder)] if local_folder else []) + libraries['roots']
-            local_reuse = scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
+            scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
         else:
-            local_reuse = scan(local_folder, needed, prior=previous_reuse, callback=local_progress)
+            scan_library = lambda: scan(local_folder, needed, prior=previous_reuse, callback=local_progress)
+        try:
+            local_reuse = scan_library()
+        except OSError as error:
+            if not getattr(args, 'download_list', False):
+                raise
+            from .model_guidance import DownloadListError
+            original = str(error)
+            if error.__cause__ is not None:
+                original += '\n' + str(error.__cause__)
+            raise DownloadListError('read', original_error=original) from error
         local_reuse['copy_mode'] = bool(getattr(args, 'copy_existing_models', False))
         local_reuse['copy_bytes'] = local_reuse['linked_bytes'] = 0
         for row in needed:
@@ -577,18 +594,27 @@ def plan(args, *, local_progress=None, stage=None):
     mismatches = model_repair.read(root)
     replace_models = []
     reserved = set()
+    check_download_list = bool(getattr(args, 'download_list', False))
+    stamps_path = root / 'verified-models.json'
+    stamps = json.loads(stamps_path.read_text(encoding='utf-8')) if check_download_list and stamps_path.is_file() else {}
     for row in files:
         path = model_target(row, model_dir, encoder_dir, prepared_dir)
         replacement = model_repair.replacement(path, row, mismatches, reserved)
         if replacement:
             replace_models.append(replacement)
         size_matches = not replacement and path.is_file() and path.stat().st_size == row['bytes']
+        if size_matches and check_download_list:
+            # Only the explicit third-party list needs this check during planning.
+            # Normal setup keeps its cheap estimate and deferred verification.
+            from .provision import verified
+            hf_directory = Path(prepared_dir) if row.get('prepared') else model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir
+            size_matches = verified(path, row, stamps, mode=getattr(args, 'verify', 'auto'), hf_directory=hf_directory)
         present += row['bytes'] if size_matches else 0
         device = existing_parent(path.parent)
         entry = groups.setdefault(str(device), {'path': str(device), 'needed_bytes': 0,
                                                 'free_bytes': disk_space.free_bytes(device)})
         local = (local_reuse or {}).get('matches', {}).get(row['repo'] + '/' + row['file'])
-        model_entries.append((row, 'found' if size_matches else 'verified' if local else 'download'))
+        model_entries.append((row, ('verified' if check_download_list else 'found') if size_matches else 'verified' if local else 'download'))
         entry['needed_bytes'] += 0 if size_matches or local and local['method'] == 'hardlink' else row['bytes']
         partial = path.with_suffix(path.suffix + '.partial')
         if not size_matches and not local and partial.is_file() and partial.stat().st_size <= row['bytes']:
@@ -717,6 +743,9 @@ def plan(args, *, local_progress=None, stage=None):
             'licenses': ['https://huggingface.co/OpenVDN/vdn-minimax-h3/blob/751739ee5b9e3ac802dca5d5111075fdaeb47885/LICENSE',
                          'https://huggingface.co/t8star/Vdn-Minimax-H3-Comfy',
                          'https://docs.nvidia.com/cuda/eula/index.html']}
+    from .model_guidance import download_files
+    value['download_files'] = download_files(model_entries)
+    value['download_files_verified'] = all(status != 'found' for _, status in model_entries)
     if mac_target:
         from .macos_bootstrap import describe_plan
         describe_plan(value)
@@ -2081,6 +2110,7 @@ def run_main(argv, shown):
     parser.add_argument('--model-downloader', choices=['auto', 'xet'], default='auto',
                         help='xet: require official HF Xet for large weights; no ModelScope/HTTP fallback. Small configs use HTTP; existing files/partials retained')
     parser.add_argument('--plan', '--check', action='store_true', help='Read-only preflight with small network samples; no installation files are written')
+    parser.add_argument('--download-list', action='store_true', help='Verify existing managed files while planning a third-party download list')
     parser.add_argument('--json', action='store_true', help='Print preflight as JSON')
     parser.add_argument('--plain', action='store_true', help='Disable live terminal rendering; append readable log lines')
     parser.add_argument('--verbose', action='store_true', help='Show full setup details, license links and per-step log paths')
@@ -2118,7 +2148,11 @@ def run_main(argv, shown):
                      stage=None if args.plan else lambda *step: prepare_step(ui, *step))
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         prepare_end(ui, False)
-        print('Preflight failed: ' + str(error), file=sys.stderr)
+        from .model_guidance import DownloadListError
+        if isinstance(error, DownloadListError):
+            print('Download list error: ' + error.key, file=sys.stderr)
+        print('Preflight failed: ' + (error.original_error if isinstance(error, DownloadListError) else str(error)),
+              file=sys.stderr)
         return 1
     print(json.dumps(value, indent=2)) if args.json else display(value, ui, verbose=args.verbose)
     if args.plan:
