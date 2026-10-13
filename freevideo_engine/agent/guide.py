@@ -64,7 +64,9 @@ GUIDE = {
         'in parts of up to 15 s (30 s is 15 + 15) that continue one another and join automatically. '
         'Continuing (longer than 15 s, or continue_from) needs two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
-        'Multi-block output is cut to the planned duration. POST /plan shows the chain plan.',
+        'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
+        'A continue_from job saves a new video that holds only the added part; to hand the user one video, '
+        'insert both into a project and export it.',
         'first_frame_reference (default false) reduces drift in a continued video: each continuing part also '
         'sees the first frame of the whole video. Set it when one scene with the same people runs over several '
         'parts and framing, colour or the person may wander. Leave it off for camera moves, big action or a '
@@ -156,7 +158,8 @@ RULES = [
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
     'When a video is done, tell the user it is in "Creations" in FreeVideo, in plain words. Do not read out job, library '
-    'or project ids; give a file path only when the user asks for one.',
+    'or project ids; give a file path only when the user asks for one. If the length differs from what was asked, '
+    'say the real length in seconds and do not explain frame counts.',
     'Ask the user only when you would have to change the content or style they asked for, when the work will '
     'take clearly longer than you told them at the start, or when you would have to delete or overwrite their '
     'own works or edits.',
@@ -187,7 +190,7 @@ RULES_ZH = [
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
     '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“作品”里。不要念任务、作品或剪辑的编号；'
-    '文件路径在用户问起时再给。',
+    '文件路径在用户问起时再给。实际长度和要求的不一样时，只说实际约几秒，不解释帧数。',
     '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
     '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
     '只在 FreeVideo 内工作，不要改动本机的其他文件，不要撤销用户做的修改。'
@@ -319,8 +322,6 @@ def introduction(zh, offers):
     """What the agent tells the user first: only what this installation is known to carry through."""
     rows = ['按描述生成视频，可以给首帧图片或参考图' if zh else
             'Make a video from a description, optionally from a first-frame picture or reference pictures']
-    if offers.get('continuation'):
-        rows.append('把一条视频接着往下生成，做成更长的一条' if zh else 'Continue a video into a longer one')
     if offers.get('editing'):
         rows.append('剪辑：把片段排上时间线，分割、裁剪、删除，再导出成片' if zh else
                     'Edit: put clips on a timeline, split, trim and remove them, then export the finished video')
