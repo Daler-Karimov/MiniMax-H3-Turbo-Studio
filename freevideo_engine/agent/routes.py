@@ -212,7 +212,8 @@ def plan(port, value, jobs=None):
     from .jobs import continuation_problems, cut_problems, parts_problems
     problems = continuation_problems(spec) + cut_problems(spec, spec['seconds'])
     if jobs is not None:
-        problems += parts_problems(spec, jobs.port.chain_runner(), work=jobs.continued_work(spec))
+        problems += parts_problems(spec, jobs.port.chain_runner(), work=jobs.continued_work(spec),
+                                   planned=jobs.planned_parts(spec))
     if problems:
         raise specs.SpecError(problems)
     if jobs is not None:

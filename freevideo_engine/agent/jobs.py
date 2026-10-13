@@ -105,11 +105,12 @@ def cut_problems(spec, seconds, prefix='', *, editor=None):
     return [dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got))]
 
 
-def parts_problems(spec, runner, prefix='', *, editor=None, work=None):
+def parts_problems(spec, runner, prefix='', *, editor=None, work=None, planned=None):
     """One video continues through a limited number of parts; say so before anything is generated.
 
     The chain backend refuses the same request when the chain is created, with the same sentence.
     `work` is the saved video continue_from names (output-relative), or None while it cannot be told.
+    `planned` is the number of parts an unfinished job it continues will have, when that is known instead.
     """
     if runner is None or spec['kind'] != 'generate' or spec.get('refine_from'):
         return []
@@ -126,7 +127,7 @@ def parts_problems(spec, runner, prefix='', *, editor=None, work=None):
                 earlier, needed = 0, max(runner._depths(dict(id=None, blocks=rows)).values())
             else:
                 # A source the backend has no record of counts as one part, as it does there.
-                earlier = (runner._work_parts(work, ()) if work else 1) if continued else 0
+                earlier = (runner._work_parts(work, ()) if work else planned or 1) if continued else 0
                 needed = earlier + count(spec['seconds'])
     except (ValueError, KeyError, TypeError):
         return []  # Not a chain the backend accepts; it says why when the chain is created.
@@ -578,7 +579,8 @@ class Jobs:
                         problems.append(schema.diagnostic(prefix + '/after', 'existing jobs or earlier batch refs', dependency))
                 problems.extend(continuation_problems(normalized, prefix, editor=editor))
                 problems.extend(parts_problems(normalized, self.port.chain_runner(), prefix, editor=editor,
-                                               work=self.continued_work(normalized)))
+                                               work=self.continued_work(normalized),
+                                               planned=self.planned_parts(normalized, rows)))
                 problems.extend(cut_problems(normalized, normalized.get('seconds'), prefix, editor=editor))
                 try:
                     self.port.check(normalized)
@@ -1150,6 +1152,32 @@ class Jobs:
         try:
             return self.port.output_relative(self.source_video(spec['continue_from'])) if spec.get('continue_from') else None
         except Exception:
+            return None
+
+    def planned_parts(self, spec, rows=()):
+        """Parts the unfinished job a request continues will have, from that job's own plan; None when not known."""
+        from ..chain_plan import plan
+        runner, total, seen = self.port.chain_runner(), 0, set()
+        try:
+            while True:
+                identity = (spec.get('continue_from') or {}).get('from_job')
+                source = next((r for r in rows if r['id'] == identity), None) or self.jobs.get(identity)
+                if source is None or identity in seen or source['status'] not in ACTIVE:
+                    return None
+                seen.add(identity)
+                spec = source['spec']
+                if spec['kind'] != 'generate' or spec.get('refine_from') or source.get('editor'):
+                    return None
+                total += len(plan(spec['seconds'], continued=bool(spec.get('continue_from')))['blocks'])
+                if not spec.get('continue_from'):
+                    return total
+                work = self.continued_work(spec)
+                if work is not None:
+                    with runner.lock:
+                        return total + runner._work_parts(work, ())
+                if 'from_job' not in spec['continue_from']:
+                    return total + 1  # A source the backend has no record of counts as one part there.
+        except (ValueError, KeyError, TypeError, AttributeError):
             return None
 
     def media_file(self, row, item, name, *, target=None):

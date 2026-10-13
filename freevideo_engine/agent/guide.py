@@ -218,7 +218,7 @@ CAPABILITIES_ZH = {
     ('GET', '/editor/sources/content'): '下载剪辑项目的源素材或缩略图；使用 GET /projects/{id} 返回的素材标识',
     ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 25 秒',
     ('POST', '/drama/plan'): '预览多镜头影片的剧本和各镜头拍摄条数，不保存、不提交。'
-        '多镜头影片可以逐镜选片；单条视频无论多长，都用一个 generate 任务',
+        '多镜头影片可以逐镜选片；单条视频（最长 60 秒）用一个 generate 任务',
     ('POST', '/drama'): '确认计划后开始拍摄，进度会保存；查看各条画面并逐镜选片',
     ('GET', '/drama'): '查看影片列表；status=active 返回未完成影片的摘要',
     ('GET', '/drama/{id}'): '读取待办事项 todo 和版本 revision；用 since 和 wait=25 等待变化。'

@@ -351,7 +351,7 @@ def contracts(*, local=False):
 
 
 DRAMA_OPERATIONS = {
-    'plan': ('POST', '/drama/plan', 'For a film of several shots with takes to choose from (one video, however long, is one generate job): first preview a screenplay and its take counts without saving or submitting'),
+    'plan': ('POST', '/drama/plan', 'For a film of several shots with takes to choose from (one video of up to 60 seconds is one generate job): first preview a screenplay and its take counts without saving or submitting'),
     'start': ('POST', '/drama', 'After planning, start a durable film; review sheets and choose each shot'),
     'list': ('GET', '/drama', 'List films; status=active returns unfinished summaries'),
     'get': ('GET', '/drama/{id}', 'Read todo and revision; use since and wait=25. If paused, stop acting and long-wait until the user continues'),
