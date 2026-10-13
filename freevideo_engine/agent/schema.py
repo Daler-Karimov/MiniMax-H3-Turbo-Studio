@@ -58,6 +58,9 @@ FILE = string(1024, pattern=r'^(?!/)(?!.*(?:\\|:))(?!.*(?:^|/)\.\.(?:/|$)).+$')
 FRAME = {'oneOf': [enum(('first', 'last')), number(0)]}
 WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 25 seconds without rejecting larger values.', **{'x-clamp': 25})
 CLIENT_WAIT = number(0, 25, default=25)
+# Waiting for the user's words is longer: a person types slowly, and each wait is one tool call.
+INBOX_WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 50 seconds without rejecting larger values.', **{'x-clamp': 50})
+CHAT_ID = string(64, pattern=r'^[A-Za-z0-9_-]{1,64}$')
 EMPTY = obj()
 
 
@@ -291,8 +294,8 @@ def contracts(*, local=False):
         ('POST', '/connect/hello'): route('Report a connected client', body=obj(dict(client=string(80),
             via=enum(('mcp', 'http'))), ('client', 'via'))),
         ('GET', '/connect/status'): route('Read recent connection status', auth=False, local=True),
-        ('GET', '/inbox'): route("Wait at most 25 seconds for the user's words or answers in this session",
-            query=obj({'wait': WAIT})),
+        ('GET', '/inbox'): route("Wait at most 50 seconds for the user's words or answers in this session; "
+            "again=true means nothing new yet, call it again", query=obj({'wait': INBOX_WAIT})),
     }
     for name, (method, suffix, summary) in DRAMA_OPERATIONS.items():
         shape = drama_schema(name)
@@ -333,8 +336,14 @@ def contracts(*, local=False):
             body=obj({'ref': REF}), path=obj({'id': PRODUCTION}, ('id',)), auth=False, local=True, idempotent=True)
     for suffix, method, body in (('', 'GET', None), ('/session', 'GET', None), ('/activity', 'GET', None),
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
-            ('/connect/reset', 'POST', EMPTY)):
+            ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
+            ('/chat/video', 'GET', None),
+            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID}, ('text', 'id'))),
+            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'}},
+                                          ('id', 'approve')))):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
+    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True)})
+    routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for suffix in ('', '/connect'):
         routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
     for name, (method, suffix, summary) in SESSION_OPERATIONS.items():
@@ -1363,7 +1372,7 @@ def _tool_schema(name):
             value['required'].append('shot')
         if name == 'freevideo_wait':
             value['properties'].pop('wait')
-            value['properties']['timeout'] = CLIENT_WAIT
+            value['properties']['timeout'] = number(0, 50, default=25, description='With id at most 25 seconds; without id (the user) up to 50, default 50.')
             value['required'] = [k for k in value['required'] if k != 'id']
         return value
     if name == 'freevideo_asset':

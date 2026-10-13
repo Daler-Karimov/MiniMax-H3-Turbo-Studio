@@ -378,6 +378,8 @@ def register():
     contracts = contract.contracts()
     page_sessions = {}
     connection = dict(connected=False, client=None, via=None, last_seen_at=None)
+    # The conversation in the Autopilot view: the page and the connected agent talk in the agent's latest session.
+    chat = dict(client=None, waiting=0, folds={})
     server._freevideo_agent_connection = connection
 
     def problem(code, message=None, status=None, **details):
@@ -432,6 +434,7 @@ def register():
                     connection['client'] = connection['client'] or request.headers.get('X-FreeVideo-Client', 'HTTP client')[:80]
                     connection['via'] = connection['via'] or 'http'
                     request['agent_client'] = request.headers.get('X-FreeVideo-Client', '')[:80] or 'HTTP client'
+                    chat['client'] = request['agent_client']
                 if definition.get('path'):
                     contract.validate(definition['path'], dict(request.match_info))
                 for key in request.query:
@@ -667,6 +670,194 @@ def register():
                             path=('/api' if request.path.startswith('/api/') else '') + '/freevideo/agent', max_age=12 * 3600)
         return response
 
+    def activity_item(row, *, card=False):
+        view = jobs.view(row, detail=False)
+        value = {k: view.get(k) for k in ('id', 'kind', 'status', 'label', 'project', 'client', 'take',
+                                          'created_at', 'finished_at')}
+        progress = view.get('progress') or {}
+        value['progress'] = {k: progress[k] for k in ('phase', 'step', 'fraction', 'remaining_seconds',
+                             'queue_position') + (('block',) if card else ()) if progress.get(k) is not None}
+        if view.get('waiting_for'):
+            value['waiting_for'] = len(view['waiting_for'])
+        if view.get('error'):
+            value['error'] = view['error']
+        video = (view.get('result') or {}).get('video') or {}
+        if video.get('url'):
+            value['video'] = video['url']
+        if (view.get('result') or {}).get('library_id'):
+            # The work this video became, for the page to show it in My works.
+            value['work'] = view['result']['library_id']
+        if card:
+            # A conversation card: the page plays and pictures the saved work itself, without the agent's token.
+            from urllib.parse import quote
+            value.pop('client')
+            work = value.setdefault('work', None)
+            seconds = row['spec'].get('seconds')
+            size = [row['spec'].get(k) if type(row['spec'].get(k)) is int else None for k in ('width', 'height')]
+            value.update(seconds=seconds if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None,
+                         width=size[0], height=size[1],
+                         thumbnail='/freevideo/library/thumbnail?id=' + quote(work, safe='') if work else None,
+                         play='/freevideo/agent/chat/video?id=' + quote(work, safe='') if work else None)
+        return value
+
+    def agent_state():
+        seen, now = connection['last_seen_at'], time.time()
+        connected = seen is not None and 0 <= now - seen < 600
+        name = (connection['client'] or '').strip()
+        # Programs report their own identifiers; the page shows the name a person knows.
+        shown = ('Claude Code' if name.lower() in ('claude-code', 'claude code', 'claude') else
+                 'Codex' if name.lower().startswith('codex') else name or None)
+        # Every answer to the agent carries the user's unread words, so a recent call will hear them too.
+        return dict(connected=connected, name=shown, listening=connected and (chat['waiting'] > 0 or now - seen < 90))
+
+    def chat_fold(store, sid):
+        """The session as the page shows it: sentences, the jobs made along the way, and questions."""
+        fold = chat['folds'].get(sid)
+        if fold is None:
+            while len(chat['folds']) >= 8:
+                chat['folds'].pop(next(iter(chat['folds'])))
+            fold = chat['folds'][sid] = dict(seq=0, items=[], jobs={}, asked={}, sent={}, ids={})
+        while store.get(sid)['last_seq'] > fold['seq']:
+            rows = store.events(sid, after=fold['seq'], limit=500)
+            if not rows:
+                break
+            for row in rows:
+                fold['seq'] = row['seq']
+                base = dict(seq=row['seq'], at=row['at'], type=row['type'])
+                if row['type'] == 'message':
+                    fold['items'].append(dict(base, role='user' if row['by'] == 'user' else 'agent', text=row['text']))
+                elif row['type'] == 'step' and row['state'] == 'done':
+                    job = (row.get('refs') or {}).get('job')
+                    if job and job not in fold['jobs']:
+                        fold['jobs'][job] = row['seq']
+                        fold['items'].append(dict(base, type='job', job=job))
+                elif row['type'] == 'confirm':
+                    if row['state'] == 'asked':
+                        item = dict(base, id=row['id'], question=row.get('question'),
+                                    estimate_seconds=row.get('estimate_seconds'), state='asked')
+                        fold['asked'][row['id']] = item
+                        fold['items'].append(item)
+                    elif row['id'] in fold['asked']:
+                        fold['asked'][row['id']]['state'] = row['state']
+        return fold
+
+    def chat_current(rows, sid, fold):
+        mine = [r for r in rows if r.get('session') == sid or (fold is not None and r['id'] in fold['jobs'])]
+        active = sorted((r for r in mine if r['status'] in ACTIVE),
+                        key=lambda r: (r['status'] in ('running', 'cancelling'), r['created_at']))
+        return mine, active[-1] if active else None
+
+    def chat_session(store):
+        return store.latest_for(chat['client']) if store is not None and chat['client'] is not None else None
+
+    @routes.get('/freevideo/agent/chat')
+    @guarded
+    async def chat_read(request):
+        after = request[query_key].get('after')
+        def read():
+            store = work_sessions()
+            sid = chat_session(store)
+            rows = jobs.rows()
+            value = dict(agent=agent_state(), session=sid, last_seq=0, read_seq=0, items=[], jobs={}, confirms={}, current=None,
+                         active=sum(1 for r in rows if r['status'] in ACTIVE))
+            if sid is None:
+                return value
+            fold = chat_fold(store, sid)
+            known = {r['id']: r for r in rows}
+            items = [i for i in fold['items'] if i['type'] != 'job' or i['job'] in known]
+            if after is None:
+                items, more = items[-200:], False
+            else:
+                items = [i for i in items if i['seq'] > after]
+                items, more = items[:200], len(items) > 200
+            mark = store.read_until(sid, chat['client'])
+            for item in items:
+                item = dict(item)
+                if item['type'] == 'message' and item['role'] == 'user':
+                    item['read'] = item['seq'] <= mark
+                    if item['seq'] in fold['ids']:
+                        item['id'] = fold['ids'][item['seq']]
+                value['items'].append(item)
+            value['last_seq'] = items[-1]['seq'] if more else fold['seq']
+            # For what the page already holds: how far the agent has read, and how each question stands now.
+            value['read_seq'] = mark
+            value['confirms'] = {identity: item['state'] for identity, item in list(fold['asked'].items())[-50:]}
+            mine, current = chat_current(rows, sid, fold)
+            now = time.time()
+            shown = {r['id']: r for r in mine if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800}
+            shown.update((i['job'], known[i['job']]) for i in items if i['type'] == 'job')
+            value['jobs'] = {identity: activity_item(row, card=True) for identity, row in shown.items()}
+            value['current'] = current['id'] if current else None
+            if current and current['id'] not in value['jobs']:
+                value['jobs'][current['id']] = activity_item(current, card=True)
+            return value
+        return reply(await asyncio.to_thread(read))
+
+    @routes.get('/freevideo/agent/chat/now')
+    @guarded
+    async def chat_now(request):
+        def read():
+            store = work_sessions()
+            sid = chat_session(store)
+            rows = jobs.rows()
+            current = chat_current(rows, sid, chat['folds'].get(sid))[1] if sid else None
+            return dict(agent=agent_state(), current=activity_item(current, card=True) if current else None,
+                        active=sum(1 for r in rows if r['status'] in ACTIVE))
+        return reply(await asyncio.to_thread(read))
+
+    @routes.post('/freevideo/agent/chat')
+    @guarded
+    async def chat_say(request):
+        value = await body(request)
+        def write():
+            store, client = work_sessions(), chat['client']
+            if store is None or client is None:
+                return None
+            sid = store.latest_for(client) or store.create(client=client, by='user')['id']
+            fold = chat_fold(store, sid)
+            if value['id'] in fold['sent']:
+                seq = fold['sent'][value['id']]
+                first = next(i for i in fold['items'] if i['seq'] == seq)
+                return 200, dict(seq=seq, id=value['id'], at=first['at'], session=sid,
+                                 read=seq <= store.read_until(sid, client), agent=agent_state())
+            if store.stopped(sid):
+                # Speaking again continues a conversation the user stopped earlier.
+                store.append(sid, dict(type='control', action='resumed'), by='user')
+            row = store.append(sid, dict(type='message', text=value['text']), by='user')
+            fold['sent'][value['id']] = row['seq']
+            fold['ids'][row['seq']] = value['id']
+            while len(fold['sent']) > 500:
+                fold['ids'].pop(fold['sent'].pop(next(iter(fold['sent']))), None)
+            return 201, dict(seq=row['seq'], id=value['id'], at=row['at'], session=sid, read=False, agent=agent_state())
+        done = await asyncio.to_thread(write)
+        if done is None:
+            # Nothing is kept: no agent has connected since FreeVideo started, so nobody would read it.
+            return reply({'error': dict(code='not_connected', message='No agent is connected.', retryable=True,
+                                        details=[], next='Connect an agent in the Autopilot view, then say it again.',
+                                        request_id=errors.request_id())}, 409)
+        return reply(done[1], done[0])
+
+    @routes.post('/freevideo/agent/chat/confirm')
+    @guarded
+    async def chat_confirm(request):
+        value = await body(request)
+        def write():
+            store = work_sessions()
+            sid = chat_session(store)
+            if sid is None:
+                raise JobError('not_found', 'No conversation')
+            row = store.append(sid, dict(type='confirm', id=value['id'],
+                                         state='approved' if value['approve'] else 'declined'), by='user')
+            return dict(id=row['id'], state=row['state'])
+        return reply(await asyncio.to_thread(write))
+
+    @routes.get('/freevideo/agent/chat/video')
+    @guarded
+    async def chat_video(request):
+        # The finished video of a work, for the local page to play in the conversation.
+        path = await asyncio.to_thread(port.library_video, request[query_key]['id'])
+        return web.FileResponse(path, headers={'Content-Type': 'video/mp4', 'Cache-Control': 'private, no-store'})
+
     @routes.get('/freevideo/agent/activity')
     @guarded
     async def activity(request):
@@ -675,25 +866,7 @@ def register():
             now = time.time()
             rows = sorted(jobs.rows(), key=lambda r: r['created_at'], reverse=True)
             shown = [r for r in rows if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800][:12]
-            def item(row):
-                view = jobs.view(row, detail=False)
-                value = {k: view.get(k) for k in ('id', 'kind', 'status', 'label', 'project', 'client', 'take',
-                                                  'created_at', 'finished_at')}
-                progress = view.get('progress') or {}
-                value['progress'] = {k: progress[k] for k in ('phase', 'step', 'fraction', 'remaining_seconds',
-                                                              'queue_position') if progress.get(k) is not None}
-                if view.get('waiting_for'):
-                    value['waiting_for'] = len(view['waiting_for'])
-                if view.get('error'):
-                    value['error'] = view['error']
-                video = (view.get('result') or {}).get('video') or {}
-                if video.get('url'):
-                    value['video'] = video['url']
-                if (view.get('result') or {}).get('library_id'):
-                    # The work this video became, for the page to show it in My works.
-                    value['work'] = view['result']['library_id']
-                return value
-            return dict(active=sum(1 for r in rows if r['status'] in ACTIVE), jobs=[item(r) for r in shown])
+            return dict(active=sum(1 for r in rows if r['status'] in ACTIVE), jobs=[activity_item(r) for r in shown])
         return reply(await asyncio.to_thread(read))
 
     @routes.post('/freevideo/agent/activity/cancel')
@@ -1266,23 +1439,35 @@ def register():
     async def inbox(request):
         # The hook already attached this request to the caller's session; answer with its unread user words.
         store, sid = work_sessions(), request.get('agent_session')
-        deadline = time.monotonic() + min(25., float(request[query_key].get('wait', '0') or 0))
-        while True:
-            if store is not None and sid is not None:
-                # Mark before reading so words arriving in between wake the wait below.
-                def read():
-                    mark = store.get(sid)['last_seq']
-                    return mark, store.unread(sid, request['agent_client'])
-                mark, pending = await asyncio.to_thread(read)
-                if pending:
-                    return reply(dict(session=sid, inbox=pending[-20:]))
-            left = deadline - time.monotonic()
-            if left <= 0:
-                return reply(dict(session=sid, inbox=[]))
-            if store is None or sid is None:
-                await asyncio.sleep(min(left, 1.))
-            else:
-                await store.wait(sid, after=mark, seconds=left, by='user')
+        client = request['agent_client']
+        if store is not None and sid is None:
+            # An agent that only listens has no session yet: give it one, so the page can speak into it.
+            sid = await asyncio.to_thread(lambda: store.latest_for(client) or store.create(client=client)['id'])
+            request['agent_session'] = sid
+        deadline = time.monotonic() + min(50., float(request[query_key].get('wait', '0') or 0))
+        chat['waiting'] += 1
+        try:
+            while True:
+                if store is not None and sid is not None:
+                    # Mark before reading so words arriving in between wake the wait below.
+                    def read():
+                        mark = store.get(sid)['last_seq']
+                        return mark, store.unread(sid, client)
+                    mark, pending = await asyncio.to_thread(read)
+                    if pending:
+                        return reply(dict(session=sid, inbox=pending[-20:]))
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    # again: nothing new this time; the caller simply waits once more.
+                    return reply(dict(session=sid, inbox=[], again=True))
+                if store is None or sid is None:
+                    await asyncio.sleep(min(left, 1.))
+                else:
+                    await store.wait(sid, after=mark, seconds=min(left, 25.), by='user')
+        finally:
+            chat['waiting'] -= 1
+            # The agent was here for the whole wait, not only when it began.
+            connection['last_seen_at'] = time.time()
 
     @routes.get(PREFIX + '/queue')
     @guarded

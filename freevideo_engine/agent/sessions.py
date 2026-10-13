@@ -316,6 +316,12 @@ class Sessions:
             rows = [row for sid, row in self._meta.items() if client in self._clients[sid]]
             return max(rows, key=lambda r: (r['updated_at'], r['id']))['id'] if rows else None
 
+    def read_until(self, sid, reader) -> int:
+        """The last event this reader has been given; unread() moves it."""
+        with self.lock:
+            self._get(sid)
+            return self._readers.get((sid, reader), self._initial_seq[sid])
+
     def stopped(self, sid) -> bool:
         with self.lock:
             return self._get(sid)['stopped']
