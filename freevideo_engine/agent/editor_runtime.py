@@ -17,13 +17,16 @@ WEB = Path(__file__).resolve().parents[2] / 'web'
 # import does. editor_model and editor_text_model import each other: the
 # module still loading is reached only through a namespace import.
 MODULES = ('editor_picture_fields', 'editor_transport_model', 'editor_audio_model', 'editor_speed_model',
-           'editor_text_model', 'editor_model', 'editor_room', 'editor_actions', 'editor_generation', 'editor_store')
+           'editor_text_model', 'editor_model', 'editor_room', 'editor_actions', 'editor_generation', 'chain_support',
+           'editor_store')
 TIME_LIMIT = 5.0
 MEMORY_LIMIT = 256 * 2**20
 STACK_LIMIT = 4 * 2**20
 
 _IMPORT = re.compile(r"^import\s+(\*\s+as\s+([\w$]+)|\{([^}]*)\})\s+from\s+'\./([\w]+)\.js';[ \t]*$", re.M)
 _EXPORT = re.compile(r'^export\s+((?:async\s+)?(?:function\*?|const|let|class)\s+([\w$]+))', re.M)
+# `export {a, b as c};` — names the module already holds, its own or imported ones.
+_EXPORT_LIST = re.compile(r'^export\s+\{([^}]*)\};[ \t]*$', re.M)
 _LEFT = re.compile(r'^\s*(?:import|export)\b', re.M)
 
 # structuredClone for the plain JSON-like values the rules copy, and the newer array/string/object
@@ -239,7 +242,12 @@ globalThis.__deliver = text => {
 
 
 def _module(name, source):
-    exports = [match.group(2) for match in _EXPORT.finditer(source)]
+    exports = [(match.group(2), match.group(2)) for match in _EXPORT.finditer(source)]
+    for match in _EXPORT_LIST.finditer(source):
+        for part in (part.strip() for part in match.group(1).split(',')):
+            if part:
+                local, _, public = part.partition(' as ')
+                exports.append((public.strip() or local.strip(), local.strip()))
 
     def imported(match):
         if match.group(2):
@@ -248,11 +256,11 @@ def _module(name, source):
         names = [re.sub(r'\s+as\s+', ': ', part) for part in names]
         return f"const {{{', '.join(names)}}} = __load('{match.group(4)}');"
 
-    body = _EXPORT.sub(r'\1', _IMPORT.sub(imported, source))
+    body = _EXPORT_LIST.sub('', _EXPORT.sub(r'\1', _IMPORT.sub(imported, source)))
     if _LEFT.search(body):
         raise ValueError(f'{name}.js: unsupported import or export form')
-    getters = ''.join(f"Object.defineProperty(__exports, '{export}', {{enumerable: true, get: () => {export}}});\n"
-                      for export in exports)
+    getters = ''.join(f"Object.defineProperty(__exports, '{public}', {{enumerable: true, get: () => {local}}});\n"
+                      for public, local in exports)
     return f"__define('{name}', function (__exports) {{\n'use strict';\n{getters}{body}\n}});\n"
 
 
