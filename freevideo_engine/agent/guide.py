@@ -158,7 +158,7 @@ RULES = [
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
-    'When a video is done, tell the user it is in "Creations" in FreeVideo, in plain words. Do not read out job, library '
+    'When a video is done, tell the user it is in "Your creations" in FreeVideo, in plain words. Do not read out job, library '
     'or project ids; give a file path only when the user asks for one. If the length differs from what was asked, '
     'say the real length in seconds and do not explain frame counts.',
     'Ask the user only when you would have to change the content or style they asked for, when the work will '
@@ -191,7 +191,7 @@ RULES_ZH = [
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
-    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“作品”里。不要念任务、作品或剪辑的编号；'
+    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“我的作品”里。不要念任务、作品或剪辑的编号；'
     '文件路径在用户问起时再给。实际长度和要求的不一样时，只说实际约几秒，不解释帧数。',
     '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
     '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
@@ -402,7 +402,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      '返回后接着发下一条。'
                      '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
                      '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
-                     '或者一句用户需要知道的话，发回同一个 session，再接着等。'
+                     '或者一句用户需要知道的话，发回同一个 session，再接着等。中文用全角标点。'
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
@@ -419,7 +419,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
                      '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
                      'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
-                     'user needs to know, to the same session, and wait again. Do not create another session for this conversation. '
+                     'user needs to know, to the same session, and wait again. Chinese text takes full-width punctuation. Do not create another session for this conversation. '
                      'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'

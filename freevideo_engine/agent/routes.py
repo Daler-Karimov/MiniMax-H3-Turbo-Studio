@@ -721,6 +721,12 @@ def register():
             return text if len(text) <= 24 else text[:25].rsplit(' ', 1)[0][:24]
         return text[:8]
 
+    wide = str.maketrans(',:;!?', '，：；！？')
+
+    def chat_text(text):
+        """Chinese an agent writes keeps Chinese punctuation: a mark right after a Chinese character is the wide one."""
+        return re.sub(r'(?<=[\u3400-\u4dbf\u4e00-\u9fff])[,:;!?]', lambda found: found.group().translate(wide), text)
+
     def chat_card(row, fold):
         card = activity_item(row, card=True)
         if not card.get('label') and fold is not None:
@@ -1179,6 +1185,8 @@ def register():
                 raise JobError('forbidden', 'Only the page user may stop or continue')
             if value['action'] == 'stopped':
                 return reply(await stop_session(sid), 201)
+        if by == 'agent' and value['type'] == 'message' and isinstance(value.get('text'), str):
+            value['text'] = chat_text(value['text'])
         return reply(await asyncio.to_thread(sessions.append, sid, value,
             by=by, client=session_client(request, by)), 201)
 
