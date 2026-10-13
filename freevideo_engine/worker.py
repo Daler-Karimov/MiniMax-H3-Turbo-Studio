@@ -140,6 +140,20 @@ def generate(request, resident=None):
         if live_budget is not None:
             # The pass cache grows only into memory no other process holds.
             refresh_budget.device_headroom = live_budget.device_headroom
+
+            def release_idle():
+                freed = 0
+                if resident is not None:
+                    for role in tuple(resident.entries):
+                        if role != 'engine':
+                            held = torch.cuda.memory_allocated()
+                            resident.drop(role, 'Video memory budget was cut during sampling')
+                            freed += max(0, held - torch.cuda.memory_allocated())
+                return freed
+            # Read between layers: a cut inside a step is answered there, not at the next step.
+            from types import SimpleNamespace
+            refresh_budget.pressure = SimpleNamespace(local=live_budget.local_memory, release=release_idle,
+                                                      limit=lambda: live_budget.limit)
         if resident is not None:
             # Idle models stay beside sampling only where the device holds both,
             # with this request's growth reserve left over.

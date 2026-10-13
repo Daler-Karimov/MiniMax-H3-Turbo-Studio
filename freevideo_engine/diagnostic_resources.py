@@ -611,6 +611,15 @@ def sampling_passes(value):
         preparation = mapping(row.get('refinement_schedule_preparation'))
         if preparation.get('schedule') == 'community-sigma3-v1':
             item['schedule_cache'] = numbers(preparation, ('seconds', 'table_cache_hits'))
+        pressure = mapping(row.get('step_pressure'))
+        if pressure:
+            item['step_pressure'] = dict(numbers(pressure, ('planned_head_chunk', 'head_chunk_at_end', 'polls', 'unread',
+                'over_polls', 'held_up_layers', 'wide_peak_reserved_bytes')),
+                narrowed_at_end=pressure.get('narrowed_at_end') is True,
+                actions=[dict(action=row['action'], **numbers(row, ('step', 'layer', 'budget_bytes', 'usage_bytes',
+                    'freed_bytes', 'head_chunk_from', 'head_chunk_to', 'layer_seconds')))
+                    for row in map(mapping, sequence(pressure.get('actions'))[:32])
+                    if row.get('action') in ('release_idle', 'narrow', 'restore', 'nothing_left')])
         item['step_seconds'] = [duration for duration in sequence(row.get('step_seconds'))[:32]
                                 if type(duration) in (int, float) and math.isfinite(duration) and duration >= 0]
         if row.get('device_backend') == 'mps':
