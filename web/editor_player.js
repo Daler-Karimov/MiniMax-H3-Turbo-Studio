@@ -16,7 +16,17 @@ export const transportTime = frames => {
     const seconds = Math.floor(Math.max(0, frames) / 24);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
-export function createEditorPlayer(host, transport, {state, sources, api, t, error = () => {}, readAudioSamples = null, preservePreview = () => false}) {
+
+// Only changes to playable audio ask the server again; transport ticks never do.
+export const playbackAudioSignature = record => JSON.stringify([record.id, record.tracks.filter(t => t.kind === 'audio').map(track =>
+    [track.id, track.clips.map(c => [c.id, c.source, c.start, c.frames, c.in, c.length, c.volume, c.splice])])]);
+export function selectAudioChain(chains, track, clip, position, volumePreview = new Map()) {
+    const chain = chains.find(c => c.ready && c.audio && c.track === track && c.clips.includes(clip?.id)
+        && position >= c.start && position < c.start + c.frames
+        && !c.clips.some(id => volumePreview.has(id) && volumePreview.get(id) !== 1));
+    return chain ? {chain, seconds: (position - chain.start) / 24 + (chain.offset || 0)} : null;
+}
+export function createEditorPlayer(host, transport, {state, sources, api, t, error = () => {}, readAudioSamples = null, preservePreview = () => false, prepareAudio = () => true}) {
     const frame = el('div', 'fv-ed-picture'); frame.setAttribute('aria-label', t('Video preview', '视频预览'));
     const empty = el('div', 'fv-ed-empty-preview'), pictureIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     pictureIcon.setAttribute('viewBox', '0 0 24 24'); pictureIcon.setAttribute('aria-hidden', 'true');
@@ -29,13 +39,18 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
     closeIcon.setAttribute('viewBox', '0 0 16 16'); closeIcon.setAttribute('aria-hidden', 'true'); closePath.setAttribute('d', 'm4 4 8 8M12 4l-8 8'); closeIcon.append(closePath); closePreview.append(closeIcon); frame.append(closePreview);
     const videos = [el('video'), el('video')]; videos.forEach(video => { video.playsInline = true; video.preload = 'auto'; video.controls = false; video.setAttribute('aria-hidden', 'true'); frame.append(video); });
     const audio = [el('audio'), el('audio')]; audio.forEach(value => { value.preload = 'auto'; frame.append(value); });
+    const chainAudio = new Map(); // Separate players keep the other track's media slot stable.
+    const allMedia = () => [...videos, ...audio, ...chainAudio.values()];
     const pictureGuide = createPictureGuide(host, frame, {state, t});
     const pictureEdit = pictureSession(state, t);
     const picturePreview = createPreviewPicture(host, frame, {state, t});
     const playButton = el('button', 'fv-ed-play'); playButton.type = 'button'; playButton.title = t('Space', '空格');
     const time = el('span', 'fv-ed-time'); time.setAttribute('aria-live', 'off'); transport.append(playButton, time);
     let active = 0, clipId = null, playing = false, disposed = false, raf = null, clockStart = 0, frameStart = 0, ticking = false, preview = null, previewSize = null, previewProject = null;
-    let audioContext = null, textRenderer = null;
+    let audioContext = null, textRenderer = null, chains = [], chainSignature = null, chainRequest = null, chainEpoch = 0;
+    const failedChains = new Set(), entries = new Map();
+    let seekGeneration = 0;
+    const chainSeconds = (chain, position) => Math.max(0, (position - chain.start) / 24 + (chain.offset || 0));
     const playback = createPlaybackClock();
     const gains = new WeakMap(), volumePreview = new Map();
     const audioPreview = createAudioPreview({state, sources, api, volumePreview, readSamples: readAudioSamples, error});
@@ -63,9 +78,132 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
         }
         if (running) { if (media.paused) media.play().catch(() => {}); } else media.pause();
     }
-    function stopMedia(media) { media.pause(); media._editorRunning = false; }
-    for (const media of [...videos, ...audio]) {
+    function stopMedia(media) { media.pause(); media._editorRunning = false; delete media.dataset.audioChain; }
+    function metadataHandler(media) {
         media.onloadedmetadata = () => { if (disposed) return; try { media.currentTime = media._editorTime || 0; } catch {} if (media._editorRunning) media.play().catch(() => {}); };
+    }
+    [...videos, ...audio].forEach(metadataHandler);
+    function failChain(media) {
+        if (disposed || media._chainEpoch !== chainEpoch) return;
+        clearTimeout(media._startTimer);
+        failedChains.add(media._chain.key);
+        stopMedia(media); media.muted = true; media._attempt = null;
+        render();
+    }
+    function chainMedia(chain) {
+        if (!chainAudio.has(chain.key)) {
+            const media = el('audio'); media.preload = 'auto'; media.muted = true;
+            media._chain = chain; media._chainEpoch = chainEpoch;
+            media.dataset.preparedChain = chain.key;
+            media.dataset.source = mediaURL(api, chain.audio); media.src = media.dataset.source;
+            const prepared = () => {
+                if (disposed || media._chainEpoch !== chainEpoch) return;
+                if (!media._editorRunning && !media.seeking) {
+                    const target = chainSeconds(chain, state.playhead);
+                    if (Math.abs(media.currentTime - target) > .001) {
+                        try { media.currentTime = target; } catch {}
+                    }
+                }
+            };
+            media.onloadedmetadata = prepared;
+            media.onerror = () => failChain(media);
+            media.onwaiting = media.onstalled = () => {
+                // Once selected, a buffer underrun restores the original path.
+                if (media._editorRunning) failChain(media);
+            };
+            chainAudio.set(chain.key, media); frame.append(media); media.load();
+        }
+        return chainAudio.get(chain.key);
+    }
+    function resetEntries() {
+        seekGeneration++; entries.clear();
+        for (const media of chainAudio.values()) {
+            clearTimeout(media._startTimer);
+            stopMedia(media); media.muted = true; media.playbackRate = 1; media._attempt = null;
+            const target = chainSeconds(media._chain, state.playhead);
+            if (media.readyState >= 1 && Math.abs(media.currentTime - target) > .001) {
+                try { media.currentTime = target; } catch {}
+            }
+        }
+    }
+    function removeChains() {
+        resetEntries();
+        for (const media of chainAudio.values()) {
+            media.onloadedmetadata = media.onerror = media.onwaiting = media.onstalled = null;
+            media.removeAttribute('src'); media.load(); media.remove();
+        }
+        chainAudio.clear();
+    }
+    function useChain(joined, track) {
+        if (!joined) { entries.delete(track); return null; }
+        const {chain, seconds} = joined, media = chainMedia(chain);
+        if (!playing) {
+            stopMedia(media); media.muted = true; media._editorTime = seconds;
+            if (media.readyState >= 1 && !media.seeking && Math.abs(media.currentTime - seconds) > .001) {
+                try { media.currentTime = seconds; } catch {}
+            }
+            // Paused positioning is preparation, never a sound takeover.
+            media.dataset.audioChain = chain.key;
+            return null;
+        }
+        let entry = entries.get(track);
+        if (!entry || entry.key !== chain.key) {
+            entry = {key: chain.key, mode: 'legacy', epoch: chainEpoch, generation: seekGeneration};
+            entries.set(track, entry);
+            // Lock this passage to originals if data or the seek target is not ready.
+            if (media.readyState < 3 || media.seeking || Math.abs(media.currentTime - seconds) > .08) return null;
+            entry.mode = 'starting'; media._editorRunning = true; media.muted = true;
+            media.dataset.audioChain = chain.key; media._attempt = entry;
+            const url = media.dataset.source;
+            const current = () => !disposed && playing && entries.get(track) === entry
+                && entry.epoch === chainEpoch && entry.generation === seekGeneration
+                && media._attempt === entry && media.dataset.source === url;
+            const rejected = () => { if (current()) failChain(media); };
+            media._startTimer = setTimeout(rejected, 1500);
+            try {
+                Promise.resolve(media.play()).then(() => {
+                    if (!current()) return;
+                    const target = chainSeconds(chain, state.playhead);
+                    if (media.paused || media.seeking || media.readyState < 3 || Math.abs(media.currentTime - target) > .08) {
+                        rejected(); return;
+                    }
+                    clearTimeout(media._startTimer); entry.mode = 'active'; render();
+                }, rejected);
+            } catch { rejected(); }
+        }
+        if (entry.mode !== 'active') return null;
+        if (media.paused || media.seeking || media.readyState < 3) { failChain(media); return null; }
+        const drift = seconds - media.currentTime;
+        // 80 ms triggers gentle clock correction, not a bound on presented A/V.
+        // Explicit user seeks reset the entry; normal ticks do not repeatedly seek.
+        if (Math.abs(drift) > .25) { failChain(media); return null; }
+        media.playbackRate = Math.abs(drift) > .08 ? (drift > 0 ? 1.03 : .97) : 1;
+        media.muted = false; media.dataset.audioChain = chain.key;
+        return joined;
+    }
+    function refreshChains() {
+        if (!prepareAudio()) return;
+        const signature = playbackAudioSignature(state.record);
+        if (chainSignature === signature) return;
+        chainSignature = signature; chains = []; failedChains.clear(); chainRequest?.abort(); removeChains();
+        const epoch = ++chainEpoch;
+        if (typeof api.fetchApi !== 'function') return;
+        chainRequest = new AbortController();
+        // Send the current edit, including unsaved trims; do not wait for autosave.
+        api.fetchApi('/freevideo/editor/audio-chains', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({project: model.serialize(state.record)}), signal: chainRequest.signal})
+            .then(response => response.ok ? response.json() : null).then(value => {
+                if (disposed || epoch !== chainEpoch) return;
+                chains = Array.isArray(value?.chains) ? value.chains : [];
+                // Preload independently of selection; a late response never takes
+                // over a passage which started with the original sound.
+                for (const chain of chains) if (chain.ready && chain.audio) {
+                    chainMedia(chain);
+                    if (playing && state.playhead >= chain.start && state.playhead < chain.start + chain.frames)
+                        entries.set(chain.track, {key: chain.key, mode: 'legacy'});
+                }
+                render();
+            }).catch(() => { /* Missing route, cancellation or preparation failure: ordinary playback. */ });
     }
     function located(record, position) {
         // The model owns which content covers the frame. Normalize its query rows.
@@ -82,6 +220,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
     }
     function render() {
         if (disposed) return;
+        refreshChains();
         // The total is what export writes (picture and sound); text past it is not exported.
         const record = state.record, position = state.playhead, total = model.exportFrames(record);
         const hasContent = record.tracks.some(track => track.clips.some(clip => clip.source || isText(clip)));
@@ -110,7 +249,16 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
             clipId = clip.id;
         }
         const linked = hasPicture ? [...map.values()].find(row => row.clip.id === clip.link) : null;
-        const processedAudio = audioPreview.render({record, position, playing: playing && playback.rate > 0, playbackRate: playback.rate}), separate = processedAudio || !!linked?.clip.splice || !hasPicture || separateSpeedAudio(linked?.clip);
+        const processedAudio = audioPreview.render({record, position, playing: playing && playback.rate > 0, playbackRate: playback.rate});
+        // The joined sound is the plain forward path only: sound edits, changed speed and
+        // backward playback keep their own routes and the original sound.
+        const plainSpeed = id => !separateSpeedAudio(model.find(record, id));
+        const availableChains = processedAudio || playback.rate !== 1 ? [] : chains.filter(c => !failedChains.has(c.key) && c.clips.every(plainSpeed));
+        const selected = new Map([...map].filter(([track]) => track !== 'v1').map(([track, row]) =>
+            [track, useChain(selectAudioChain(availableChains, track, row.clip, position, volumePreview), track)]));
+        const linkedChain = linked && [...selected.values()].some(value => value?.chain.clips.includes(linked.clip.id));
+        const originalSeparate = processedAudio || !!linked?.clip.splice || !hasPicture || separateSpeedAudio(linked?.clip);
+        const separate = originalSeparate || linkedChain;
         if (hasPicture) {
             const video = videos[active], speedPlayback = previewSpeed(video, clip, playing, linked?.clip); video.muted = !linked || separate || playback.rate < 0 || speedPlayback.muted;
             seekMedia(video, mediaURL(api, source.video), (videoRow.frame + (playing && playback.rate > 0 ? 0 : .5)) / 24, speedPlayback.running && map.get('v1')?.clip.id === clip.id, clipVolume(linked?.clip));
@@ -118,16 +266,33 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
         }
         picturePreview.update({clip: hasPicture ? clip : null, size: hasPicture && clipPictureSize(clip, sources), video: videos[active], preview: !!preview, playing});
         let slot = 0;
+        const usedChains = new Set();
         for (const [track, row] of map) {
             if (processedAudio) break;
-            if (isText(row.clip) || track === 'v1' || (hasPicture && row.clip.link === clip.id && !separate)) continue;
+            if (isText(row.clip) || track === 'v1') continue;
             const metadata = sources.get(sourceKey(row.clip.source));
-            if (!metadata || metadata.missing || slot >= audio.length) continue;
+            if (!metadata || metadata.missing) continue;
+            const carriedByVideo = hasPicture && row.clip.link === clip.id && !originalSeparate;
+            const joined = selected.get(track);
+            if (joined) {
+                usedChains.add(joined.chain.key);
+                // Reserve precisely the slot this row used before joining.
+                if (!carriedByVideo && metadata.audio && slot < audio.length) stopMedia(audio[slot++]);
+                continue;
+            }
+            if (carriedByVideo || slot >= audio.length) continue;
             const url = mediaURL(api, metadata.audio); if (!url) continue;
-            const sound = audio[slot++], playback = previewSpeed(sound, row.clip, playing); sound.muted = playback.muted;
-            seekMedia(sound, url, audioSeconds(row.clip, speedAudioFrame(row.clip, position - row.clip.start)), playback.running, clipVolume(row.clip));
+            const media = audio[slot++], speed = previewSpeed(media, row.clip, playing); delete media.dataset.audioChain; media.muted = speed.muted;
+            seekMedia(media, url, audioSeconds(row.clip, speedAudioFrame(row.clip, shown - row.clip.start)), speed.running, clipVolume(row.clip));
         }
         while (slot < audio.length) stopMedia(audio[slot++]);
+        for (const [key, media] of chainAudio) if (!usedChains.has(key)) {
+            if (media._attempt && entries.get(media._chain.track) === media._attempt && media._attempt.mode === 'starting') continue;
+            const pausedSelection = !playing && availableChains.some(c => c.key === key
+                && selectAudioChain([c], c.track, map.get(c.track)?.clip, position, volumePreview));
+            stopMedia(media); media.muted = true;
+            if (pausedSelection) media.dataset.audioChain = key;
+        }
         const next = record.tracks[0].clips.find(value => value.start >= (clip ? clip.start + clip.frames : position) && value.source);
         const metadata = next && sources.get(sourceKey(next.source));
         if (metadata?.video && !metadata.missing) {
@@ -140,7 +305,9 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
         if (!playing || disposed) return;
         const total = model.exportFrames(state.record), {frame: position, stop} = playback.advance(now, total);
         const target = stop && playback.rate > 0 && !playback.range ? Math.max(0, total - 1) : position;
-        ticking = true; state.seek(target); ticking = false; render();
+        // A loop that starts over is a jump like a user's: the joined sound starts again from there.
+        // A loop that starts over is a jump like a user's: the joined sound and the clock start again from there.
+        ticking = (target - state.playhead) * playback.rate >= 0; state.seek(target); ticking = false; render();
         if (stop) { pause(); return; }
         raf = requestAnimationFrame(tick);
     }
@@ -152,16 +319,17 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
         clearPreview();
         const total = model.exportFrames(state.record), restart = !playback.range && !playback.loop && playback.rate > 0 && state.playhead >= Math.max(0, total - 1);
         state.seek(playback.begin(restart ? 0 : state.playhead, total));
-        playing = true; clockStart = performance.now(); frameStart = state.playhead; render(); raf = requestAnimationFrame(tick);
+        resetEntries(); playing = true; clockStart = performance.now(); frameStart = state.playhead; render(); raf = requestAnimationFrame(tick);
         playback.reset(clockStart, frameStart);
     }
-    function pause() { playing = false; playback.rate = 1; cancelAnimationFrame(raf); [...videos, ...audio].forEach(stopMedia); render(); }
+    function pause() { playing = false; playback.rate = 1; resetEntries(); cancelAnimationFrame(raf); allMedia().forEach(stopMedia); render(); }
     playButton.onclick = () => playing ? pause() : play();
     const unsubscribe = state.subscribe(event => {
         if (event.type === 'selection') { if (pictureEdit.panelOpen && pictureEdit.selected()) clearPreview(); render(); return; }
         if (event.type !== 'playhead' && event.type !== 'record') return;
         if (preview && preservePreview()) previewProject = pictureLayout(state.record);
         else if (event.type === 'playhead' || previewProject !== pictureLayout(state.record)) clearPreview();
+        if (!ticking) resetEntries();
         if (playing && !ticking) { clockStart = performance.now(); frameStart = state.playhead; }
         if (playing && !ticking) playback.reset(clockStart, frameStart);
         render();
@@ -192,7 +360,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
             preview.onended = () => { clearPreview(); render(); };
             preview.src = mediaURL(api, metadata.video || metadata.audio); frame.append(preview); closePreview.hidden = false; render(); preview.play().catch(() => {});
         },
-        dispose() { disposed = true; playing = false; cancelAnimationFrame(raf); unsubscribe(); stopPictureEdit(); clearPreview(); audioPreview.dispose();
-            [...videos, ...audio].forEach(media => { media.pause(); media.onloadedmetadata = null; media.removeAttribute('src'); delete media.dataset.source; media.load(); media.remove(); }); playButton.onclick = closePreview.onclick = null; picturePreview.dispose(); pictureGuide.dispose(); audioContext?.close().catch(() => {}); },
+        dispose() { disposed = true; playing = false; chainRequest?.abort(); removeChains(); cancelAnimationFrame(raf); unsubscribe(); stopPictureEdit(); clearPreview(); audioPreview.dispose();
+            allMedia().forEach(media => { media.pause(); media.onloadedmetadata = media.onerror = null; media.removeAttribute('src'); delete media.dataset.source; media.load(); media.remove(); }); playButton.onclick = closePreview.onclick = null; picturePreview.dispose(); pictureGuide.dispose(); audioContext?.close().catch(() => {}); },
     };
 }

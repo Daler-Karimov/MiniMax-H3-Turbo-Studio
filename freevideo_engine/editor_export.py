@@ -13,6 +13,7 @@ import math
 import os
 import re
 import threading
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -22,6 +23,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from .editor_frames import display_frame, frame_not_after, last_frame_end
+from .comfy_continuation import audio_lead_in, apply_audio_lead_in
 from .editor_text import is_text_track, has_text_data, validate_text_project, paint_project, check_export_text, MissingGlyphs
 from . import editor_export_options
 from .editor_speed import validate_clip, changed as speed_changed, audio_changed, independent_join, VideoReader, AudioReader
@@ -233,7 +235,7 @@ class _VideoReader:
 
 class _AudioReader:
     """One resampled packet at a time; timestamps preserve offsets and seek alignment."""
-    def __init__(self, path, first_sample, cancelled):
+    def __init__(self, path, first_sample, cancelled, *, rate=SAMPLE_RATE):
         import av
         self.container = None
         try:
@@ -243,10 +245,11 @@ class _AudioReader:
             origin_stream = next(iter(self.container.streams.video), self.stream)
             self.origin = Fraction(origin_stream.start_time or 0) * origin_stream.time_base
             self.mono = len(self.stream.layout.channels) == 1
+            self.rate = rate
             self.resampler = av.AudioResampler(format='fltp', layout='mono' if self.mono else 'stereo',
-                                              rate=SAMPLE_RATE)
-            if first_sample > SAMPLE_RATE:
-                stamp = self.origin + Fraction(first_sample, SAMPLE_RATE) - Fraction(1, 10)
+                                              rate=rate)
+            if first_sample > rate:
+                stamp = self.origin + Fraction(first_sample, rate) - Fraction(1, 10)
                 if self.stream.duration is not None:
                     # A legal picture range may extend past the sound's end.
                     # Seek into its last packet, then let samples() pad with zero.
@@ -271,7 +274,7 @@ class _AudioReader:
         for frame in self.container.decode(self.stream):
             _check(self.cancelled)
             for item in self.resampler.resample(frame):
-                stamp = (round((Fraction(item.pts) * item.time_base - self.origin) * SAMPLE_RATE)
+                stamp = (round((Fraction(item.pts) * item.time_base - self.origin) * self.rate)
                          if item.pts is not None else fallback)
                 data = item.to_ndarray()
                 if self.mono:
@@ -366,6 +369,222 @@ def _audio_frame(samples, **kwargs):
     return av.AudioFrame.from_ndarray(samples, **kwargs)
 
 
+def _native_audio_length(path, cancelled=None):
+    """Only generated stereo 32 kHz media with an exact duration can join."""
+    import av
+    with av.open(str(path)) as source:
+        if len(source.streams.audio) != 1:
+            return None
+        stream = source.streams.audio[0]
+        origin = next(iter(source.streams.video), stream)
+        if (stream.rate != SPLICE_RATE or stream.layout.name != 'stereo'
+                or stream.duration is None
+                or Fraction(stream.start_time or 0) * stream.time_base !=
+                   Fraction(origin.start_time or 0) * origin.time_base):
+            return None
+        count = Fraction(stream.duration) * stream.time_base * SPLICE_RATE
+        if count.denominator != 1 or count <= 0:
+            return None
+        # MP4 edit lists can make the first decoded frame appear at zero while
+        # a later frame still starts late. Verify the whole native clock with
+        # one decoded packet in memory, including availability of the tail.
+        expected = Fraction(origin.start_time or 0) * origin.time_base
+        heard = 0
+        for frame in source.decode(stream):
+            _check(cancelled)
+            if (not heard and stream.codec_context.name == 'aac'
+                    and frame.samples != (stream.codec_context.frame_size or 1024)):
+                return None  # a leading edit/offset hidden by an MP4 edit list
+            if (frame.pts is None or frame.time_base is None
+                    or Fraction(frame.pts) * frame.time_base != expected):
+                return None
+            heard += frame.samples
+            expected += Fraction(frame.samples, SPLICE_RATE)
+        return int(count) if heard >= count else None
+
+
+class _LeadStore:
+    """Snapshot accepted seam data on disk, retaining one small window in RAM.
+
+    The continuation retention task may remove records while a long export is
+    running. Never silently switch a planned chain to a different audio clock.
+    """
+    def __init__(self, directory):
+        self.file = tempfile.TemporaryFile(dir=directory)
+
+    def save(self, lead):
+        offset = self.file.seek(0, 2)
+        self.file.write(lead['samples'].tobytes(order='C'))
+        return offset
+
+    def load(self, offset):
+        import numpy as np
+        self.file.seek(offset)
+        data = self.file.read(12240 * 2 * 4)
+        return dict(samples=np.frombuffer(data, dtype=np.float32).reshape(12240, 2),
+                    before=12000, fade=240, sample_rate=SPLICE_RATE)
+
+    def close(self):
+        self.file.close()
+
+
+def _audio_chains(clips, resolve, cancelled, lead_store=None, joinable=None):
+    """Plan eligible runs; keep paths/counts, never all the lead-in tensors."""
+    from av import FFmpegError
+    chains, lengths = {}, {}
+
+    def part(clip):
+        path = _media(resolve, clip, 'audio')
+        if path is None:
+            return None
+        if path not in lengths:
+            try:
+                lengths[path] = _native_audio_length(path, cancelled)
+            except FFmpegError:
+                # Full-source preflight may encounter damage beyond the kept
+                # range. Let the ordinary reader validate only exported audio.
+                lengths[path] = None
+        length = lengths[path]
+        first_output = _audio_start(clip)
+        desired = Fraction(first_output, SAMPLE_RATE) * SPLICE_RATE
+        first = round(desired)
+        if length is None or first < 0:
+            return None
+        # 32 -> 48 kHz has a two-native-sample phase cycle. Frame trims
+        # need not land on a native sample. Decode a little earlier on that
+        # grid and drop the exact 48 kHz prefix after rate conversion.
+        first = max(0, (int(desired) // 2) * 2 - 64) if first_output else 0
+        skip_output = first_output - first * SAMPLE_RATE // SPLICE_RATE
+        count = length - first
+        if clip['in'] + clip['frames'] < clip['length']:
+            count = min(count, math.ceil(Fraction(clip['frames'] * SAMPLES_PER_FRAME + skip_output,
+                                                 SAMPLE_RATE) * SPLICE_RATE))
+        return dict(clip=clip, path=path, first=first, count=count, skip_output=skip_output,
+                    usable=count - math.ceil(Fraction(skip_output, SAMPLE_RATE) * SPLICE_RATE))
+
+    run = []
+    for previous, current in zip(clips, clips[1:]):
+        _check(cancelled)
+        if (previous['start'] + previous['frames'] != current['start']
+                or previous['in'] + previous['frames'] != previous['length']
+                or current['in'] != 0 or _audio_start(current) != 0
+                or previous.get('volume', 1) != 1 or current.get('volume', 1) != 1
+                or not previous.get('source') or not current.get('source')
+                or joinable is not None and not joinable(previous, current)):
+            run = []
+            continue
+        left_path = _media(resolve, previous, 'audio')
+        right_path = _media(resolve, current, 'audio')
+        lead = audio_lead_in(right_path, previous=left_path)
+        if lead is None:
+            run = []
+            continue
+        left, right = part(previous), part(current)
+        if (left is None or right is None
+                or left['usable'] < lead['before'] + (lead['fade'] if run else 0)
+                or right['usable'] < lead['fade']):
+            run = []
+            continue
+        if not run:
+            run = [left]
+            chains[previous['id']] = run
+        if lead_store is not None:
+            run[-1]['lead_offset'] = lead_store.save(lead)
+        run.append(right)
+        chains[current['id']] = run
+    return chains
+
+
+class _JoinedAudioReader(_AudioReader):
+    """Bounded native seam windows, then one resampler on a continuous clock."""
+    def __init__(self, parts, cancelled, lead_store=None):
+        self.parts, self.cancelled = parts, cancelled
+        self.lead_store = lead_store
+        self.container = None
+        self.chunks = iter(self._joined_chunks())
+        self.chunk = None
+        try:
+            self.chunk = next(self.chunks, None)
+            if self.chunk is None:
+                raise ExportError('unreadable')
+        except BaseException:
+            self.close()
+            raise
+
+    def _native_chunks(self):
+        import numpy as np
+        reader = None
+        try:
+            reader = _AudioReader(self.parts[0]['path'], self.parts[0]['first'], self.cancelled,
+                                  rate=SPLICE_RATE)
+            consumed = 0
+            for index, part in enumerate(self.parts):
+                _check(self.cancelled)
+                next_part = self.parts[index + 1] if index + 1 < len(self.parts) else None
+                lead = (self.lead_store.load(part['lead_offset']) if self.lead_store is not None
+                        else audio_lead_in(next_part['path'], previous=part['path'])) if next_part else None
+                before = lead['before'] if lead is not None else 0
+                # Leave just the replacement window undecoded until the next
+                # block's head is ready. Prefix storage is independent of length.
+                stop = part['count'] - before
+                while consumed < stop:
+                    count = min(8192, stop - consumed)
+                    yield reader.samples(part['first'] + consumed, count)
+                    consumed += count
+                tail = reader.samples(part['first'] + consumed, before) if before else None
+                reader.close()
+                if next_part is None:
+                    break
+                reader = _AudioReader(next_part['path'], next_part['first'], self.cancelled,
+                                      rate=SPLICE_RATE)
+                consumed = 0
+                if lead is not None:
+                    head = reader.samples(next_part['first'], lead['fade'])
+                    previous_samples = np.ascontiguousarray(tail.T)
+                    samples = np.ascontiguousarray(head.T)
+                    apply_audio_lead_in(previous_samples, samples, lead)
+                    yield previous_samples.T.copy()
+                    yield samples.T.copy()
+                    consumed = lead['fade']
+        finally:
+            if reader is not None:
+                reader.close()
+
+    @classmethod
+    def native_chunks(cls, parts, cancelled=None, lead_store=None):
+        """The export's exact native samples, also used by editor playback."""
+        reader = cls.__new__(cls)
+        reader.parts, reader.cancelled, reader.lead_store = parts, cancelled, lead_store
+        return reader._native_chunks()
+
+    def _joined_chunks(self):
+        import av
+        resampler = av.AudioResampler(format='fltp', layout='stereo', rate=SAMPLE_RATE)
+        native_position, output_position = 0, -self.parts[0].get('skip_output', 0)
+        chunks = self._native_chunks()
+        try:
+            for data in chunks:
+                _check(self.cancelled)
+                frame = _audio_frame(data, format='fltp', layout='stereo')
+                frame.sample_rate = SPLICE_RATE
+                frame.pts, frame.time_base = native_position, Fraction(1, SPLICE_RATE)
+                native_position += data.shape[1]
+                for item in resampler.resample(frame):
+                    yield output_position, item.to_ndarray()
+                    output_position += item.samples
+            for item in resampler.resample(None):
+                _check(self.cancelled)
+                yield output_position, item.to_ndarray()
+                output_position += item.samples
+        finally:
+            chunks.close()
+
+    def close(self):
+        if self.chunks is not None:
+            self.chunks.close()
+        self.chunk = self.chunks = None
+
+
 def _checked_target(target, root=None):
     from .comfy_editor import _safe
     target = Path(target).absolute()
@@ -380,9 +599,10 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
     """Render exactly the saved timeline, publishing atomically after encoder flush.
 
     Resolve returns local Paths, never HTTP URLs. Memory contains at most one
-    video decoder, one main audio decoder per track, and one separate extra
-    reader at a time. Reverse RGB windows and crossfade buffers are bounded;
-    duration changes disk/time usage, not resident media storage.
+    video decoder, at most two native audio decoders per audio track, small
+    seam windows, one separate extra reader at a time and the current output
+    frame. Reverse RGB windows and crossfade buffers are bounded; duration
+    changes disk/time usage, not resident media storage.
     Raises ExportError(reason) or ExportCancelled and removes owned partials.
     Existing destinations are refused and never removed.
     """
@@ -425,8 +645,21 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
         audio_tracks = {track['id']: track for track in project['tracks'] if track['kind'] == 'audio'}
         envelopes = {key: _CrossfadeReads(track, resolved.__getitem__, cancelled)
                      for key, track in audio_tracks.items()}
+
+        def joinable(track):
+            # A continuation joins its sound only where nothing else shapes that seam:
+            # no speed or reverse, no fade or crossfade there, and both parts audible.
+            row, reads = audio_tracks[track], envelopes[track]
+            return lambda left, right: not (
+                audio_changed(left) or audio_changed(right) or left.get('fade_out') or right.get('fade_in')
+                or left['id'] in reads.outgoing or right['id'] in reads.incoming
+                or not clip_audible(left, row, project['tracks']) or not clip_audible(right, row, project['tracks']))
         with ExitStack() as readers, av.open(str(temporary), 'w', format=settings.container,
                                             options=settings.container_options) as output:
+            lead_store = _LeadStore(target.parent)
+            readers.callback(lead_store.close)
+            chains = {track: _audio_chains(clips, resolved.__getitem__, cancelled, lead_store, joinable(track))
+                      for track, clips in tracks.items() if track != 'v1'}
             video = None
             if settings.only != 'sound':
                 video = output.add_stream('libx264', rate=FPS)
@@ -439,7 +672,7 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
             audio.codec_context.time_base = Fraction(1, SAMPLE_RATE)
             audio.codec_context.thread_count = 1
             indices = {track: 0 for track in tracks}
-            active, decoders = {}, {}
+            active, decoders, decoder_keys = {}, {}, {}
             readers.callback(lambda: [decoder.close() for decoder in decoders.values()])
             black = np.zeros((height, width, 3), dtype=np.uint8) if video is not None else None
             written = 0
@@ -453,15 +686,20 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
                     indices[track] = index
                     clip = clips[index] if index < len(clips) and clips[index]['start'] <= number else None
                     if clip is not active.get(track):
-                        if decoders.get(track):
+                        chain = chains.get(track, {}).get(clip['id']) if clip is not None else None
+                        key = chain if chain is not None else clip
+                        changed = key is not decoder_keys.get(track)
+                        if changed and decoders.get(track):
                             decoders.pop(track).close()
                         active[track] = clip
-                        if clip is not None and (track == 'v1' or clip_audible(clip, audio_tracks[track], project['tracks'])):
+                        decoder_keys[track] = key
+                        if changed and clip is not None and (track == 'v1' or clip_audible(clip, audio_tracks[track], project['tracks'])):
                             path = _media(resolved.__getitem__, clip, 'video' if track == 'v1' else 'audio')
                             if path is not None:
                                 decoder = (VideoReader(path, clip, width, height, cancelled) if track == 'v1' and speed_changed(clip)
-                                           else AudioReader(path, clip, cancelled) if track != 'v1' and audio_changed(clip)
                                            else _VideoReader(path, clip['in'], width, height, cancelled, clip) if track == 'v1'
+                                           else AudioReader(path, clip, cancelled) if audio_changed(clip)
+                                           else _JoinedAudioReader(chain, cancelled, lead_store) if chain is not None
                                            else _AudioReader(path, _audio_start(clip), cancelled))
                                 decoders[track] = decoder
                 if video is not None and number >= settings.start:
@@ -485,7 +723,10 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
                     track_block = np.zeros_like(mixed)
                     if clip is not None and track in decoders:
                         local = (number - clip['start']) * SAMPLES_PER_FRAME
-                        samples = decoders[track].samples(_audio_start(clip) + local, SAMPLES_PER_FRAME)
+                        chain = chains[track].get(clip['id'])
+                        start = ((number - chain[0]['clip']['start']) * SAMPLES_PER_FRAME if chain is not None
+                                 else _audio_start(clip) + local)
+                        samples = decoders[track].samples(start, SAMPLES_PER_FRAME)
                         positions = local + np.arange(SAMPLES_PER_FRAME)
                         clips = tracks[track]; index = indices[track]
                         previous = clips[index - 1] if index else None

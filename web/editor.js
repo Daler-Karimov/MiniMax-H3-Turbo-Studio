@@ -83,7 +83,7 @@ export function suspendCanvasPointer(canvas) {
     };
 }
 
-// `components` replaces the optional progress module (see loadEditorComponents).
+// `components` replaces the optional progress module (see loadEditorComponents); tests also pass their generation stand-in here.
 export function openEditor({api, app, from = null, panel = {}, components: given = undefined, onView = view => viewChanged(view)}) {
     if (opened) { opened.element.focus(); return opened; }
     const t = (en, zh) => String(language()).toLowerCase().startsWith('zh') ? zh : en;
@@ -191,7 +191,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         }
         notify(t('Could not complete. Try again.', '没有完成，请重试'));
     }
-    const store = createEditorStore(api, {t, notify, onGenerationReady: ready => {
+    const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
         genHost.hidden = !ready; element.dataset.generationReady = String(ready);
         tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
@@ -207,7 +207,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }, {onStatus: () => {
         if (!queue.dirty) { discardOnSwitch = false; saveWarning.hidden = true; }
     }});
-    const player = createEditorPlayer(preview, transport, {state, sources: store.sources, api, t, error, readAudioSamples: panel.readAudioSamples || readSpeedAudioSamples, preservePreview: () => initializing});
+    const player = createEditorPlayer(preview, transport, {state, sources: store.sources, api, t, error, readAudioSamples: panel.readAudioSamples || readSpeedAudioSamples, preservePreview: () => initializing, prepareAudio: () => !initializing});
     function selectionClips(selection = state.selection) {
         if (selection?.kind !== 'clip') return [];
         return state.record.tracks[0].clips.filter(clip => selection.ids.includes(clip.id) || selection.ids.includes(clip.link));
@@ -777,7 +777,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     library = createEditorLibrary(libraryHost, {store, t, actions, state});
     opened = handle; document.body.append(element); element.showModal(); viewChanged('editor'); navigation.querySelector('[data-view=editor]').focus();
     handle.ready = (async () => {
-        const componentsReady = Promise.allSettled([import('./editor_tracks.js'), given || loadEditorComponents()]);
+        const progressComponents = given && Object.hasOwn(given, 'generationStandIn') && Object.keys(given).length === 1 ? null : given;
+        const componentsReady = Promise.allSettled([import('./editor_tracks.js'), progressComponents || loadEditorComponents()]);
         await editorStyles; if (closing || disposed) return;
         let record = null, key = null;
         try {
@@ -808,7 +809,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (from?.work && !state.record.id) queue.enqueue(state.record);
         } catch (value) { error(value); }
         if (closing || disposed) return;
-        initializing = false; savedContent = content(state.record);
+        initializing = false; savedContent = content(state.record); player.refresh();
         genHost.inert = false; genHost.classList.remove('fv-ed-pending');
         updateTop(); updateTransport();
         const [trackResult, componentResult] = await componentsReady; if (closing || disposed) return;
@@ -851,7 +852,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         title.disabled = false; genHost.inert = toolbar.inert = false;
         tracksHost.inert = !tracks;
         for (const host of [tracksHost, genHost, toolbar]) host.classList.remove('fv-ed-pending');
-        if (!closing && !disposed) { updateTop(); updateTransport(); }
+        if (!closing && !disposed) { player.refresh(); updateTop(); updateTransport(); }
     });
     updateTop(); return handle;
 }

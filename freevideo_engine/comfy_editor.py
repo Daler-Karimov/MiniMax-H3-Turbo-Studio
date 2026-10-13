@@ -1077,6 +1077,25 @@ def _local_page(request):
         return False
 
 
+def _same_origin_audio(request):
+    if request.headers.get('Sec-Fetch-Site') in ('same-site', 'cross-site'):
+        return False
+    if not _local_page(request):
+        return False
+    referer = request.headers.get('Referer')
+    if referer:
+        try:
+            page = urlsplit(referer)
+            origin = urlsplit(request.scheme + '://' + request.host)
+            return (page.scheme == origin.scheme and page.hostname == origin.hostname
+                    and (page.port or (443 if page.scheme == 'https' else 80)) ==
+                        (origin.port or (443 if origin.scheme == 'https' else 80))
+                    and not page.username and not page.password)
+        except ValueError:
+            return False
+    return True  # Non-browser clients are not authenticated by these headers.
+
+
 async def _body(request):
     if request.content_length is not None and request.content_length > BODY_BYTES:
         raise TooLarge('Project body is too large')
@@ -1158,6 +1177,39 @@ def register():
         if len(keys) > 1000:
             raise ValueError('Too many sources')
         return web.json_response(dict(sources=await asyncio.to_thread(sources, root(), keys)), headers=_HEADERS)
+
+    @endpoint('post', '/freevideo/editor/audio-chains')
+    async def audio_chains(request):
+        if not _same_origin_audio(request):
+            return web.json_response(dict(error='Same origin required'), status=403, headers=_HEADERS)
+        from .editor_playback import prepare
+        body = await _body(request)
+        stopped = threading.Event()
+        connected = hasattr(request, 'transport')
+        def cancelled():
+            transport = getattr(request, 'transport', None)
+            return stopped.is_set() or (connected and (transport is None or transport.is_closing()))
+        worker = asyncio.create_task(asyncio.to_thread(prepare, root(), body.get('project'), cancelled))
+        try:
+            result = await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            stopped.set()
+            try:
+                await worker
+            except Exception:
+                pass
+            raise
+        return web.json_response(result, headers=_HEADERS)
+
+    @endpoint('get', '/freevideo/editor/audio-chain')
+    async def audio_chain(request):
+        if not _same_origin_audio(request):
+            return web.json_response(dict(error='Same origin required'), status=403, headers=_HEADERS)
+        from .editor_playback import lease_audio
+        path = await asyncio.to_thread(lease_audio, root(), request.query.get('id'), request.query.get('key'))
+        if not path.is_file():
+            raise FileNotFoundError('Playback audio unavailable')
+        return web.FileResponse(path, headers={'Content-Type': 'audio/wav', 'Cross-Origin-Resource-Policy': 'same-origin', **_HEADERS})
 
     @endpoint('post', '/freevideo/editor/import')
     async def upload(request):

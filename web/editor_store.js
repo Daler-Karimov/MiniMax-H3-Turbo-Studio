@@ -4,8 +4,6 @@ import {generationSize} from './editor_generation.js';
 const clockDefault = {now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id)};
 const copy = value => structuredClone(value);
 const memoryProjects = new Map();
-const fakeJobs = new Map();
-const fakeSources = new Map();
 const errorFor = response => Object.assign(new Error('editor_request'), {status: response.status});
 const post = value => ({method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(value)});
 export const sourceKey = source => source ? `${source.kind}:${source.id}` : null;
@@ -226,7 +224,7 @@ export function mediaURL(api, value) {
     return api.apiURL?.(path) || path;
 }
 
-export function createEditorStore(api, {t = en => en, notify = () => {}, onGenerationReady = () => {}, clock = clockDefault, pollMs = 2000} = {}) {
+export function createEditorStore(api, {t = en => en, notify = () => {}, onGenerationReady = () => {}, clock = clockDefault, pollMs = 2000, standIn: injected = null} = {}) {
     const sources = new Map(), sourceReads = new Map(), watchers = new Set(), pollers = new Set(), once = new Set();
     let recovered = null, capabilityPoll = null;
     let generationAvailable = true, generationProbe = null;
@@ -256,55 +254,20 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         const poller = createPoller(read, deliver, {clock, interval: pollMs}); pollers.add(poller);
         return () => { poller.dispose(); pollers.delete(poller); };
     }
-    function fakeEnabled() { try { return localStorage.getItem('fv-editor-fake') === '1'; } catch { return false; } }
     function generationAbsent() {
         if (!generationAvailable) return;
         generationAvailable = false;
         if (!disposed) onGenerationReady(false);
     }
-    function persistFake(job) {
-        fakeJobs.set(job.id, copy(job));
-        try { localStorage.setItem('fv-editor-job:' + job.id, JSON.stringify(job)); } catch {}
-    }
-    function fakeJob(id) {
-        if (fakeJobs.has(id)) return fakeJobs.get(id);
-        try { const value = JSON.parse(localStorage.getItem('fv-editor-job:' + id)); if (value) fakeJobs.set(id, value); return value; } catch { return null; }
-    }
-    function fakeState(id) {
-        const job = fakeJob(id); if (!job) return null;
-        let elapsed = job.elapsed + (job.active ? clock.now() - job.started : 0);
-        let failed = false;
-        const blocks = job.blocks.map(block => {
-            const fraction = Math.max(0, Math.min(1, elapsed / 4000)); elapsed -= 4000;
-            const material = job.materials.find(row => (row.geometry?.frames || row.frames || 0) >= block.frames);
-            let state = fraction === 1 ? 'done' : fraction > 0 ? 'running' : 'pending';
-            if (failed || (!job.active && state !== 'done')) state = 'cancelled';
-            const error = !material ? 'no_material' : block.text.startsWith('!fail') ? 'gpu_memory' : null;
-            if (error && fraction > 0 && !failed) { state = 'failed'; failed = true; }
-            const output = state === 'done' ? material?.video : null;
-            if (output) {
-                const metadata = {...material.geometry, _fallback: true, video: mediaURL(api, output), audio: mediaURL(api, output),
-                    path: output, has_video: true, has_audio: true, sample_rate: 32000, missing: false,
-                    thumbnail: api.apiURL?.('/freevideo/library/thumbnail?' + new URLSearchParams({id: material.id}))};
-                fakeSources.set('generated:' + output, metadata); sources.set('generated:' + output, metadata);
-            }
-            return {...block, state, fraction: state === 'done' ? 1 : fraction, inputs: {frames: block.frames}, output,
-                skip_frames: block.after ? 22 : 0, skip_audio_samples: block.after ? 29333 : 0,
-                remaining_seconds: Math.ceil((1 - fraction) * 4), error};
-        });
-        return {id, state: failed ? 'failed' : blocks.every(b => b.state === 'done') ? 'done' : job.active ? 'running' : 'cancelled', blocks};
-    }
-    async function startFake(payload) {
-        const rows = await json('/freevideo/library?limit=48', undefined, {items: []});
-        const id = 'fake-' + (globalThis.crypto?.randomUUID?.() || clock.now() + '-' + Math.random());
-        persistFake({id, blocks: copy(payload.blocks), materials: rows.items || [], elapsed: 0, started: clock.now(), active: true});
-        return fakeState(id);
-    }
+    // Optional adapter (or factory): startChain, owns, chain, chainAction, and
+    // optional restoreSources. Production callers provide none.
+    const standIn = typeof injected === 'function'
+        ? injected({clock, sources, request: json, mediaURL: value => mediaURL(api, value)}) : injected;
     const store = {
         sources, cache,
-        get generationAvailable() { return fakeEnabled() || generationAvailable; },
+        get generationAvailable() { return !!standIn || generationAvailable; },
         generationReady() {
-            if (fakeEnabled()) return Promise.resolve(true);
+            if (standIn) return Promise.resolve(true);
             if (!generationAvailable) return Promise.resolve(false);
             // One bounded request per store, shared by concurrent callers. Only
             // an explicit 404 hides generation; outages leave the editor usable.
@@ -391,7 +354,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 sourceReads.set(signature, (async () => {
                     const value = await json('/freevideo/editor/sources?' + query, undefined, {sources: {}});
                     cache(value.sources);
-                    for (const key of missing) if (fakeSources.has(key) && (!sources.has(key) || sources.get(key).missing)) sources.set(key, fakeSources.get(key));
+                    standIn?.restoreSources?.(missing);
                 })().finally(() => sourceReads.delete(signature)));
             }
             await sourceReads.get(signature); return sources;
@@ -472,26 +435,21 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
             read(); return fallback;
         },
         async startChain(payload) {
-            if (fakeEnabled()) return startFake(payload);
+            if (standIn) return standIn.startChain(payload);
             if (!generationAvailable) return null;
             const response = await request(chainRoute(), post(payload));
             if (response.status === 404) {
                 generationAbsent();
-                notice('generate', 'Generating is unavailable until you restart after updating.', '更新后重启即可生成。');
+                notice('generate', 'Restart FreeVideo to generate.', '请重新启动 FreeVideo 后再生成。');
                 return null;
             }
             if (!response.ok) throw errorFor(response);
-            return (await response.json()).chain;
+            return (await response.json())?.chain || null;
         },
-        async chain(id) { return fakeEnabled() && id.startsWith('fake-') ? fakeState(id) : (await json(chainRoute(id)))?.chain || null; },
+        async chain(id) { return standIn?.owns(id) ? standIn.chain(id) : (await json(chainRoute(id)))?.chain || null; },
         watchChain(id, fn) { return watch(() => store.chain(id), fn); },
         async chainAction(id, action) {
-            if (fakeEnabled() && id.startsWith('fake-')) {
-                const job = fakeJob(id); if (!job) return null;
-                if (action === 'cancel' && job.active) { job.elapsed += clock.now() - job.started; job.active = false; }
-                if (action === 'resume' && !job.active) { job.started = clock.now(); job.active = true; }
-                persistFake(job); return fakeState(id);
-            }
+            if (standIn?.owns(id)) return standIn.chainAction(id, action);
             const payload = action === 'resume' && api.clientId ? {client_id: api.clientId} : {};
             return (await json(chainRoute(id, action), post(payload)))?.chain || null;
         },
