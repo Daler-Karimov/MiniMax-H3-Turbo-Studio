@@ -7,7 +7,7 @@ FreeVideo code uses [Apache-2.0](LICENSE). Its dependencies and models retain th
 | Qt, PySide6 and Shiboken6 | LGPL-3.0; [component notices](freevideo_engine/launcher/licenses/NOTICE.txt) |
 | PyInstaller bootloader | GPL-2.0 with the bootloader exception |
 | CPython / psutil | PSF / BSD-3-Clause |
-| [QuickJS Python binding](https://github.com/PetterS/quickjs) 1.19.4 (author: Petter Strandmark) and QuickJS (© 2017–2021 Fabrice Bellard and Charlie Gordon) | [MIT notices](freevideo_engine/licenses/quickjs-MIT.txt) |
+| [QuickJS Python binding](https://github.com/PetterS/quickjs) 1.19.4 (author: Petter Strandmark) and QuickJS (© 2016–2021 Fabrice Bellard, © 2017–2021 Charlie Gordon) | [MIT notices](freevideo_engine/licenses/quickjs-MIT.txt) |
 | [ComfyUI](https://github.com/Comfy-Org/ComfyUI), including the H3 text encoder code | GPL-3.0 |
 | [VDN-H3](https://github.com/OpenVDN/vdn-minimax-h3), [Diffusers](https://github.com/huggingface/diffusers), [SageAttention](https://github.com/thu-ml/SageAttention) | Apache-2.0 |
 | [VDN-H3 and H3 model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3-edge/blob/main/LICENSE) | MiniMax H3 Community License |
