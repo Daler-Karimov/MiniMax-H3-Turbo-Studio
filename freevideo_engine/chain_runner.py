@@ -297,19 +297,23 @@ class ChainRunner:
         return isinstance(row['after'], str) and bool(row['continuation'])
 
     def _seams_kept(self, snapshot):
-        """(expected, kept) seam sounds of the leading blocks, keeping late any a record still has."""
+        """(indexes of the seams that must be repaired, how many of them have their sound), keeping
+        late any a shared record still has. A seam is the pair of neighbours in the joined video, so a
+        block that continues from a block other than its neighbour cannot be repaired and counts as lost."""
         identity, blocks = snapshot['id'], store.leading_blocks(snapshot)
-        expected = kept = 0
-        for row in blocks[1:] if getattr(self.host, 'repairs_seams', True) else ():
+        wanted, kept = set(), 0
+        for position, row in enumerate(blocks[1:] if getattr(self.host, 'repairs_seams', True) else (), 1):
             if not self._continues(row):
                 continue
-            expected += 1
-            after = self._sources(snapshot, row)['after']
-            if chain_leads.load(self.store_dir, identity, row['index'], after['output'], row['output']) is not None:
+            wanted.add(row['index'])
+            neighbour = blocks[position - 1]
+            if row['after'] != neighbour['id']:
+                continue
+            if chain_leads.load(self.store_dir, identity, row['index'], neighbour['output'], row['output']) is not None:
                 kept += 1
-            elif self._keep_lead(identity, row['index'], row['output'], after['output'], True):
+            elif self._keep_lead(identity, row['index'], row['output'], neighbour['output'], True):
                 kept += 1
-        return expected, kept
+        return wanted, kept
 
     def _finish_blocks(self, record, final_state='done'):
         if not record['join']:
@@ -501,16 +505,23 @@ class ChainRunner:
                 return self.closed.is_set() or (final_state != 'cancelled'
                                                and self.records[identity]['state'] == 'cancelling')
         index_by_output = {row['output']: row['index'] for row in snapshot['blocks'] if row['output']}
+        wanted = set()
         def lead_reader(following, previous):
+            # Only a seam that must be repaired gets a sound; another seam is never counted for it.
             index = index_by_output.get(following)
-            return chain_leads.load(self.store_dir, identity, index, previous, following) if index is not None else None
-        promised, kept = self._seams_kept(snapshot)
-        snapshot = dict(snapshot, lead_reader=lead_reader, expected_seams=promised)
+            if index is None or index not in wanted:
+                return None
+            return chain_leads.load(self.store_dir, identity, index, previous, following)
         texts = [row['inputs']['text'] for row in snapshot['blocks']]
         texts += [row['inputs'].get('text') for row in snapshot['snapshot']['prompt'].values()
                   if isinstance(row, dict) and isinstance(row.get('inputs'), dict)]
         failure = None
+        promised = kept = 0
         try:
+            found, kept = self._seams_kept(snapshot)
+            wanted.update(found)
+            promised = len(wanted)
+            snapshot = dict(snapshot, lead_reader=lead_reader, expected_seams=promised)
             if kept < promised:
                 # A sound seam that cannot be repaired is never published as a finished video.
                 raise ValueError('%d of %d seam sounds were not kept' % (promised - kept, promised))

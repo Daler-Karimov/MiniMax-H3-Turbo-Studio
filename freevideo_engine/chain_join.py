@@ -174,6 +174,10 @@ def _join_files(sources, target, cancelled, frames, exact=True, leads=None, expe
     if leads is not None and audio_lead_in is not None:
         stored = audio_lead_in
         def audio_lead_in(video, previous=None):
+            if expected is not None:
+                # The caller named the seams that must be repaired and keeps their sound itself;
+                # a shared record for any other pair of videos must not stand in for them.
+                return leads(video, previous)
             return leads(video, previous) or stored(video, previous=previous)
     sources, target = [Path(source) for source in sources], Path(target)
     if len(sources) < 2:

@@ -44,13 +44,14 @@ def load(directory, chain, index, previous, output=None):
     import numpy as np
     from .continuation import LEAD_IN_SAMPLES, LEAD_IN_FADE, LEAD_IN_RATE
     try:
-        with np.load(_path(directory, chain, index), allow_pickle=False) as data:
+        with open(_path(directory, chain, index), 'rb') as stream, np.load(stream, allow_pickle=False) as data:
             samples, kept = data['samples'], str(data['previous'])
             own = str(data['output']) if 'output' in data.files else ''
         if kept and kept != previous or own and output is not None and own != output or samples.dtype != np.float32 or samples.shape != (LEAD_IN_SAMPLES + LEAD_IN_FADE, 2):
             return None
         return dict(samples=samples, before=LEAD_IN_SAMPLES, fade=LEAD_IN_FADE, sample_rate=LEAD_IN_RATE)
-    except (OSError, ValueError, KeyError, TypeError, EOFError):
+    except Exception:
+        # Damaged storage (a bad checksum or archive directory included) is the same as no copy.
         return None
 
 
@@ -62,12 +63,14 @@ def has(directory, chain, index):
 
 
 def prune(directory, chains):
-    """Drop the kept leads of chains the store no longer lists; a listed chain keeps all of them,
-    because a longer chain is joined again from its first block."""
+    """Drop the kept leads of chains whose record is gone; a chain that still has its record file keeps
+    all of them, because a longer chain is joined again from its first block. `chains` is what the
+    caller loaded; a record beyond its limit or one it could not read is still on disk."""
     chains = set(chains)
     try:
         for path in Path(directory).glob('c-*' + SUFFIX):
-            if path.name.split('.', 1)[0] not in chains:
+            chain = path.name.split('.', 1)[0]
+            if chain not in chains and not (Path(directory) / (chain + '.json')).exists():
                 path.unlink(missing_ok=True)
     except OSError:
         logging.warning('[FreeVideo] Chain seam sound could not be removed')
