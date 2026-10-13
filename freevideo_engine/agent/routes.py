@@ -712,7 +712,7 @@ def register():
     @routes.get('/freevideo/agent/connect')
     @guarded
     async def connect(request):
-        # For Settings: how to connect an agent on this computer. The token itself stays in its file.
+        # For the Autopilot view: how to connect an agent on this computer. The token itself stays in its file.
         from ..comfy_bridge import installation_root, source_root
         from .guide import page_language
         from .mcp import client_config, linux_wrapper_supported, python_shell_command, shell_quote

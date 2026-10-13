@@ -4,7 +4,10 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 
 // null means no connection has been seen; '' remembers a connection without a name.
 export function connectionState(copied, status, previousName, t) {
-    if (status?.connected === true) return {color: 'green', text: status.client?.trim() || t('Connected', '已连接'), buttonText: t('Copy', '复制')};
+    if (status?.connected === true) {
+        const name = status.client?.trim();
+        return {color: 'green', text: name ? t(`Connected to ${name}`, `已连接 ${name}`) : t('Connected', '已连接'), buttonText: t('Copy', '复制')};
+    }
     if (previousName != null) {
         const name = previousName || 'Agent';
         return {color: 'gray', text: t(`${name} disconnected`, `${name} 已断开`), buttonText: t('Reconnect', '重新连接')};
