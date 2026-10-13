@@ -204,9 +204,10 @@ def generate(request, resident=None):
         # A two-pass request that runs as one pass (small canvases) continues
         # too: its first and final canvases are the same one, so one tail
         # serves both stages. An explicit single-pass request keeps nothing.
+        # Whatever media conditioned the request, the sampler returns only the
+        # generated picture and sound rows, so the tail is the same.
         plan_flags = request.get('sampling_plan') or {}
         continuable = (bool(plan_flags.get('enabled') or plan_flags.get('requested'))
-                       and (options.get('task', 't2va') == 't2va' or bool(continuation and continuation.get('anchor')))
                        and not request.get('preview'))
         first_tail = continuation_data = None
         def tail_failure(error):

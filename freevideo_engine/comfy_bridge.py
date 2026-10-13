@@ -1182,16 +1182,35 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     canvas = validate_request(prompt, width, height, seconds, seed, continue_from=continue_from, frames=frames)
     source = Path(source or source_root()).resolve()
     root, machine = installation(source, environ)
+    continuation = None
+
+    def check_ending():
+        try:
+            from .continuation_tail import check
+        except ImportError:
+            return
+        from .two_pass import sampling_canvas
+        check(continue_from, sampling_canvas(canvas)[0])
+
     if continue_from is not None:
         validate_route(backend=machine.get('device_backend', 'cuda'))
-        from .continuation import prepare, summary
+        from .continuation import MISSING, prepare, summary
         from .two_pass import sampling_canvas
         # A continuation takes no media or preview, so its sampled size is known here; the snapshot
         # of the previous segment was written for that canvas, not for the requested size.
-        continuation = prepare(continue_from, sampling_canvas(canvas)[0], directory=root / 'continuations')
+        try:
+            continuation = prepare(continue_from, sampling_canvas(canvas)[0], directory=root / 'continuations')
+        except ValueError as error:
+            if str(error) != MISSING:
+                raise
+            # A video with no stored context (single-pass, an earlier version, a replaced file) is
+            # continued from its own ending, which the engine reads and encodes. Only a video whose
+            # ending cannot be used stops here, before anything is loaded.
+            check_ending()
     # The engine decides the same way from the same record: whether the film's first frame is there to use.
+    # An ending encoded from the file has no first frame of the film to give.
     anchored = False
-    if continue_from is not None and first_frame_reference:
+    if continue_from is not None and continuation is not None and first_frame_reference:
         from .continuation import chain_first_frame_picture
         try:
             anchored = chain_first_frame_picture(continuation, continue_from) is not None
@@ -1227,10 +1246,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         command += ['--continue-from', str(continue_from)]
         if first_frame_reference:
             command.append('--first-frame-reference')
-        from .continuation import persist_snapshot
-        continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')
-        command += ['--continuation-snapshot', continuation['snapshot'],
-                    '--continuation-snapshot-sha256', continuation['snapshot_sha256']]
+        if continuation is not None:
+            from .continuation import persist_snapshot
+            continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')
+            command += ['--continuation-snapshot', continuation['snapshot'],
+                        '--continuation-snapshot-sha256', continuation['snapshot_sha256']]
     if upscale:
         command = command[:command.index('generate') + 1] + upscale_command(upscale[1], output, upscale[0], resources)
     else:
@@ -1323,11 +1343,28 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
                        base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
         if continue_from is not None:
-            from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, validate_snapshot, summary
+            from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, MISSING, validate_snapshot, summary
             validate_route(task='ref2va' if anchored else task_for(extra.get('media', {})), anchor=anchored,
                            media=extra.get('media'))
-            continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
-            state['continuation'] = summary(continuation)
+            if continuation is not None:
+                try:
+                    continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
+                    state['continuation'] = summary(continuation)
+                except ValueError as error:
+                    if str(error) != MISSING:
+                        raise
+                    # Stored for another first-pass size: the engine sets it aside and encodes the ending.
+                    check_ending()
+                    continuation = None
+                    if anchored:
+                        # An encoded ending carries no first frame of the film, so nothing anchors this run.
+                        anchored = False
+                        planned = plan(sampled, two_pass, task_for(extra.get('media', {})),
+                                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+            if continuation is None:
+                from .continuation import OVERLAP_FRAMES
+                state['continuation'] = dict(overlap_frames=OVERLAP_FRAMES,
+                                             new_frames=sampled['frames'] - OVERLAP_FRAMES, encoded=True)
         # A preview is its own result; an upscale is always run from its preview.
         keyed = dict(planned, preview=True) if preview else planned
         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
@@ -1437,8 +1474,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             report.update(report_extra)
             save(output.with_suffix('.request.json'), report)
         if continue_from is not None:
-            state['continuation']['audio_lead_in_samples'] = engine.get('continuation', {}).get(
-                'audio_lead_in_samples', 0)
+            receipt = engine.get('continuation') or {}
+            if continuation is None and receipt:
+                # The ending was encoded by the engine, which is where the real counters come from.
+                state['continuation'] = dict(receipt)
+            state['continuation']['audio_lead_in_samples'] = receipt.get('audio_lead_in_samples', 0)
         if comfy_metadata:
             # Dropping the video on the canvas restores this graph, as with ComfyUI's own video nodes.
             # Written before the result cache records the file's size and hash.
