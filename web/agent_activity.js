@@ -27,13 +27,13 @@ function glyph(path) {
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', path); svg.append(p);
     return svg;
 }
-// The same two wordings as the generation progress in the create view.
-const left = (s, t) => s >= 60 ? t(`About ${Math.ceil(s / 60)}\u00a0min left`, `预计还需约 ${Math.ceil(s / 60)}\u00a0分钟`)
-    : t('Less than a minute left', '预计还需不到 1\u00a0分钟');
+// The same two wordings as the conversation's cards.
+const left = (s, t) => s >= 60 ? t(`About ${Math.ceil(s / 60)} min`, `约 ${Math.ceil(s / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
 // The engine's phases in the reader's language.
 function phaseText(p, t) {
     const step = p.step;
-    if (p.phase === 'sampling' && step?.total) return t(`Step ${step.done} / ${step.total}`, `生成 ${step.done} / ${step.total}`);
+    // The first step is still getting ready: the line does not count from zero.
+    if (p.phase === 'sampling' && step?.total) return step.done >= 1 ? t(`Step ${step.done} / ${step.total}`, `生成 ${step.done} / ${step.total}`) : t('Preparing', '准备中');
     return {encoding: t('Reading prompt and media', '读取提示词和素材'), load: t('Loading the model', '加载模型'),
         decode: t('Saving video and audio', '保存视频与音频'), starting: t('Starting', '启动中'),
         loading: t('Loading the model', '加载模型'), answering: t('Answering', '回答中'), rewriting: t('Writing', '改写中'),
@@ -194,9 +194,7 @@ export function createAgentActivity(t, api, host, {interval = [1500, 8000], open
 
     function renderPanel() {
         const header = el('header');
-        header.append(el('h2', null, t('Agent jobs', 'Agent 任务')),
-            el('p', null, t('Requests from AI agents connected to FreeVideo. They share the queue with your videos.',
-                '已连接的 AI Agent 提交的任务，与您的生成共用同一个队列。')));
+        header.append(el('h2', null, t('Agent jobs', 'Agent 任务')));
         const list = el('ol');
         const key = refill(panel, list, rows(data.jobs, t, api, poll, job => { setOpen(false); open(job); }));
         panel.replaceChildren();
