@@ -22,6 +22,7 @@ import uuid
 
 from . import API_VERSION, enabled
 from . import assets
+from . import private_file
 from . import spec as specs
 from . import schema as contract, errors, access
 from .jobs import ACTIVE, DONE, JobError, Jobs, chain_error, library_view
@@ -66,9 +67,8 @@ def ensure_token(root):
     except FileNotFoundError:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         value = secrets.token_urlsafe(32)
-        # TODO Windows: set a current-user-only ACL; verify on Windows hardware.
         try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            descriptor = private_file.create(path)
         except FileExistsError:
             pass
         else:

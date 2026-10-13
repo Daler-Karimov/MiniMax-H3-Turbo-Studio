@@ -11,6 +11,7 @@ from copy import deepcopy
 import hashlib
 import json
 import logging
+import re
 import secrets
 import threading
 import time
@@ -55,6 +56,17 @@ class ProjectError(JobError):
 
 def _invalid(path, expected, received=None):
     return spec.SpecError([schema.diagnostic(path, expected, received)])
+
+
+def _refused(project, error):
+    """The editor's own check names the part it refused; an Agent cannot take its next step without it."""
+    # The editor's reasons are fixed phrases ("Invalid clip", "Invalid source"); they repeat nothing supplied.
+    reason = str(error) if type(error) is ValueError and re.fullmatch(r'[A-Z][A-Za-z ]{2,60}', str(error)) else ''
+    row = schema.diagnostic('/project', 'a valid editor project' + (' (%s)' % (reason[:1].lower() + reason[1:]) if reason else ''),
+                            project)
+    row['next'] = ('Correct that part of /project. To place clips, create the project with empty tracks, '
+                   'then add each clip with an insert operation.')
+    return spec.SpecError([row])
 
 
 def _digest(scope, payload):
@@ -126,7 +138,7 @@ class Projects:
         except OSError as error:
             raise ProjectError('storage_unavailable') from error
         except (ValueError, TypeError, KeyError, RecursionError) as error:
-            raise _invalid('/project', 'a valid editor project') from error
+            raise _refused(project, error) from error
 
     def _rejected(self, error, stored, path, received, *, operation=None):
         if error['code'] in STATE_CODES:
