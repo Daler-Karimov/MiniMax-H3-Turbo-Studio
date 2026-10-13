@@ -30,8 +30,9 @@ export function jobEstimate(job, age) {
 // The level a job shows, given the engine's number (`base`), the time it says is left and the clock. The engine's
 // number can stand for a long while: a model loading for the first time runs far past the time the engine gave it,
 // and a video in several parts has no timing at all. While it stands the level still rises, at the pace of the time
-// left, slowing down, and by no more than a quarter of what remains. What was added is kept when the number moves
-// again: the rest of the way is drawn shorter, so the level neither waits nor goes back, and is full at the end.
+// left, slowing down, and by no more than a quarter of what remains. When the number moves again, what was added is
+// kept only as far as the number has not caught up with it: the rest of the way is then drawn shorter, so the level
+// neither waits nor goes back and is full at the end, and a run that goes as the engine said shows the engine's number.
 const DRIFT = .25, RISE = .0005;
 export const newLevel = () => ({value: 0, top: null, since: 0, scale: 1});
 // The time left a running job shows, by the creation panel's rule: once measured never raised, and gone once its last
@@ -58,12 +59,13 @@ export function jobLeft(row, sent, source, time) {
 }
 export function jobLevel(row, base, left, time) {
     if (row.top === null || base > row.top + RISE) {
-        if (row.top !== null && row.top < 1) row.scale = (1 - row.value) / (1 - row.top);
+        if (row.top !== null && base < 1) row.scale = Math.min(row.scale, (1 - row.value) / (1 - base));
         row.top = base; row.since = time;
     }
-    const level = 1 - row.scale * (1 - Math.max(base, row.top));
-    const more = left > 0 ? (1 - level) * DRIFT * (1 - Math.exp(-Math.max(0, time - row.since) / (DRIFT * left))) : 0;
-    return row.value = Math.max(row.value, Math.min(.99, level + more));
+    // The number itself, or where standing since it last moved has brought the level: whichever is further on.
+    const from = 1 - row.scale * (1 - row.top), level = 1 - row.scale * (1 - Math.max(base, row.top));
+    const more = left > 0 ? (1 - from) * DRIFT * (1 - Math.exp(-Math.max(0, time - row.since) / (DRIFT * left))) : 0;
+    return row.value = Math.max(row.value, Math.min(.99, Math.max(level, from + more)));
 }
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
