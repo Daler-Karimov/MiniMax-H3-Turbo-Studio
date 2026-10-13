@@ -35,7 +35,8 @@ def local_address(request):
     socket = request.transport.get_extra_info('sockname') if request.transport else None
     if not socket:
         raise JobError('not_ready', 'Listening address unavailable')
-    host = '[::1]' if ':' in socket[0] else '127.0.0.1'
+    # A specific loopback address is the only one that listens; anything else is reached through localhost.
+    host = '[::1]' if ':' in socket[0] else socket[0] if socket[0].startswith('127.') else '127.0.0.1'
     scheme = 'https' if request.transport.get_extra_info('sslcontext') is not None else 'http'
     return f'{scheme}://{host}:{socket[1]}'
 
