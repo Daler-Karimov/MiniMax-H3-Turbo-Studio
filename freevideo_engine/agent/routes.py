@@ -29,6 +29,9 @@ from . import schema as contract, errors, access
 from .jobs import ACTIVE, DONE, JobError, Jobs, chain_error, library_view
 
 PREFIX = '/freevideo/agent/v1'
+# What an empty wait tells the agent: the conversation is open for as long as the user keeps the page.
+KEEP_WAITING = ('Nothing new yet. The user is still in FreeVideo and may speak at any moment: call this wait '
+                'again now. An empty wait never ends the conversation; do not end your turn or write a summary.')
 
 
 def local_address(request):
@@ -1496,8 +1499,9 @@ def register():
                         return reply(dict(session=sid, inbox=pending[-20:]))
                 left = deadline - time.monotonic()
                 if left <= 0:
-                    # again: nothing new this time; the caller simply waits once more.
-                    return reply(dict(session=sid, inbox=[], again=True))
+                    # again: nothing new this time; the caller simply waits once more. An agent decides what to
+                    # do next from the last answer it read, so the empty one says it in words as well.
+                    return reply(dict(session=sid, inbox=[], again=True, next=KEEP_WAITING))
                 if store is None or sid is None:
                     await asyncio.sleep(min(left, 1.))
                 else:
