@@ -101,7 +101,12 @@ def list_videos(output_directory, *, before=None, limit=24):
                 summary['encoder_file'].pop('path', None)
             if not (root / summary['report']).is_file():
                 summary['report'] = None
-            agent = _agent(path.parent) if agent_enabled() else None
+            try:
+                agent = _agent(path.parent) if agent_enabled() else None
+            except Exception as error:
+                # Optional attribution must not hide an otherwise valid saved video.
+                logging.getLogger(__name__).warning('[FreeVideo] Agent label unavailable: %s', error)
+                agent = None
             if agent:
                 summary['agent'] = agent
             rows.append(dict(summary, id=key[1], bytes=info.st_size,

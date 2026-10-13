@@ -33,7 +33,11 @@ async def comfy_entrypoint():
     share_routes()
     from .freevideo_engine.comfy_metadata import register as workflow_backfill
     workflow_backfill()
-    from .freevideo_engine.agent.routes import register as agent_routes
-    agent_routes()
+    try:
+        from .freevideo_engine.agent.routes import register as agent_routes
+        agent_routes()
+    except Exception as error:
+        import logging
+        logging.warning('[FreeVideo] Agent routes not registered: %s', error)
     from .freevideo_engine.comfy_nodes import FreeVideoExtension
     return FreeVideoExtension()

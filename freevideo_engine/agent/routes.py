@@ -298,7 +298,8 @@ def register():
     from aiohttp import web
     from server import PromptServer
     server = PromptServer.instance
-    if server is None or getattr(server, '_freevideo_agent', None) is not None:
+    if (server is None or getattr(server, '_freevideo_agent', None) is not None
+            or getattr(server, '_freevideo_agent_registered', False)):
         return
     from .. import proxy_identity
     hop_secret = os.environ.pop(proxy_identity.ENV, '')
@@ -313,18 +314,25 @@ def register():
             async def off(request):
                 return web.json_response({'enabled': False}, headers={'Cache-Control': 'no-store'})
         return
-    from .comfy import ComfyPort
-    port = ComfyPort(server)
-    jobs = Jobs(port, port.output_root / 'FreeVideo' / '.agent' / 'jobs')
-    server._freevideo_agent = jobs
-    from .sessions import Confirmations, Sessions
-    sessions = Sessions(port.output_root / 'FreeVideo' / '.agent' / 'sessions')
-    server._freevideo_agent_sessions = sessions
-    # The user's stop also cancels this session's queued and running agent work and pauses its productions.
-    sessions.on_stop.append(lambda sid: asyncio.to_thread(jobs.stop_session, sid))
-    # Operations an agent runs only after the user approves them; the page changes the policy.
-    confirmations = Confirmations(port.output_root / 'FreeVideo' / '.agent' / 'confirm.json', sessions)
-    jobs.productions.gate = confirmations.gate
+    startup_failed = False
+    try:
+        from .comfy import ComfyPort
+        from .sessions import Confirmations, Sessions
+        port = ComfyPort(server)
+        jobs = Jobs(port, port.output_root / 'FreeVideo' / '.agent' / 'jobs')
+        sessions = Sessions(port.output_root / 'FreeVideo' / '.agent' / 'sessions')
+        # The user's stop also cancels this session's queued and running agent work and pauses its productions.
+        sessions.on_stop.append(lambda sid: asyncio.to_thread(jobs.stop_session, sid))
+        # Operations an agent runs only after the user approves them; the page changes the policy.
+        confirmations = Confirmations(port.output_root / 'FreeVideo' / '.agent' / 'confirm.json', sessions)
+        jobs.productions.gate = confirmations.gate
+    except Exception as error:
+        # Optional agent state must never prevent the studio or other routes from loading.
+        logging.getLogger(__name__).warning('[FreeVideo] Agent startup unavailable: %s', error)
+        startup_failed = True
+    else:
+        server._freevideo_agent = jobs
+        server._freevideo_agent_sessions = sessions
     tokens = {}
     token_failures = set()
     thumbnails = asyncio.Semaphore(1)
@@ -349,7 +357,10 @@ def register():
 
     def prepare_token(root):
         # Startup and public connection help share authentication's Windows cache.
-        return expected(root) if os.name == 'nt' else ensure_token(root)
+        try:
+            return expected(root) if os.name == 'nt' else ensure_token(root)
+        except (OSError, ValueError):
+            raise TokenUnavailable() from None
 
     def reply(value, status=200):
         return web.json_response(value, status=status, headers={'Cache-Control': 'no-store'},
@@ -384,6 +395,8 @@ def register():
             attached = None
             suffix = ''
             try:
+                if startup_failed:
+                    raise JobError('not_ready', 'Agent startup unavailable')
                 suffix = request.match_info.route.resource.canonical
                 suffix = suffix[len(PREFIX):] if suffix.startswith(PREFIX) else suffix
                 method = 'GET' if request.method == 'HEAD' else request.method
@@ -1453,6 +1466,11 @@ def register():
         return web.FileResponse(path, headers={'Content-Type': kind, 'Cache-Control': 'private, no-store',
             'Content-Disposition': 'attachment', 'X-Content-Type-Options': 'nosniff'})
 
+    server._freevideo_agent_registered = True
+    if startup_failed:
+        # Keep the guarded 503 routes, but publish no partial stores, token or scheduler.
+        return
+
     async def scheduler():
         while True:
             try:
@@ -1479,5 +1497,5 @@ def register():
                                             args.port), pid=os.getpid(), api=PREFIX, started_at=time.time())
         path = token_path(root).with_name('endpoint.json')
         path.write_text(json.dumps(endpoint), encoding='utf-8')
-    except Exception:  # noqa: BLE001 - discovery is a convenience; the API works without it
-        pass
+    except Exception as error:  # noqa: BLE001 - discovery is a convenience; the API works without it
+        logging.getLogger(__name__).warning('[FreeVideo] Agent discovery unavailable: %s', error)

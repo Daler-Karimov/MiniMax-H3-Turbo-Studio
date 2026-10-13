@@ -1,8 +1,8 @@
 """Agent-native control of FreeVideo: job specs, media tools, headless edits and MCP.
 
-The agent features are held back for now: they stay off, with no routes, token,
-commands or controls, unless FREEVIDEO_AGENT=1 is set where ComfyUI runs (and
-for the agent and mcp commands)."""
+Agent features are enabled by default. Set FREEVIDEO_AGENT=0 (or false, no, off)
+where ComfyUI runs and for the managed commands to disable the agent API, token,
+commands and controls."""
 import os
 
 API_VERSION = 1
@@ -10,6 +10,6 @@ SWITCH = 'FREEVIDEO_AGENT'
 
 
 def enabled(environ=None):
-    """Whether the agent features are on: FREEVIDEO_AGENT=1 (or true, yes, on)."""
+    """On by default; only FREEVIDEO_AGENT=0/false/no/off explicitly disables it."""
     value = (os.environ if environ is None else environ).get(SWITCH, '')
-    return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return value.strip().lower() not in ('0', 'false', 'no', 'off')

@@ -73,6 +73,7 @@ def _main(argv=None):
                  if agent_enabled() else '') + '\n'
               'Examples:\n  ./freevideo\n  ./freevideo server --listen 0.0.0.0\n  ./freevideo setup --plan\n'
               '  ./freevideo test --suite quick\n  ./freevideo generate --prompt-file prompt.txt --out video.mp4\n\n'
+              'Agent commands are enabled by default; set FREEVIDEO_AGENT=0 to disable them.\n\n'
               'Use COMMAND --help for options. Windows: .\\setup.ps1 / .\\test.ps1 / .\\freevideo.ps1; Linux: ./setup.sh / ./test.sh / ./freevideo.')
         return 0
     if not rest:
