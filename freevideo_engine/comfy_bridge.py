@@ -75,6 +75,11 @@ def progress_history_forecast(root, machine, canvas):
         return {}  # A progress estimate cannot prevent generation.
 
 
+# The decoder's phase events, as decode.py and macos_decode.py print them.
+_DECODE_PARTS = {'Loading video VAE': 'vae_load', 'Decoding the video': 'video_decode',
+                 'Loading and decoding audio': 'audio_load_decode', 'Saving MP4 and audio': 'encode'}
+
+
 class WholeVideoProgress:
     """Annotate phase events with one report-weighted whole-video progress.
 
@@ -82,6 +87,10 @@ class WholeVideoProgress:
     rough decoder estimate which real decoded-frame timings then replace.
     These presentation estimates never change resource admission or placement.
     """
+    ORDER = ('encoding', 'load', 'sampling', 'decode')
+    # The decoder's own steps, in the order it runs them, by the name of each one's forecast.
+    DECODE_PARTS = ('vae_load', 'video_decode', 'audio_load_decode', 'encode')
+
     def __init__(self, clock=time.perf_counter):
         self.clock = clock
         self.started = clock()
@@ -90,15 +99,34 @@ class WholeVideoProgress:
         self.completed = set()
         self.weights = {}
         self.measured = {}
+        # Seconds each phase has run over every stretch of it, the forecast's
+        # own weights, phases the forecast closed and phases a retry does not repeat.
+        self.spent = {}
+        self.forecasts = {}
+        self.closed = set()
+        self.reused = set()
+        self.decode_parts = {}
+        self.decode_rest = None
         self.total = 0.
         self.forecast_ready = False
         self.failed = False
         self.sampling_plan = {}
         self.decode_from_sampling = False
         self.sampling_time_weighted = False
+        self.sampling_rest = None
         self.decode_tail = 0.
+        self.shown = 0.
 
     def _sampling_estimate(self, message, now):
+        if self._step_estimate(message, now) or not self.sampling_rest or self.sampling_rest[0] != message.get('done'):
+            return
+        # No new step time from this message. Time that passes outside a step, as between the two passes, is not
+        # taken out of the steps still to run.
+        inside = _timing_seconds(message.get('step_elapsed_seconds')) or 0.
+        self.weights['sampling'] = max(self.weights.get('sampling', 0.),
+                                       now - self.phase_started + max(0., self.sampling_rest[1] - inside))
+
+    def _step_estimate(self, message, now):
         estimate = _timing_seconds(message.get('estimated_step_seconds'))
         done, total = message.get('done'), message.get('total')
         if estimate is None or type(done) is not int or type(total) is not int or not 0 <= done <= total:
@@ -122,6 +150,7 @@ class WholeVideoProgress:
                 return  # Do not treat the two larger refinement NFEs as small NFEs.
             full_step *= second['width'] * second['height'] / area
             remaining = max(0, plan['base_steps'] - done) * estimate + plan['refine_steps'] * full_step
+        self.sampling_rest = done, remaining
         remaining = max(0., remaining - (_timing_seconds(message.get('step_elapsed_seconds')) or 0.))
         self.weights['sampling'] = max(.001, now - self.phase_started + remaining)
         self.sampling_time_weighted = True
@@ -133,6 +162,7 @@ class WholeVideoProgress:
             self.weights['decode'] = 1.9 * full_step
             self.decode_from_sampling = True
         self.forecast_ready = True
+        return True
 
     @staticmethod
     def _forecast_weights(forecast):
@@ -156,6 +186,13 @@ class WholeVideoProgress:
             values['decode'] = values.get('decode', 0.) + residual
         return values
 
+    @classmethod
+    def _forecast_parts(cls, forecast):
+        stages = forecast.get('stages') if isinstance(forecast, dict) else None
+        values = {name: _timing_seconds(stages.get(name + '_seconds')) for name in cls.DECODE_PARTS} \
+            if isinstance(stages, dict) else {}
+        return {name: value for name, value in values.items() if value is not None}
+
     def forecast(self, value):
         value = value.get('forecast') if isinstance(value, dict) and 'forecast' in value else value
         weights = self._forecast_weights(value)
@@ -164,25 +201,56 @@ class WholeVideoProgress:
             # Close that phase before the first video-model event so its
             # measured weight is credited instead of starting a second timer.
             if self.phase == 'encoding':
-                self.measured['encoding'] = max(.001, self.clock() - self.phase_started)
-                self.completed.add('encoding')
+                self._close(self.clock())
+                self.closed.add('encoding')
                 self.phase = None
+            self.forecasts.update(weights)
+            self.decode_parts = self._forecast_parts(value)
             self.weights.update(weights)
             if 'decode' in weights:
                 self.decode_from_sampling = False
-            self.weights.update(self.measured)
-            self.total = sum(self.weights.values())
             self.forecast_ready = all(name in self.weights for name in ('sampling', 'decode'))
+            self._settle()
+            self.total = sum(self.weights.values())
 
     def _base(self):
         return sum(self.weights.get(name, 0.) for name in self.completed)
+
+    def _close(self, now):
+        if self.phase is not None:
+            self.spent[self.phase] = max(0., now - self.phase_started)
+
+    def _enter(self, phase, now):
+        """Phases do not always come one after the other: a preset check
+        runs for a moment while the prompt is encoded, and an encoder event
+        can follow the forecast. A phase that comes back goes on from the
+        time it already has, and only the phases before the one now running
+        are finished; a later one that ran for a moment keeps its forecast."""
+        self._close(now)
+        self.phase, self.phase_started = phase, now - self.spent.get(phase, 0.)
+        self.closed.discard(phase)
+        self._settle()
+
+    def _settle(self):
+        before = self.ORDER[:self.ORDER.index(self.phase)] if self.phase else ()
+        self.completed = (set(before) | self.closed | self.reused) - {self.phase}
+        for name in self.ORDER:
+            seconds = self.spent.get(name)
+            if name in self.completed:
+                if seconds is not None:
+                    self.measured[name] = self.weights[name] = max(.001, seconds)
+                elif name not in self.reused:
+                    self.weights.pop(name, None)  # Passed without running: nothing of it is left to wait for.
+            elif name in self.measured:
+                del self.measured[name]
+                self.weights[name] = max(self.forecasts.get(name, 0.), seconds or 0., .001)
 
     def _message_phase(self, message):
         if message.get('timing_phase') in ('encoding', 'load', 'sampling', 'decode'):
             return message['timing_phase']
         phase = message.get('phase')
         return {'sampling': 'sampling', 'sample_finalize': 'decode',
-                'complete': 'decode'}.get(phase)
+                'complete': 'decode'}.get(phase) if isinstance(phase, str) else None
 
     def annotate(self, message):
         message = dict(message)
@@ -192,15 +260,12 @@ class WholeVideoProgress:
             self.forecast(message['prediction'])
         retry = message.get('retry') if isinstance(message.get('retry'), dict) else {}
         if retry.get('reuse_sampling') is True:
+            self.reused.add('sampling')
             self.completed.add('sampling')
         phase = self._message_phase(message)
         now = self.clock()
         if phase and phase != self.phase:
-            if self.phase is not None:
-                self.completed.add(self.phase)
-                self.measured[self.phase] = max(.001, now - self.phase_started)
-                self.weights[self.phase] = self.measured[self.phase]
-            self.phase, self.phase_started = phase, now
+            self._enter(phase, now)
         if phase == 'sampling':
             self._sampling_estimate(message, now)
         if phase == 'decode' and message.get('stage') == 'video':
@@ -210,11 +275,19 @@ class WholeVideoProgress:
                 video_seconds = elapsed * total / done
                 # Reports put audio/MP4/post-decode cleanup at about 6-8% of
                 # video decode time. Retain this tail until audio/save starts.
-                self.decode_tail = video_seconds * .08
+                self.decode_tail = max(video_seconds * .08, self.decode_rest or 0.)
                 self.weights['decode'] = now - self.phase_started + video_seconds - elapsed + self.decode_tail
                 self.forecast_ready = True
         elif phase == 'decode':
             self.decode_tail = 0.
+            part = message.get('decode_part')
+            rest = self.DECODE_PARTS[self.DECODE_PARTS.index(part):] if part in self.DECODE_PARTS else ()
+            if rest and all(name in self.decode_parts for name in rest):
+                # The decoder says which of its steps begins: what is left of
+                # the phase is this step and the ones after it, not the whole
+                # forecast made before the run.
+                self.decode_rest = sum(self.decode_parts[name] for name in rest[1:])
+                self.weights['decode'] = now - self.phase_started + self.decode_parts[part] + self.decode_rest
         self.total = sum(self.weights.values())
         if message.get('phase') == 'complete' or message.get('overall', {}).get('status') == 'complete':
             message['overall'] = {'status': 'complete', 'fraction': 1., 'estimated': False,
@@ -223,18 +296,33 @@ class WholeVideoProgress:
         overall = {'status': 'running', 'estimated': self.forecast_ready,
                    'elapsed_seconds': now - self.started}
         if self.forecast_ready and self.total > 0:
-            start = self._base() / self.total
             weight = self.weights.get(self.phase, 0.)
             elapsed = max(0., now - self.phase_started)
             seconds = self.weights.get(self.phase)
-            fraction = start
-            if weight:
-                fraction += weight / self.total * min(.95, elapsed / max(seconds, 1e-9))
             remaining = max(0., self.total - self._base() - min(elapsed, seconds or 0.))
             future = sum(value for name, value in self.weights.items()
                          if name not in self.completed and name != self.phase)
+            total = self.total
+            if weight and elapsed > .95 * weight and .95 * future > .05 * self._base():
+                # A phase that outruns its forecast (a model read from a cold
+                # disk) is given the time it has taken, so the fraction keeps
+                # rising instead of standing at the forecast's end; it does so
+                # only while enough of the run is still ahead for that to
+                # raise it. The time left is unchanged: what follows is.
+                seconds = elapsed / .95
+                total += seconds - weight
+                weight = seconds
+            start = self._base() / total
+            fraction = start
+            if weight:
+                fraction += weight / total * min(.95, elapsed / max(seconds, 1e-9))
+            # What has been given out is not taken back. A phase that
+            # returns (a model loaded again between the passes), a decoder
+            # step that ran past its forecast and a retry all add time
+            # left; the fraction waits for the run to catch up with it.
+            fraction = self.shown = max(self.shown, fraction)
             overall.update(fraction=fraction, phase_start_fraction=start,
-                           phase_weight=weight / self.total if self.total else 0.,
+                           phase_weight=weight / total,
                            phase_elapsed_seconds=elapsed, phase_seconds=seconds,
                            remaining_seconds=remaining,
                            remaining_floor_seconds=max(future, self.decode_tail),
@@ -462,7 +550,10 @@ def progress_message(event):
               'lora_prepare_start': 'Loading LoRAs',
               'resource_retry': 'Adjusting memory placement and retrying'}
     if name == 'decode_phase':
-        return {'label': str(event.get('phase', 'Decoding video and audio')), 'timing_phase': 'decode'}
+        message = {'label': str(event.get('phase', 'Decoding video and audio')), 'timing_phase': 'decode'}
+        if isinstance(event.get('phase'), str) and event['phase'] in _DECODE_PARTS:
+            message['decode_part'] = _DECODE_PARTS[event['phase']]
+        return message
     if name == 'decode_progress':
         return dict(label='Decoding the video', timing_phase='decode', phase='decode', stage='video',
                     done=event.get('done'), total=event.get('total'), unit='frames',
