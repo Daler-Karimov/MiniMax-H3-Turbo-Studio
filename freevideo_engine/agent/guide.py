@@ -357,7 +357,7 @@ def connection_guide(root, base, lang=None, offers=None):
         '# job = call("GET", "/jobs/" + job["id"] + "?wait=25")',
         '# Poll the same ID until succeeded. Retry a lost submission using the same ref.',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
-        '# The conversation inside FreeVideo (see below): one wait per command, never a loop inside one command.',
+        '# The conversation inside FreeVideo (see below): each wait is its own command; when it returns, run the next one.',
         '# box = call("GET", "/inbox?wait=50")   # {"session": ..., "inbox": [what the user said], "again": true if nothing yet}',
         '# call("POST", "/sessions/" + box["session"] + "/events", {"type": "message", "text": "YOUR WORDS"})',
     ])
@@ -386,21 +386,27 @@ def connection_guide(root, base, lang=None, offers=None):
         conversation='用户会在 FreeVideo 的“AI 全自动”页里直接和你说话，你的话也显示在那里。'
                      '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
                      '回应里的 session 就是这段对话；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
-                     '{"type":"message","text":"…"}（MCP 用 freevideo_session_post），先用一句话介绍自己和能做的事。'
-                     '然后一直调等待接口等用户的话：它最多约 50 秒返回，"again": true 表示暂时没有新消息，再调一次，不要停，'
-                     '也不要因为没有消息去问用户。每条命令只等一次，命令的超时设到 60 秒以上。'
+                     '{"type":"message","text":"…"}（MCP 用 freevideo_session_post），把上面那段自我介绍发到这里。'
+                     '然后守在这段对话里：再调等待接口，它最多约 50 秒返回；"again": true 表示用户还没说话，'
+                     '马上再调下一次，一次接一次，不限次数。没有消息不是结束的理由：不要结束这一轮回复，'
+                     '不要停下来问用户——你一停，用户在 FreeVideo 里说的话就没人听了。'
+                     '用命令行调接口时，每次等待单独发一条命令（一条命令里不写循环，超时设到 60 秒以上），'
+                     '返回后接着发下一条。'
                      '收到话（inbox 里每条的 text）就去做；做完把结果用一两句话发回同一个 session，再接着等。'
-                     '这段对话里不要新建会话。用户没让你停，就一直这样循环。' if zh else
+                     '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
                      'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
-                     'with {"type":"message","text":"..."} (MCP: freevideo_session_post) and first say one line about '
-                     'who you are and what you can do. Then keep calling the wait for the user\'s words: it answers within '
-                     'about 50 seconds, and "again": true means nothing new yet, so call it again; do not stop and do not '
-                     'ask the user because nothing came. One wait per command, with a command timeout above 60 seconds. '
+                     'with {"type":"message","text":"..."} (MCP: freevideo_session_post) and say the introduction above '
+                     'there. Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
+                     '"again": true means the user has not spoken yet, so call it again at once, time after time, with no '
+                     'limit. Nothing new is not a reason to finish: do not end your reply and do not stop to ask the '
+                     'user, because once you stop nobody hears what the user says in FreeVideo. From a command line, '
+                     'each wait is its own command (no loop inside one command, timeout above 60 seconds); when it '
+                     'returns, run the next one. '
                      'When words arrive (text of each inbox row), do what they ask, post the result in one or two '
                      'sentences to the same session, and wait again. Do not create another session for this conversation. '
-                     'Continue this loop until the user tells you to stop.',
+                     'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
                  '“我连接不到你电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
