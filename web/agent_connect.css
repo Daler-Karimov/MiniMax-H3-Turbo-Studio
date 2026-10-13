@@ -9,4 +9,11 @@
 .fv-agent-connect-body .fv-agent-connect-status{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fv-body);color:var(--fv-muted)}
 .fv-agent-connect-body .fv-agent-connect-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--fv-disabled)}
 .fv-agent-connect-body .fv-agent-connect-dot[data-color=green]{background:var(--fv-success)}
-.fv-setup .fv-agent-connect[hidden]{display:none}
+/* The Autopilot page: one centred column under the top bar. */
+.fv-studio.fv-autopilot{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.fv-studio.fv-autopilot .fv-autopilot-body{box-sizing:border-box;overflow:auto;display:grid;align-content:start;justify-items:center;gap:24px;padding:48px 16px 24px}
+.fv-autopilot-card{box-sizing:border-box;width:min(640px,100%);display:grid;gap:14px;padding:26px;border:1px solid var(--fv-border);border-radius:var(--fv-r-lg);background:var(--fv-card)}
+.fv-autopilot-card>h2{margin:0;font-size:var(--fv-strong);line-height:1.3;font-weight:var(--fv-semibold);color:var(--fv-ink)}
+.fv-autopilot-card[hidden]{display:none}
+.fv-autopilot-body>.fv-agent-list{box-sizing:border-box;width:min(640px,100%);padding:0 26px}
+@media(max-width:480px){.fv-autopilot-card{padding:18px}.fv-autopilot-body>.fv-agent-list{padding:0 18px}}

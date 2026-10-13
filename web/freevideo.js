@@ -8,6 +8,7 @@ import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
+import { agentInterfaceEnabled } from './agent_connect.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
@@ -564,7 +565,7 @@ app.registerExtension({
     beforeConfigureGraph() { configuringGraph = true; },
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
-        for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio)],
+        for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api))],
             ['updates', startUpdateChecks]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }

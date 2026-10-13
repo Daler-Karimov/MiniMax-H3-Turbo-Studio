@@ -61,3 +61,4 @@ engine-gpu-*.lock
 # Optional local prompt models, runtime binaries and private rewrite caches.
 /optional/
 *.gguf
+/out/

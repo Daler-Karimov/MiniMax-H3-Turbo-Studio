@@ -113,34 +113,3 @@ export function agentConnectCard(t, api, shown = () => true) {
     const enabled = agentInterfaceEnabled(api);
     return {element: body, title: t('Connect an agent', '连接 Agent'), enabled, sync, stop};
 }
-
-// Settings: the card as one collapsible section of the dialog.
-export function agentConnect(t, api) {
-    let observer, dialog;
-    const section = el('details', 'fv-agent-connect');
-    section.hidden = true;
-    const card = agentConnectCard(t, api, () => !section.hidden && section.open && section.dataset.expanded !== 'false'
-        && (!dialog || dialog.open && dialog.dataset.closing !== 'true'));
-    section.append(el('summary', null, card.title), card.element);
-    function close() {
-        card.stop(); observer?.disconnect(); observer = null;
-        dialog?.removeEventListener('close', close); dialog = null;
-    }
-    section.addEventListener('toggle', () => {
-        if (!observer) {
-            dialog = section.closest('dialog');
-            observer = new MutationObserver(card.sync);
-            observer.observe(section, {attributes: true, attributeFilter: ['open', 'hidden', 'data-expanded']});
-            if (dialog) {
-                observer.observe(dialog, {attributes: true, attributeFilter: ['open', 'data-closing']});
-                dialog.addEventListener('close', close);
-            }
-        }
-        card.sync();
-    });
-    card.enabled.then(on => {
-        if (on) section.hidden = false;
-        else { close(); section.remove(); }
-    });
-    return section;
-}

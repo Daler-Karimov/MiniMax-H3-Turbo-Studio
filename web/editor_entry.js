@@ -3,7 +3,7 @@ import {openEditor} from './editor.js';
 import {api} from '../../scripts/api.js';
 import {app} from '../../scripts/app.js';
 import {openStudio, showNodes} from './studio.js';
-import {viewChanged} from './view_navigation.js';
+import {openAutopilot, viewChanged} from './view_navigation.js';
 function editorPanel(node) {
     const values = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
     return {node: node.id, width: values.width, height: values.height, text: values.text || '', settings: Object.fromEntries(Object.entries({
@@ -29,6 +29,7 @@ export function openEditorView(node, {studio} = {}) {
     }
     const handle = openEditor({api, app, panel, onView(view) {
         if (view === 'nodes') showNodes(node, studio);
+        else if (view === 'autopilot') openAutopilot(node, {studio});
         else if (studio?.open) viewChanged('studio', node);
         else openStudio(node);
     }});

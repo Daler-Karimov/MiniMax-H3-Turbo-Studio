@@ -689,6 +689,9 @@ def register():
                 video = (view.get('result') or {}).get('video') or {}
                 if video.get('url'):
                     value['video'] = video['url']
+                if (view.get('result') or {}).get('library_id'):
+                    # The work this video became, for the page to show it in My works.
+                    value['work'] = view['result']['library_id']
                 return value
             return dict(active=sum(1 for r in rows if r['status'] in ACTIVE), jobs=[item(r) for r in shown])
         return reply(await asyncio.to_thread(read))
