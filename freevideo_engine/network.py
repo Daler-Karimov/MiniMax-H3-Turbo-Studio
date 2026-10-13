@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 from . import execution_paths
+from . import subprocess_output
 from .windows_ux import external_python, hidden_console
 import threading
 import time
@@ -303,7 +304,7 @@ def probe(family, name, spec, versions, timeout, env, *, measure_speed=False):
             origin_proxy = execution_paths.run(['git', 'config', '--get', 'remote.origin.proxy'], env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3, **hidden_console())
             if origin_proxy.returncode == 0:
-                settings['remote.' + remote + '.proxy'] = origin_proxy.stdout.decode().rstrip('\r\n')
+                settings['remote.' + remote + '.proxy'] = subprocess_output.decode_output(origin_proxy.stdout).rstrip('\r\n')
             elif origin_proxy.returncode != 1:
                 raise RuntimeError('Git proxy configuration could not be read')
             git_env = proxy.git_environment(env, settings)
@@ -969,8 +970,8 @@ MIN_GIT = (2, 17)
 def git_version(executable, env=None):
     """(major, minor) of a Git executable, or None when it cannot be run or read."""
     try:
-        output = execution_paths.run([str(executable), '--version'], env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, timeout=30, **hidden_console()).stdout
+        output = subprocess_output.run_external([str(executable), '--version'], env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=30, **hidden_console()).stdout
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     found = re.search(r'git version (\d+)\.(\d+)', output or '')
@@ -1001,14 +1002,14 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
         command = [git, *command[1:]]
         if run:
             return run(label, command, env=env)
-        result = execution_paths.run(list(map(str, command)), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **hidden_console())
+        result = subprocess_output.run_external(list(map(str, command)), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **hidden_console())
         if result.returncode:
             raise RuntimeError(result.stdout[-2500:])
     if target.exists():
         if not (target / '.git').exists():
             raise ValueError('Existing dependency is not a Git checkout of the pinned source: ' + str(target))
-        head = execution_paths.check_output([git, '-C', str(target), 'rev-parse', 'HEAD'], env=env, text=True, **hidden_console()).strip()
-        dirty = execution_paths.check_output([git, '-C', str(target), 'status', '--porcelain', '--untracked-files=no'], env=env, text=True, **hidden_console())
+        head = subprocess_output.output_external([git, '-C', str(target), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
+        dirty = subprocess_output.output_external([git, '-C', str(target), 'status', '--porcelain', '--untracked-files=no'], env=env, **hidden_console())
         if head != commit or dirty:
             raise ValueError('Existing dependency differs from the pinned clean source: ' + str(target))
         return target
@@ -1044,7 +1045,7 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
             finally:
                 env = original
             execute(target.name + '-checkout', ['git', '-C', temporary, 'checkout', '--detach', commit])
-            actual = execution_paths.check_output([git, '-C', str(temporary), 'rev-parse', 'HEAD'], env=env, text=True, **hidden_console()).strip()
+            actual = subprocess_output.output_external([git, '-C', str(temporary), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
             if actual != commit:
                 raise ValueError('Downloaded source did not match its pinned commit')
             temporary.rename(target)

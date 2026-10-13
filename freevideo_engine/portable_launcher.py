@@ -179,6 +179,10 @@ class PortableController(Controller):
                 'import sys;sys.path.insert(0,sys.argv[1]);'
                 'from freevideo_engine.portable import main;'
                 'sys.exit(main(sys.argv[2], ["--initialize"]))', str(self.source), str(self.root)]
+        # -I ignores PYTHONUTF8, so name the mode on the command line: the start
+        # process then reads and writes UTF-8 like every other FreeVideo process,
+        # whatever the system code page is.
+        command[1:1] = ['-X', 'utf8']
         tail = ''
         view = launch_view.view_for(self.root)
         self.progress(dict(stage='verify', done=0, total=None, detail='Check local files'))
@@ -377,6 +381,8 @@ def gui(root):
 def portable_session(root):
     from .launcher_session import Session
     root = Path(plain(resolved(root)))
+    from .triton_compat import own_temporary_environment
+    own_temporary_environment(root / 'engine')
     os.environ.update(portable.environment(root, portable.manifest(root)))
     os.environ['FREEVIDEO_LAUNCHER_HOME'] = str(root/'engine/launcher')
     class PortableSession(Session):

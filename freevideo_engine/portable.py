@@ -170,6 +170,8 @@ def own_environment(root, value):
     runtime through that folder, as the environment it was started with did:
     what it starts with the inherited environment imports and loads from there.
     """
+    from .triton_compat import own_temporary_environment
+    own_temporary_environment(Path(plain(root)) / 'engine')
     from .execution_paths import execution_environment
     return execution_environment(environment(root, value))
 

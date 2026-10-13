@@ -23,7 +23,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import execution_paths
 from .hardware import Hardware, GiB, cgroup_capacity
-from . import __version__
+from . import __version__, subprocess_output
 from .policy import resource_budget
 from .monitoring import save
 from .install_tuning import build_parallelism, required_models, cache_compatible, wheel_key
@@ -211,7 +211,7 @@ def dependency_status(root, layout='unified', system=None):
         if python.exists():
             code = ('import importlib.metadata as m,json; '
                     'print(json.dumps({d.metadata["Name"].lower().replace("_","-"):d.version for d in m.distributions()}))')
-            check = execution_paths.run([str(python), '-B', '-c', code], capture_output=True, text=True)
+            check = subprocess_output.run_python([str(python), '-B', '-c', code], capture_output=True)
             if check.returncode:
                 row['error'] = check.stderr[-1000:]
             else:
@@ -280,8 +280,8 @@ def digest(path, algorithm='sha256', git_blob=False):
 def inventory(gpu=None):
     smi = nvidia_smi()
     query = 'index,uuid,name,compute_cap,memory.total,memory.free,driver_version,pci.bus_id'
-    result = subprocess.run([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
-                            check=True, capture_output=True, text=True, timeout=20)
+    result = subprocess_output.run_external([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
+                            check=True, capture_output=True, timeout=20)
     rows = [dict(zip(query.split(','), map(str.strip, row))) for row in csv.reader(result.stdout.splitlines())]
     selector = gpu if gpu is not None else os.environ.get('CUDA_VISIBLE_DEVICES', '0').split(',')[0]
     matches = [r for r in rows if r['index'] == selector or r['uuid'] == selector]
@@ -1302,6 +1302,8 @@ class Installer:
         from .package_progress import PackageOutput
         if self.cancel.is_set():
             raise RuntimeError(self.state.get('resource_guard', 'Installation cancelled.'))
+        from .triton_compat import temporary_environment
+        env = temporary_environment(self.root, env or self.env)
         args, cwd = uv_file_arguments(args, cwd)
         with self.state_lock:
             index = len(self.state['steps'])
@@ -1529,14 +1531,14 @@ class Installer:
         # and unpack another copy. Existing installations keep their own base.
         if prepared.is_dir() and not any(current.glob('cpython-' + self.versions['python'] + '-*')):
             env = dict(self.env, UV_PYTHON_INSTALL_DIR=str(prepared))
-            found = execution_paths.run([str(uv), '--no-config', 'python', 'find', '--managed-python',
+            found = subprocess_output.run_external([str(uv), '--no-config', 'python', 'find', '--managed-python',
                                     '--no-python-downloads', self.versions['python']],
-                                   env=env, capture_output=True, text=True, timeout=30)
+                                   env=env, capture_output=True, timeout=30)
             if found.returncode == 0:
                 candidate = Path(found.stdout.strip())
                 if candidate.is_file() and candidate.resolve().is_relative_to(prepared.resolve()):
-                    check = execution_paths.run([str(candidate), '-I', '-B', '-c',
-                        'import platform; print(platform.python_version())'], capture_output=True, text=True, timeout=30)
+                    check = subprocess_output.run_python([str(candidate), '-I', '-B', '-c',
+                        'import platform; print(platform.python_version())'], capture_output=True, timeout=30)
                     if check.returncode == 0 and check.stdout.strip() == self.versions['python']:
                         self.env['UV_PYTHON_INSTALL_DIR'] = str(prepared)
                         self.command('python-bootstrap-reuse', [candidate, '-I', '-B', '-c',
@@ -1566,10 +1568,10 @@ class Installer:
                 'python="cp"+str(sys.version_info.major)+str(sys.version_info.minor), '
                 'torch=str(torch.__version__),cuda=torch.version.cuda,cxx11_abi=torch.compiled_with_cxx11_abi(), '
                 'machine=platform.machine(),glibc=platform.libc_ver())))')
-        identity = json.loads(subprocess.check_output([str(python), '-c', code], env=self.env, text=True))
+        identity = json.loads(subprocess_output.output_python([str(python), '-c', code], env=self.env))
         identity.update(arch='.'.join(map(str, self.plan['inventory']['hardware']['capability'])),
-                        source=self.spec['sageattention']['commit'], compiler=subprocess.check_output(
-                            ['g++', '--version'], text=True).splitlines()[0])
+                        source=self.spec['sageattention']['commit'], compiler=subprocess_output.output_external(
+                            ['g++', '--version']).splitlines()[0])
         wheel_dir = Path(self.plan['wheel_cache']) / wheel_key(identity)
         manifest = wheel_dir / 'manifest.json'
         record = json.loads(manifest.read_text(encoding='utf-8')) if manifest.is_file() else None
@@ -1594,7 +1596,7 @@ class Installer:
             save(stamp, identity)
             header_code = ('from pathlib import Path; import site; '
                           'print(":".join(str(p) for s in site.getsitepackages() for p in (Path(s)/"nvidia").glob("*/include")))')
-            headers = subprocess.check_output([str(python), '-c', header_code], env=self.env, text=True).strip()
+            headers = subprocess_output.output_python([str(python), '-c', header_code], env=self.env).strip()
             build = self.plan['build']
             build_env = dict(self.env, CUDA_HOME=str(toolkit), PATH=str(toolkit / 'bin') + os.pathsep + self.env['PATH'],
                 CPATH=headers, TORCH_CUDA_ARCH_LIST=identity['arch'], MAX_JOBS=str(build['jobs']),

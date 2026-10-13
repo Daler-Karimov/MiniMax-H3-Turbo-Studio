@@ -149,6 +149,10 @@ class _WinAPI:
     def __init__(self):
         dll = ctypes.WinDLL('kernel32', use_last_error=True)
         declarations = {
+            'GetACP': ([], _DWORD),
+            'WideCharToMultiByte': ([_DWORD, _DWORD, ctypes.c_wchar_p, ctypes.c_int,
+                                     ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                                     ctypes.POINTER(_BOOL)], ctypes.c_int),
             'CreateDirectoryW': ([ctypes.c_wchar_p, ctypes.c_void_p], _BOOL),
             'CreateFileW': ([ctypes.c_wchar_p, _DWORD, _DWORD, ctypes.c_void_p,
                              _DWORD, _DWORD, _HANDLE], _HANDLE),
@@ -255,6 +259,22 @@ class _Backend:
                 return _registry_long_paths()
             except (ImportError, AttributeError, OSError, ValueError):
                 return False
+
+    def ansi_path(self, path):
+        """Whether the system code page spells this path without substitution."""
+        try:
+            api = _win_api()
+            code_page = api.GetACP()
+            if code_page == 65001:
+                return True
+            substituted = _BOOL()
+            # WC_NO_BEST_FIT_CHARS: even a similar character names a different file.
+            api.check(api.WideCharToMultiByte(code_page, 0x400, str(path), -1,
+                                            None, 0, None, ctypes.byref(substituted)))
+            return not substituted.value
+        except (AttributeError, OSError, ValueError, TypeError, ctypes.ArgumentError):
+            # Not knowing is no reason for a short folder: the length decides, as it did.
+            return True
 
     def locations(self):
         return [Path(plain(value, windows=True)) / 'FV' for key in ('ProgramData', 'LOCALAPPDATA')
@@ -504,6 +524,11 @@ def needs_view(root, longest=None) -> bool:
     if os.environ.get('FREEVIDEO_RUNTIME_ALIAS') == '0':
         return False
     if os.environ.get('FREEVIDEO_RUNTIME_ALIAS') == '1':
+        return True
+    # The kernel compiler reads its cache folder and finds its own headers through the system's
+    # ANSI code page. A folder that code page cannot spell is one it cannot use, whatever its
+    # length; the short folder is plain letters.
+    if not _backend.ansi_path(root):
         return True
     # An installation that runs from where it is keeps doing so; only one beyond its budget is
     # given the short folder.

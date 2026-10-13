@@ -37,6 +37,8 @@ vendor/
 downloads/
 prepared/
 kernel-cache/
+# Dedicated compiler scratch files, also under engine in portable installations.
+tmp/
 wheels/
 machine.json
 prepared-cache.json
