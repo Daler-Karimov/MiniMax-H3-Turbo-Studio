@@ -1,41 +1,78 @@
 {
   "schema": 1,
-  "product_version": "0.4.0",
+  "product_version": "0.4.1",
   "en": {
-    "summary": "Adds an editing view, long videos generated one part after another, and AI agent connections, and makes generation faster.",
+    "summary": "Fixes Extend on videos made earlier, and improves progress display and several agent details.",
     "changes": [
-      "New editing view: arrange generated clips on a timeline, add text and subtitles, change speed or reverse a clip, and choose the size and quality when exporting.",
-      "Long videos can be generated one part after another: select a range on the timeline in the editing view and press Generate, and each part continues from the one before. A 30-second video is generated in two parts.",
-      "Clips can be extended in the editing view: drag a new part out of the end of a clip and press Generate, and it continues from the clip. A \"First-frame reference\" switch reduces drift when a clip is extended.",
-      "The editing view can create subtitles automatically: it recognizes Chinese, English, Japanese, Korean and Cantonese speech and gives each line its text and timing.",
-      "A step-by-step guide appears the first time FreeVideo opens, and can be viewed again from Settings.",
-      "Connect an AI agent and let it generate, edit and export videos.",
-      "A new \"LAN access\" switch in Settings lets phones and other computers on the same network open FreeVideo with a link.",
-      "After an offline package is imported, FreeVideo offers to delete the ZIP files that are no longer needed, freeing up disk space.",
-      "LoRAs can be added directly in the creation panel.",
-      "The FreeVideo · Media node accepts several reference images.",
-      "Faster generation: the wait before decoding is shorter; when generating several videos in a row, the models load faster for the later ones. On computers with less memory, background compiling after an update uses less memory.",
-      "Fixes: generating with several large reference images no longer runs out of memory; 16:9 videos can be saved as share videos; making the full video from a preview no longer stalls on a single step now and then; when setup cannot find a graphics driver, the error says so; setup shows the current step; when security software removes one of FreeVideo's files, the error says why and how to restore it; on a slow network, setup waits longer and tries once more when no download source responds; on English Windows, FreeVideo starts when the install folder or the user name contains Chinese characters."
+      "Extend works again on videos made earlier, including ones whose size was changed, and the new part now uses the previous video's picture size automatically. Clicking Extend on a result or in Creations now opens Edit with the video on the timeline and a new part already placed after it, ready to generate.",
+      "Autopilot can start a new conversation, and earlier ones stay in a list to return to; the agent also keeps listening after it answers, so it still responds when the conversation resumes later.",
+      "A percentage and the time left appear as soon as a video starts; progress keeps moving while the model loads and runs smoothly to the end, on Autopilot job cards as well.",
+      "In Edit, an agent can start a new timeline from just a name, and writes a short note on each clip so it is clear at a glance what the clip is.",
+      "A video added to the timeline from Creations now brings the description it was generated from, so it can be regenerated right away.",
+      "A video of 16 to 29 seconds requested through an agent is now made in one generation when the computer allows it, the same as in Create.",
+      "When a specific camera path, placement or order of actions keeps coming out wrong, the agent can offer to make a rough camera draft first and generate from it.",
+      "The question about freeing the disk space used by old model files now appears after updating.",
+      "At smaller sizes, more of the model stays in GPU memory, so computers with less memory read less from the drive while generating.",
+      "When the network is slow or a step takes a while, the install page now shows what it is doing.",
+      "Third-party download during setup now lists only the files this computer needs, and the list can be exported; after downloading, choose the folder and the files that pass the check are used directly.",
+      "When other programs use a large part of the GPU during a generation, or the GPU overheats, a short note appears under the result."
     ]
   },
   "zh": {
-    "summary": "新增剪辑视图、一段接一段的长视频生成，并可以连接 AI Agent；生成也更快。",
+    "summary": "修复了之前生成的视频不能“接着生成”的问题，并改进了进度显示和 Agent 的几处体验。",
     "changes": [
-      "新增剪辑视图：把生成的片段排在时间线上剪辑，可以加文字和字幕、变速和倒放；导出时可以选画面大小和画质。",
-      "长视频可以一段接一段生成：在剪辑视图的时间线上选好范围再点生成，每一段都接着前一段往下生成；30 秒的视频分两段生成。",
-      "剪辑视图里可以延长片段：从片段尾巴拖出一段再点生成，接在原片段后面往下生成；延长片段时可以打开“首帧参考”，减小画面漂移。",
-      "剪辑视图可以自动生成字幕：识别中文、英文、日文、韩文和粤语语音，得到每句的文字和时间。",
-      "第一次打开时有分步指引，设置里可以再看一遍。",
-      "可以连接 AI Agent，让它生成、剪辑和导出视频。",
-      "设置里新增“局域网访问”开关，打开后，同一网络里的手机和其他电脑可以用链接打开 FreeVideo。",
-      "导入离线包以后，可以删掉用不到的压缩包，释放磁盘空间。",
-      "创作面板里可以直接添加 LoRA。",
-      "FreeVideo · Media 节点可以接多张参考图。",
-      "生成更快：解码前的等待更短；连续生成时，后面的视频加载模型更快。内存较小的电脑上，更新后的后台编译占用的内存更少。",
-      "修复：用多张较大的参考图生成时不再内存不足；16:9 的视频可以保存分享视频；先出预览再生成正式视频时，不再偶尔在某一步停留很久；安装时没有找到显卡驱动，会直接说明；安装时会显示当前步骤；FreeVideo 的文件被安全软件移走时，会说明原因和恢复的办法；网络较慢、下载源都连不上时，安装会多等一会儿再试一轮；英文 Windows 上，安装文件夹或用户名带中文时也能正常启动。"
+      "之前生成的视频（包括换过尺寸的）都可以“接着生成”，不再提示不能接续；新的一段会自动用上一段的画面大小。在结果或作品上点“接着生成”，会打开剪辑视图：原视频已在时间线上，后面接好了新的一段，点“生成”继续。",
+      "“AI 全自动”里可以开新对话，旧对话留在列表里，可以回去接着做；Agent 答完以后会一直等下一句，隔一会儿再说也有回应。",
+      "点“生成”后马上显示百分比和预计剩余时间；加载模型时进度照常前进，平稳走到结束，“AI 全自动”的任务卡也一样。",
+      "剪辑视图里，Agent 只凭一个名字就能新建时间线，并会在每一段上写一句说明，一眼就能看出这一段是什么。",
+      "从“作品”放上时间线的视频会带上当时的生成描述，可以直接重新生成。",
+      "通过 Agent 生成 16–29 秒的视频时，电脑条件允许就一次生成，和创作面板一致。",
+      "指定的镜头路线、位置或动作顺序总是生成得不对时，Agent 会提议先做一个粗略的镜头草稿，再照草稿生成。",
+      "更新后询问是否释放旧模型文件所占硬盘空间的提示，现在会正常出现。",
+      "画面较小时，更多模型留在显存里，内存较小的电脑生成时读取硬盘更少。",
+      "安装时网络较慢或某一步较久时，安装页会显示当前正在做什么。",
+      "安装时选第三方下载，现在只列出这台电脑需要的文件，并可以导出下载清单；下载完成后选中那个文件夹，校验通过的文件直接使用。",
+      "生成期间其他程序占用了较多显卡，或显卡过热时，结果下方会出现一句简短的提示。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.0",
+      "en": {
+        "summary": "Adds an editing view, long videos generated one part after another, and AI agent connections, and makes generation faster.",
+        "changes": [
+          "New editing view: arrange generated clips on a timeline, add text and subtitles, change speed or reverse a clip, and choose the size and quality when exporting.",
+          "Long videos can be generated one part after another: select a range on the timeline in the editing view and press Generate, and each part continues from the one before. A 30-second video is generated in two parts.",
+          "Clips can be extended in the editing view: drag a new part out of the end of a clip and press Generate, and it continues from the clip. A \"First-frame reference\" switch reduces drift when a clip is extended.",
+          "The editing view can create subtitles automatically: it recognizes Chinese, English, Japanese, Korean and Cantonese speech and gives each line its text and timing.",
+          "A step-by-step guide appears the first time FreeVideo opens, and can be viewed again from Settings.",
+          "Connect an AI agent and let it generate, edit and export videos.",
+          "A new \"LAN access\" switch in Settings lets phones and other computers on the same network open FreeVideo with a link.",
+          "After an offline package is imported, FreeVideo offers to delete the ZIP files that are no longer needed, freeing up disk space.",
+          "LoRAs can be added directly in the creation panel.",
+          "The FreeVideo · Media node accepts several reference images.",
+          "Faster generation: the wait before decoding is shorter; when generating several videos in a row, the models load faster for the later ones. On computers with less memory, background compiling after an update uses less memory.",
+          "Fixes: generating with several large reference images no longer runs out of memory; 16:9 videos can be saved as share videos; making the full video from a preview no longer stalls on a single step now and then; when setup cannot find a graphics driver, the error says so; setup shows the current step; when security software removes one of FreeVideo's files, the error says why and how to restore it; on a slow network, setup waits longer and tries once more when no download source responds; on English Windows, FreeVideo starts when the install folder or the user name contains Chinese characters."
+        ]
+      },
+      "zh": {
+        "summary": "新增剪辑视图、一段接一段的长视频生成，并可以连接 AI Agent；生成也更快。",
+        "changes": [
+          "新增剪辑视图：把生成的片段排在时间线上剪辑，可以加文字和字幕、变速和倒放；导出时可以选画面大小和画质。",
+          "长视频可以一段接一段生成：在剪辑视图的时间线上选好范围再点生成，每一段都接着前一段往下生成；30 秒的视频分两段生成。",
+          "剪辑视图里可以延长片段：从片段尾巴拖出一段再点生成，接在原片段后面往下生成；延长片段时可以打开“首帧参考”，减小画面漂移。",
+          "剪辑视图可以自动生成字幕：识别中文、英文、日文、韩文和粤语语音，得到每句的文字和时间。",
+          "第一次打开时有分步指引，设置里可以再看一遍。",
+          "可以连接 AI Agent，让它生成、剪辑和导出视频。",
+          "设置里新增“局域网访问”开关，打开后，同一网络里的手机和其他电脑可以用链接打开 FreeVideo。",
+          "导入离线包以后，可以删掉用不到的压缩包，释放磁盘空间。",
+          "创作面板里可以直接添加 LoRA。",
+          "FreeVideo · Media 节点可以接多张参考图。",
+          "生成更快：解码前的等待更短；连续生成时，后面的视频加载模型更快。内存较小的电脑上，更新后的后台编译占用的内存更少。",
+          "修复：用多张较大的参考图生成时不再内存不足；16:9 的视频可以保存分享视频；先出预览再生成正式视频时，不再偶尔在某一步停留很久；安装时没有找到显卡驱动，会直接说明；安装时会显示当前步骤；FreeVideo 的文件被安全软件移走时，会说明原因和恢复的办法；网络较慢、下载源都连不上时，安装会多等一会儿再试一轮；英文 Windows 上，安装文件夹或用户名带中文时也能正常启动。"
+        ]
+      }
+    },
     {
       "product_version": "0.3.25",
       "en": {
@@ -218,36 +255,6 @@
         "changes": [
           "在 8 GB 和 10 GB 显存的 Windows 显卡上，10 秒以内的视频如果带参考图、首帧或尾帧、参考音频，第一遍注意力改为每次计算 8 个头（原来是 4 个），与纯文本生成一致。带一张参考图生成 10 秒 1344×768 视频时，在 8 GB 显存预算下第一遍每步缩短约 8%，显存仍在原来的预算之内。同一个种子生成的视频可能与以前略有不同，就像在显存不同的显卡上本来就会有差异一样。",
           "在 Windows 上，第一遍步与步之间保留在显卡上的模型层不再逐步减少，每步需要重新传输的层更少。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.18",
-      "en": {
-        "summary": "On Windows computers with little RAM, loading the video model reads much less from the disk.",
-        "changes": [
-          "On Windows, when RAM cannot hold the whole video model, loading no longer reads the model layers that sampling streams from the disk anyway; each is read when sampling first needs it. With 16 GB of RAM, that is about 13 GB less to read every time the model loads: on an RTX 5060 Ti test machine limited to the RAM of a 16 GB computer, loading took 7 seconds instead of 11, and on a slower drive the saving is a few minutes. Videos are unchanged. Computers that keep the whole model in RAM, Linux and Mac load as before."
-        ]
-      },
-      "zh": {
-        "summary": "在内存较小的 Windows 电脑上，加载视频模型时从硬盘读取的数据少了很多。",
-        "changes": [
-          "在 Windows 上，内存放不下整个视频模型时，加载阶段不再预先读取那些采样时本来就要从硬盘读取的模型层，改为采样第一次用到时再读。16 GB 内存的电脑每次加载模型可少读约 13 GB：在按 16 GB 电脑的内存条件运行的 RTX 5060 Ti 测试机上，加载从 11 秒缩短到 7 秒；硬盘较慢时可节省几分钟。生成的视频不变。内存能放下整个模型的电脑、Linux 和 Mac 的加载方式不变。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.17",
-      "en": {
-        "summary": "On Windows, GPUs with 12 to 20 GB of memory sample a little faster: attention runs 16 heads at a time where memory allows.",
-        "changes": [
-          "On Windows, attention now runs 16 heads at a time instead of 8 whenever the GPU memory budget leaves room for it. This covers the first pass on 12 to 20 GB GPUs and the second pass on most 16 and 20 GB GPUs. On a 16 GB GPU, a 10-second 1344×768 video took about 6% less time per first-pass step and about 2% less per second-pass step, without using more video memory. FP8 models, requests with a LoRA, Linux and GPUs below 12 GB keep their current settings. The same seed can give a slightly different video than before, as it already does between GPUs with different memory."
-        ]
-      },
-      "zh": {
-        "summary": "在 Windows 上，12–20 GB 显存的显卡采样稍快一些：显存允许时，注意力每次计算 16 个头。",
-        "changes": [
-          "在 Windows 上，只要显存预算有余量，注意力改为每次计算 16 个头（原来每次 8 个）。12–20 GB 显卡的第一遍，以及大多数 16 GB 和 20 GB 显卡的第二遍都会用上。在 16 GB 显卡上生成 10 秒 1344×768 视频，第一遍每步缩短约 6%，第二遍每步缩短约 2%，显存占用没有增加。FP8 模型、使用 LoRA 的生成、Linux 和 12 GB 以下的显卡保持现有设置。同一个种子生成的视频可能与以前略有不同，就像在显存不同的显卡上本来就会有差异一样。"
         ]
       }
     }
