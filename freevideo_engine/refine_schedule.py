@@ -48,10 +48,11 @@ def modulation(engine, schedule):
         yield dict(schedule=schedule, table_cache_hits=0)
         return
     manifest = json.loads((Path(engine.cache) / 'manifest.json').read_text(encoding='utf-8'))
-    times = timesteps(device, engine.task)
+    task = getattr(engine, 'adaln_task', engine.task)
+    times = timesteps(device, task)
     cursor = ScheduleCursor(times)
     fetch = getattr(engine, 'fetch_tables', True)
-    cache = TableCache(engine.cache, manifest['source_id'], 3, task=engine.task,
+    cache = TableCache(engine.cache, manifest['source_id'], 3, task=task,
         manifest=manifest, timesteps=times, channels=model.config.hidden_size, device='cpu', fetch=fetch)
     originals = []
     started, hits = time.perf_counter(), 0

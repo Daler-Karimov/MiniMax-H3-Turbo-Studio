@@ -57,7 +57,7 @@ class Engine:
                  fp8_gemm='auto', window_varlen=False, varlen_smooth_k=True,
                  task='t2va', stream_weights=False, canvas=None, head_parallelism=1,
                  residual_offload=False, device_backend=None, gpu_allocation_bytes=None,
-                 fetch_tables=True):
+                 fetch_tables=True, adaln_task=None):
         self.device_backend = device_backend if device_backend is not None else get_backend()
         if gpu_allocation_bytes is not None and (type(gpu_allocation_bytes) is not int or gpu_allocation_bytes < 0):
             raise ValueError('GPU allocation limit must be a nonnegative byte count')
@@ -72,6 +72,9 @@ class Engine:
         if task not in TASKS:
             raise ValueError('Unsupported Engine task: ' + str(task))
         self.task = task
+        if adaln_task not in (None, task, 'ref2va_audio'):
+            raise ValueError('Unsupported continuation modulation schedule')
+        self.adaln_task = adaln_task or task
         if type(residual_offload) is not bool:
             raise ValueError('Residual offload must be boolean')
         if residual_offload and (not projection_chunk or not inference_kernels):
@@ -270,8 +273,8 @@ class Engine:
         self.schedule_hook = None
         embeddings = None
         if adaln_cache:
-            self.cursor = ScheduleCursor(schedule_timesteps(steps, task=task))
-        table_cache = (TableCache(self.cache, manifest['source_id'], steps, task=task, manifest=manifest,
+            self.cursor = ScheduleCursor(schedule_timesteps(steps, task=self.adaln_task))
+        table_cache = (TableCache(self.cache, manifest['source_id'], steps, task=self.adaln_task, manifest=manifest,
                                  timesteps=self.cursor.timesteps, channels=model.config.hidden_size, device='cpu',
                                  fetch=fetch_tables)
                        if adaln_cache and (adaln_disk_cache or portable_adaln) else None)
@@ -305,7 +308,7 @@ class Engine:
                          _load_safetensors(self.cache / f'adaln/{index:02d}.safetensors').items()}
             if adaln_cache and not cache_hit:
                 if embeddings is None:
-                    _, embeddings = schedule_embeddings(model, steps, task=task)
+                    _, embeddings = schedule_embeddings(model, steps, task=self.adaln_task)
                 block.load_state_dict({name: value.to(self.device_backend.device) for name, value in adaln.items()}, strict=False, assign=True)
                 table = [block.adaln_proj(embedding) for embedding in embeddings]
                 block.adaln_proj = CachedModulation(table, self.cursor)
@@ -511,6 +514,8 @@ class Engine:
                        'window_varlen': window_varlen,
                        'varlen_smooth_k': varlen_smooth_k if window_varlen else None,
                        'steps': steps, 'source_id': manifest['source_id']}
+        if self.adaln_task != self.task:
+            self.config['adaln_task'] = self.adaln_task
 
     def gpu_commit_reserve(self):
         """Allocator room this request may still reserve, which WDDM will charge to commit."""
@@ -534,10 +539,16 @@ class Engine:
                step_callback=None, sampling_complete_callback=None, initial_latents=None, refine_steps=None, refine_schedule=None,
                allow_smaller_canvas=False, progress_offset=0, progress_total=None,
                pass_cache_budget_bytes=None, gpu_reserve_bytes=0, pass_resident_blocks=None,
-               budget_refresh=None):
+               budget_refresh=None, continuation=None):
         from src.inference.render import load_prompt, generate_latents
         from .geometry import geometry, sampler_for_canvas
         refining = initial_latents is not None
+        if continuation is not None:
+            from .continuation import validate_route
+            validate_route(task=self.task)
+            if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
+                from .continuation import SIZE_MISMATCH
+                raise ValueError(SIZE_MISMATCH)
         if refining != (refine_steps is not None):
             raise ValueError('Refinement requires both initial latents and a tail step count')
         if refining:
@@ -578,6 +589,9 @@ class Engine:
             prompt, tags = value['prompt_embeds'].to(self.device_backend.device, torch.bfloat16), value['text_token_tags']
         else:
             prompt, tags, conditions = load_prompt(str(conditioning), self.device_backend.device)
+            if continuation is not None and conditions:
+                from .continuation import UNSUPPORTED
+                raise ValueError(UNSUPPORTED)
             from .keyframes import validate_conditioning
             source_canvas = self.canvas if allow_smaller_canvas and self.canvas is not None else canvas
             validate_conditioning(prompt, tags, conditions, self.task,
@@ -631,6 +645,8 @@ class Engine:
 
         class StepTimes(list):
             def append(self, value):
+                if prefix is not None:
+                    prefix.restore_video()
                 super().append(value)
                 count = getattr(offloader, 'drive_reads', None)
                 total = count() if count is not None else None
@@ -725,12 +741,16 @@ class Engine:
         if active_steps == 1:
             trigger_prefetch()
         checkpoint_seconds = 0.
+        from .continuation import sampling
         try:
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
-                    self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader:
+                    self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
+                    self.transformer, continuation, seed, self.device_backend.device) as prefix:
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
                                                 conditions=conditions)
+                if prefix is not None:
+                    latents, audio = prefix.finish(latents, audio)
                 stats = offloader.stats()
                 # StepTimes.append closes over the live offloader. Retaining
                 # that list subclass in a receipt also retains its pinned

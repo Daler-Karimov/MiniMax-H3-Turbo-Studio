@@ -151,7 +151,8 @@ def output_summary(report, relative_video):
                 conditioning_cache_hit=report.get('encoding', {}).get('cache_hit', False),
                 gpu_budget_bytes=report.get('profile', {}).get('policy', {}).get('gpu_budget_bytes'),
                 gpu_total_bytes=report.get('profile', {}).get('policy', {}).get('hardware', {}).get('vram_total'),
-                geometry=report.get('geometry', {}),
+                # A small size is sampled larger and scaled back; people see the size they asked for.
+                geometry=dict(report.get('geometry', {}), **(report.get('output_size') or {})),
                 sampling_plan=report.get('sampling_plan'),
                 low_memory=bool(report.get('low_memory_mode')),
                 thermal=thermal_slowdown(((report.get('memory') or {}).get('video') or {}).get('gpu')),
@@ -186,4 +187,14 @@ def output_summary(report, relative_video):
             unified_total_bytes=hardware.get('ram_total'),
             unified_reserve_bytes=policy.get('reserve_bytes'),
             vram_peak_bytes=None, gpu_budget_bytes=None, gpu_total_bytes=None)
+    continuation = report.get('continuation')
+    if isinstance(continuation, dict):
+        # Only chain counters, never retained source paths or conditioning.
+        counters = {key: continuation[key] for key in
+                    ('overlap_frames', 'new_frames', 'frame_origin', 'audio_origin', 'segment', 'audio_lead_in_samples')
+                    if type(continuation.get(key)) is int}
+        if counters:
+            if 'overlap_frames' in counters and 'new_frames' in counters:
+                counters['requested_frames'] = counters['overlap_frames'] + counters['new_frames']
+            result['continuation'] = counters
     return result

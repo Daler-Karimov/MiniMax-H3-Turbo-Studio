@@ -22,12 +22,77 @@ def validate_steps(base_steps=8, refine_steps=3, enabled=True):
         raise ValueError('Second-pass steps must be fewer than first-pass steps')
 
 
-def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3):
+# A first pass below this many pixels is too small for the learned lift: about
+# a third of the clips at 768x512 and every clip at 512x512 had coloured
+# bursts, and none did from 480x288 (960x544) upward. Those sizes run in one pass.
+SMALL_FIRST_PASS_PIXELS = 138240
+
+
+# A requested size below this many pixels shows the same bursts in any pass
+# layout. Such a request is rendered at a larger size of nearly the same shape
+# and scaled down to the size asked for.
+SMALL_TARGET_PIXELS = 131072
+# How far the rendered shape may differ from the requested one; the rendered
+# frames are centre-cropped to the requested shape before scaling.
+RENDER_SHAPE_TOLERANCE = 0.03
+
+
+def render_size(width, height):
+    """Return (width, height) to render for a small requested size, else None.
+
+    The smallest multiple-of-32 size of at least SMALL_FIRST_PASS_PIXELS whose
+    shape is within RENDER_SHAPE_TOLERANCE of the requested shape.
+    """
+    from math import log
+    from .geometry import geometry
+    geometry(width, height)
+    if width * height >= SMALL_TARGET_PIXELS:
+        return None
+    wanted = log(width / height)
+    best = None
+    for rw in range(256, 4097, 32):
+        for rh in range(256, 4097, 32):
+            pixels = rw * rh
+            if pixels < SMALL_FIRST_PASS_PIXELS:
+                continue
+            if best is not None and pixels > best[0]:
+                break
+            error = abs(log(rw / rh) - wanted)
+            if error <= RENDER_SHAPE_TOLERANCE and (best is None or (pixels, error) < best[:2]):
+                best = (pixels, error, rw, rh)
+    return best[2:] if best else None
+
+
+def render_canvas(canvas):
+    """Return (canvas to render, requested size or None) for a geometry() dict."""
+    render = render_size(canvas['width'], canvas['height'])
+    if render is None:
+        return canvas, None
+    from .geometry import geometry
+    larger = geometry(*render, frames=canvas['frames'])
+    return (dict(canvas, width=larger['width'], height=larger['height'], video_tokens=larger['video_tokens']),
+            dict(width=canvas['width'], height=canvas['height']))
+
+
+def sampling_canvas(canvas, *, staged=False, media=None, conditioned=False):
+    """The one place that decides what canvas a request samples.
+
+    A preview, the upscale of a preview and pre-encoded conditioning (tied to
+    the requested canvas) keep the requested size.
+    """
+    if staged or conditioned or (media or {}).get('conditioning_info'):
+        return canvas, None
+    return render_canvas(canvas)
+
+
+def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, staged=False):
     """Align the smaller canvas, lift, center-crop, then refine at the target.
 
     Odd multiples of 32 need up to 32 extra pixels before the latent crop.
-    Small canvases use a smaller factor or same-size refinement. Size never
-    disables a requested second pass; memory pressure cannot change its math.
+    Small canvases use a smaller factor or same-size refinement. A first pass
+    below SMALL_FIRST_PASS_PIXELS is replaced by one pass at the target size,
+    unless the first pass itself is wanted (a preview or its upscale: staged).
+    Memory pressure never changes this math.
     """
     from .geometry import geometry
     from .media_request import TASKS
@@ -58,6 +123,12 @@ def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3):
                 top=(lift['height'] - target['height']) // 2,
                 width=target['width'], height=target['height'])
     upscaling = first != lift
+    if upscaling and first['width'] * first['height'] < SMALL_FIRST_PASS_PIXELS:
+        if not staged:
+            single = plan(canvas, False, task, base_steps=base_steps)
+            return dict(single, requested=True,
+                        reason='Small canvas: one pass at the target size.')
+        result['staged'] = True
     result.update(enabled=True, mode='vdn%d-lbh-tail%d' % (base_steps, refine_steps),
                   refine_steps=refine_steps, total_steps=base_steps + refine_steps,
                   first=first, second=shape, upscale_target=lift, crop=crop,

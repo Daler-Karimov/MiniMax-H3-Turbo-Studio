@@ -161,11 +161,18 @@ def run(args):
             raise ValueError('Preencoded conditioning already includes media; use its conditioning_info')
         if args.prompt_file and task != 't2va' and not raw_media:
             raise ValueError('Native media encoding requires its input files')
-        sampling = plan(canvas, args.two_pass, task, base_steps=args.base_steps or 8, refine_steps=args.refine_steps)
+        # Too small to sample cleanly: render larger, scale the picture down.
+        from .two_pass import sampling_canvas
+        canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
+                                              conditioned=bool(args.conditioning))
+        sampling = plan(canvas, args.two_pass, task, base_steps=args.base_steps or 8, refine_steps=args.refine_steps,
+                        staged=bool(preview or refine_source))
         from .paths import base_path, checkpoint_path
         base = str(Path(args.base or base_path()).resolve())
         adapters = [row for row in media.get('loras', []) if row['strength'] != 0]
         prepared_cache = Path(args.cache).resolve()
+        if output_size:
+            report['output_size'] = output_size
         report.update(geometry=canvas, sampling_plan=sampling, profile=dict(policy=resource,
             engine=dict(device_backend='mps', task=task, attention='mps', steps=sampling['base_steps'])),
             encoder_mode='native H3 encoder library child' if args.prompt_file else 'preencoded shared conditioning')
@@ -286,6 +293,8 @@ def run(args):
                 base=base, task=task,
                 checkpoint=str(Path(args.checkpoint or checkpoint_path()).resolve()),
                 seed=args.seed, canvas=canvas, sampling=sampling, resources=resource)
+            if output_size:
+                engine['output_size'] = [output_size['width'], output_size['height']]
             if preview:
                 engine['preview'] = True
             if refine_source:

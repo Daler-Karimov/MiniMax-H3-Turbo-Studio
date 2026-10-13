@@ -194,6 +194,7 @@ def summarize(report, engine, encoding):
         largest_category=ranked[0]['stage'] if ranked else None,
         step_seconds=steps, completed_nfe=len(steps),
         sampling_plan=engine.get('sampling_plan') or report.get('sampling_plan'),
+        continuation=engine.get('continuation') or report.get('continuation'),
         sampling_passes=engine.get('sampling_passes'), latent_upscale=engine.get('latent_upscale'),
         sampling_reused=sampling_reused,
         sampling_memory=sampling_memory or None,
@@ -248,7 +249,7 @@ def summarize(report, engine, encoding):
 REQUEST_FIELDS = ('seed', 'encoder_mode', 'profile', 'resource_planning', 'compatibility',
     'reclaimable_resident_models', 'idle_resources', 'tuning', 'input_cache', 'resource_attempts',
     'resource_prediction', 'resource_prediction_error', 'error', 'error_message', 'error_type',
-    'resource_error', 'exception', 'encoding_failure', 'phase')
+    'resource_error', 'exception', 'encoding_failure', 'phase', 'continuation')
 
 
 def preview_receipts(output, read_json):

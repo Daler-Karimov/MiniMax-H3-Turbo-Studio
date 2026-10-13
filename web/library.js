@@ -200,6 +200,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null} = {}) {
                 ? t('Not deleted: the folder also holds files FreeVideo did not write: ', '未删除：文件夹里还有不是 FreeVideo 生成的文件：') + (value.kept || []).join(', ')
                 : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
                 : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
+                : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请等它完成后再试。')
                 : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
                 : t('Could not delete this creation.', '无法删除这条作品。'));
         }

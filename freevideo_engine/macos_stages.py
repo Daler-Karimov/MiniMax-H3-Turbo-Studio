@@ -376,7 +376,8 @@ def worker(value):
                         width=value['canvas']['width'], height=value['canvas']['height'],
                         frames=value['canvas']['frames'], two_pass=True, refine_steps=sampling['refine_steps'],
                         reuse_weights=True, refinement_resident_bytes=admission['refinement_resident_bytes'],
-                        first_pass_saved=first_saved, phase_changed=changed)
+                        first_pass_saved=first_saved, phase_changed=changed,
+                        staged=sampling.get('staged', False))
                     result.update(sampling_passes=measured['sampling_passes'],
                         shared_sampling_residency=measured['shared_sampling_residency'],
                         latent_upscale=measured['latent_upscale'], sampling_phase='latent-save')
@@ -419,7 +420,8 @@ def worker(value):
             tick = time.monotonic()
             result['decode'] = decode_to_file(initial['video'], initial['audio'], value['output'],
                 base=value['base'], artifacts_dir=artifacts,
-                budget_bytes=resource['allocator_capacity_bytes'], reserve_bytes=resource['reserve_bytes'])
+                budget_bytes=resource['allocator_capacity_bytes'], reserve_bytes=resource['reserve_bytes'],
+                output_size=value.get('output_size'))
             result.update(work_seconds=time.monotonic() - tick, success=True)
             return
         else:

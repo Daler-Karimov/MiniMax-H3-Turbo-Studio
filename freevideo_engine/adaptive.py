@@ -659,13 +659,21 @@ def complete_observation(metrics, canvas, output, artifacts, telemetry):
     from .system import memory_complete, memory_peak
     from .validation import _retained_array_header, finite_number
     expected = canvas['frames']
+    continuation = metrics.get('continuation')
+    output_frames = expected
+    if continuation is not None:
+        from .continuation import OVERLAP_FRAMES
+        if (not isinstance(continuation, dict) or continuation.get('overlap_frames') != OVERLAP_FRAMES
+                or continuation.get('new_frames') != expected - OVERLAP_FRAMES):
+            raise ValueError('Invalid continuation output geometry')
+        output_frames = continuation['new_frames']
     preview = metrics.get('preview') is True
     if preview:
         # A preview decodes its first pass at the planned smaller canvas.
         first = (metrics.get('sampling_plan') or {}).get('first') or {}
         canvas = dict(canvas, width=first.get('width'), height=first.get('height'))
     if (metrics.get('success') is not True or metrics.get('phase') != 'complete'
-            or metrics.get('finite_latents') is not True or metrics.get('frames') != expected
+            or metrics.get('finite_latents') is not True or metrics.get('frames') != output_frames
             or any(metrics.get('geometry', {}).get(k) != canvas[k] for k in ('width','height','frames','fps'))):
         raise ValueError('A successful complete request with matching geometry is required.')
     steps = metrics.get('config', {}).get('steps')
@@ -678,11 +686,11 @@ def complete_observation(metrics, canvas, output, artifacts, telemetry):
             or not same_strategy(metrics, canvas) or not all(finite_number(t) and t > 0 for t in times)):
         raise ValueError('A probe or incomplete sample cannot become a resource observation.')
     rgb_shape, dtype = _retained_array_header(Path(artifacts)/'rgb.npy')
-    if str(dtype) != 'uint8' or rgb_shape != (expected, canvas['height'], canvas['width'], 3):
+    if str(dtype) != 'uint8' or rgb_shape != (output_frames, canvas['height'], canvas['width'], 3):
         raise ValueError('Retained video frames do not match the complete request.')
     audio_shape, audio_dtype = _retained_array_header(Path(artifacts)/'audio.npy')
     if (str(audio_dtype) != 'float32' or len(audio_shape) != 2 or audio_shape[0] != 2
-            or abs(audio_shape[1]/32000. - expected/canvas['fps']) > 1/canvas['fps']):
+            or abs(audio_shape[1]/32000. - output_frames/canvas['fps']) > 1/canvas['fps']):
         raise ValueError('Retained stereo audio does not match the request duration.')
     import av
     with av.open(str(output)) as container:
@@ -690,13 +698,19 @@ def complete_observation(metrics, canvas, output, artifacts, telemetry):
         if len(video) != 1 or len(audio) != 1:
             raise ValueError('The completed MP4 must contain video and audio.')
         stream = video[0]
-        if ((stream.width, stream.height, stream.frames) != (canvas['width'],canvas['height'],expected)
+        # A request rendered at a larger size is saved at the size asked for.
+        shown = metrics.get('output_size') or canvas
+        if ((stream.width, stream.height, stream.frames) != (shown['width'],shown['height'],output_frames)
                 or float(stream.average_rate) != canvas['fps'] or audio[0].codec_context.channels != 2):
             raise ValueError('MP4 metadata does not match the requested output.')
     if metrics.get('sampling_reused') is True:
         # The output is validated, but these observations cover only a decoder
         # retry. Do not teach placement/ETA that a full request cost this little
         # time or occupied only the decoder's memory.
+        return None
+    if continuation is not None:
+        # Clean prefix rows and the shorter decode have different timing from
+        # ordinary text generation. Do not seed that request's history with it.
         return None
     if preview or metrics.get('first_pass_source') == 'preview':
         # A preview stops after its first pass, and its upscale reuses that pass

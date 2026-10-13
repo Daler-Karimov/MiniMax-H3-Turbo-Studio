@@ -92,6 +92,7 @@ def main():
     from .media_request import TASKS
     generate.add_argument('--task', choices=TASKS, help='Input task; inferred when --media is provided')
     generate.add_argument('--media', type=Path, help='Versioned keyframe/reference/LoRA request JSON; local files only')
+    generate.add_argument('--continue-from', type=Path, help='Continue an existing MP4 using its absolute path')
     generate.add_argument('--allocator-limit-gib', type=float,
                           help='Explicit benchmark cap on PyTorch CUDA allocations; not a whole-device memory limit')
     generate.add_argument('--no-history-placement', action='store_true', help='Keep the starting placement for a matched baseline; still record measurements')
@@ -116,9 +117,11 @@ def main():
     generate.add_argument('--out', type=Path, required=True)
     generate.add_argument('--width', type=int, default=1344)
     generate.add_argument('--height', type=int, default=768)
-    length = generate.add_mutually_exclusive_group()
-    length.add_argument('--frames', type=int)
-    length.add_argument('--seconds', type=float)
+    duration = generate.add_mutually_exclusive_group()
+    duration.add_argument('--frames', type=int, help='Frame count (rounded up); continuation requires 39, 56, 73, ... total frames')
+    duration.add_argument('--seconds', type=float)
+    generate.add_argument('--continuation-snapshot', type=Path, help=argparse.SUPPRESS)
+    generate.add_argument('--continuation-snapshot-sha256', help=argparse.SUPPRESS)
     for command in (generate, encode):
         command.add_argument('--encoder-python', '--comfy-python', dest='comfy_python',
                              default=os.environ.get('FREEVIDEO_COMFY_PYTHON', sys.executable))
@@ -131,12 +134,21 @@ def main():
                                help='Measure the placement questions this machine can settle')
     calibrate.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.command == 'generate':
+        from .continuation import validate_frames, validate_route
+        if args.continue_from is not None:
+            if args.frames is not None:
+                validate_frames(args.frames)
+            validate_route(task=args.task or 't2va', two_pass=args.two_pass, preview=args.preview,
+                           refine_from=args.refine_from)
     if sys.platform == 'darwin' and args.command in ('plan', 'generate', 'encode', 'doctor'):
         from .macos_generate import dispatch
         return dispatch(args)
     if args.command == 'plan':
         from .geometry import geometry
         canvas = geometry(args.width, args.height, frames=args.frames, seconds=args.seconds)
+        from .two_pass import render_canvas
+        canvas = render_canvas(canvas)[0]
         hardware = Hardware.from_dict(json.loads(args.hardware_json.read_text(encoding='utf-8'))) if args.hardware_json else detect()
         available = {'sage2', 'cudnn', 'torch-flash', 'fa2', 'fa4'} if args.hardware_json else available_backends(hardware, probe_missing=False)
         policy = choose(hardware, **{key: getattr(args, key) for key in

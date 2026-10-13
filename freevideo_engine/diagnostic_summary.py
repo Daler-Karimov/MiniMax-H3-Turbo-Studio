@@ -73,6 +73,12 @@ def summary_report(report):
         if type(summary.get(key)) is bool:
             result[key] = summary[key]
     result['geometry'] = _measurements(summary.get('geometry'), ('width','height','frames','fps','video_tokens','reference_video_tokens','reference_audio_tokens'))
+    continuation = _measurements(summary.get('continuation') or engine.get('continuation'),
+                                 ('overlap_frames', 'new_frames', 'frame_origin', 'audio_origin', 'segment', 'audio_lead_in_samples'))
+    if type(continuation.get('audio_lead_in_samples')) is not int:
+        continuation.pop('audio_lead_in_samples', None)
+    if continuation:
+        result['continuation'] = continuation
     shape = engine.get('conditioning_shape')
     if isinstance(shape, (list, tuple)) and len(shape) == 2 and all(type(x) is int and x > 0 for x in shape):
         result['geometry']['text_tokens'] = shape[0]
