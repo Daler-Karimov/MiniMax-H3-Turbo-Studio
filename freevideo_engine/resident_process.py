@@ -403,9 +403,10 @@ class SessionOwner:
         if self.prewarm is not None:
             stopped = self.prewarm.stop()
             from .encoder_diagnostics import prewarm_receipt
+            from .idle_encoder import discard_staging
             receipt = prewarm_receipt(self.prewarm.report, gpu=True)
             receipt['worker_released'] = False
-            self.prewarm = None
+            report, self.prewarm = self.prewarm.report, None
             # An interrupted native loader can be stuck in IO. Never grant
             # memory credit or start another request until it yielded/exited.
             if self.process is not None and self.process.poll() is None:
@@ -417,6 +418,9 @@ class SessionOwner:
                     processes.stop(self.process, grace=1.)
                     self.process = None
                     receipt['worker_released'] = True
+                    # The worker writes the same record and may have been stopped inside that save.
+                    if report is not None:
+                        discard_staging(report)
         return receipt
 
     def warm_encoder(self, output, python, environment, *, busy=None, notify=None):

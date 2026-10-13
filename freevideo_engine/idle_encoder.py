@@ -5,6 +5,7 @@ CUDA, and a new foreground request cancels this lower-priority work first.
 """
 import argparse
 from contextlib import contextmanager
+import glob
 import json
 import os
 import signal
@@ -117,6 +118,20 @@ def interruptible_load(patcher, check):
                 delattr(obj, name)
 
 
+def discard_staging(report):
+    """Remove what a stopped preload left of an unfinished save.
+
+    A worker that does not yield in time is stopped, sometimes between
+    creating save()'s staging file and renaming it; the empty file would stay
+    beside the user's video. Only this record's own staging names are removed.
+    """
+    for path in report.parent.glob(glob.escape(report.name) + '.*.tmp'):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 class IdleEncoder:
     def __init__(self):
         self.thread = None
@@ -205,6 +220,8 @@ class IdleEncoder:
                 if self.process is not None and self.process.poll() is None:
                     processes.stop(self.process, grace=1.)
                 save(report, dict(state='failed', reason=str(error), error_type=type(error).__name__))
+            finally:
+                discard_staging(report)
 
         self.thread = threading.Thread(target=work, name='FreeVideo idle encoder', daemon=True)
         self.thread.start()
