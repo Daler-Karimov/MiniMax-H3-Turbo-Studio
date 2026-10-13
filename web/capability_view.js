@@ -183,7 +183,7 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     function show(point, x, y) {
         hover = point; position(mark, x, y);
         time.textContent = aboutTime(point.estimate, t);
-        const duration = point.seconds === Math.min(30, surface.sizes[point.size].max)
+        const duration = point.seconds < 30 && point.seconds === surface.sizes[point.size].max
             ? t(`up to ${point.seconds} s`, `单次最长 ${point.seconds} 秒`) : t(`${point.seconds} s`, `${point.seconds} 秒`);
         configuration.textContent = `${point.width} × ${point.height} · ${duration}`;
         plot.classList.add('is-hover');
@@ -218,7 +218,7 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
         now.hidden = !point || seconds > surface.top || seconds > surface.sizes[i].max;
         if (!now.hidden) position(now, surface.xs[i] * plot.clientWidth, (1 - seconds / surface.top) * plot.clientHeight);
         const max = i >= 0 ? Math.min(30, surface.sizes[i].max) : 0;
-        longest.textContent = max ? t(`Up to ${max} s`, `单次最长 ${max} 秒`) : '';
+        longest.textContent = !max ? '' : max < 30 ? t(`Up to ${max} s`, `单次最长 ${max} 秒`) : t('Single run: under 30 s', '单次不到 30 秒');
         plot.setAttribute('aria-disabled', String(getState().disabled));
         highlight();
     }
