@@ -508,6 +508,16 @@ def lower_priority():
         os.nice(19)
 
 
+def reclaim(machine):
+    """Free the AdaLN sources a table made unused; disk only, so the GPU may be busy (adaln_reclaim)."""
+    from .adaln_reclaim import run as reclaim_sources
+    result = reclaim_sources(machine, should_stop=CANCELLED.is_set)
+    if result['action'] == 'deleted' or result['reason'] not in ('full_install', 'no_manifest',
+                                                              'no_old_grid_table', 'unexpected_manifest'):
+        print(json.dumps(dict(event='adaln_reclaim', **result)), flush=True)
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True, help='The installation machine.json')
@@ -531,6 +541,7 @@ def main(argv=None):
         own_temporary_environment(machine.get('root'))
         os.environ.update(execution_environment(environment(machine)))
         owner = os.environ.get(OWNER_ENV)
+        reclaim(machine)
         receipt = run(machine, background=args.background, owner=int(owner) if owner else None)
     except Exception as error:
         if args.background and isinstance(error, BlockingIOError):

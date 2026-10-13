@@ -58,6 +58,9 @@ class Session:
     page = 'comfy'
     selected = installed_versions = engine_identity = bundled_identity = None
     release_details = None
+    adaln_thread = adaln_result = adaln_found = None
+    adaln_polled = 0.
+    adaln_hidden = adaln_retry = False
     # The source whose earlier copies were removed once ComfyUI ran it.
     old_versions_retired = None
     archives_busy = False
@@ -407,6 +410,10 @@ class Session:
             self.queue_state = None
             self._update_engine_when_idle()
             return
+        if name == 'keep_adaln':
+            self.keep_adaln(); return
+        if name == 'delete_adaln':
+            self.delete_adaln(); return
         if name == 'back':
             self.page = 'comfy' if self.page == 'models' else 'models'
             return
@@ -1153,6 +1160,79 @@ class Session:
             remove(self.bridge)
             self._closed = True
 
+    # -- AdaLN sources the engine no longer reads: the user decides ---------------------
+    def adaln_offer(self):
+        """The background check's standing offer for this installation, or None; read at most every 5 s."""
+        now = time.monotonic()
+        if now - self.adaln_polled < 5:
+            return self.adaln_found
+        self.adaln_polled, self.adaln_found = now, None
+        try:
+            from . import adaln_reclaim
+            machine = json.loads((io_path(self.engine_root()) / 'machine.json').read_text(encoding='utf-8'))
+            offer = adaln_reclaim.offer(machine['cache'])
+            line = adaln_reclaim.release_line(self.installed_product_version() or adaln_reclaim.installed_release())
+            size = sum(offer.get(key, 0) for key in ('bytes', 'tables_bytes'))
+            if (all(type(offer.get(key, 0)) is int for key in ('bytes', 'tables_bytes')) and size >= 2**30
+                    and offer.get('manifest') and (line is None or offer.get('declined') != line)):
+                self.adaln_found = dict(bytes=size, machine=machine, line=line)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+        return self.adaln_found
+
+    def adaln_idle(self):
+        return (self.controller.state.get('status') == 'open'
+                and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.closing
+                         or self.update_intent or self.engine_updating or self.update_restarting
+                         or self.updater and self.updater.busy or self.upgrade.busy or self.model_switch)
+                and self._queue_busy() is False)
+
+    def keep_adaln(self):
+        """"Later": the question does not come back before the next release line."""
+        offer = self.adaln_offer()
+        if self.adaln_thread is not None or not offer:
+            return
+        if offer['line']:
+            from . import adaln_reclaim
+            try:
+                adaln_reclaim.decline(offer['machine']['cache'], offer['line'])
+            except OSError:
+                pass
+        self.adaln_hidden = True
+
+    def delete_adaln(self):
+        offer = self.adaln_offer()
+        if self.adaln_thread is not None or not offer or not self.adaln_idle():
+            return
+        machine = offer['machine']
+        def work():
+            from . import adaln_reclaim
+            self.adaln_result = adaln_reclaim.apply(machine)
+        self.adaln_retry = False
+        self.adaln_thread = threading.Thread(target=work, name='freevideo-adaln-cleanup', daemon=True)
+        self.adaln_thread.start()
+
+    def adaln_dialog_view(self, error, update):
+        thread = self.adaln_thread
+        if thread is not None and not thread.is_alive():
+            result, self.adaln_thread, self.adaln_result = self.adaln_result or {}, None, None
+            thread = None
+            # Busy GPU: ask again; anything else (deleted, or the conditions stopped holding) ends the question.
+            self.adaln_retry = result.get('reason') in ('busy', 'stopped')
+            self.adaln_hidden = not self.adaln_retry
+            self.adaln_polled, self.adaln_found = 0., None
+        offer = None if self.adaln_hidden else self.adaln_offer()
+        remind = bool(offer and self.page == 'launcher' and not error and not update['remind']
+                      and (thread is not None or self.adaln_idle()))
+        size = size_text((offer or {}).get('bytes', 0), decimal_sizes=sys.platform == 'darwin')
+        return dict(remind=remind, busy=thread is not None,
+                    title=self.t('Delete model files no longer in use?', '删除不再使用的模型文件？'),
+                    body=self.t('This frees %s of disk space. If the files are needed later, they will be downloaded again automatically.',
+                                '可释放 %s 磁盘空间。以后如需要，会自动重新下载。') % size,
+                    delete_text=(self.t('Deleting…', '正在删除…') if thread is not None else
+                                 self.t('Try again', '再试一次') if self.adaln_retry else self.t('Delete', '删除')),
+                    later_text=self.t('Not now', '暂不删除'))
+
     def tick(self):
         if isinstance(self.controller, Controller) and not self.controller.busy:
             self.controller.poll_access_proxy()
@@ -1641,6 +1721,7 @@ class Session:
                 models=len(self.form['offline_models']), guide=package_instructions(self.form['new_comfy'] and self.form['environment_method'] == 'manual'
                                            and not self.form['offline_runtime'], zh)),
             video_model_guide=video_instructions(zh),
+            adaln_dialog=self.adaln_dialog_view(error, update),
             selected=bool(self.selected), can_repair=self.can_repair(), repair_offered=repair_offered, error=error, retry_kind=self.retry_kind(), notice=self.notice,
             # Qt reads a list as an array; LEVELS is a tuple.
             compatibility=dict(self.compatibility, levels=list(self.compatibility.get('levels') or ())),

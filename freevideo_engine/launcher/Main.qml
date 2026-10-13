@@ -942,6 +942,23 @@ ApplicationWindow {
     }
 
     FPopup {
+        id: adalnDialog; objectName: "adalnDialog"
+        visible: s.adaln_dialog.remind && !settings.visible && !modelDialog.visible && !updateDialog.visible && !(s.archives_dialog && s.archives_dialog.remind) && !s.notice
+        width: Math.min(480, win.width - 40); closePolicy: Popup.NoAutoClose
+        contentItem: ColumnLayout {
+            spacing: 14
+            FText { objectName: "adalnDialogTitle"; text: s.adaln_dialog.title; font.pixelSize: theme.section + 2; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            FText { objectName: "adalnDialogText"; text: s.adaln_dialog.body; color: theme.muted; Layout.fillWidth: true }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                FButton { objectName: "adalnLaterButton"; text: s.adaln_dialog.later_text; flat: true; enabled: !s.adaln_dialog.busy; onClicked: backend.action("keep_adaln", false) }
+                Item { Layout.fillWidth: true }
+                FButton { objectName: "adalnDeleteButton"; text: s.adaln_dialog.delete_text; primary: true; enabled: !s.adaln_dialog.busy; onClicked: backend.action("delete_adaln", false) }
+            }
+        }
+    }
+
+    FPopup {
         id: settings; objectName: "settingsDialog"
         visible: settingsOpen; onClosed: settingsOpen = false
         width: Math.min(700, win.width-50); height: Math.min(700, win.height-50)
