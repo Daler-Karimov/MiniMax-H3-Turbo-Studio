@@ -395,7 +395,7 @@ def _run(args):
             continuation = prepare_continuation(continue_from, canvas)
         continuation = dict(continuation, audio_context=audio_context(), source_video=str(continue_from))
         if first_frame is not None:
-            from .continuation import anchor_media, chain_first_frame, unpack_first_frame
+            from .continuation import anchor_media, chain_first_frame, first_frame_reference, unpack_first_frame
             try:
                 kept = chain_first_frame(continuation, continue_from)
             except ValueError:
@@ -409,11 +409,12 @@ def _run(args):
                     raise FileExistsError(args.out.resolve())
                 args.out.resolve().parent.mkdir(parents=True, exist_ok=True)
                 continue_anchor = args.out.resolve().with_suffix('.first-frame.png')
-                continue_anchor.write_bytes(unpack_first_frame(kept))
+                picture, picture_width, picture_height = first_frame_reference(unpack_first_frame(kept))
+                continue_anchor.write_bytes(picture)
                 media = anchor_media(media, continue_anchor)
                 validate_route(task=getattr(args, 'task', None) or 'ref2va', anchor=True, two_pass=two_pass,
                                preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
-                first_frame.update(used=True, width=kept['width'], height=kept['height'])
+                first_frame.update(used=True, width=picture_width, height=picture_height)
         if continue_anchor is not None:
             continuation['anchor'] = media['references'][0]
     active_loras = [row for row in media.get('loras', []) if row['strength'] != 0]

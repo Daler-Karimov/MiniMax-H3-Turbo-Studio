@@ -22,6 +22,10 @@ FIRST_FRAME_NOTE = ('The reference image is the very first frame of this whole f
                     'location, framing and colour tone as in that image throughout.')
 FIRST_FRAME_MAX_BYTES = 8 * 1024 * 1024
 FIRST_FRAME_MAX_SIDE = 4096
+# The picture the model is given is half the side of the film's first frame, but not under this
+# on its short side: on a real six-part chain it held framing and colour as well as the full
+# picture for a third of the extra sampling time. Smaller pictures are not tested.
+FIRST_FRAME_REFERENCE_SHORT = 384
 VERSION = 1
 
 MISSING = 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.'
@@ -138,13 +142,38 @@ def unpack_first_frame(value):
         raise ValueError('Invalid first frame') from None
 
 
+def first_frame_reference(raw):
+    """(PNG bytes, width, height) of the reference picture made from a kept first frame."""
+    import io
+    from PIL import Image
+    with Image.open(io.BytesIO(raw)) as image:
+        width, height = image.size
+        scale = max(.5, FIRST_FRAME_REFERENCE_SHORT / min(width, height))
+        if scale >= 1:
+            return raw, width, height
+        small = image.convert('RGB').resize((round(width * scale), round(height * scale)), Image.LANCZOS)
+    target = io.BytesIO()
+    small.save(target, format='PNG')
+    return target.getvalue(), small.width, small.height
+
+
 def chain_first_frame(request, video_path=None):
     """The first frame of the whole film `request` continues, as record metadata; None when nothing has it.
 
     A continued video's record carries it from its own source. The first part of a film never
     stored one: its saved video starts with that frame. A continued part made before records
-    carried the frame has no way back to it.
+    carried the frame has no way back to it. Anything that keeps it from being read is a ValueError,
+    so every caller falls back the same way.
     """
+    try:
+        return _chain_first_frame(request, video_path)
+    except (ValueError, MemoryError):
+        raise
+    except Exception:
+        raise ValueError('Invalid first frame') from None
+
+
+def _chain_first_frame(request, video_path):
     metadata = _snapshot_value(request)['metadata']
     if metadata.get('first_frame') is not None:
         unpack_first_frame(metadata['first_frame'])
