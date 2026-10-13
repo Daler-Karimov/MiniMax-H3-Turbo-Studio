@@ -106,8 +106,8 @@ def _claims(project):
                      for v, row in enumerate(versions if isinstance(versions, list) else ()) if isinstance(row, dict)]
             for where, source, length in rows:
                 if (isinstance(source, dict) and isinstance(source.get('kind'), str) and isinstance(source.get('id'), str)
-                        and type(length) is int):
-                    yield where + '/length', source['kind'] + ':' + source['id'], length
+                        and comfy_editor._whole(length, 1, 10**7)):
+                    yield where + '/length', source['kind'] + ':' + source['id'], int(length)
 
 
 class Projects:
