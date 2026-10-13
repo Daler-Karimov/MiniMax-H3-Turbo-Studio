@@ -108,7 +108,7 @@ GUIDE = {
     'session_routes': [dict(operation=name, method=method, path=path, description=summary)
                        for name, (method, path, summary) in SESSION_OPERATIONS.items()],
     'filming': [
-        'Filming is for a film of several shots, each picked from takes. One video of any length is one generate '
+        'Filming is for a film of several shots, each picked from takes. One video of up to 60 seconds is one generate '
         'job (longer requests continue and join automatically); to polish an idea first, run enhance, then generate.',
         'Use drama plan → start → get → sheet → choose/reshoot → finish; inspect todo after every change.',
         'At start tell the user the estimated total time; on over_budget decide whether to ask them; '
@@ -381,6 +381,8 @@ GUIDE['agent_jobs'] += [
     'before uploading. Unknown fields are rejected and every batch is validated before it is recorded.',
     'limits.seconds in the status reply is what this installation can make now. While continuation is false, '
     'one block (15 s) is the longest video; plan and submit refuse longer requests with continuation_unavailable.',
+    'One video has at most 5 parts (60 s in one request). continue_from counts the parts of the video it '
+    'continues; plan and submit refuse a longer one and name the longest seconds that still fits.',
     'features in the status reply names what this installation offers; false means not usable now (for example '
     'chain.auto while continuation is false), and a missing name means not offered here.',
 ]

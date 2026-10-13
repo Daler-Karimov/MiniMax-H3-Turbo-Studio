@@ -209,8 +209,10 @@ def plan(port, value, jobs=None):
     result = dict(spec={k: v for k, v in spec.items() if k != 'depends_on'}, warnings=[])
     if spec['kind'] != 'generate' or spec.get('refine_from'):
         return result
-    from .jobs import continuation_problems, cut_problems
+    from .jobs import continuation_problems, cut_problems, parts_problems
     problems = continuation_problems(spec) + cut_problems(spec, spec['seconds'])
+    if jobs is not None:
+        problems += parts_problems(spec, jobs.port.chain_runner(), work=jobs.continued_work(spec))
     if problems:
         raise specs.SpecError(problems)
     if jobs is not None:

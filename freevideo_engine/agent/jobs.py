@@ -105,6 +105,46 @@ def cut_problems(spec, seconds, prefix='', *, editor=None):
     return [dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got))]
 
 
+def parts_problems(spec, runner, prefix='', *, editor=None, work=None):
+    """One video continues through a limited number of parts; say so before anything is generated.
+
+    The chain backend refuses the same request when the chain is created, with the same sentence.
+    `work` is the saved video continue_from names (output-relative), or None while it cannot be told.
+    """
+    if runner is None or spec['kind'] != 'generate' or spec.get('refine_from'):
+        return []
+    from ..chain_plan import plan
+    from ..chain_runner import ChainTooLong
+    from ..chain_store import reference
+    limit, continued = runner.max_parts, bool(spec.get('continue_from'))
+    count = lambda seconds: len(plan(seconds, continued=continued)['blocks'])
+    try:
+        with runner.lock:
+            if editor is not None:
+                rows = [dict(id=b['id'], after=reference(b.get('after')), before=reference(b.get('before')))
+                        for b in editor['blocks']]
+                earlier, needed = 0, max(runner._depths(dict(id=None, blocks=rows)).values())
+            else:
+                # A source the backend has no record of counts as one part, as it does there.
+                earlier = (runner._work_parts(work, ()) if work else 1) if continued else 0
+                needed = earlier + count(spec['seconds'])
+    except (ValueError, KeyError, TypeError):
+        return []  # Not a chain the backend accepts; it says why when the chain is created.
+    if needed <= limit:
+        return []
+    if editor is not None:
+        problem, got = schema.diagnostic(prefix + '/target', 'a range that takes at most %d parts' % limit, None), '%d parts' % needed
+    else:
+        fit = next((s for s in range(int(spec['seconds']), 1, -1) if earlier + count(s) <= limit), None)
+        if fit is None:
+            problem = schema.diagnostic(prefix + '/continue_from', 'a video of fewer than %d parts' % limit, None)
+            got = 'a video of %d parts' % earlier
+        else:
+            problem, got = schema.diagnostic(prefix + '/seconds', 'at most %d' % fit, spec['seconds']), None
+    message = problem['message'] if got is None else problem['message'].replace('received None', 'received ' + got)
+    return [dict(problem, got=got or problem['got'], message='%s %s' % (ChainTooLong(needed, limit), message))]
+
+
 def continuation_unavailable():
     return chain_error('continuation_unavailable', 'This backend cannot continue multiple video blocks.',
                        'Submit a new job with seconds<=15, or enable a backend with continuation inputs and resume.')
@@ -537,6 +577,8 @@ class Jobs:
                     if dependency not in known:
                         problems.append(schema.diagnostic(prefix + '/after', 'existing jobs or earlier batch refs', dependency))
                 problems.extend(continuation_problems(normalized, prefix, editor=editor))
+                problems.extend(parts_problems(normalized, self.port.chain_runner(), prefix, editor=editor,
+                                               work=self.continued_work(normalized)))
                 problems.extend(cut_problems(normalized, normalized.get('seconds'), prefix, editor=editor))
                 try:
                     self.port.check(normalized)
@@ -1103,6 +1145,13 @@ class Jobs:
             return self.port.library_video(item['library'])
         return self.port.input_path(item['file'])
 
+    def continued_work(self, spec):
+        """The saved video a request continues, as the chain backend names it; None while it cannot be told."""
+        try:
+            return self.port.output_relative(self.source_video(spec['continue_from'])) if spec.get('continue_from') else None
+        except Exception:
+            return None
+
     def media_file(self, row, item, name, *, target=None):
         """Resolve one media item to a file relative to ComfyUI input (frames, imports, edits)."""
         folder = 'freevideo/agent/' + row['id']
@@ -1212,7 +1261,7 @@ class Jobs:
                     else bool(row['spec'].get('continue_from')) or not single_block(payload['seconds'])) and not self.continuation_ready():
                 raise continuation_unavailable()
             self.touch(row, chain_submission='creating', status='queued', queued_at=self.clock())
-            from ..chain_runner import ChainBusy
+            from ..chain_runner import ChainBusy, ChainTooLong
             try:
                 if resume:
                     chain = runner.resume(row['chain_id'], client_id='agent:' + row['id'])
@@ -1223,6 +1272,11 @@ class Jobs:
                     self.touch(row, status='waiting')
                     return
                 raise
+            except ChainTooLong as error:
+                # Submit and plan refuse this up front; a source that was still being made can only be counted here.
+                row['resume_pending'] = False
+                self.finish(row, 'failed', error=errors.build('chain_too_long', validation=True, message=str(error)))
+                return
             except Exception:
                 row['resume_pending'] = False
                 if resume:
