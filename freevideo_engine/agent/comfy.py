@@ -188,7 +188,10 @@ class ComfyPort:
         from ..comfy_progress import STATE
         with STATE.lock:
             row = STATE.rows.get(str(node))
-            return json.loads(json.dumps(row['message'])) if row else None
+            if not row:
+                return None
+            # How old the message is, as a reopened page gets it, so a bar can go on from where the engine is now.
+            return dict(json.loads(json.dumps(row['message'])), age_seconds=max(0., STATE.clock() - row['measured']))
 
     async def submit(self, graph, extra):
         if self.handler is None:

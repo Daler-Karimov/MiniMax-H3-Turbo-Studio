@@ -13,6 +13,7 @@ from inspect import isawaitable
 import logging
 import math
 import os
+import re
 from pathlib import Path
 import secrets
 import stat
@@ -710,13 +711,32 @@ def register():
         # Every answer to the agent carries the user's unread words, so a recent call will hear them too.
         return dict(connected=connected, name=shown, listening=connected and (chat['waiting'] > 0 or now - seen < 90))
 
+    def chat_name(said):
+        """A job the agent left unnamed is called by what the user asked for: the first words after a colon."""
+        text = re.split(r'[:：]', said or '', maxsplit=1)[-1].strip()
+        text = re.split(r'[，。！？；、,.!?;\n]', text, maxsplit=1)[0].strip() or text
+        if not text:
+            return None
+        if text.isascii():
+            return text if len(text) <= 24 else text[:25].rsplit(' ', 1)[0][:24]
+        return text[:8]
+
+    def chat_card(row, fold):
+        card = activity_item(row, card=True)
+        if not card.get('label') and fold is not None:
+            card['label'] = fold['names'].get(row['id'])
+        estimate = jobs.estimate(row)
+        if estimate:
+            card['progress']['estimate'] = estimate
+        return card
+
     def chat_fold(store, sid):
         """The session as the page shows it: sentences, the jobs made along the way, and questions."""
         fold = chat['folds'].get(sid)
         if fold is None:
             while len(chat['folds']) >= 8:
                 chat['folds'].pop(next(iter(chat['folds'])))
-            fold = chat['folds'][sid] = dict(seq=0, items=[], jobs={}, asked={}, sent={}, ids={})
+            fold = chat['folds'][sid] = dict(seq=0, items=[], jobs={}, asked={}, sent={}, ids={}, names={}, said=None)
         while store.get(sid)['last_seq'] > fold['seq']:
             rows = store.events(sid, after=fold['seq'], limit=500)
             if not rows:
@@ -726,10 +746,13 @@ def register():
                 base = dict(seq=row['seq'], at=row['at'], type=row['type'])
                 if row['type'] == 'message':
                     fold['items'].append(dict(base, role='user' if row['by'] == 'user' else 'agent', text=row['text']))
+                    if row['by'] == 'user':
+                        fold['said'] = row['text']
                 elif row['type'] == 'step' and row['state'] == 'done':
                     job = (row.get('refs') or {}).get('job')
                     if job and job not in fold['jobs']:
                         fold['jobs'][job] = row['seq']
+                        fold['names'][job] = chat_name(fold['said'])
                         fold['items'].append(dict(base, type='job', job=job))
                 elif row['type'] == 'confirm':
                     if row['state'] == 'asked':
@@ -786,10 +809,10 @@ def register():
             now = time.time()
             shown = {r['id']: r for r in mine if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800}
             shown.update((i['job'], known[i['job']]) for i in items if i['type'] == 'job')
-            value['jobs'] = {identity: activity_item(row, card=True) for identity, row in shown.items()}
+            value['jobs'] = {identity: chat_card(row, fold) for identity, row in shown.items()}
             value['current'] = current['id'] if current else None
             if current and current['id'] not in value['jobs']:
-                value['jobs'][current['id']] = activity_item(current, card=True)
+                value['jobs'][current['id']] = chat_card(current, fold)
             return value
         return reply(await asyncio.to_thread(read))
 
@@ -800,8 +823,9 @@ def register():
             store = work_sessions()
             sid = chat_session(store)
             rows = jobs.rows()
-            current = chat_current(rows, sid, chat['folds'].get(sid))[1] if sid else None
-            return dict(agent=agent_state(), current=activity_item(current, card=True) if current else None,
+            fold = chat_fold(store, sid) if sid else None
+            current = chat_current(rows, sid, fold)[1] if sid else None
+            return dict(agent=agent_state(), current=chat_card(current, fold) if current else None,
                         active=sum(1 for r in rows if r['status'] in ACTIVE))
         return reply(await asyncio.to_thread(read))
 

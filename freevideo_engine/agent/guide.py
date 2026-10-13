@@ -149,7 +149,8 @@ GUIDE = {
 RULES = [
     'Finish the job. When the user asks for a video, keep going until the finished video exists. Decide ordinary '
     'things yourself: how to split shots, how many takes, which take to keep. Tell the user what you decided in '
-    'one or two sentences at the end, not along the way.',
+    'one or two sentences at the end, not along the way. Name every video you submit: label is a short name of what '
+    'it shows, in the user\'s language (2 to 8 Chinese characters, or 1 to 4 words), for example "Seaside at dawn".',
     'Solve problems yourself first. Every error has a next field, and often details with alternatives; these are '
     'steps that work on this computer. Not enough graphics memory: use a listed alternative (a lower resolution '
     'or a shorter video) and try again. A take is not good: make another; if it is still not good after two more, '
@@ -182,7 +183,8 @@ RULES = [
 
 RULES_ZH = [
     '把任务做完。用户要求生成视频时，持续推进，直到成片生成。如何拆分镜头、拍几条、选哪一条等普通决定，'
-    '由你自己做。最后用一两句话告诉用户你做了哪些决定，不要每做一步都请用户决定。',
+    '由你自己做。最后用一两句话告诉用户你做了哪些决定，不要每做一步都请用户决定。'
+    '提交的每条视频都起个名字：label 写拍的是什么，用用户的语言，2 到 8 个字，例如“清晨海边”。',
     '先自己解决问题。每个错误都有 next 字段，details 里也常有可选方案；这些是在本机可行的处理步骤。'
     '显存不足时，从列出的方案中选择较低分辨率或较短时长重试。一条拍得不好就再拍；再拍两条仍不满意，'
     '换一种描述，不要反复提交同一个要求。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
@@ -353,7 +355,8 @@ def connection_guide(root, base, lang=None, offers=None):
         'call("POST", "/connect/hello", {"client": "Local Agent", "via": "http"})',
         'print(call("GET", ""))',
         '# Only after the user asks for a video:',
-        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "ref": "shot-1"})["job"]',
+        '# label is the short name the user sees on the job, in their language: what the video shows, 2 to 8 characters.',
+        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "label": "SHORT NAME", "ref": "shot-1"})["job"]',
         '# job = call("GET", "/jobs/" + job["id"] + "?wait=25")',
         '# Poll the same ID until succeeded. Retry a lost submission using the same ref.',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
@@ -386,26 +389,32 @@ def connection_guide(root, base, lang=None, offers=None):
         conversation='用户会在 FreeVideo 的“AI 全自动”页里直接和你说话，你的话也显示在那里。'
                      '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
                      '回应里的 session 就是这段对话；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
-                     '{"type":"message","text":"…"}（MCP 用 freevideo_session_post），把上面那段自我介绍发到这里。'
+                     '{"type":"message","text":"…"}（MCP 用 freevideo_session_post）。在这里先只说一句话，不超过 20 个字，'
+                     '不列条目、不举例（页面上已经有例句），例如“连上了。告诉我想做什么视频。”'
                      '然后守在这段对话里：再调等待接口，它最多约 50 秒返回；"again": true 表示用户还没说话，'
                      '马上再调下一次，一次接一次，不限次数。没有消息不是结束的理由：不要结束这一轮回复，'
                      '不要停下来问用户——你一停，用户在 FreeVideo 里说的话就没人听了。'
                      '用命令行调接口时，每次等待单独发一条命令（一条命令里不写循环，超时设到 60 秒以上），'
                      '返回后接着发下一条。'
-                     '收到话（inbox 里每条的 text）就去做；做完把结果用一两句话发回同一个 session，再接着等。'
+                     '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
+                     '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
+                     '或者一句用户需要知道的话，发回同一个 session，再接着等。'
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
                      'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
-                     'with {"type":"message","text":"..."} (MCP: freevideo_session_post) and say the introduction above '
-                     'there. Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
+                     'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
+                     'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
+                     '"Connected. Tell me what video you want." Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
                      '"again": true means the user has not spoken yet, so call it again at once, time after time, with no '
                      'limit. Nothing new is not a reason to finish: do not end your reply and do not stop to ask the '
                      'user, because once you stop nobody hears what the user says in FreeVideo. From a command line, '
                      'each wait is its own command (no loop inside one command, timeout above 60 seconds); when it '
                      'returns, run the next one. '
-                     'When words arrive (text of each inbox row), do what they ask, post the result in one or two '
-                     'sentences to the same session, and wait again. Do not create another session for this conversation. '
+                     'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
+                     '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
+                     'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
+                     'user needs to know, to the same session, and wait again. Do not create another session for this conversation. '
                      'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
