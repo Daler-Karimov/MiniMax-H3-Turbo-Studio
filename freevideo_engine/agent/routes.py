@@ -1016,7 +1016,7 @@ def register():
                 name = part.filename
                 contract.validate(contracts['POST', '/media']['body']['properties']['name'], name)
                 media_kind(name)
-                target = Path(temporary) / name
+                target = Path(temporary) / ('media' + Path(name).suffix.lower())
                 size = 0
                 with target.open('xb') as output:
                     while True:
@@ -1041,7 +1041,7 @@ def register():
                     raise JobError('too_large', 'Upload exceeds limit', limit_bytes=contract.MAX_UPLOAD_BYTES)
                 if not data:
                     raise JobError('invalid_media', 'Empty file')
-                target = Path(temporary) / name
+                target = Path(temporary) / ('media' + Path(name).suffix.lower())
                 target.write_bytes(data)
             async with upload_decoders:
                 try:
@@ -1057,6 +1057,7 @@ def register():
             out = port.input_path(relative, create=True)
             os.replace(target, out)
             info['name'] = identity + suffix
+            info['original_name'] = name
             return reply(dict(**assets.view(relative), **info), 201)
 
     @routes.get(PREFIX + '/media/{kind}/{file:.+}/file')

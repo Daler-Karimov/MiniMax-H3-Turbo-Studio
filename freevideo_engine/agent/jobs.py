@@ -7,6 +7,7 @@ may read other jobs' results (a frame, a clip, an enhanced prompt); such a job
 waits until those finish and fails with dependency_failed if one does not.
 """
 import asyncio
+import atexit
 import hashlib
 from copy import deepcopy
 import json
@@ -23,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import spec as specs
 from . import schema, errors, assets
+from ..system import windows
 
 ACTIVE = ('waiting', 'queued', 'running', 'cancelling')
 CAST_AGAIN = 'POST /freevideo/agent/v1/cast/%s/generate to make the reference pictures again.'
@@ -175,6 +177,114 @@ def iso(stamp):
         return None
 
 
+class _ReceiptWrites:
+    """Windows receipt outbox. Backoff never holds this lock or Jobs.lock.
+
+    A complete, fsynced pending file is also a restart receipt. Revisions keep an
+    older pending file from superseding a newer receipt if cleanup was interrupted.
+    The writer never takes Jobs.lock, including when shutdown waits for it.
+    """
+    def __init__(self, directory):
+        self.directory = directory
+        self.lock = threading.RLock()
+        self.pending = {}
+        self.revision = 0
+        self.worker = None
+        self.stopped = threading.Event()
+        self.registered = False
+
+    def save(self, row):
+        with self.lock:
+            self.revision += 1
+            value = {k: v for k, v in row.items() if not k.startswith('_')}
+            value['_receipt_revision'] = self.revision
+            self.directory.mkdir(parents=True, exist_ok=True)
+            temporary = self.directory / (row['id'] + '.' + uuid.uuid4().hex + '.pending')
+            try:
+                with temporary.open('x', encoding='utf-8') as stream:
+                    json.dump(value, stream, indent=1)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+            previous = self.pending.get(row['id'])
+            self.pending[row['id']] = temporary
+            if previous is not None:
+                self._remove(previous)
+            self.retry()
+
+    @staticmethod
+    def _remove(path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass  # A stale pending receipt has a lower revision and cannot win on load.
+
+    def _flush(self):
+        # The same lock serializes snapshot publication and retries, so a retry
+        # cannot overwrite a later cancellation, resume or updated result.
+        with self.lock:
+            for identity, temporary in list(self.pending.items()):
+                try:
+                    os.replace(temporary, self.directory / (identity + '.json'))
+                except OSError:
+                    continue
+                del self.pending[identity]
+                for stale in self.directory.glob(identity + '.*.pending'):
+                    self._remove(stale)
+            if not self.pending and self.registered:
+                atexit.unregister(self.close)
+                self.registered = False
+
+    def retry(self):
+        with self.lock:
+            self._flush()
+            if not self.pending:
+                return
+            if not self.registered:
+                atexit.register(self.close)
+                self.registered = True
+            if self.worker is None and not self.stopped.is_set():
+                self.worker = threading.Thread(target=self._backoff, name='agent-receipts', daemon=True)
+                self.worker.start()
+
+    def _backoff(self):
+        # Including retry()'s first attempt: eight tries, 2.8 seconds of waiting.
+        try:
+            for attempt in range(1, 8):
+                if self.stopped.wait(.1 * attempt):
+                    return
+                self._flush()
+                with self.lock:
+                    if not self.pending:
+                        return
+            logging.getLogger(__name__).warning('Agent receipts remain pending; will retry on save, tick or shutdown')
+        finally:
+            with self.lock:
+                self.worker = None
+
+    def close(self):
+        self.stopped.set()
+        with self.lock:
+            worker = self.worker
+        if worker is not None:
+            worker.join()
+        for attempt in range(8):
+            self._flush()
+            with self.lock:
+                if not self.pending:
+                    break
+            if attempt < 7:
+                time.sleep(.1 * (attempt + 1))
+        with self.lock:
+            if self.pending:
+                logging.getLogger(__name__).warning('Agent receipts retained for recovery on restart')
+            if self.registered:
+                atexit.unregister(self.close)
+                self.registered = False
+
+
 class Jobs:
     def __init__(self, port, directory, *, clock=now):
         self.port = port
@@ -183,6 +293,7 @@ class Jobs:
         self.clock = clock
         self.jobs = {}
         self.lock = threading.RLock()
+        self._receipts = _ReceiptWrites(self.directory) if windows() else None
         self.cpu = threading.Semaphore(1)
         # Optional executor hook: called as parent_allowed(row['parent']) before a
         # child with a parent may start. A False answer records the job as cancelled.
@@ -221,6 +332,26 @@ class Jobs:
                 records.append(json.loads(path.read_text(encoding='utf-8')))
             except (OSError, ValueError):
                 continue
+        if self._receipts is not None:
+            for path in sorted(self.directory.glob('j*.pending')):
+                try:
+                    row = json.loads(path.read_text(encoding='utf-8'))
+                    if isinstance(row, dict) and path.name.startswith(str(row.get('id')) + '.'):
+                        records.append(row)
+                except (OSError, ValueError):
+                    continue  # An interrupted staging write is not a receipt.
+            latest = {}
+            for row in records:
+                if not isinstance(row, dict) or not specs.JOB_ID.fullmatch(str(row.get('id'))):
+                    continue
+                revision = row.get('_receipt_revision', 0)
+                if type(revision) is not int or revision < 0:
+                    continue
+                self._receipts.revision = max(self._receipts.revision, revision)
+                previous = latest.get(row['id'])
+                if previous is None or revision >= previous.get('_receipt_revision', 0):
+                    latest[row['id']] = row
+            records = list(latest.values())
         for row in records:
             if (isinstance(row, dict) and specs.JOB_ID.fullmatch(str(row.get('id')))
                     and row.get('kind') in ('generate', 'assemble', 'export', 'image_edit') + GPU_KINDS
@@ -269,6 +400,10 @@ class Jobs:
                     self.log_poll_failure(row, error)
 
     def save(self, row):
+        if self._receipts is not None:
+            with self.lock:
+                self._receipts.save(row)
+            return
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / (row['id'] + '.json')
         temporary = path.with_name(path.name + '.' + uuid.uuid4().hex[:8] + '.tmp')
@@ -277,6 +412,14 @@ class Jobs:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+
+    def retry_pending(self):
+        if self._receipts is not None:
+            self._receipts.retry()
+
+    def close(self):
+        if self._receipts is not None:
+            self._receipts.close()
 
     def touch(self, row, **changes):
         with self.lock:
@@ -308,6 +451,8 @@ class Jobs:
                 row['result'] = result
                 if save:
                     self.save(row)
+            elif save:
+                self.retry_pending()
             return
         row.update(status=status, finished_at=self.clock(), updated_at=self.clock())
         if result is not None:
@@ -320,6 +465,7 @@ class Jobs:
             self.save(row)
 
     def save_batch(self, rows):
+        self.retry_pending()
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / ('b' + uuid.uuid4().hex + '.json')
         temporary = path.with_suffix('.tmp')
@@ -796,6 +942,7 @@ class Jobs:
     async def tick(self):
         rows = []
         def advance():
+            self.retry_pending()
             with self.lock:
                 rows.extend(self._tick())
                 self.productions.tick()
