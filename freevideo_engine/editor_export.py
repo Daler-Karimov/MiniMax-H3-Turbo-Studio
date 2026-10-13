@@ -58,6 +58,20 @@ class ExportCancelled(InterruptedError):
     pass
 
 
+class _SeamRepairError(Exception):
+    """An optional seam operation failed; the ordinary export may still work."""
+
+
+def _seam_call(operation, *args, **kwargs):
+    try:
+        return operation(*args, **kwargs)
+    except ExportCancelled:
+        raise
+    except Exception as error:
+        # The ordinary export reports a real source error under its own name.
+        raise _SeamRepairError() from error
+
+
 def _reason(error):
     if isinstance(error, ExportError):
         return error.reason
@@ -308,7 +322,7 @@ class _AudioReader:
                     break
                 self.chunk = next(self.chunks, None)
             return result
-        except (ExportError, ExportCancelled):
+        except (ExportError, ExportCancelled, _SeamRepairError):
             raise
         except Exception:
             raise ExportError('unreadable') from None
@@ -429,7 +443,7 @@ class _LeadStore:
         self.file.close()
 
 
-def _audio_chains(clips, resolve, cancelled, lead_store=None, joinable=None):
+def _audio_chains(clips, resolve, cancelled, lead_store=None, joinable=None, *, save_lead=None):
     """Plan eligible runs; keep paths/counts, never all the lead-in tensors."""
     from av import FFmpegError
     chains, lengths = {}, {}
@@ -489,8 +503,8 @@ def _audio_chains(clips, resolve, cancelled, lead_store=None, joinable=None):
         if not run:
             run = [left]
             chains[previous['id']] = run
-        if lead_store is not None:
-            run[-1]['lead_offset'] = lead_store.save(lead)
+        if save_lead is not None or lead_store is not None:
+            run[-1]['lead_offset'] = (save_lead or lead_store.save)(lead)
         run.append(right)
         chains[current['id']] = run
     return chains
@@ -507,10 +521,14 @@ class _JoinedAudioReader(_AudioReader):
         try:
             self.chunk = next(self.chunks, None)
             if self.chunk is None:
-                raise ExportError('unreadable')
+                raise _SeamRepairError()
         except BaseException:
             self.close()
             raise
+
+    def samples(self, start, count):
+        # Whatever goes wrong while reading joined sound, the ordinary export is tried instead.
+        return _seam_call(super().samples, start, count)
 
     def _native_chunks(self):
         import numpy as np
@@ -560,10 +578,10 @@ class _JoinedAudioReader(_AudioReader):
 
     def _joined_chunks(self):
         import av
-        resampler = av.AudioResampler(format='fltp', layout='stereo', rate=SAMPLE_RATE)
         native_position, output_position = 0, -self.parts[0].get('skip_output', 0)
         chunks = self._native_chunks()
         try:
+            resampler = av.AudioResampler(format='fltp', layout='stereo', rate=SAMPLE_RATE)
             for data in chunks:
                 _check(self.cancelled)
                 frame = _audio_frame(data, format='fltp', layout='stereo')
@@ -577,6 +595,12 @@ class _JoinedAudioReader(_AudioReader):
                 _check(self.cancelled)
                 yield output_position, item.to_ndarray()
                 output_position += item.samples
+        except ExportCancelled:
+            raise
+        except Exception as error:
+            # Mark failures before _AudioReader.samples can classify them as
+            # unreadable media. Only the joined repair/resampling path is here.
+            raise _SeamRepairError() from error
         finally:
             chunks.close()
 
@@ -607,6 +631,18 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
     Raises ExportError(reason) or ExportCancelled and removes owned partials.
     Existing destinations are refused and never removed.
     """
+    try:
+        return _render_once(project, resolve, target, progress=progress, cancelled=cancelled,
+                            options=options, repair_seams=True)
+    except _SeamRepairError:
+        # _render_once has closed every reader/snapshot and removed its partial.
+        # Cancellation wins even when it arrives while a seam operation fails.
+        _check(cancelled)
+    return _render_once(project, resolve, target, progress=progress, cancelled=cancelled,
+                        options=options, repair_seams=False)
+
+
+def _render_once(project, resolve, target, *, progress, cancelled, options, repair_seams):
     import av
     import numpy as np
     target = Path(target)
@@ -657,9 +693,17 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
                 or not clip_audible(left, row, project['tracks']) or not clip_audible(right, row, project['tracks']))
         with ExitStack() as readers, av.open(str(temporary), 'w', format=settings.container,
                                             options=settings.container_options) as output:
-            lead_store = _LeadStore(target.parent)
-            readers.callback(lead_store.close)
-            chains = {track: _audio_chains(clips, resolved.__getitem__, cancelled, lead_store, joinable(track))
+            lead_store = None
+
+            def save_lead(lead):
+                nonlocal lead_store
+                if lead_store is None:
+                    lead_store = _LeadStore(target.parent)
+                    readers.callback(lead_store.close)
+                return lead_store.save(lead)
+
+            chains = {track: _seam_call(_audio_chains, clips, resolved.__getitem__, cancelled,
+                                       joinable=joinable(track), save_lead=save_lead) if repair_seams else {}
                       for track, clips in tracks.items() if track != 'v1'}
             video = None
             if settings.only != 'sound':
@@ -787,7 +831,7 @@ def render(project: dict, resolve, target: Path, *, progress=None, cancelled=Non
         _check(cancelled)
         complete = True
         return target
-    except (ExportError, ExportCancelled):
+    except (ExportError, ExportCancelled, _SeamRepairError):
         raise
     except Exception as error:
         raise ExportError(_reason(error)) from None
