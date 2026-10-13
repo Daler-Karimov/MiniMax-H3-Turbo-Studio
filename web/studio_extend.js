@@ -90,13 +90,14 @@ export function extendSnapshot(snapshot, node, source, {multiple = false} = {}) 
     inputs.width = source.geometry.width; inputs.height = source.geometry.height;
     inputs.preview = false; inputs.refine_from = ''; inputs.two_pass = true;
     for (const [key, value] of [['base_steps', 8], ['refine_steps', 3]]) if (key in inputs) inputs[key] = value;
-    delete inputs.first;
+    // A continuation takes no first or last frame and no pre-encoded conditioning.
+    for (const key of ['first', 'last', 'conditioning']) delete inputs[key];
     if (multiple) delete inputs.continue_from; else inputs.continue_from = source.video;
     // The predecessor's tail replaces the draft's first frame.
     const media = copy.output[String(inputs.media?.[0])];
     if (media?.class_type === 'FreeVideoMedia') {
         // The continuation's own last frames stand in for every first, last and reference item.
-        delete media.inputs.first;
+        for (const key of Object.keys(media.inputs)) if (key !== 'assets') delete media.inputs[key];
         if (media.inputs.assets) media.inputs.assets = '[]';
     }
     return copy;
@@ -131,12 +132,19 @@ export function mountExtendThumbnail(image, api, record) {
         if (video.requestVideoFrameCallback) waitForFrame();
         video.currentTime = target;
     };
+    let retry = 0, attempts = 0;
     video.onseeked = () => {
         // A paused video may not present its newly decoded frame.
         if (video.requestVideoFrameCallback) video.play().catch(() => requestAnimationFrame(capture));
         else requestAnimationFrame(capture);
+        // A busy machine may never deliver that frame: seek to the same place again, a few times.
+        clearTimeout(retry);
+        retry = setTimeout(() => {
+            if (disposed || captured || ++attempts > 4) return;
+            video.currentTime = Math.max(0, target - attempts / 1000);
+        }, 1500);
     };
     video.src = api.apiURL(extendVideoURL(record));
-    return () => { disposed = true; video.pause(); if (callback !== null) video.cancelVideoFrameCallback?.(callback);
+    return () => { disposed = true; clearTimeout(retry); video.pause(); if (callback !== null) video.cancelVideoFrameCallback?.(callback);
         video.onloadedmetadata = video.onseeked = null; video.removeAttribute('src'); video.load(); video.remove(); };
 }
