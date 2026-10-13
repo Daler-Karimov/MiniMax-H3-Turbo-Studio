@@ -22,13 +22,17 @@ export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(second
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 export const jobName = (job, t) => job.label || t('Video', '视频');
 export const jobFraction = job => Math.max(0, Math.min(1, Number(job.progress?.fraction) || 0));
-// What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule. Without the
-// engine's estimate the reported fraction moves toward the end over the time the engine said is left.
-export function jobEstimate(job, age) {
-    const p = job.progress || {}, e = p.estimate;
-    if (e?.overall) return estimatedFraction(e, e.overall, age, age) ?? jobFraction(job);
-    const raw = jobFraction(job);
-    return p.remaining_seconds > 0 ? raw + (1 - raw) * Math.min(.9, Math.max(0, age) / p.remaining_seconds) : raw;
+// What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule. While the
+// engine has no timing for what it is doing (a model loading for the first time, a video in several parts), the
+// level still rises over the seconds the reported fraction has stood (`still`): at the pace of the time the engine
+// said is left, slowing down, and by no more than a quarter of what remains.
+const DRIFT = .25;
+export function jobEstimate(job, age, still = age) {
+    const p = job.progress || {}, e = p.estimate, overall = e?.overall, left = p.remaining_seconds;
+    const sent = overall ? estimatedFraction(e, overall, age, age) : null;
+    if (overall?.estimated === true && overall.phase_weight > 0) return sent ?? jobFraction(job);
+    const base = Math.max(jobFraction(job), sent ?? 0);
+    return left > 0 ? base + (1 - base) * DRIFT * (1 - Math.exp(-Math.max(0, still) / (DRIFT * left))) : base;
 }
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
@@ -105,10 +109,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const p = job.progress || {}, {age_seconds: sent, ...sample} = p.estimate || {fraction: p.fraction};
         const key = JSON.stringify(sample), time = performance.now() / 1000;
         let row = levels.get(job.id);
-        if (!row) levels.set(job.id, row = {key: null, at: 0, job: null, value: 0});
+        if (!row) levels.set(job.id, row = {key: null, at: 0, job: null, value: 0, raw: null, since: time});
         // remaining_seconds counts down between samples; the one that came with the sample is the one to move by.
         if (row.key !== key) { row.key = key; row.at = time - (sent > 0 ? sent : 0); row.job = job; }
-        if (job.status === 'running') row.value = Math.max(row.value, Math.min(.99, jobEstimate(row.job, time - row.at)));
+        // A loading model sends its own counts on and on while the fraction stands: that standing time is its own clock.
+        if (row.raw !== p.fraction) { row.raw = p.fraction; row.since = time; }
+        if (job.status === 'running') row.value = Math.max(row.value, Math.min(.99, jobEstimate(row.job, time - row.at, time - row.since)));
         return row.value;
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
