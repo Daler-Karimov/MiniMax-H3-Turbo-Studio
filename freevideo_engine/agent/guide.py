@@ -403,6 +403,8 @@ def connection_guide(root, base, lang=None, offers=None):
                      '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
                      '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
                      '或者一句用户需要知道的话，发回同一个 session，再接着等。中文用全角标点。'
+                     '做完一条视频也不是结尾：这句话就是汇报，不要再在自己窗口里写总结（一写总结这一轮就结束了，'
+                     '用户的下一句话没人听），紧接着再调等待接口，空等多少轮都接着等。'
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
@@ -419,7 +421,10 @@ def connection_guide(root, base, lang=None, offers=None):
                      'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
                      '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
                      'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
-                     'user needs to know, to the same session, and wait again. Chinese text takes full-width punctuation. Do not create another session for this conversation. '
+                     'user needs to know, to the same session, and wait again. Chinese text takes full-width punctuation. '
+                     'A finished video is not the end either: that sentence is the report, so write no summary in your own '
+                     'window (a summary ends your turn, and then nobody hears the next thing the user says); call the wait '
+                     'again right away, and keep waiting however many waits come back empty. Do not create another session for this conversation. '
                      'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
