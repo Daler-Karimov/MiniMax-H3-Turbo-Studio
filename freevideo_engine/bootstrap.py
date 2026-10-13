@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse
 import csv
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -1517,10 +1517,28 @@ class Installer:
         return network.clone(self.root / 'vendor' / name, url, commit, sparse=sparse, run=self.command,
                              network=self.network, env=self.env)
 
+    @contextmanager
+    def download_notice(self, key):
+        """Keep the patient-round notice visible across command heartbeats."""
+        active = False
+
+        def notice(message):
+            nonlocal active
+            self.ui.write(message + '\n')
+            active = True
+            self.ui.event('progress', key=key, label='Download', detail=message)
+
+        try:
+            yield notice
+        finally:
+            if active:
+                self.ui.event('progress', key=key, label='Download', detail='', state='complete')
+
     def packages(self, label, args, family='pypi'):
-        return network.package_command(self.network, family,
-            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
-            self.env, notice=lambda message: self.ui.write(message + '\n'))
+        with self.download_notice('download-patient-' + label) as notice:
+            return network.package_command(self.network, family,
+                lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
+                self.env, notice=notice)
 
     def python_install(self, uv):
         from .system import bootstrap_root
@@ -1555,9 +1573,9 @@ class Installer:
             return self.command('python-' + source + '-' + route,
                                 [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
         try:
-            return network.download_command(self.network, 'github', attempt, self.env, category='python',
-                                            extra_sources=['user-python'] if custom else [],
-                                            notice=lambda message: self.ui.write(message + '\n'))
+            with self.download_notice('download-patient-python') as notice:
+                return network.download_command(self.network, 'github', attempt, self.env, category='python',
+                                                extra_sources=['user-python'] if custom else [], notice=notice)
         except network.PackageSourcesError as error:
             failure = RuntimeError('Python download failed on every route; see retained logs')
             failure.package_attempts = error.attempts

@@ -16,6 +16,7 @@ class ProgressState:
         self.tasks = {}
         self.last = {}
         self.model_groups = []
+        self.download_notices = {}
 
     def update(self, event, now=None):
         now = time.monotonic() if now is None else now
@@ -25,8 +26,15 @@ class ProgressState:
             return
         if event.get('kind') == 'phase':
             self.phase = event
+            self.download_notices.clear()
             return
         key = str(event.get('key', 'current'))
+        if event.get('kind') == 'progress' and key.startswith('download-patient-'):
+            if event.get('state', 'running') == 'running' and event.get('detail'):
+                self.download_notices[key] = event
+            else:
+                self.download_notices.pop(key, None)
+            return
         if event.get('kind') == 'task':
             self.tasks.pop(key, None)
         previous = self.tasks.get(key, {})
@@ -48,6 +56,12 @@ class ProgressState:
         active.sort(key=lambda row: (number(row.get('total')) and row['total'] > 0,
                                      row.get('unit') == 'bytes'), reverse=True)
         current = active[0] if active else self._view(self.last, now)
+        if self.download_notices:
+            notice = next(reversed(self.download_notices.values()))
+            # A temporary activity line, with the underlying stage and counters
+            # retained so clearing it restores the current operation immediately.
+            current = dict(current, label=current.get('label') or notice['label'],
+                           detail=notice['detail'], activity='', name='')
         return dict(phase_progress=dict(self.phase), active_tasks=active, progress=current, model_groups=self.model_groups)
 
     @staticmethod

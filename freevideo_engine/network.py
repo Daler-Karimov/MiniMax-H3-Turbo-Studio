@@ -586,8 +586,8 @@ _INTEGRITY_FAILURE = re.compile(
     r"\b(?:invalid|bad|wrong|incorrect|mismatched?)\s+checksums?\b"
     r"|\bchecksums?\s+(?:mismatch|error|failed|failure)\b"
     r"|\bchecksums?\s+(?:verification|validation)\s+(?:failed|failure|error)\b"
-    r"|\bchecksums?\s+(?:does not|doesn't|did not|didn't|do not|don't)\s+match\b"
-    r"|\b(?:does not|doesn't|did not|didn't|do not|don't)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b"
+    r"|\bchecksums?\s+(?:does\s+not|doesn't|did\s+not|didn't|do\s+not|don't)\s+match\b"
+    r"|\b(?:does\s+not|doesn't|did\s+not|didn't|do\s+not|don't)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b"
     r"|\bhash\s+(?:mismatch|check\s+failed|does\s+not\s+match)\b|\bhashes\s+(?:do\s+not|didn't)\s+match\b"
     r"|\bsha-?256\s+mismatch\b|\bdigest\s+mismatch\b"
     r"|\bintegrity\s+(?:check|verification)\s+failed\b")

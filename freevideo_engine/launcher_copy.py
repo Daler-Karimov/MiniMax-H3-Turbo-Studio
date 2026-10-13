@@ -13,6 +13,7 @@ SOURCES = {
 }
 
 ZH = dict([
+    ('The network is slow. Downloading again; this may take a while.', '网络较慢，正在重试'),
     ('Prepare Python', '准备 Python'), ('Install Python', '安装 Python'),
     ('Prepare download tools', '准备下载工具'), ('Tsinghua mirror', '清华镜像'),
     ('Preparing installation', '准备安装'), ('Checking the environment', '正在检查运行环境'),
