@@ -267,6 +267,24 @@ def bundle(web=WEB, modules=MODULES, start='editor_actions', entry=None, prelude
     return ''.join(parts)
 
 
+def _editing_unavailable():
+    """The answer when the rules engine is missing. Adding it is not always ours to do (the user's own
+    ComfyUI), so this says what does not work here instead of sending the user to repair."""
+    from . import errors
+    from .jobs import JobError
+
+    class EditingUnavailable(JobError):
+        def view(self):
+            answer = errors.build(self.code, validation=True, details=[], message=self.message, next_action=(
+                'Tell the user that editing videos and images is not available here for now, and go on with what '
+                'does not need it. features in the status reply shows these as false.'))
+            answer['retryable'] = False
+            return answer
+
+    return EditingUnavailable('not_ready', 'Editing videos and images is not available in this installation for now. '
+                                           'Generation and everything else work.')
+
+
 class ScriptRuntime:
     """A QuickJS context with linked page modules. Calls are serialized by a
     lock; a failed or interrupted call discards the context."""
@@ -280,8 +298,7 @@ class ScriptRuntime:
         try:
             import quickjs
         except ImportError:
-            from .jobs import JobError
-            raise JobError('not_ready', 'The editor rules engine is not installed; repair FreeVideo.') from None
+            raise _editing_unavailable() from None
         context = quickjs.Context()
         context.set_memory_limit(MEMORY_LIMIT)
         context.set_max_stack_size(STACK_LIMIT)

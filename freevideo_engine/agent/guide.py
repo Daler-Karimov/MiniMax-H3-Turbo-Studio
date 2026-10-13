@@ -60,7 +60,8 @@ GUIDE = {
     ],
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
-        'Generation uses the continuous backend; longer requests split, continue and join automatically. '
+        'Generation uses the continuous backend. A request of up to 15 s is one generation; a longer one is made '
+        'in parts of up to 15 s (30 s is 15 + 15) that continue one another and join automatically. '
         'Continuing (longer than 15 s, or continue_from) needs two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan.',
@@ -162,7 +163,8 @@ RULES = [
     'Cut by default. Wherever the film can change shot, make the new shot from the reference pictures it should '
     'have (cast cards, scene pictures) instead of continuing the previous video. Continue a video only for a '
     'long take that cannot be cut, an action that must stay unbroken, or sound that must stay unbroken, and '
-    'continuing again and again is not recommended. One video has at most 5 parts (the first and 4 '
+    'continuing again and again is not recommended. Content of 16 to 29 seconds is better made as shots of '
+    'up to 15 seconds each. One video has at most 5 parts (the first and 4 '
     'continuations), each continued part at least 10 seconds, about 70 seconds in all; filling that is not '
     'recommended. Past it, cut to a new shot.',
 ]
