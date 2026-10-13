@@ -1030,13 +1030,9 @@ class Jobs:
                     payload.pop('seconds')
                     payload['blocks'] = deepcopy(row['editor']['blocks'])
                 elif spec.get('continue_from'):
-                    from ..chain_plan import plan
-                    source = self.port.output_relative(self.source_video(spec['continue_from']))
-                    payload.pop('seconds')
-                    payload['join'] = True
-                    payload['blocks'] = [dict(id='b%d' % (i + 1), frames=block['frames'], text=prompt,
-                        seed=spec['seed'] + i, after='b%d' % i if i else dict(work=source))
-                        for i, block in enumerate(plan(spec['seconds'])['blocks'])]
+                    # Planned as a continuation, so the new video is as long as the request says.
+                    payload.update(after=dict(work=self.port.output_relative(self.source_video(spec['continue_from']))),
+                                   text=prompt, seed=spec['seed'])
                 self.start_chain(row, payload=payload)
         work = asyncio.create_task(asyncio.to_thread(prepare))
         try:

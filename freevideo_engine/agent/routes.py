@@ -30,6 +30,16 @@ from .jobs import ACTIVE, DONE, JobError, Jobs, chain_error, library_view
 PREFIX = '/freevideo/agent/v1'
 
 
+def local_address(request):
+    """The backend's bound port, independent of page origins and forwarding headers."""
+    socket = request.transport.get_extra_info('sockname') if request.transport else None
+    if not socket:
+        raise JobError('not_ready', 'Listening address unavailable')
+    host = '[::1]' if ':' in socket[0] else '127.0.0.1'
+    scheme = 'https' if request.transport.get_extra_info('sslcontext') is not None else 'http'
+    return f'{scheme}://{host}:{socket[1]}'
+
+
 def token_path(root):
     return Path(root) / 'agent' / 'token'
 
@@ -190,7 +200,7 @@ def plan(port, value, jobs=None):
     if spec['width'] * spec['height'] > 2 * 1024 ** 2:
         result['warnings'].append('Above 2 MP takes much longer and needs more memory')
     from ..chain_plan import plan as chain_plan
-    result['chain_plan'] = chain_plan(spec['seconds'])
+    result['chain_plan'] = chain_plan(spec['seconds'], continued=bool(spec.get('continue_from')))
     from .forecast import generation_estimate
     result['estimate'], result['capabilities_revision'] = generation_estimate(port, spec, result['chain_plan'])
     return result
@@ -556,8 +566,10 @@ def register():
     @guarded
     async def discover(request):
         # Unauthenticated: tells a client where to look, reveals nothing else.
+        connect = request.scheme + '://' + request.host + PREFIX + '/connect'
         return reply(dict(enabled=True, api_versions=[API_VERSION], base=PREFIX, auth='bearer',
-                          token='agent/token in the FreeVideo installation folder'))
+                          token='agent/token in the FreeVideo installation folder', connect=connect,
+                          instructions='GET ' + connect + ' for plain-text connection instructions and follow them.'))
 
     @routes.get('/freevideo/agent/session')
     @guarded
@@ -635,7 +647,7 @@ def register():
         for row in jobs.rows():
             if row.get('client'):
                 seen[row['client']] = max(seen.get(row['client'], 0), row['created_at'])
-        return reply(dict(api=PREFIX, token_file=str(token_path(root)), claude_code=config['claude_code'],
+        return reply(dict(address=local_address(request), api=PREFIX, token_file=str(token_path(root)), claude_code=config['claude_code'],
                           mcp_json=config['mcp_json'], cli=('"%s"' % script if ' ' in str(script) else str(script))
                           + ' agent status' if script else None,
                           token_from_environment=False,

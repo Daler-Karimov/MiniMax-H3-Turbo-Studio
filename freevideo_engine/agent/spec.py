@@ -149,15 +149,15 @@ def task(media):
     return 'i2va' if 'first' in media else 'l2va' if 'last' in media else 't2va'
 
 
-def saved_length(canvas, seconds):
+def saved_length(canvas, seconds, continued=False):
     """Frames and seconds of the saved video. One generation keeps its aligned canvas; a longer video is
-    made in blocks and joined to exactly the planned whole seconds."""
+    made in blocks and joined to exactly the planned whole seconds. A continuation saves only what it adds."""
     from ..chain_plan import PlanError, plan
     try:
-        planned = plan(seconds)
+        planned = plan(seconds, continued=continued)
     except PlanError:
         return canvas['frames'], canvas['seconds']
-    if planned['single']:
+    if planned['single'] and not continued:
         return canvas['frames'], canvas['seconds']
     return planned['frames'], planned['frames'] / canvas['fps']
 
@@ -180,8 +180,7 @@ def normalize(value):
             from ..geometry import geometry
             width, height = canvas_size(original)
             canvas = geometry(width, height, seconds=value['seconds'])
-            frames, output_seconds = (canvas['frames'], canvas['seconds']) if value.get('continue_from') else \
-                saved_length(canvas, value['seconds'])
+            frames, output_seconds = saved_length(canvas, value['seconds'], bool(value.get('continue_from')))
             result.update(prompt=value['prompt'], width=width, height=height, seconds=float(value['seconds']),
                           frames=frames, output_seconds=output_seconds, seed_random=value['seed'] is None,
                           seed=secrets.randbelow(MAX_SEED + 1) if value['seed'] is None else value['seed'],

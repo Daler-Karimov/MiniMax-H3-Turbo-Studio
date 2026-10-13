@@ -92,6 +92,24 @@ def changed_clip_ids(before, after):
     return changed + [identity for identity in old if identity not in new]
 
 
+def _claims(project):
+    """(path, source key, length) wherever a project says how long a source is: every clip and every version of it."""
+    tracks = project.get('tracks') if isinstance(project, dict) else None
+    for t, track in enumerate(tracks if isinstance(tracks, list) else ()):
+        clips = track.get('clips') if isinstance(track, dict) else None
+        for c, clip in enumerate(clips if isinstance(clips, list) else ()):
+            if not isinstance(clip, dict):
+                continue
+            path, versions = '/project/tracks/%d/clips/%d' % (t, c), clip.get('versions')
+            rows = [(path, clip.get('source'), clip.get('length'))]
+            rows += [('%s/versions/%d' % (path, v), row, row.get('length'))
+                     for v, row in enumerate(versions if isinstance(versions, list) else ()) if isinstance(row, dict)]
+            for where, source, length in rows:
+                if (isinstance(source, dict) and isinstance(source.get('kind'), str) and isinstance(source.get('id'), str)
+                        and type(length) is int):
+                    yield where + '/length', source['kind'] + ':' + source['id'], length
+
+
 class Projects:
     def __init__(self, root, *, directory=None):
         self.root = root  # The ComfyUI output folder, where the page keeps FreeVideo/.editor
@@ -153,6 +171,24 @@ class Projects:
         return self._load(identity)
 
     # Whole-project writes ------------------------------------------------------------------------------
+    def _lengths(self, project, stored=None):
+        """A written project cannot say a source is longer than it is.
+
+        The page takes every length from the file; a whole-project write states it. A clip that asks for
+        frames its source does not have would only be found by the export, which stops there.
+        """
+        known = {row[1:] for row in _claims(stored)} if stored else set()
+        for path, key, length in _claims(project):
+            if (key, length) in known:
+                continue
+            try:
+                info = comfy_editor.sources(self.root, [key])[key]
+            except ValueError:
+                continue  # not a source at all: the editor's own check refuses it and names the part
+            known.add((key, length))
+            if not info['missing'] and info['frames'] and length > info['frames']:
+                raise _invalid(path, 'at most %d, the number of frames this source has' % info['frames'], length)
+
     def create(self, value, *, ref=None, client=None):
         schema.validate(schema.project_schema('create'), value)
         digest, replay = self._receipt('projects:create', value, ref, client)
@@ -163,6 +199,7 @@ class Projects:
             raise _invalid('/project', 'a new project with id null and revision 0')
         # The page's receipt makes a repeated create return the first project.
         create = _operation_key(ref, client) if ref is not None else None
+        self._lengths(project)
         result = dict(project=self._save(deepcopy(project), create=create))
         self._remember(ref, digest, result, client)
         return result
@@ -176,6 +213,7 @@ class Projects:
         if not isinstance(project, dict) or project.get('id') != identity:
             raise _invalid('/project/id', 'the project id in the path', project.get('id') if isinstance(project, dict) else None)
         before = self._load(identity)['project']
+        self._lengths(project, before)
         saved = self._save(deepcopy(project), ref=ref, client=client)
         result = dict(project=saved, changed_clip_ids=changed_clip_ids(before, saved))
         self._remember(ref, digest, result, client)
@@ -368,7 +406,8 @@ class Projects:
 
 
 # Export ----------------------------------------------------------------------------------------------
-EXPORT_REASONS = {'source_missing': 'source_missing', 'unreadable': 'source_missing', 'disk_full': 'storage_unavailable'}
+# Both are about a clip in the project, so the answer says to look there, not to resume a generation.
+EXPORT_REASONS = {'source_missing': 'clip_source_unusable', 'unreadable': 'clip_source_unusable', 'disk_full': 'storage_unavailable'}
 
 
 def run_export(port, row, *, poll=.25):

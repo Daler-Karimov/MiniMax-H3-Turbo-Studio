@@ -15,6 +15,17 @@ export async function agentHeaders(api) {
     return pending;
 }
 
+// Status reads use the same page session, acquired only when the card opens.
+export async function agentGet(api, path, options = {}) {
+    for (let attempt = 0; ; attempt++) {
+        const headers = await agentHeaders(api);
+        options.signal?.throwIfAborted();
+        const response = await api.fetchApi(path, {...options, cache: 'no-store', credentials: 'same-origin', headers});
+        if (response.status !== 401 || attempt) return response;
+        sessions.delete(api);
+    }
+}
+
 // A restarted FreeVideo forgets page sessions: fetch a new one once and repeat.
 export async function agentPost(api, path, body) {
     for (let attempt = 0; ; attempt++) {

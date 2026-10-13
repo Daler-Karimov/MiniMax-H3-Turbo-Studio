@@ -66,15 +66,20 @@ def validate(payload):
     if type(join) is not bool:
         raise ValueError('Join must be a bool')
     if 'seconds' in payload:
+        # 'after' continues a saved video: the plan then counts the first block as a continuation too.
+        source = payload.get('after')
+        if source is not None and not isinstance(source, dict):
+            raise ValueError('A planned video can only continue a saved work')
         planned = chain_plan.plan(payload['seconds'], payload.get('single', False), payload.get('max_frames'),
-                                  payload.get('single_limit_seconds'), payload.get('block_seconds'))
+                                  payload.get('single_limit_seconds'), payload.get('block_seconds'),
+                                  continued=source is not None)
         inputs = prompt[node]['inputs']
         text, seed = payload.get('text', inputs.get('text')), payload.get('seed', inputs.get('seed'))
         if not isinstance(text, str):
             raise ValueError('Text must be a string')
         if type(seed) is not int or seed < 0:
             raise ValueError('A nonnegative integer seed is required')
-        rows = [dict(id='b%s' % (index + 1), after='b%s' % index if index else None,
+        rows = [dict(id='b%s' % (index + 1), after='b%s' % index if index else source,
                      frames=row['frames'], text=text, seed=seed + index)
                 for index, row in enumerate(planned['blocks'])]
     else:

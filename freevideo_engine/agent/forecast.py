@@ -9,7 +9,7 @@ def generation_estimate(port, spec, chain=None):
     reasons here so a film never invents a time for unsupported conditioning.
     """
     from ..chain_plan import plan as chain_plan
-    chain = chain if chain is not None else chain_plan(spec['seconds'])
+    chain = chain if chain is not None else chain_plan(spec['seconds'], continued=bool(spec.get('continue_from')))
     table = port.capability_snapshot(dict(width=str(spec['width']), height=str(spec['height']),
                                           task=spec['task'], adapters='1' if spec['loras'] else '0'))
     seconds = None

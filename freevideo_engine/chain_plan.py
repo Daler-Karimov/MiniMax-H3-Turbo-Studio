@@ -30,8 +30,12 @@ def _first_frames(seconds):
     return geometry(seconds=seconds)['frames']
 
 
-def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, block_seconds=None):
-    """`max_frames`: the most frames this device generates at once for the current settings (unknown: 15 s)."""
+def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, block_seconds=None, continued=False):
+    """`max_frames`: the most frames this device generates at once for the current settings (unknown: 15 s).
+
+    `continued`: the video goes on from a saved one, so its first block too spends OVERLAP frames on what
+    came before and adds only the rest.
+    """
     _number(seconds, 'Length')
     if type(single) is not bool:
         raise PlanError('invalid', 'Single must be true or false')
@@ -53,6 +57,10 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
     # The longest whole-second block this device can start a video with, and continue one with.
     first = (limit - (limit - 5) % UNIT) // FPS if limit >= 39 else 0
     following = (limit - OVERLAP) // UNIT * UNIT // FPS if limit >= OVERLAP + UNIT else 0
+    new = frames
+    if continued:
+        new = max(1, math.ceil(round(FPS * seconds, 6) / UNIT)) * UNIT
+        frames = new + OVERLAP
     block = BLOCK_SECONDS
     if block_seconds is not None:
         block = math.floor(_number(block_seconds, 'The block length') + .5)
@@ -62,10 +70,10 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
             raise PlanError('block_too_long', 'This device cannot generate a block of this length')
     fits = frames <= limit
     # The block length only matters once a video is split: up to 30 s stays one generation.
-    if fits and (single or seconds <= SINGLE_SECONDS or seconds <= min(block, first)):
-        return dict(seconds=seconds, frames=frames, single=True, hide_frames=0,
-                    blocks=[dict(seconds=seconds, frames=frames, new_frames=frames)])
-    first, following = min(block, first), min(block, following)
+    if fits and (single or seconds <= SINGLE_SECONDS or seconds <= min(block, following if continued else first)):
+        return dict(seconds=seconds, frames=new, single=True, hide_frames=0,
+                    blocks=[dict(seconds=seconds, frames=frames, new_frames=new)])
+    first, following = min(block, following if continued else first), min(block, following)
     if first < SHORTEST_BLOCK or following < SHORTEST_BLOCK:
         raise PlanError('device_limit', 'This device cannot generate this length at this size')
     total = seconds = math.floor(seconds + .5)
@@ -81,7 +89,7 @@ def plan(seconds, single=False, max_frames=None, single_limit_seconds=None, bloc
     blocks, shown = [], 0
     for index, length in enumerate(lengths):
         target = FPS * sum(lengths[:index + 1])
-        if index == 0:
+        if index == 0 and not continued:
             new = requested = _first_frames(length)
         else:
             # Each block takes the shortest step that reaches its whole second; nothing is cut in between.

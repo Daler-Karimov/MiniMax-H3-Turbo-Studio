@@ -1,19 +1,10 @@
-/* Settings · AI agents: copyable commands, a few facts, and a guarded token reset. */
-.fv-setup .fv-agent-connect-body,.fv-setup .fv-agent-connect-content{display:grid;gap:12px}
-.fv-setup .fv-agent-connect-body{padding-top:10px}
-.fv-setup .fv-agent-connect-body>p{margin:0;text-wrap:balance}
-.fv-setup .fv-agent-connect-content>p:empty{display:none}
-.fv-setup .fv-agent-copy{display:grid;gap:6px;min-width:0}
-.fv-setup .fv-agent-copy-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:var(--fv-micro);color:var(--fv-muted)}
-.fv-setup .fv-agent-copy-head button{min-height:26px;padding:0 10px;font-size:var(--fv-micro)}
-.fv-setup .fv-agent-copy :is(code,pre){display:block;margin:0;padding:10px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-bg);color:var(--fv-ink);font:12px/1.55 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:all}
-.fv-setup .fv-agent-copy-block pre{max-height:220px;overflow:auto;user-select:text}
-.fv-setup .fv-agent-facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;font-size:var(--fv-micro)}
-.fv-setup .fv-agent-facts dt{color:var(--fv-muted)}
-.fv-setup .fv-agent-facts dd{margin:0;overflow-wrap:anywhere}
-.fv-setup .fv-agent-actions{align-items:center}
-.fv-setup .fv-agent-actions a{color:var(--fv-accent);font-size:var(--fv-body)}
-.fv-setup .fv-agent-confirm{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-raised);font-size:var(--fv-micro)}
-.fv-setup .fv-agent-confirm span{flex:1 1 220px;color:var(--fv-muted)}
-.fv-setup .fv-agent-confirm .fv-danger{border-color:var(--fv-danger);color:var(--fv-danger)}
+/* Connect an agent: one sentence, one action, one status. The card carries its own layout wherever it is placed. */
+.fv-agent-connect-body{display:grid;gap:12px;min-width:0}
+.fv-agent-connect-body>p{margin:0}
+.fv-agent-connect-body .fv-agent-sentence{padding:10px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-bg);color:var(--fv-ink);font-size:var(--fv-body);overflow-wrap:anywhere;user-select:all}
+.fv-agent-connect-body .fv-agent-sentence:empty{display:none}
+.fv-agent-connect-body .fv-agent-connect-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fv-agent-connect-body .fv-agent-connect-status{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fv-body);color:var(--fv-muted)}
+.fv-agent-connect-body .fv-agent-connect-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--fv-disabled)}
+.fv-agent-connect-body .fv-agent-connect-dot[data-color=green]{background:var(--fv-success)}
 .fv-setup .fv-agent-connect[hidden]{display:none}
