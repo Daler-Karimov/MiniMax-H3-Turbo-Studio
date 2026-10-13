@@ -162,8 +162,9 @@ RULES = [
     'Cut by default. Wherever the film can change shot, make the new shot from the reference pictures it should '
     'have (cast cards, scene pictures) instead of continuing the previous video. Continue a video only for a '
     'long take that cannot be cut, an action that must stay unbroken, or sound that must stay unbroken, and '
-    'avoid continuing again and again. One shot can be continued up to 5 parts, each at least 10 seconds, '
-    'about 70 seconds in all; do not fill that. Past it, cut to a new shot.',
+    'continuing again and again is not recommended. One video has at most 5 parts (the first and 4 '
+    'continuations), each continued part at least 10 seconds, about 70 seconds in all; filling that is not '
+    'recommended. Past it, cut to a new shot.',
 ]
 
 
@@ -183,9 +184,9 @@ RULES_ZH = [
     '先选角，再拍摄。先搜索角色库，使用用户指定的卡片或明确符合要求的卡片；拿不准时询问用户。'
     '只有找不到合适卡片时才新建：用户提供了照片就用照片，否则通过 POST /cast/{id}/generate 生成参考图。'
     '开拍前用一句话告诉用户选角结果。后续镜头使用卡片当前的图片。保留你创建的卡片，方便以后拍片复用。',
-    '默认切镜头。能切镜头的地方就切：新镜头直接用该有的参考图（人物卡、场景图）生成，不接上一段视频。'
-    '只有不能切镜的长镜头、必须连贯的动作、必须连贯的声音，才接着上一段生成，也不要一段接一段地连续接。'
-    '一个镜头最多接到 5 段，每段不短于 10 秒，总长约 70 秒，不建议接满；超过就切镜头。',
+    '默认切镜头。能切镜头的地方就切：新镜头直接用对应的参考图（人物卡、场景图）生成，不接上一段视频。'
+    '只有不能切镜的长镜头、必须连贯的动作、必须连贯的声音，才接着上一段生成，而且不建议一段接一段地连续接。'
+    '一条视频最多 5 段（第一段加 4 次接着生成），接着生成的每一段至少 10 秒，总长约 70 秒；不建议接满，超过就切镜头。',
 ]
 
 
