@@ -391,6 +391,18 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
             // these limits; only the callback publishes a measured capability.
             read(); return fallback;
         },
+        // The longest single part this computer makes at a size other than the edit's; null when it cannot be told.
+        async requestFrames(size, settings) {
+            try {
+                for (let tries = 0; tries < 5 && !disposed; tries++) {
+                    const reply = await json('/freevideo/capabilities?' + new URLSearchParams(size));
+                    if (reply?.status !== 'computing') return !reply || (reply.status && reply.status !== 'ready') ? null
+                        : capabilityPoints(reply, {...size, settings}).maxRequestFrames;
+                    await new Promise(done => clock.setTimeout(done, 1000));
+                }
+            } catch { /* not known */ }
+            return null;
+        },
         async startChain(payload) {
             if (standIn) return standIn.startChain(payload);
             if (!generationAvailable) return null;

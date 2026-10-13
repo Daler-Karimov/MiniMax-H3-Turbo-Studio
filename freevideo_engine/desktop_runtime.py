@@ -20,6 +20,20 @@ from .long_paths import io_path, resolved, plain, plain_text, plain_errors
 from .system import install_root, windows
 
 
+def parse_progress_line(line):
+    """Decode the worker's UI protocol; ordinary terminal output stays a log."""
+    if line.startswith('{'):
+        try:
+            message = json.loads(line)
+            if message.get('event') == 'freevideo_ui':
+                return message
+            if message.get('event') == 'local_model_progress':
+                return local_model_ui(message)
+        except (ValueError, AttributeError):
+            pass
+    return None
+
+
 def launcher_root():
     if os.environ.get('FREEVIDEO_LAUNCHER_HOME'):
         return Path(os.environ['FREEVIDEO_LAUNCHER_HOME'])
@@ -334,17 +348,12 @@ class Runner:
                     log.write(line)
                     output = (output + line)[-2 * 1024 * 1024:]
                     self.events.put(('log', line))
-                    if line.startswith('{'):
-                        try:
-                            message = plain_message(json.loads(line))
-                            if message.get('event') == 'freevideo_ui':
-                                if message.get('kind') == 'failure' and isinstance(message.get('error'), str):
-                                    error = message['error']
-                                self.events.put(('progress', message))
-                            elif message.get('event') == 'local_model_progress':
-                                self.events.put(('progress', local_model_ui(message)))
-                        except (ValueError, AttributeError):
-                            pass
+                    message = parse_progress_line(line)
+                    if message is not None:
+                        message = plain_message(message)
+                        if message.get('kind') == 'failure' and isinstance(message.get('error'), str):
+                            error = message['error']
+                        self.events.put(('progress', message))
                 code = process.wait(timeout=15)
                 process.stdout.close()
         except BaseException as failure:

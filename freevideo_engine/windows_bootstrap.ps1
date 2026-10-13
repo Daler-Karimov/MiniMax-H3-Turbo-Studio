@@ -67,9 +67,11 @@ function Invoke-FreeVideoBootstrapCommand {
 function Test-FreeVideoSlowDownloadFailure {
     param([string]$Detail)
     # Keep the patient-round gate aligned with network.slow_download_failure.
+    # URL paths may contain validation words without a validation failure.
+    $Detail = $Detail -replace 'https?://\S+', ''
     return ($Detail -match 'timed out|timeout|connection|could not resolve|failed to download|failed to fetch|network is unreachable|ssl|tls|http status|status code|requested url returned error|rpc failed|early eof|unable to access|remote end hung up|couldn''t connect|proxy' -and
         $Detail -notmatch '\b(401|403|404|410)\b' -and
-        $Detail -notmatch 'no solution found|no matching distribution|could not find a version|checksum|hash mismatch|hashes do not match|hashes didn''t match|hash does not match|hash check failed|sha256 mismatch|sha-256 mismatch|digest mismatch|integrity|certificate verify failed|certificate_verify_failed|invalid peer certificate|unknown issuer|not found|resolutionimpossible|failed to build|invalid wheel|permission denied|no space left on device|disk full')
+        $Detail -notmatch 'no solution found|no matching distribution|could not find a version|\b(?:invalid|bad|wrong|incorrect|mismatched?)\s+checksums?\b|\bchecksums?\s+(?:mismatch|error|failed|failure)\b|\bchecksums?\s+(?:verification|validation)\s+(?:failed|failure|error)\b|\bchecksums?\s+(?:does\s+not|doesn''t|did\s+not|didn''t|do\s+not|don''t)\s+match\b|\b(?:does\s+not|doesn''t|did\s+not|didn''t|do\s+not|don''t)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b|\bhash\s+(?:mismatch|check\s+failed|does\s+not\s+match)\b|\bhashes\s+(?:do\s+not|didn''t)\s+match\b|\bsha-?256\s+mismatch\b|\bdigest\s+mismatch\b|\bintegrity\s+(?:check|verification)\s+failed\b|certificate verify failed|certificate_verify_failed|invalid peer certificate|unknown issuer|not found|resolutionimpossible|failed to build|invalid wheel|permission denied|no space left on device|disk full')
 }
 
 function Test-FreeVideoUvArchive {

@@ -427,8 +427,23 @@ MIN_GPU_RESERVE_GIB = .2
 
 FF_STASH_WIDTH = 14336  # BF16 SwiGLU output channels kept for the per-tensor FP8 scale
 
+# Int8 GPU-output workspace in GiB, second transfer slot included, for
+# canvases below the envelope's anchors: (video tokens, GiB). A two-pass
+# 960x544 / 4.5 s request on a Windows RTX 5060 Ti 16 GB peaked 2.48 GiB at
+# 4320 tokens and 3.46 GiB at 16320 tokens beyond its sixteen resident
+# blocks, against 7.14 and 7.82 from the envelope, so the plan held sixteen
+# and eighteen blocks where the budget held about twenty-five and streamed
+# the rest from disk on every step. Each figure carries one GiB of margin.
+# The curve joins the envelope at its lowest anchor (896 square, 243
+# frames) and never exceeds it. It rests on one card.
+SMALL_CANVAS_INT8_WORKSPACE = (
+    (4320, 3.48),
+    (16320, 4.46),
+    (56448, 6.5 + 6. * 56448 / 72576 + BLOCK_BYTES / GiB - 56448 * FF_STASH_WIDTH * 2 / GiB),
+)
 
-def windows_gpu_output_workspace(video_tokens, *, prefetch=False, ff_stash=True):
+
+def windows_gpu_output_workspace(video_tokens, *, prefetch=False, ff_stash=True, small_canvas=False):
     """Starting workspace for head-8 GPU outputs with the full per-tensor FF stash.
 
     Int8 projections scale each activation row on its own, so every FF row tile
@@ -442,8 +457,17 @@ def windows_gpu_output_workspace(video_tokens, *, prefetch=False, ff_stash=True)
     The 6.5 + 6 * token-ratio envelope covers both anchors. It is a cold-start
     estimate, not a fitted throughput model or proof of capacity elsewhere.
     The OS growth reserve has already been subtracted from the budget.
+
+    small_canvas=True counts resident blocks below the anchors from the
+    measured int8 curve (SMALL_CANVAS_INT8_WORKSPACE) instead of the envelope.
+    Head-group choices keep using the envelope.
     """
     tokens = 72576 if video_tokens is None else video_tokens
+    if small_canvas and not ff_stash and tokens < SMALL_CANVAS_INT8_WORKSPACE[-1][0]:
+        for (low, at_low), (high, at_high) in zip(SMALL_CANVAS_INT8_WORKSPACE, SMALL_CANVAS_INT8_WORKSPACE[1:]):
+            if tokens <= high:
+                at = at_low + (at_high - at_low) * max(0, tokens - low) / (high - low)
+                return int(at * GiB) - (0 if prefetch else BLOCK_BYTES)
     workspace = int((6.5 + 6. * tokens / 72576) * GiB) + (BLOCK_BYTES if prefetch else 0)
     return workspace if ff_stash else workspace - tokens * FF_STASH_WIDTH * 2
 
@@ -1220,7 +1244,8 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
         # FF stash. In addition, crediting a shorter geometry against its old
         # 345-frame anchor added five blocks to a request that already OOMed.
         # Budget the current execution path before host placement is planned.
-        windows_workspace = windows_gpu_output_workspace(effective_tokens, prefetch=prefetch, ff_stash=not int8)
+        windows_workspace = windows_gpu_output_workspace(effective_tokens, prefetch=prefetch, ff_stash=not int8,
+                                                         small_canvas=True)
         windows_workspace += max(0, activation_bytes(head, effective_tokens) - activation_bytes(8, effective_tokens))
         if prefetch and gpu_budget < 14 * GiB:
             # Saving a transfer slot must not turn fully retained host weights

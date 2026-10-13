@@ -135,10 +135,11 @@ class Progress:
                 self.last = now
 
 
-def verify(path, row):
+def verify(path, row, progress=None):
     if path.stat().st_size != row['bytes']:
         raise ValueError('Downloaded size differs from the pinned manifest')
-    return network.hash_file(path, 'sha256' if row.get('sha256') else 'sha1', not row.get('sha256'), discard_cache=True) == (row.get('sha256') or row['git_blob'])
+    return network.hash_file(path, 'sha256' if row.get('sha256') else 'sha1', not row.get('sha256'),
+                             discard_cache=True, progress=progress) == (row.get('sha256') or row['git_blob'])
 
 
 def checked_range_response(response, requested, total, progress):
@@ -187,10 +188,13 @@ def sdk_worker(request):
     progress = Progress(row['bytes'])
     backend = []
     started = time.monotonic()
+    from .install_activity import byte_progress
+    verifying = byte_progress('verify_progress', target,
+        report=lambda **row: emit(phase='verify', **row))
     try:
         if target.is_file():
-            emit(phase='verify')
-            if verify(target, row):
+            emit(phase='verify', done_bytes=0, total_bytes=row['bytes'])
+            if verify(target, row, progress=verifying):
                 emit(phase='ready', backend='verified-stage', seconds=time.monotonic()-started, fingerprint=fingerprint(target))
                 return 0
             network.retain_partial(target, 'hash-rejected')
@@ -213,7 +217,14 @@ def sdk_worker(request):
                 def update(self, amount):
                     progress.update(0)
                 def end(self):
-                    emit(phase='reconstruct', done_bytes=row['bytes'], total_bytes=row['bytes'])
+                    emit(phase='reconstruct', done_bytes=0, total_bytes=row['bytes'])
+                def merge_progress(self, done, total):
+                    merging(done, total)
+                def verify_progress(self, done, total):
+                    verifying(done, total)
+
+            merging = byte_progress('assemble_progress', target,
+                report=lambda **row: emit(phase='reconstruct', **row))
 
             original_get, original_parallel = _download.requests.get, getattr(_download, '_parallel_download', None)
 
@@ -318,8 +329,8 @@ def sdk_worker(request):
         # count alone does not prove that the file descriptor is closed.
         emit(phase='transfer_complete', done_bytes=row['bytes'], total_bytes=row['bytes'])
         downloaded = time.monotonic()
-        emit(phase='verify')
-        if not verify(target, row):
+        emit(phase='verify', done_bytes=0, total_bytes=row['bytes'])
+        if not verify(target, row, progress=verifying):
             raise ValueError('Downloaded hash differs from the pinned manifest')
         emit(phase='ready', backend=backend[-1] if backend else 'hf-cache',
              download_seconds=downloaded-started, verification_seconds=time.monotonic()-downloaded,
@@ -524,6 +535,12 @@ def run_sdk(source, row, path, plan, progress_callback, networking, transfer_com
                         network_bytes_per_second=current.get('transfer_bytes', 0) /
                         max(.001, current.get('elapsed_seconds', time.monotonic()-started)),
                         method=current.get('backend'))
+                if current['phase'] in ('verify', 'reconstruct') and current.get('total_bytes'):
+                    from .model_status import NAMES, family
+                    sys.stdout.write(json.dumps(dict(event='verify_progress' if current['phase'] == 'verify' else 'assemble_progress',
+                        file=str(path), name=NAMES[family(row)][0], done_bytes=current.get('done_bytes', 0),
+                        total_bytes=current['total_bytes'])) + '\n')
+                    sys.stdout.flush()
                 prior_phase = current['phase']
                 last_emit = time.monotonic()
             # The SDK reports the transfer complete before it starts its final

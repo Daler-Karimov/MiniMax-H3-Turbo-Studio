@@ -277,6 +277,8 @@ class Setup:
             arguments += ['--prepared-format', value['prepared_format']]
         if value.get('copy'):
             arguments.append('--copy-existing-models')
+        if value.get('download_list'):
+            arguments.append('--download-list')
         self.selection = dict(root=str(root), arguments=arguments)
         self.plan = None
         self.state = dict(status='running', action='plan', libraries=libraries)

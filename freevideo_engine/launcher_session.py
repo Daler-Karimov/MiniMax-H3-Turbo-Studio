@@ -1,4 +1,5 @@
 """Widget-independent state for the Qt launcher; uses the existing installer."""
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,8 @@ from .launcher_settings import Store, default_language
 from .launcher_copy import size_text
 from .launcher_terminal import Tail
 from .model_status import FAMILIES, NAMES
-from .model_guidance import package_instructions, video_instructions, runtime_packages_supported
+from .model_guidance import (package_instructions, video_instructions, runtime_packages_supported, download_view,
+                             export_download_list, DownloadListError, DOWNLOAD_COPY)
 from .setup_progress import progress_text
 from .terminal_ui import clean, duration
 from .model_upgrade import TARGET
@@ -109,6 +111,8 @@ class Session:
         self.tail = Tail()
         self.log_source = None
         self.model_groups = []
+        self.download_export = self.download_error = self.download_error_key = ''
+        self._download_view = None
         self.browser_attempted = False
         self.browser_url = None
         self.port_notice_url = None
@@ -258,6 +262,7 @@ class Session:
         self.cleaner.state = dict(status='idle', bytes=0, error='')
         self.controller.selection = None
         self.controller.state = dict(status='idle')
+        self.download_export = self.download_error = self.download_error_key = ''
         self.browser_attempted = False
         self.port_notice_url = None
         self.browser_error = self.error = ''
@@ -283,6 +288,65 @@ class Session:
         # Saved folders that were deleted since are dropped instead of blocking the new one.
         kept = [p for p in self.form['model_dirs'] if io_path(Path(p).expanduser()).is_dir()]
         self.edit('model_dirs', library_roots(kept + [folder]))
+
+    def prepare_download_list(self):
+        if self.controller.busy or self.importer.busy or self.cleaner.busy:
+            return
+        if (self.controller.state.get('plan', {}).get('download_files_verified')
+                and self.controller.state.get('status') == 'review'
+                and self.download_error_key not in ('unchecked', 'changed')):
+            return
+        self.error = ''
+        self.download_export = self.download_error = self.download_error_key = ''
+        self.persist()
+        self.controller.run('inspect', self.setup_values(download_list=True))
+
+    def export_downloads(self, folder):
+        """The dialog shows a worded error; nothing raises into a traceback."""
+        self.download_export = self.download_error = self.download_error_key = ''
+        if self.controller.busy or self.controller.state.get('status') != 'review':
+            self.download_error = self.t('Wait for the file check to finish.', '请等待文件检查完成。')
+            return
+        preferences = download_preferences(self.engine_root() / 'download-settings.json')
+        try:
+            self.download_export = export_download_list(self.controller.state.get('plan', {}), folder, preferences['source'])
+        except DownloadListError as error:
+            self.download_error_key = error.key
+            reason = ''
+            if error.key == 'write':
+                reason = self.t(*DOWNLOAD_COPY.get('write_' + error.reason, DOWNLOAD_COPY['write_other']))
+                # Session has no log writer; keep the OS detail on stderr, without the user's paths.
+                from .failure_details import redacted_launcher_error
+                print('Download list export failed (%s): %s' % (error.reason, redacted_launcher_error(error.original_error)),
+                      file=sys.stderr)
+            self.download_error = self.t(*DOWNLOAD_COPY['error_' + error.key]).format(reason=reason)
+
+    def use_downloaded_folder(self, folder):
+        if self.controller.busy or self.importer.busy or self.cleaner.busy:
+            return
+        self.add_folder(folder)
+        # Even a folder already in the list may have received new downloads.
+        self.controller.state = dict(status='idle')
+        self.prepare_download_list()
+
+    def downloads_view(self):
+        row = self.controller.state
+        plan = row.get('plan', {}) if row.get('status') == 'review' else {}
+        if not plan.get('download_files_verified', True):
+            plan = {}
+        zh = self.language.startswith('zh')
+        decimal_sizes = sys.platform == 'darwin'
+        # Only inputs that affect list content belong here. Disk/progress/notice
+        # updates must not replace the QML model or its file delegates.
+        key = ('download_files' in plan, plan.get('download_files', []),
+               (plan.get('local_models') or {}).get('matches', {}), zh, decimal_sizes)
+        if self._download_view is None or self._download_view[0] != key:
+            view = download_view(plan, zh, decimal_sizes=decimal_sizes)
+            if self._download_view is None or self._download_view[1] != view:
+                self._download_view = (deepcopy(key), view)
+            else:
+                self._download_view = (deepcopy(key), self._download_view[1])
+        return self._download_view[1]
 
     def remove_folder(self, index):
         removed = self.form['model_dirs'][index]
@@ -319,9 +383,19 @@ class Session:
         if self.archives_busy:
             return
         if self.form['model_method'] == 'auto' and not self.form['offline_models']:
-            self.importer.download(self.form['offline_runtime'], self.source, self.form['sampling_caches'])
+            self.importer.download(self.form['offline_runtime'], self.source, False)
         else:
             self.importer.prepare(self.form['offline_runtime'], self.form['offline_models'], self.source)
+
+    def setup_values(self, form=None, **extra):
+        """Only the visible automatic-setup option can request every quality level."""
+        form = self.form if form is None else form
+        values = dict(form, token=self.token, **extra)
+        if (form['model_method'] == 'manual' or
+                (runtime_packages_supported() and form['new_comfy']
+                 and form['environment_method'] == 'manual')):
+            values['sampling_caches'] = False
+        return values
 
     def activate_offline(self, root):
         from .offline_packages import check_runtime_platform
@@ -370,7 +444,7 @@ class Session:
             self.remember(self.selected, persist=False)
             self.repair_request = dict(self.form, repair=True)
             self.persist()
-            self.controller.run('inspect', dict(self.repair_request, token=self.token))
+            self.controller.run('inspect', self.setup_values(self.repair_request))
             self.page = 'progress'
             self.model_groups = []
             self.started = time.monotonic()
@@ -390,7 +464,7 @@ class Session:
                 # Recompute the plan and live disk space; never install a stale
                 # failed review or discard completed/resumable downloads.
                 self.persist()
-                self.controller.run('inspect', dict(self.repair_request or self.form, token=self.token))
+                self.controller.run('inspect', self.setup_values(self.repair_request or self.form))
                 self.page = 'progress'
                 self.started = time.monotonic()
             return
@@ -471,7 +545,7 @@ class Session:
             self.controller.run('connect')
         else:
             self.persist()
-            self.controller.run('inspect', dict(self.repair_request or self.form, token=self.token))
+            self.controller.run('inspect', self.setup_values(self.repair_request or self.form))
             self.page = 'progress'
             self.model_groups = []
         self.started = time.monotonic()
@@ -605,7 +679,7 @@ class Session:
             self.model_switch = 'inspect'
             self.repair_request = None
             upgrade.switching()
-            self.controller.run('inspect', dict(self.form, token=self.token, repair=True, prepared_format='int8'))
+            self.controller.run('inspect', self.setup_values(repair=True, prepared_format='int8'))
             self.page = 'progress'
             self.model_groups = []
             self.started = time.monotonic()
@@ -944,7 +1018,7 @@ class Session:
         self.port_notice_url = None
         self.browser_wait = None
         self.persist()
-        self.controller.run('inspect', dict(self.form, token=self.token))
+        self.controller.run('inspect', self.setup_values())
         self.page = 'progress'
         self.model_groups = []
         self.started = time.monotonic()
@@ -1632,6 +1706,10 @@ class Session:
                            done=min(group['download_bytes'], group.get('downloaded_bytes') or 0),
                            rate=group.get('bytes_per_second') or progress.get('rate'))
         file_text = progress_text(current, zh, decimal_sizes=sys.platform == 'darwin')
+        if self.importer.busy and self.importer.state.get('activity'):
+            imported = self.importer.state
+            file_text = progress_text(dict(activity=imported['activity'], unit='bytes',
+                name=display('Package files', zh), done=imported.get('activity_done'), total=imported.get('activity_total')), zh)
         # The time row's estimate: only while downloading, from what is left at the current speed.
         from .setup_progress import number
         left, rate = (current.get('total') or 0) - (current.get('done') or 0), current.get('rate')
@@ -1708,7 +1786,16 @@ class Session:
                          self.archives_prompt_offer if self.archives_retry_dialog else self.archive_offer())
         archives_idle = bool(archive_offer and archive_offer['paths']) and self.archives_idle()
         archive_dialog = self.archives_dialog_view(archive_offer, archives_idle, error, update)
-        return plain_data(dict(sampling_cache_bytes=total_bytes(), version=__version__,
+        downloads = self.downloads_view()
+        inspection_read_error = (row.get('status') == 'failed' and row.get('action') == 'inspect'
+                                 and 'Download list error: read' in row.get('error', '').splitlines())
+        download_state = dict(checking=bool(self.controller.busy), error=self.download_error,
+            needs_check=self.download_error_key in ('unchecked', 'changed'), folder=self.download_export,
+            inspection_error=inspection_read_error,
+            notice=downloads['copy']['exported'].format(folder=self.download_export) if self.download_export else '')
+        if inspection_read_error:
+            download_state.update(error=self.t(*DOWNLOAD_COPY['error_read']), needs_check=True)
+        return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
             page=self.page, status=row.get('status', 'idle'), busy=self.controller.busy or self.importer.busy or self.cleaner.busy,
             cleanup=cleanup,

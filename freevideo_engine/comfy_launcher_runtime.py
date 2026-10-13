@@ -958,7 +958,11 @@ class Controller:
         self.selection = dict(descriptor, engine=str(engine), source=str(source), url=url, ready=ready,
                               repair_comfy=repair_comfy, lan_access=values.get('lan_access') is True)
         self.state = dict(self.state, selection=dict(self.selection), host=host)
-        if not ready:
+        # Third-party downloads (manual models, no offline packages) are checked
+        # file by file, so files the user downloaded are found on a ready engine too.
+        checked = bool(values.get('download_list') or (
+            values.get('model_method') == 'manual' and not values.get('offline_models')))
+        if not ready or checked:
             extra = values.get('model_dirs', [])
             if not isinstance(extra, list) or any(not isinstance(p, str) for p in extra):
                 raise ValueError('Model folders must be a list of directory paths')
@@ -968,10 +972,19 @@ class Controller:
             extra = [p for p in dict.fromkeys(extra) if p.strip() and io_path(Path(p).expanduser()).is_dir()]
             self.setup.inspect(dict(root=str(engine), extra_libraries=extra, copy=False,
                 sampling_caches=bool(values.get('sampling_caches')), prepared_format=values.get('prepared_format'),
+                **({'download_list': True} if checked else {}),
                 frontend=dict(root=descriptor['root'], separate=descriptor['separate'], download=fresh,
                               repair_python=host['python'] if repair_comfy else None)))
             row = self._wait_setup()
             self.state = dict(self.state, plan=row['plan'])
+            # A ready receipt covers the engine, not every model file: when the
+            # file-by-file check finds models to place or download, accepting the
+            # plan prepares them before connecting.
+            plan = row['plan']
+            if ready and checked and (
+                    plan.get('download_files') or (plan.get('local_models') or {}).get('matches')):
+                self.selection = dict(self.selection, ready=False)
+                self.state = dict(self.state, selection=dict(self.selection))
         extra_disk, disks, disk_errors = disk_review(self.state.get('plan', {}), engine, descriptor['root'],
             separate=descriptor['separate'], new_comfy=fresh and not io_path(descriptor['root']).exists())
         errors = list(self.state.get('plan', {}).get('errors', []))

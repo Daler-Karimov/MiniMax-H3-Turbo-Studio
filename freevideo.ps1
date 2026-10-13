@@ -75,6 +75,7 @@ try {
         Write-Host 'Preparing isolated Python for setup. Model/environment installation requires the setup confirmation.'
         Write-Host "Bootstrap cache and log: $bootstrapRoot"
         $bootstrapLock = [IO.File]::Open((Join-Path $bootstrapRoot 'bootstrap.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+        $patientDownloadNotice = $false
         try {
             $versions = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'freevideo_engine\bootstrap_versions.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $uvSpec = $versions.windows.uv
@@ -110,6 +111,10 @@ try {
               if ($profile.Mode -eq 'patient') {
                 if (-not $allNetworkFailures) { break }
                 Write-Host 'The network is slow. Downloading again; this may take a while.'
+                $patientDownloadNotice = $true
+                if ($env:FREEVIDEO_UI_EVENTS -eq '1') {
+                    Write-Host '{"event":"freevideo_ui","kind":"progress","key":"download-patient-python","label":"Download","detail":"The network is slow. Downloading again; this may take a while."}'
+                }
               }
               foreach ($name in @('UV_HTTP_TIMEOUT', 'UV_HTTP_RETRIES')) {
                 $value = $freevideoSavedEnvironment[$name]
@@ -139,6 +144,9 @@ try {
             $freevideoPython = (& $uv python find --managed-python $versions.python | Select-Object -Last 1).Trim()
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $freevideoPython)) { throw 'Managed Python could not be located.' }
         } finally {
+            if ($patientDownloadNotice -and $env:FREEVIDEO_UI_EVENTS -eq '1') {
+                Write-Host '{"event":"freevideo_ui","kind":"progress","key":"download-patient-python","label":"Download","detail":"","state":"complete"}'
+            }
             $bootstrapLock.Dispose()
             Write-Progress -Activity 'FreeVideo bootstrap' -Completed
         }

@@ -83,7 +83,18 @@ class ProgressState:
             old = self.rows.get(node)
             metadata_only = ('compatibility' in value and not value.get('new_request')
                              and not any(key in value for key in ('phase', 'stage', 'timing_phase', 'label', 'reset')))
-            if old and metadata_only:
+            # A heartbeat carries a newer estimate, not engine progress (Harper's
+            # bridge repeats the last message's fields with a fresh overall).
+            heartbeat = isinstance(value.get('overall'), dict) and value['overall'].get('heartbeat') is True
+            overall_measured = now
+            if old and heartbeat:
+                # Replace only overall: the row and its age keep describing the
+                # last engine message, so a reopened page still sees a quiet engine.
+                value = dict(old['message'], overall=value['overall'])
+                value.pop('new_request', None)
+                value.pop('reset', None)
+                measured = old['measured']
+            elif old and metadata_only:
                 # A settings notice is not engine progress. Keep the current
                 # activity and its timestamp, including in reopened snapshots.
                 value = dict(old['message'], compatibility=value['compatibility'])
@@ -91,11 +102,11 @@ class ProgressState:
                 value.pop('reset', None)
                 if isinstance(value.get('overall'), dict) and 'reset' in value['overall']:
                     value['overall'] = {key: item for key, item in value['overall'].items() if key != 'reset'}
-                measured = old['measured']
+                measured, overall_measured = old['measured'], old.get('overall_measured', old['measured'])
             elif old and value.get('warning'):
                 # A memory warning must not replace the current sampling step.
                 value = dict(old['message'], warning=value['warning'])
-                measured = old['measured']
+                measured, overall_measured = old['measured'], old.get('overall_measured', old['measured'])
             else:
                 measured = now
                 # The page starts a new request on these too and clears its notes.
@@ -134,16 +145,22 @@ class ProgressState:
             self._record_timeline(node, value, message, now, measured)
             self.sequence += 1
             value.update(node=node, stream_id=self.stream_id, sequence=self.sequence)
-            self.rows[node] = {'message': value, 'measured': measured}
+            self.rows[node] = {'message': value, 'measured': measured, 'overall_measured': overall_measured}
             while len(self.rows) > 32:
                 oldest = min(self.rows, key=lambda key: self.rows[key]['message']['sequence'])
                 del self.rows[oldest]
-            return dict(value, age_seconds=max(0., now - measured))
+            return self._aged(value, now, measured, overall_measured)
+
+    @staticmethod
+    def _aged(message, now, measured, overall_measured):
+        # age_seconds: since the last engine message; overall_age_seconds: since
+        # the estimate in `overall` (a heartbeat refreshes only that one).
+        return dict(message, age_seconds=max(0., now - measured), overall_age_seconds=max(0., now - overall_measured))
 
     def snapshot(self):
         with self.lock:
             now = self.clock()
-            return [dict(deepcopy(row['message']), age_seconds=max(0., now-row['measured']))
+            return [self._aged(deepcopy(row['message']), now, row['measured'], row.get('overall_measured', row['measured']))
                     for row in self.rows.values()]
 
 

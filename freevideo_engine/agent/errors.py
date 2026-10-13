@@ -55,7 +55,7 @@ ERRORS = {
     'internal_error': (500, True, 'An internal error prevented this operation from completing.', 'Read the job list and report request_id if the error persists.'),
     'local_only': (403, False, 'This endpoint does not allow requests from this peer address.', 'Run the client on the FreeVideo computer and connect using its loopback address.'),
     'origin_forbidden': (403, False, 'Origin must match this FreeVideo instance; a different origin was received.', 'Open the page served by this FreeVideo instance, or use a local command-line client without Origin.'),
-    'continuation_unavailable': (409, False, 'This backend cannot continue video blocks.', 'Use an independent shot with seconds<=15, or enable a backend with continuation inputs and resume.'),
+    'continuation_unavailable': (409, False, 'This backend cannot continue video blocks.', 'Use POST /plan for a supported single block (unknown limit: seconds<=15), or enable continuation and resume.'),
     'not_resumable': (409, False, 'Only failed, interrupted or cancelled generation jobs can resume.', 'Read the job; wait for active jobs or submit a new job for a different request.'),
     'idempotency_conflict': (409, False, 'This idempotency key was already used for different request content.', 'Resend the original content with this key, or use a new ref for the changed request.'),
     'source_missing': (409, False, 'A completed source block is no longer available.', 'Restore the completed block before resuming, or submit a new job.'),

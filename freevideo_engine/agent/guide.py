@@ -58,11 +58,23 @@ GUIDE = {
         'Name subjects <Subject 1>, <Subject 2> in subject_definitions and reuse those labels in every section.',
         'Clips are cut to the generated length (at most 15 s); the job result lists any cut.',
     ],
+    'camera_draft': [
+        'Optional, never the default. When the user asks for a specific camera path, placement or order of actions '
+        'and two direct generations did not get it, offer to make a rough camera draft first and tell them it '
+        'takes you 10 to 30 minutes, more the more there is in the shot. Do not offer it for an ordinary shot.',
+        'The draft is a video you render yourself from a simple 3D scene: 960x544, 24 fps, 124 frames. Only the '
+        'camera path, the positions of things and the timing of the action need to be right.',
+        'Generate at 960x544 for 5 s with the draft as the only media.references video. Write the description as '
+        'one plain paragraph without sections and end it with: "The reference video is a rough 3D stand-in of this '
+        'scene: follow its camera path, object positions and motion timing, but render real materials, colours, '
+        'lighting and surroundings as described above; do not copy its simplified, flat look." The result follows '
+        'the draft and looks plainer than a direct generation, so keep the direct one when the user prefers its look.',
+    ],
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
-        'Generation uses the continuous backend. A request of up to 15 s is one generation; a longer one is made '
-        'in parts of up to 15 s (30 s is 15 + 15) that continue one another and join automatically. '
-        'Continuing (longer than 15 s, or continue_from) needs two-pass text generation: quality "light" '
+        'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
+        'Otherwise it uses parts of up to 15 s (30 s is 15 + 15), continued and joined automatically. '
+        'Multiple blocks or continue_from need two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
         'A continue_from job saves a new video that holds only the added part; to hand the user one video, '
@@ -91,10 +103,12 @@ GUIDE = {
     ],
     'editing_projects': [
         'GET /projects lists timelines shared with the editor page. First GET /projects/{id} to read revision and clip IDs.',
+        'For a new timeline POST /projects with {"project": {"name": "..."}} (width and height too if not 1344x768); it comes back empty at revision 1. Then add each clip with an insert operation.',
         'POST /projects/{id}/operations sends revision and 1-64 operations, using whole frames at 24 fps. The batch saves once or changes nothing.',
         'On 409 project_changed, recompute edits from error.project and its current_revision, then send a new request. On clip_busy wait for generation to finish.',
         'POST /projects/{id}/generate reserves pending parts for clip_ids or a start/frames range and fills them as the returned job finishes. POST /projects/{id}/export renders the revision you read; wait for its job.',
         'Subtitles: POST /projects/{id}/listen with mode transcribe (writes down what is said) or align (times the lines you give) and the revision you read; wait for the job and read result.lines, each with start and end frames. Then add them with a subtitles operation of cues {start, frames, text}; replace true swaps the whole track. With no speech model the job fails with no_speech_model: write the lines yourself.',
+        'The user sees one line under each picture clip: its note, or else the first line of its description. A description is generation text, often long and in English, so after you add, generate or change a clip, write a note (operation note) in the user\'s language saying what is in the picture: the subject first, then the setting, for example "Train through morning mist" (in Chinese "小火车穿过晨雾"). A short clip shows only the first few characters, about four in Chinese, and those must already make sense on their own. Do not write where the clip sits (opening, middle, ending, part 2): the order of the clips shows that. Do not write how far along it is: the clip already shows its progress. Keep it true when you change the clip again.',
         'Reuse ref or Idempotency-Key only for the identical request. Source video/audio/thumbnail URLs require the same Agent token.',
     ],
     'project_routes': [dict(operation=name, method=method, path=path, description=summary)
@@ -119,7 +133,7 @@ GUIDE = {
                        for name, (method, path, summary) in SESSION_OPERATIONS.items()],
     'filming': [
         'Filming is for a film of several shots, each picked from takes. One video of up to 60 seconds is one generate '
-        'job (longer requests continue and join automatically); to polish an idea first, run enhance, then generate. '
+        'job (30 s or more, or beyond the device limit, continues and joins automatically); to polish an idea first, run enhance, then generate. '
         'A film is cut into shots: see the rule "Cut by default" before making one long continued video.',
         'Use drama plan → start → get → sheet → choose/reshoot → finish; inspect todo after every change.',
         'At start tell the user the estimated total time; on over_budget decide whether to ask them; '
@@ -156,7 +170,9 @@ RULES = [
     'Solve problems yourself first. Every error has a next field, and often details with alternatives; these are '
     'steps that work on this computer. Not enough graphics memory: use a listed alternative (a lower resolution '
     'or a shorter video) and try again. A take is not good: make another; if it is still not good after two more, '
-    'describe it a different way instead of repeating the request. The queue is busy: wait with wait=25 on the '
+    'describe it a different way instead of repeating the request. When what stays wrong is the camera path, where '
+    'things are or the order of actions, the guide (camera_draft) has a slower way: offer it to the user. '
+    'The queue is busy: wait with wait=25 on the '
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
@@ -176,8 +192,7 @@ RULES = [
     'Cut by default. Wherever the film can change shot, make the new shot from the reference pictures it should '
     'have (cast cards, scene pictures) instead of continuing the previous video. Continue a video only for a '
     'long take that cannot be cut, an action that must stay unbroken, or sound that must stay unbroken, and '
-    'continuing again and again is not recommended. Content of 16 to 29 seconds is better made as shots of '
-    'up to 15 seconds each. One video has at most 5 parts (the first and 4 '
+    'continuing again and again is not recommended. One video has at most 5 parts (the first and 4 '
     'continuations), each continued part at least 10 seconds, about 70 seconds in all; filling that is not '
     'recommended. Past it, cut to a new shot.',
 ]
@@ -189,7 +204,8 @@ RULES_ZH = [
     '提交的每条视频都起个名字：label 写拍的是什么，用用户的语言，2 到 8 个字，例如“清晨海边”。',
     '先自己解决问题。每个错误都有 next 字段，details 里也常有可选方案；这些是在本机可行的处理步骤。'
     '显存不足时，从列出的方案中选择较低分辨率或较短时长重试。一条拍得不好就再拍；再拍两条仍不满意，'
-    '换一种描述，不要反复提交同一个要求。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
+    '换一种描述，不要反复提交同一个要求。一直不对的是镜头路线、位置或动作先后时，指南的 camera_draft 一节有一种更慢的做法，'
+    '可以向用户提议。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
@@ -335,7 +351,7 @@ def introduction(zh, offers):
     return rows
 
 
-def connection_guide(root, base, lang=None, offers=None):
+def connection_guide(root, base, lang=None, offers=None, resumed=False):
     """Public bootstrap text contains locations and commands, never credential values."""
     import json
     from pathlib import Path
@@ -387,17 +403,27 @@ def connection_guide(root, base, lang=None, offers=None):
                            description=CAPABILITIES_ZH.get((method, suffix), row['summary']) if zh else row['summary'])
                       for (method, suffix), row in contracts().items()
                       if not suffix.startswith('/freevideo/') and not suffix.startswith('/connect')],
-        first_reply='用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话告诉用户你能做“先介绍这几样”里的事，'
-                    '只说这几样，并举两三个用户可以提出的要求。不要报版本号，不要念接口名。'
-                    '不要自行启动任务，等待用户提出要求。' if zh else
-                    'Reply to the user in English; if the user switches languages, follow their language. '
-                    'After connecting, first reply in plain words: tell the user you can do the things under '
-                    '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
-                    'numbers or endpoint names. Do not start any task yourself; wait for the user to ask.',
+        # An agent connecting again while the user's conversation is under way has greeted there once already.
+        first_reply=(('用中文回复用户；如果用户改用其他语言，就跟随用户。用户所在的对话已经开始了：连接后不要自我介绍，'
+                      '也不要说“已连接”，先调一次等待接口，回应里的 before 是这段对话的最后几句；什么都不说，等用户开口再接着做。'
+                      '不要自行启动任务。' if zh else
+                      'Reply to the user in English; if the user switches languages, follow their language. '
+                      'The user is in a conversation that has already begun: after connecting do not introduce yourself '
+                      'and do not say that you are connected. Call the wait once; "before" in its answer holds the last '
+                      'lines of that conversation. Say nothing until the user speaks, then carry on from there. '
+                      'Do not start any task yourself.') if resumed else (
+                        '用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话告诉用户你能做“先介绍这几样”里的事，'
+                        '只说这几样，并举两三个用户可以提出的要求。不要报版本号，不要念接口名。'
+                        '不要自行启动任务，等待用户提出要求。如果第一次等待的回应说这段对话已经在进行，就不再介绍，接着之前的做。' if zh else
+                        'Reply to the user in English; if the user switches languages, follow their language. '
+                        'After connecting, first reply in plain words: tell the user you can do the things under '
+                        '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
+                        'numbers or endpoint names. Do not start any task yourself; wait for the user to ask. If the first wait says '
+                        'the conversation is already under way, do not introduce yourself again; carry on from it.')),
         introduce=introduction(zh, offers or {}),
         conversation='用户会在 FreeVideo 的“AI 全自动”页里直接和你说话，你的话也显示在那里。'
                      '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
-                     '回应里的 session 就是这段对话；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
+                     '回应里的 session 就是用户现在所在的对话（用户新开或换到另一段对话时它会变，话总是发到最近一次等待给的那个 session）；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
                      '{"type":"message","text":"…"}（MCP 用 freevideo_session_post）。在这里先只说一句话，不超过 20 个字，'
                      '不列条目、不举例（页面上已经有例句），例如“连上了。告诉我想做什么视频。”'
                      '你自己窗口里的那段介绍照常说，但它不是这一轮的结尾：说完紧接着去调等待接口。'
@@ -414,7 +440,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
-                     'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
+                     'without id). Its "session" is the conversation the user is in (it changes when the user opens or returns to another one; always post to the session the latest wait named); POST ' + base + PREFIX + '/sessions/{session}/events '
                      'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
                      'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
                      '"Connected. Tell me what video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '
@@ -470,8 +496,8 @@ GUIDE['agent_jobs'] += [
     'Keys survive restart. Batch-level ref names the whole request; row refs still name earlier dependencies.',
     'Upload media content with POST /media. HTTP accepts no local absolute paths; MCP and CLI read local files '
     'before uploading. Unknown fields are rejected and every batch is validated before it is recorded.',
-    'limits.seconds in the status reply is what this installation can make now. While continuation is false, '
-    'one block (15 s) is the longest video; plan and submit refuse longer requests with continuation_unavailable.',
+    'POST /plan gives the length supported for the current size and quality. Without continuation, only a '
+    'single block can run; unknown device limits use 15 s. Multiple blocks return continuation_unavailable.',
     'One video has at most 5 parts (60 s in one request). continue_from counts the parts of the video it '
     'continues; plan and submit refuse a longer one and name the longest seconds that still fits.',
     'features in the status reply names what this installation offers; false means not usable now (for example '

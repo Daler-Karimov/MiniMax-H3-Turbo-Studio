@@ -354,12 +354,12 @@ def contracts(*, local=False):
     for suffix, method, body in (('', 'GET', None), ('/session', 'GET', None), ('/activity', 'GET', None),
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
             ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
-            ('/chat/video', 'GET', None),
-            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID}, ('text', 'id'))),
-            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'}},
-                                          ('id', 'approve')))):
+            ('/chat/video', 'GET', None), ('/chat/list', 'GET', None), ('/chat/new', 'POST', EMPTY),
+            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION}, ('text', 'id'))),
+            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
+                                           'session': SESSION}, ('id', 'approve')))):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
-    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True)})
+    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True), 'session': SESSION})
     routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for suffix in ('', '/connect'):
         routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
@@ -635,7 +635,7 @@ def image_schema(name):
 PROJECT_OPERATIONS = {
     'list': ('GET', '/projects', 'List editing projects shared with the editor page. Then get one to read its revision and clip IDs.'),
     'get': ('GET', '/projects/{id}', 'Read a timeline and authenticated source URLs. Read its revision and clip IDs before editing.'),
-    'create': ('POST', '/projects', 'Create an editor timeline. Send a valid editor project with id null and revision 0.'),
+    'create': ('POST', '/projects', 'Create an editor timeline. Send {"project": {"name": "..."}}; the rest of an empty timeline is filled in.'),
     'write': ('PUT', '/projects/{id}', 'Replace a timeline. First get the project and preserve its id and revision; recompute from error.project on project_changed.'),
     'operations': ('POST', '/projects/{id}/operations', 'Apply 1-64 timeline edits atomically and save once. First get revision and clip IDs; on project_changed recompute from error.project, and on clip_busy wait for generation to finish.'),
     'generate': ('POST', '/projects/{id}/generate', 'Make new picture and sound for selected clips or a frame range, as the page Generate does. First get revision and clip IDs; the parts are reserved at once and fill in as the returned job finishes.'),
@@ -730,7 +730,9 @@ def session_schema(name):
 
 def project_schema(name):
     if name in ('create', 'write'):
-        return obj(dict(project={'type': 'object', 'description': 'The editor page project record; validated by the shared editor save.'}, ref=REF), ('project',))
+        text = ('A new timeline: {"name": "..."} is enough (width and height if not 1344x768); the rest is filled in. Add clips with insert operations afterwards.'
+                if name == 'create' else 'The whole project record as you read it, with your changes; validated by the shared editor save.')
+        return obj(dict(project={'type': 'object', 'description': text}, ref=REF), ('project',))
     ids = array(CLIP, 1, 500)
     revision = number(1, integer=True, description='The saved revision you read; a later save returns project_changed.')
     if name == 'generate':
@@ -751,7 +753,7 @@ def project_schema(name):
     if name != 'operations':
         return EMPTY
     fields = {
-        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end.'),
+        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end. A work brings the description it was generated from. Then write the new picture clip\'s note.'),
         'split': (dict(clip_ids=ids, frame=EDITOR_FRAME), ('clip_ids', 'frame'), 'Cut selected clips and their linked partners. The frame must be inside a selected segment.'),
         'trim': (dict(clip_ids=ids, frame=EDITOR_FRAME, edge=enum(('start', 'end'))), ('clip_ids', 'frame', 'edge'), 'Trim a selected edge at the frame. The frame must be inside a selected segment.'),
         'remove': (dict(clip_ids=ids), ('clip_ids',), 'Remove selected clips and linked partners. Use clip IDs from this revision.'),
@@ -761,6 +763,7 @@ def project_schema(name):
         'move': (dict(clip_ids=ids, frames=number(-10**7, 10**7, integer=True)), ('clip_ids', 'frames'), 'Move selected clips by a signed relative frame offset. Use clip IDs from this revision; linked partners move together.'),
         'describe': (dict(clip_ids=ids, text=dict(type='string', maxLength=8000)), ('clip_ids', 'text'), 'Set the description of selected clips. Use clip IDs from this revision and one paragraph of text.'),
         'set_ref': (dict(clip_ids=ids, ref=dict(type='string', maxLength=128, pattern=r'^[A-Za-z0-9_-]{0,128}$')), ('clip_ids', 'ref'), 'Set an outside shot reference on selected clips. Use clip IDs from this revision; an empty ref removes it.'),
+        'note': (dict(clip_ids=ids, text=dict(type='string', maxLength=120)), ('clip_ids', 'text'), 'Write the one line the user sees under selected picture clips; without it they see the start of the generation text. Do it after you add, generate or change a clip: in the user\'s language, what is in the picture, subject first ("Train through morning mist"); a short clip shows only the first few characters. Not the clip\'s position (opening, part 2) and not its progress. Up to 120 characters on one line; an empty text removes it. It never changes the description used for generation.'),
         'use_version': (dict(clip_id=CLIP, index=number(0, 49, integer=True)), ('clip_id', 'index'), 'Restore a stored clip version. First get the clip ID and its versions array; index is zero based.'),
         'subtitles': (dict(cues=array(obj(dict(start=EDITOR_FRAME, frames=number(1, 10**7, integer=True), text=dict(type='string', minLength=1, maxLength=400)),
                                          ('start', 'frames', 'text')), 1, 500), replace=dict(type='boolean')), ('cues',),

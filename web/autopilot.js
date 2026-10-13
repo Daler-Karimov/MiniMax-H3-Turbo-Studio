@@ -5,7 +5,7 @@ import { about, agentChat, jobName } from './autopilot_chat.js';
 import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
 import { openSetup } from './setup.js';
-import { extendVideo, openStudio, showNodes } from './studio.js';
+import { openExtendEditor, openStudio, showNodes } from './studio.js';
 import { viewChanged, viewSwitch } from './view_navigation.js';
 import { wordmark } from './wordmark.js';
 
@@ -45,9 +45,9 @@ export function openAutopilotView(node, {studio = null} = {}) {
     // Leaving for another view waits until this page has closed, so the view underneath is never covered twice.
     const closed = () => dialog.open ? new Promise(done => { dialog.addEventListener('close', done, {once: true}); closeDialog(dialog); }) : null;
     const chat = agentChat(t, api, {shown: inSight,
-        // A finished video opens as its work in Creations. Continuing it there belongs to the studio, so this page gives way first.
+        // Creations continues the work on the editor timeline; this page gives way first.
         open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
-            extend: async record => { await closed(); return extendVideo(record, node); }}),
+            extend: async (record, options) => { await closed(); return openExtendEditor(record, node, {studio, ...options}); }}),
         edit: job => leave(() => openEditorView(node, {studio: studio?.open ? studio : undefined, work: {id: job.work, video: `FreeVideo/${job.work}/video.mp4`, geometry: {width: job.width, height: job.height, seconds: job.seconds}}})),
         changed: view => { last = view; show(); }});
     // With no agent the card stands alone in the middle. Once one has connected the conversation stays, also after

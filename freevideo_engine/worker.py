@@ -164,6 +164,13 @@ def generate(request, resident=None):
                 resident.gpu_budget = min(resident.gpu_budget, limit)
         save(request['metrics'], metrics)
         manifest = json.loads((Path(request['cache']) / 'manifest.json').read_text(encoding='utf-8'))
+        if continuation is not None and 'tail' in continuation:
+            # Nothing was stored for the previous video: its ending is encoded here, before any model of
+            # this run is loaded, and every later attempt reads the same record.
+            from .continuation_tail import complete
+            continuation, metrics['continuation_encode'] = complete(
+                continuation, request['geometry'], manifest, request.get('sampling_plan'), resident=resident)
+            request['continuation'] = continuation
         if manifest.get('precision') not in ('fp8', 'int8', 'bf16'):
             raise ValueError('The Engine requires an official FP8 or int8 cache')
         options, decoder = request['engine_options'], request['decoder_options']
@@ -204,9 +211,10 @@ def generate(request, resident=None):
         # A two-pass request that runs as one pass (small canvases) continues
         # too: its first and final canvases are the same one, so one tail
         # serves both stages. An explicit single-pass request keeps nothing.
+        # Whatever media conditioned the request, the sampler returns only the
+        # generated picture and sound rows, so the tail is the same.
         plan_flags = request.get('sampling_plan') or {}
         continuable = (bool(plan_flags.get('enabled') or plan_flags.get('requested'))
-                       and (options.get('task', 't2va') == 't2va' or bool(continuation and continuation.get('anchor')))
                        and not request.get('preview'))
         first_tail = continuation_data = None
         def tail_failure(error):

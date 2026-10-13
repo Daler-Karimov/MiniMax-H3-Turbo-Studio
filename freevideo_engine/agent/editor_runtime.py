@@ -137,6 +137,7 @@ globalThis.__batch = text => {
             case 'move': record = actions.moveParts(record, op.clip_ids, {frames: op.frames, track: null}); break;
             case 'describe': record = model.describe(record, actions.linkedIds(record, op.clip_ids), op.text, by); break;
             case 'set_ref': record = model.setRef(record, actions.linkedIds(record, op.clip_ids), op.ref); break;
+            case 'note': record = model.setNote(record, actions.linkedIds(record, op.clip_ids), op.text); break;
             case 'use_version': record = model.restoreVersion(record, op.clip_id, op.index, by); break;
             // One undo on the page; rejects as subtitles / range / text / locked / overlap.
             case 'subtitles': record = texts.addSubtitles(record, op.cues, {replace: op.replace === true}); break;

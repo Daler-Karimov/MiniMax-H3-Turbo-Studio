@@ -236,6 +236,12 @@ def _encode(args, request, resident, trace):
     loading = trace.data
     def phase(name, **metrics):
         trace.stage(name, **metrics)
+        if args.check_library:
+            from .install_activity import step
+            labels = {'encoder_torch_import': 'Runtime libraries importing',
+                      'encoder_options': 'Encoder configuring', 'encoder_native_import': 'Encoder importing'}
+            if name in labels:
+                step(labels[name])
         if name in ('encoder_oom', 'encoder_retry'):
             print(json.dumps(dict(event=name, attempt=len(loading.get('encoder_attempts', [])))), flush=True)
         if name == 'encoder_oom' and request.get('metrics') and request.get('diagnostic_output'):
@@ -306,6 +312,8 @@ def _encode(args, request, resident, trace):
             raise RuntimeError('Unexpected application modules: ' + repr(forbidden))
         print(json.dumps({'native_encoder_library_import': True, 'application_modules_loaded': [],
                           'torch': str(torch.__version__), 'source': str(args.comfy_root)}), flush=True)
+        from .install_activity import step
+        step('Encoder ready')
         return
     phase('encoder_media_prepare')
     keyframes = request.get('keyframes')

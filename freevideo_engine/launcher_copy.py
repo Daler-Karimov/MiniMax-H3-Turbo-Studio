@@ -13,6 +13,7 @@ SOURCES = {
 }
 
 ZH = dict([
+    ('The network is slow. Downloading again; this may take a while.', '网络较慢，正在重试'),
     ('Prepare Python', '准备 Python'), ('Install Python', '安装 Python'),
     ('Prepare download tools', '准备下载工具'), ('Tsinghua mirror', '清华镜像'),
     ('Preparing installation', '准备安装'), ('Checking the environment', '正在检查运行环境'),
@@ -119,6 +120,23 @@ ZH = dict([
     ('Hugging Face · Video', 'Hugging Face · 视频'), ('Hugging Face · Audio', 'Hugging Face · 音频'),
 ])
 ZH.update(NAMES.values())
+ZH.update([
+    ('Completed ', '已完成 '), ('Verifying ', '正在校验'), ('Assembling ', '正在合并'),
+    ('Copying ', '正在复制'), ('Model files', '模型文件'),
+    ('Packages resolving', '正在检查组件'), ('Packages installing', '正在安装组件'), ('Packages ready', '组件已就绪'),
+    ('Environment creating', '正在创建运行环境'), ('Base packages installing', '正在安装基础组件'),
+    ('Python ready', 'Python 已就绪'), ('Python downloading', '正在下载 Python'),
+    ('GPU acceleration building', '正在准备显卡加速'),
+    ('Runtime libraries verifying', '正在校验运行组件'), ('Runtime libraries importing', '正在载入运行组件'),
+    ('Encoder configuring', '正在准备文本编码器'), ('Encoder importing', '正在载入文本编码器'),
+    ('Encoder ready', '文本编码器已就绪'),
+    ('GPU information reading', '正在读取显卡信息'), ('GPU tests running', '正在检查显卡'),
+    ('GPU tests finished', '显卡检查已完成'),
+    ('Packages preparing', '正在准备组件'), ('Packages removing', '正在移除旧组件'),
+    ('Model files verifying', '正在校验模型文件'), ('Model files preparing', '正在准备模型文件'),
+    ('Model files assembling', '正在合并模型文件'),
+    ('Package files', '离线包文件'),
+])
 # Card lines for steps that only report counts (the terminal keeps the counts).
 ZH.update([('Downloading components', '正在下载组件'), ('Preparing components', '正在准备组件'),
            ('Downloading runtime packages', '正在下载运行组件'), ('Finding existing models', '正在查找已有模型')])

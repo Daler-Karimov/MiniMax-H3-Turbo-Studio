@@ -10,6 +10,7 @@ import math
 import platform
 from pathlib import Path
 from statistics import median
+import threading
 import time
 
 
@@ -48,7 +49,8 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     if len(attempts) > 1:
         return None
     passes = video.get('sampling_passes') if plan.get('enabled') else [video]
-    if not isinstance(passes, list) or len(passes) != (2 if plan.get('enabled') else 1):
+    preview = bool(report.get('preview') or plan.get('preview'))
+    if not isinstance(passes, list) or len(passes) != (2 if plan.get('enabled') and not preview else 1):
         return None
     measured = []
     for part in passes:
@@ -61,7 +63,7 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     if sum(p['seconds'] for p in measured) > total * 1.01:
         return None
     base = plan.get('base_steps', video.get('config', {}).get('steps', 8))
-    refine = plan.get('refine_steps', 0) if plan.get('enabled') else 0
+    refine = plan.get('refine_steps', 0) if plan.get('enabled') and not preview else 0
     if measured[0]['steps'] != base or (refine and measured[1]['steps'] != refine):
         return None
     encoding = report.get('encoding') or {}
@@ -118,7 +120,7 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
         version=version if isinstance(version, str) and len(version) <= 64 else None,
         in_use=in_use,
         reference_rows=reference_rows,
-        flow='preview' if report.get('preview') or plan.get('preview') else 'full', stages=stages,
+        flow='preview' if preview else 'full', stages=stages,
         sampling_geometry={k: plan[k] for k in ('first', 'second') if plan.get(k)},
         references=task_has_references(video.get('config', {}).get('task', 't2va')),
         model_resident=video.get('resident_engine_cache_hit'))
@@ -130,7 +132,7 @@ def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, ta
     validate_steps(base_steps, refine_steps, two_pass)
     candidates = []
     for row in records:
-        if (row['task'] != task or row['adapters'] != adapters
+        if (row.get('flow', 'full') != 'full' or row['task'] != task or row['adapters'] != adapters
                 or row['shape'] != {k: canvas[k] for k in ('width', 'height', 'frames')}):
             continue
         # Both passes retain their own resolution costs. Never multiply the
@@ -319,6 +321,76 @@ def _stage_forecast(records, request, cold_flags, prior):
     return result
 
 
+_START_CONTEXT = {}
+# Guards the entries above: only one background read per key, and readers
+# always see a complete hardware/records pair. File IO stays outside it.
+_START_LOCK = threading.Lock()
+
+
+def _context_key(output_directory, machine):
+    device = machine.get('device_identity') if machine.get('device_backend') == 'mps' else machine.get('gpu_uuid')
+    system = machine.get('system') or platform.system()
+    return (str(output_directory), json.dumps(device, sort_keys=True), system, machine.get('setup_run')), device, system
+
+
+def start_context(output_directory, machine, *, timeout=.035):
+    """Bound foreground IO to ~35 ms, even on slow/unavailable output disks.
+
+    One daemon per key reads in the background. Its last result stays in use
+    while a newer read runs (at most one every 15 s), so a request that starts
+    minutes after the previous one still sees that run. A request that started
+    before a read finished can pick it up later (history_read_at).
+    No GPU calls, resident RPC, model scans, hashing or directory-wide cache
+    inspection. Installation inventory describes identity, not live free RAM.
+    """
+    from threading import Event, Thread
+    key, device, system = _context_key(output_directory, machine)
+    start = False
+    with _START_LOCK:
+        entry = _START_CONTEXT.get(key)
+        if entry is None:
+            entry = dict(ready=Event(), started=None, read_at=None, hardware={}, records=[], reading=False)
+            _START_CONTEXT[key] = entry
+        now = time.monotonic()
+        if not entry['reading'] and (entry['started'] is None or now - entry['started'] > 15):
+            entry['reading'], entry['started'], start = True, now, True
+    if start:
+        def read():
+            hardware, records = dict(entry['hardware']), list(entry['records'])
+            try:
+                if machine.get('setup_run'):
+                    with (Path(machine['setup_run']) / 'plan.json').open('rb') as stream:
+                        raw = stream.read(1024 * 1024 + 1)
+                    if len(raw) <= 1024 * 1024:
+                        found = json.loads(raw).get('inventory', {}).get('hardware', {})
+                        if same_device(found, device):
+                            hardware = {k: found[k] for k in
+                                ('gpu_name', 'capability', 'ram_total', 'vram_total', 'system') if k in found}
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            try:
+                records = local_records(output_directory, device, system=system, stage_details=True)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            finally:
+                with _START_LOCK:
+                    entry['hardware'], entry['records'] = hardware, records
+                    entry['read_at'], entry['reading'] = time.monotonic(), False
+                entry['ready'].set()
+        Thread(target=read, name='freevideo-progress-history', daemon=True).start()
+    if timeout and not entry['ready'].is_set():
+        entry['ready'].wait(timeout)
+    with _START_LOCK:
+        return dict(entry['hardware']), list(entry['records'])
+
+
+def history_read_at(output_directory, machine):
+    """Monotonic time the last background read finished, or None."""
+    with _START_LOCK:
+        entry = _START_CONTEXT.get(_context_key(output_directory, machine)[0])
+        return entry and entry['read_at']
+
+
 def local_records(output_directory, gpu_uuid, *, system=None, stage_details=False, refresh=False):
     """Bounded recent JSON reads, cached between slider changes; never open MP4s."""
     system = system or platform.system()
@@ -338,7 +410,10 @@ def local_records(output_directory, gpu_uuid, *, system=None, stage_details=Fals
         except OSError:
             continue
     records = []
-    for _, path in sorted(paths, reverse=True)[:48]:
+    # Slider estimates keep their original window of the 48 newest files; the
+    # progress history reads on until it has 48 usable rows.
+    candidates = sorted(paths, reverse=True)
+    for _, path in (candidates if stage_details else candidates[:48]):
         try:
             with path.open('rb') as stream:
                 data = stream.read(4 * 1024 * 1024 + 1)
@@ -347,6 +422,8 @@ def local_records(output_directory, gpu_uuid, *, system=None, stage_details=Fals
             row = timing_record(json.loads(data), gpu_uuid, system, stage_details=stage_details)
             if row:
                 records.append(row)
+                if stage_details and len(records) == 48:
+                    break
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             continue
     if not stage_details:

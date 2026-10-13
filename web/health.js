@@ -13,7 +13,7 @@ const t = (en, zh) => cn ? zh : en;
 // launcher.js removes this flag during setup; read it before that.
 const launchVisit = query.get('freevideo') === 'launch';
 // Every script this folder ships; a test keeps the list in step with web/*.js.
-export const MODULES = ['agent_activity.js', 'agent_connect.js', 'agent_session.js', 'autopilot.js', 'autopilot_chat.js', 'browser_extension.js', 'chain_support.js', 'capability_view.js', 'compatibility.js', 'error_panel.js', 'first_run_guide.js', 'fonts.js', 'freevideo.js', 'generation_progress.js',
+export const MODULES = ['agent_activity.js', 'agent_connect.js', 'agent_session.js', 'autopilot.js', 'autopilot_chat.js', 'autopilot_conversations.js', 'browser_extension.js', 'chain_support.js', 'capability_view.js', 'compatibility.js', 'error_panel.js', 'first_run_guide.js', 'fonts.js', 'freevideo.js', 'generation_progress.js',
     'editor.js', 'editor_actions.js', 'editor_adjust.js', 'editor_adjust_picture.js', 'editor_picture_fields.js', 'editor_picture_session.js', 'editor_preview_picture.js', 'editor_entry.js', 'editor_export_dialog.js', 'editor_first_frame.js', 'editor_genbar.js', 'editor_geometry.js', 'editor_library.js', 'editor_menu.js', 'editor_model.js', 'editor_frame.js', 'editor_player.js', 'editor_room.js', 'editor_select.js', 'editor_state.js', 'editor_store.js', 'editor_tracks.js', 'editor_generation.js', 'editor_transport.js', 'editor_transport_model.js', 'editor_audio.js', 'editor_audio_model.js', 'editor_audio_notes.js', 'editor_audio_replace.js', 'editor_audio_rules.js', 'editor_speed.js', 'editor_speed_model.js',
     'editor_loader.js', 'editor_text_coverage.js', 'editor_text.js', 'editor_text_model.js', 'editor_text_layout.js', 'editor_notes.js', 'editor_icons.js', 'dialog_keys.js', 'frame_sizes.js', 'health.js', 'image_commands.js', 'image_editor.js', 'image_editor_engine.js', 'launcher.js', 'length_plan.js', 'library.js', 'motion.js', 'output_download.js', 'port_notice.js', 'preview_scene.js',
     'progress_connection.js', 'prompt_draft.js', 'prompt_enhance.js', 'prompt_references.js', 'report_issue.js', 'studio_recent.js',
@@ -599,12 +599,26 @@ async function check() {
     // Opening the workspace waits for an animation frame.
     await sleep(1500);
     const problems = [];
-    const ui = window.FreeVideoUI || {};
-    if (!ui.ready) {
+    if (!window.FreeVideoUI?.ready) {
         problems.push(...await diagnoseModules());
         if (problems.length && problems.every(p => p.retry && !extensionProblem(p)) && await reloadOnce(problems)) return;
     }
-    if (!ui.ready && !problems.length) problems.push({text: t('FreeVideo’s scripts loaded, but ComfyUI did not start them.', 'FreeVideo 的脚本已下载，但 ComfyUI 没有启动它们。'), advice: 'reload'});
+    // Every file loads, so ComfyUI is most likely still working through other
+    // extensions: it starts them one after another, and a slow one ahead of
+    // FreeVideo's delays it. Give it the rest of the minute before naming it.
+    if (!window.FreeVideoUI?.ready && !problems.length) await waitFor(() => window.FreeVideoUI?.ready, 50000);
+    const notStarted = {text: t('FreeVideo’s scripts loaded, but ComfyUI did not start them.', 'FreeVideo 的脚本已下载，但 ComfyUI 没有启动它们。'), advice: 'reload'};
+    if (!window.FreeVideoUI?.ready && !problems.length) {
+        problems.push(notStarted);
+        // A start later than that clears the card instead of leaving it up.
+        const timer = setInterval(() => {
+            if (!window.FreeVideoUI?.ready) return;
+            clearInterval(timer);
+            if (!card || !lastProblems.length || !lastProblems.every(p => p === notStarted || p.advice === 'plugin')) return;
+            card.remove(); card = null; lastProblems = [];
+            send('ready', []);
+        }, 1000);
+    }
     if (!problems.length) problems.push(...await diagnoseStyles());
     let checkStudio = false;
     if (launchVisit && !problems.length) {
@@ -637,6 +651,8 @@ async function check() {
         && !reports.some(item => item.type === 'error' && item.where === 'studio'))
         problems.unshift({text: t('The creative workspace did not open.', '创作面板没有打开。'), advice: 'reload'});
     problems.push(...lastProblems);
+    // Started while this check was waiting for the page to be in front.
+    if (window.FreeVideoUI?.ready && problems.includes(notStarted)) problems.splice(problems.indexOf(notStarted), 1);
     if (problems.length) {
         problems.push(...pluginErrors());
         show(distinct(problems)); send('error', distinct(problems));

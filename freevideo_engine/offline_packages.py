@@ -220,7 +220,7 @@ def stamp(path):
     return [info.st_size, info.st_mtime_ns]
 
 
-def unchanged(path, row, known, current=None):
+def unchanged(path, row, known, current=None, progress=None):
     """Still the file its import checked: the size matches, and the recorded time too.
 
     Only a file whose record says it was rewritten since is hashed. `current`
@@ -235,7 +235,24 @@ def unchanged(path, row, known, current=None):
     if known.get(row['path']) in (None, current):
         return True
     from .network import hash_file
-    return hash_file(path) == row['sha256']
+    return hash_file(path, **({'progress': progress} if progress else {})) == row['sha256']
+
+
+def file_progress(progress, activity, total):
+    from .install_activity import byte_progress
+    return byte_progress('', '', report=lambda **row:
+        progress(activity=activity, activity_done=row['done_bytes'], activity_total=row['total_bytes']))
+
+
+def copy_progress(source, target, progress):
+    """The existing cross-disk copy, with a bounded buffer and actual bytes."""
+    total, done = source.stat().st_size, 0
+    progress(0, total)
+    with source.open('rb') as input_file, target.open('wb') as output:
+        for chunk in iter(lambda: input_file.read(4 * 2**20), b''):
+            output.write(chunk)
+            done += len(chunk)
+            progress(done, total)
 
 
 def import_archive(path, destination, progress=lambda **kw: None, cancelled=lambda: False):
@@ -265,18 +282,19 @@ def import_archive(path, destination, progress=lambda **kw: None, cancelled=lamb
         current = present.get(row['path'])
         if current is None:
             continue
-        if current[0] != row['bytes'] or not unchanged(root / row['path'], row, known, current):
+        if current[0] != row['bytes'] or not unchanged(root / row['path'], row, known, current,
+                progress=file_progress(progress, 'verify', row['bytes'])):
             raise ValueError('已有导入文件已改变，未覆盖：' + plain(root / row['path']))
         verified[row['path']] = current
     marker = root / value['marker']
     if not missing and marker.is_file() and marker.read_bytes() == value['raw']:
         # Imported before and complete: nothing to read again.
         save(root / VERIFIED, verified)
-        progress(done=total, total=total, detail=path.name)
+        progress(done=total, total=total, detail=path.name, activity='')
         return dict(root=plain(root), kind=value['kind'], variant=value['variant'], name=path.name, **origin)
     done = sum(r['bytes'] for r in value['files'] if r['path'] in verified)
     root.mkdir(parents=True, exist_ok=True)
-    progress(done=done, total=total, detail=path.name)
+    progress(done=done, total=total, detail=path.name, activity='')
     with zipfile.ZipFile(path) as archive:
         for row in value['files']:
             if cancelled():
@@ -374,7 +392,8 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
     def source_for(row):
         for root in models:
             current = walks[root].get(row['path'])
-            if current and unchanged(io_path(root) / row['path'], row, known[root], current):
+            if current and unchanged(io_path(root) / row['path'], row, known[root], current,
+                    progress=file_progress(progress, 'verify', row['bytes'])):
                 return io_path(root) / row['path']
         return None
 
@@ -383,19 +402,26 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
         try:
             os.link(src, target)
         except OSError:
-            shutil.copyfile(src, target)
+            copy_progress(src, target, file_progress(progress, 'copy_bytes', src.stat().st_size))
 
+    included = []
     for row in model['files']:
         target, src = runtime / row['path'], source_for(row)
         if src is None:
+            if pack_name(row['path']) == '采样缓存':
+                total -= row['bytes']
+                progress(done=done, total=total, detail='检查配套包', activity='')
+                continue
             raise ValueError('还需导入「%s」包，缺少文件：%s' % (pack_name(row['path']), row['path']))
         if row['path'] in here:
-            if not os.path.samefile(target, src) and hash_file(target) != row['sha256']:
+            if not os.path.samefile(target, src) and hash_file(target,
+                    progress=file_progress(progress, 'verify', row['bytes'])) != row['sha256']:
                 raise ValueError('离线安装已有不同模型，未覆盖：' + plain(target))
         else:
             place(src, target)
+        included.append(row)
         done += row['bytes']
-        progress(done=done, total=total, detail='检查配套包')
+        progress(done=done, total=total, detail='检查配套包', activity='')
     listed = {row['path'] for row in model['files']}
     for root in models:
         package = io_path(root) / 'offline-package.json'
@@ -405,11 +431,14 @@ def assemble(runtime, models, source, progress=lambda **kw: None):
             if row['path'] in listed or not row['path'].startswith(OPTIONAL_PREFIX) or row['path'] in here:
                 continue
             current = walks[root].get(row['path'])
-            if not current or not unchanged(io_path(root) / row['path'], row, known[root], current):
+            if not current or not unchanged(io_path(root) / row['path'], row, known[root], current,
+                    progress=file_progress(progress, 'verify', row['bytes'])):
                 continue  # The engine fetches a table it cannot find when a request needs it.
             place(io_path(root) / row['path'], runtime / row['path'])
             listed.add(row['path'])
-    return finish(runtime, config, model, source, here)
+    progress(done=done, total=total, detail='检查配套包', activity='')
+    # Only placed rows are recorded: a skipped Sampling caches table is fetched when needed.
+    return finish(runtime, config, dict(model, files=included), source, here)
 
 
 def runtime_config(runtime):

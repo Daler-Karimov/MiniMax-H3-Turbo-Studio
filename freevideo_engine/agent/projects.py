@@ -33,6 +33,25 @@ RULE_EXPECTED = {
     'source': 'a source that has a picture or sound',
     'invalid': 'an op named in the operations schema with its fields',
 }
+# The note operation shares the page's 'text' code with describe; what it needed is its own.
+NOTE_EXPECTED = 'picture clips and a text of at most 120 characters on one line (an empty text removes the note)'
+# An agent acts on the last answer it read, so the answer that brings new picture clips asks for their notes.
+# It comes first in that answer: the project after it carries every clip's description, and a real agent
+# that printed only the start of a long answer never saw a request placed after it.
+NOTE_NEXT = ('Picture clips %s have no note yet. Write each one now with a note operation: in the user\'s language, '
+             'what is in the picture, subject first; not its position and not its progress.')
+
+
+def note_next(result, project, ids):
+    missing = [clip['id'] for track in project['tracks'] if track['kind'] == 'video' for clip in track['clips']
+               if clip['id'] in ids and not clip.get('note')]
+    return dict(next=NOTE_NEXT % ', '.join(missing), **result) if missing else result
+
+
+def new_project(given):
+    """The page's empty timeline with what the caller sent on top; a name alone is enough to start one."""
+    return dict(dict(version=1, id=None, revision=0, name='', fps=comfy_editor.FPS, width=1344, height=768, settings=None, serial=0,
+                     tracks=[dict(id='v1', kind='video', clips=[]), dict(id='a1', kind='audio', clips=[])]), **given)
 
 
 class ProjectError(JobError):
@@ -64,7 +83,7 @@ def _refused(project, error):
     reason = str(error) if type(error) is ValueError and re.fullmatch(r'[A-Z][A-Za-z ]{2,60}', str(error)) else ''
     row = schema.diagnostic('/project', 'a valid editor project' + (' (%s)' % (reason[:1].lower() + reason[1:]) if reason else ''),
                             project)
-    row['next'] = ('Correct that part of /project. To place clips, create the project with empty tracks, '
+    row['next'] = ('Correct that part of /project. For a new timeline send only {"project": {"name": "..."}}; '
                    'then add each clip with an insert operation.')
     return spec.SpecError([row])
 
@@ -162,6 +181,8 @@ class Projects:
     def _rejected(self, error, stored, path, received, *, operation=None):
         if error['code'] in STATE_CODES:
             raise ProjectError(STATE_CODES[error['code']], project=stored, operation=operation)
+        if error['code'] == 'text' and isinstance(received, dict) and received.get('op') == 'note':
+            raise _invalid(path, NOTE_EXPECTED, received)
         raise _invalid(path, RULE_EXPECTED.get(error['code'], 'an operation this timeline allows'), received)
 
     # Reads ---------------------------------------------------------------------------------------------
@@ -196,8 +217,9 @@ class Projects:
         if replay is not None:
             return replay
         project = value.get('project') if isinstance(value, dict) else None
-        if not isinstance(project, dict) or project.get('id') is not None or project.get('revision') != 0:
-            raise _invalid('/project', 'a new project with id null and revision 0')
+        project = new_project(project) if isinstance(project, dict) else None
+        if project is None or project.get('id') is not None or project.get('revision') != 0:
+            raise _invalid('/project', 'a new project: its name is enough, with no id and no revision')
         # The page's receipt makes a repeated create return the first project.
         create = _operation_key(ref, client) if ref is not None else None
         self._lengths(project)
@@ -222,7 +244,8 @@ class Projects:
 
     # Operations ----------------------------------------------------------------------------------------
     def _media(self, operations):
-        """Insert operations name a source key; the server fills in its length and streams."""
+        """Insert operations name a source key; the server fills in its length and streams, and for a
+        saved video the description it was generated from."""
         keys = [op['source'] for op in operations if op.get('op') == 'insert']
         found = comfy_editor.sources(self.root, keys) if keys else {}
         resolved = []
@@ -236,6 +259,8 @@ class Projects:
             kind, identity = op['source'].split(':', 1)
             media = dict(source=dict(kind=kind, id=identity), frames=info['frames'], hasVideo=info['has_video'],
                          hasAudio=info['has_audio'], width=info['width'], height=info['height'])
+            if info.get('text'):
+                media['text'] = info['text']
             resolved.append(dict({k: v for k, v in op.items() if k != 'source'}, media=media))
         return resolved
 
@@ -263,6 +288,7 @@ class Projects:
                            operations[index] if index is not None else None, operation=index)
         saved = self._save(reply['project'], ref=ref, client=client)
         result = dict(project=saved, changed_clip_ids=changed_clip_ids(stored, saved), results=reply['results'])
+        result = note_next(result, saved, set(result['changed_clip_ids']) - set(_clips(stored)))
         self._remember(ref, digest, result, client)
         return result
 
@@ -324,7 +350,8 @@ class Projects:
             raise
         with self.lock:
             self.prepared[job['id']] = saved
-        result = dict(job=jobs.view(job), jobs=[jobs.view(job)], project=saved, clip_ids=plan['ids'])
+        result = note_next(dict(job=jobs.view(job), jobs=[jobs.view(job)], project=saved, clip_ids=plan['ids']),
+                           saved, set(plan['ids']))
         self._remember(ref, digest, result, client)
         return result
 

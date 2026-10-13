@@ -39,6 +39,8 @@ _CLIP = re.compile(r'c[1-9][0-9]{0,8}')
 _TOKEN = re.compile(r'[A-Za-z0-9_-]{1,128}')
 _REASON = re.compile(r'[a-z_]{1,80}')
 _REF = re.compile(r'[A-Za-z0-9_-]{1,128}')
+# A note is one line: the page refuses the same characters (editor_model.js NOTE_BREAK) and the same ends.
+_NOTE_BREAK = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029]')
 _STATE = threading.RLock()
 _TRANSCODING = threading.Lock()
 _FAILED_IMPORTS = {}  # terminal statuses awaiting writable storage
@@ -279,6 +281,12 @@ def validate(record):
                 if not isinstance(raw['ref'], str) or not _REF.fullmatch(raw['ref']):
                     raise ValueError('Invalid block reference')
                 clip['ref'] = raw['ref']
+            if 'note' in raw:
+                note = raw['note']
+                if (not _text(note, 120) or not note or note != note.strip() or '\ufeff' in (note[0], note[-1])
+                        or _NOTE_BREAK.search(note)):
+                    raise ValueError('Invalid block note')
+                clip['note'] = note
             if source is None and ('take' in raw or 'made_text' in raw):
                 raise ValueError('Invalid clip versions')
             _made(raw, clip)
@@ -645,6 +653,10 @@ def sources(root, keys):
                 if _read_json(report, 4 * 1024**2).get('success') is not True:
                     raise ValueError('Creation is incomplete')
             media = probe(path)
+            if source['kind'] == 'work':
+                text = _work_text(root, relative)
+                if text:
+                    media['text'] = text
             if source['kind'] == 'import':
                 metadata = _read_import(root, source['id'])
                 media.update(preview_width=media['width'], preview_height=media['height'])
@@ -672,6 +684,23 @@ def sources(root, keys):
             pass
         result[key] = info
     return result
+
+
+def _work_text(root, relative):
+    """The text a saved video was generated from; a block made from it starts with this description."""
+    try:
+        path = _safe(root, (PurePosixPath(relative).parent / 'prompt.txt').as_posix())
+        with path.open('rb') as stream:
+            data = stream.read(4 * 8000 + 1)
+        if len(data) > 4 * 8000:
+            # Longer than any description a block keeps; its beginning alone is not the description.
+            return ''
+        text = data.decode('utf-8').strip()
+    except (OSError, ValueError):
+        # Optional: an old, joined or hand-copied video has none.
+        return ''
+    # The same limit as a block's own description, so the project it lands in still saves.
+    return text if _text(text, 8000) else ''
 
 
 def _read_import(root, identity):

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import argparse
 import csv
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -354,6 +354,18 @@ def model_target(row, model_dir, encoder_dir, prepared_dir=None):
     return (model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir) / row['file']
 
 
+def installation_model_files(prepared, reuse_cache, sampling_caches):
+    """The file selection shared by planning and provisioning."""
+    from . import prepared_model
+    from .sampling_assets import install_files, usable_with
+    files = list(required_models(json.loads((PACKAGE / 'model_files.json').read_text(encoding='utf-8')),
+                                 reuse_cache or prepared))
+    files += prepared_model.files(prepared)
+    if prepared or (reuse_cache and usable_with(reuse_cache)):
+        files += install_files(bool(sampling_caches))
+    return files
+
+
 def resolve_prepared_format(requested, saved, hardware):
     """The prepared model format of this setup run: 'int8_convrot' or 'fp8'.
 
@@ -530,18 +542,13 @@ def plan(args, *, local_progress=None, stage=None):
     prepared_dir = prepared['directory'] if prepared else None
     if mac_target and reuse_cache is None and prepared is None:
         errors.append('No verified native-compatible prepared model is available. Source conversion is not supported on Mac.')
-    files = required_models(json.loads((PACKAGE / 'model_files.json').read_text(encoding='utf-8')), reuse_cache or prepared)
-    files += prepared_model.files(prepared)
     # New installations prepare every quality level; an existing one keeps its
     # earlier choice (off if it predates the option) unless the flag says otherwise.
     sampling_caches = getattr(args, 'sampling_caches', None)
     if sampling_caches is None:
         sampling_caches = prior['sampling_caches'] if isinstance(prior.get('sampling_caches'), bool) else not saved.get('ready')
     sampling_caches = bool(sampling_caches)
-    from .sampling_assets import install_files, usable_with
-    if prepared or (reuse_cache and usable_with(reuse_cache)):
-        # Published tables match these weights; other caches compute their own.
-        files += install_files(sampling_caches)
+    files = installation_model_files(prepared, reuse_cache, sampling_caches)
     local_reuse = None
     local_folder = getattr(args, 'reuse_models', None)
     local_manifest = getattr(args, 'reuse_models_manifest', None)
@@ -559,9 +566,19 @@ def plan(args, *, local_progress=None, stage=None):
             if not isinstance(libraries, dict) or libraries.get('version') != 1 or not isinstance(libraries.get('roots'), list):
                 raise ValueError('Invalid model library manifest')
             directories = ([str(local_folder)] if local_folder else []) + libraries['roots']
-            local_reuse = scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
+            scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
         else:
-            local_reuse = scan(local_folder, needed, prior=previous_reuse, callback=local_progress)
+            scan_library = lambda: scan(local_folder, needed, prior=previous_reuse, callback=local_progress)
+        try:
+            local_reuse = scan_library()
+        except OSError as error:
+            if not getattr(args, 'download_list', False):
+                raise
+            from .model_guidance import DownloadListError
+            original = str(error)
+            if error.__cause__ is not None:
+                original += '\n' + str(error.__cause__)
+            raise DownloadListError('read', original_error=original) from error
         local_reuse['copy_mode'] = bool(getattr(args, 'copy_existing_models', False))
         local_reuse['copy_bytes'] = local_reuse['linked_bytes'] = 0
         for row in needed:
@@ -577,18 +594,27 @@ def plan(args, *, local_progress=None, stage=None):
     mismatches = model_repair.read(root)
     replace_models = []
     reserved = set()
+    check_download_list = bool(getattr(args, 'download_list', False))
+    stamps_path = root / 'verified-models.json'
+    stamps = json.loads(stamps_path.read_text(encoding='utf-8')) if check_download_list and stamps_path.is_file() else {}
     for row in files:
         path = model_target(row, model_dir, encoder_dir, prepared_dir)
         replacement = model_repair.replacement(path, row, mismatches, reserved)
         if replacement:
             replace_models.append(replacement)
         size_matches = not replacement and path.is_file() and path.stat().st_size == row['bytes']
+        if size_matches and check_download_list:
+            # Only the explicit third-party list needs this check during planning.
+            # Normal setup keeps its cheap estimate and deferred verification.
+            from .provision import verified
+            hf_directory = Path(prepared_dir) if row.get('prepared') else model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir
+            size_matches = verified(path, row, stamps, mode=getattr(args, 'verify', 'auto'), hf_directory=hf_directory)
         present += row['bytes'] if size_matches else 0
         device = existing_parent(path.parent)
         entry = groups.setdefault(str(device), {'path': str(device), 'needed_bytes': 0,
                                                 'free_bytes': disk_space.free_bytes(device)})
         local = (local_reuse or {}).get('matches', {}).get(row['repo'] + '/' + row['file'])
-        model_entries.append((row, 'found' if size_matches else 'verified' if local else 'download'))
+        model_entries.append((row, ('verified' if check_download_list else 'found') if size_matches else 'verified' if local else 'download'))
         entry['needed_bytes'] += 0 if size_matches or local and local['method'] == 'hardlink' else row['bytes']
         partial = path.with_suffix(path.suffix + '.partial')
         if not size_matches and not local and partial.is_file() and partial.stat().st_size <= row['bytes']:
@@ -717,6 +743,9 @@ def plan(args, *, local_progress=None, stage=None):
             'licenses': ['https://huggingface.co/OpenVDN/vdn-minimax-h3/blob/751739ee5b9e3ac802dca5d5111075fdaeb47885/LICENSE',
                          'https://huggingface.co/t8star/Vdn-Minimax-H3-Comfy',
                          'https://docs.nvidia.com/cuda/eula/index.html']}
+    from .model_guidance import download_files
+    value['download_files'] = download_files(model_entries)
+    value['download_files_verified'] = all(status != 'found' for _, status in model_entries)
     if mac_target:
         from .macos_bootstrap import describe_plan
         describe_plan(value)
@@ -998,6 +1027,8 @@ def setup_task(label):
     routes = {'official': 'official source', 'nju': 'Nanjing University mirror',
               'tuna': 'Tsinghua mirror', 'ghfast': 'GitHub mirror',
               'user-python': 'your Python mirror', 'user': 'your configured source'}
+    # Python route retries append the route after the source.
+    label = re.sub(r'-(?:direct|proxy)$', '', label)
     source = next((name for name in routes if label.endswith('-' + name)), None)
     key = label[:-(len(source) + 1)] if source else label
     for prefix in ('unified-', 'engine-', 'encoder-'):
@@ -1098,7 +1129,8 @@ class Installer:
             from .runtime_libraries import damaged
             if ui is not None:
                 prepare_step(ui, 'Checking the environment')
-            self.damaged_before = damaged(self.pythons['engine'])
+            self.damaged_before = damaged(self.pythons['engine'], progress=(
+                lambda done, total: prepare_step(ui, 'Checking the environment', done, total)) if ui is not None else None)
         # Moving a working installation to int8 checks the int8 kernels first
         # (execute), so a GPU that fails them keeps its configuration as it was.
         # With changed files that check cannot run; the one after installing still does.
@@ -1304,6 +1336,7 @@ class Installer:
             raise RuntimeError(self.state.get('resource_guard', 'Installation cancelled.'))
         from .triton_compat import temporary_environment
         env = temporary_environment(self.root, env or self.env)
+        env = dict(env, FREEVIDEO_INSTALL_PROGRESS='1')
         args, cwd = uv_file_arguments(args, cwd)
         with self.state_lock:
             index = len(self.state['steps'])
@@ -1316,6 +1349,10 @@ class Installer:
         if label == 'models' and self.plan.get('local_models'):
             title, detail = 'Reuse models / download missing files', 'Import verified local models; source files stay in place'
         self.ui.begin(key, title, detail=str(log) if self.ui.verbose else detail)
+        initial = ('Python downloading' if title == 'Install Python' else
+                   'Environment creating' if title == 'Create Python environment' else '')
+        if initial:
+            self.ui.update(key, activity='note', name=initial, detail=initial)
         progress = LogProgress(log)
         parallel_tasks = set()
         models_step = label == 'models'
@@ -1445,11 +1482,13 @@ class Installer:
                                constraints=['-c', constraints_file(label, self.system)], check=check):
                         return
                 from .runtime_libraries import damaged, reinstall_arguments
-                fresh = damaged(executable)
+                fresh = self.check_runtime_libraries(executable, label)
                 result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(fresh), *argv[5:]], group)
                 # Files linked from a changed uv cache arrive with a new environment.
-                if not fresh and damaged(executable):
-                    result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(damaged(executable)), *argv[5:]], group)
+                if not fresh:
+                    changed = self.check_runtime_libraries(executable, label)
+                    if changed:
+                        result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(changed), *argv[5:]], group)
                 return result
             task(name + '-torch', torch_packages,
                  (name + '-venv',), writer)
@@ -1502,6 +1541,18 @@ class Installer:
             tasks['models']['after'] = ('package-cache',)
         return tasks, pythons, comfy
 
+    def check_runtime_libraries(self, python, role):
+        from .runtime_libraries import damaged
+        key = role + '-runtime-libraries'
+        self.ui.begin(key, 'Runtime libraries verifying')
+        def progress(done, total):
+            self.ui.update(key, activity='count', name='Runtime libraries verifying',
+                           detail='Runtime libraries verifying', done=done, total=total, unit='items')
+        try:
+            return damaged(python, progress=progress)
+        finally:
+            self.ui.end(key)
+
     def release_package_cache(self, uv):
         cache = self.root / 'downloads' / 'uv-cache'
         if cache.is_symlink() or not cache.resolve().is_relative_to(self.root.resolve()):
@@ -1517,10 +1568,28 @@ class Installer:
         return network.clone(self.root / 'vendor' / name, url, commit, sparse=sparse, run=self.command,
                              network=self.network, env=self.env)
 
+    @contextmanager
+    def download_notice(self, key):
+        """Keep the patient-round notice visible across command heartbeats."""
+        active = False
+
+        def notice(message):
+            nonlocal active
+            self.ui.write(message + '\n')
+            active = True
+            self.ui.event('progress', key=key, label='Download', detail=message)
+
+        try:
+            yield notice
+        finally:
+            if active:
+                self.ui.event('progress', key=key, label='Download', detail='', state='complete')
+
     def packages(self, label, args, family='pypi'):
-        return network.package_command(self.network, family,
-            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
-            self.env, notice=lambda message: self.ui.write(message + '\n'))
+        with self.download_notice('download-patient-' + label) as notice:
+            return network.package_command(self.network, family,
+                lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
+                self.env, notice=notice)
 
     def python_install(self, uv):
         from .system import bootstrap_root
@@ -1541,8 +1610,10 @@ class Installer:
                         'import platform; print(platform.python_version())'], capture_output=True, timeout=30)
                     if check.returncode == 0 and check.stdout.strip() == self.versions['python']:
                         self.env['UV_PYTHON_INSTALL_DIR'] = str(prepared)
-                        self.command('python-bootstrap-reuse', [candidate, '-I', '-B', '-c',
-                                     'import sys; print("Reusing verified bootstrap Python: " + sys.executable)'])
+                        # -I ignores PYTHONIOENCODING: without -X utf8 a path the
+                        # system code page cannot spell fails the print.
+                        self.command('python-bootstrap-reuse', subprocess_output.python_command([candidate, '-I', '-B', '-c',
+                                     'import sys; print("Reusing verified bootstrap Python: " + sys.executable)']))
                         return
         custom = self.env.get('UV_PYTHON_INSTALL_MIRROR') if self.network.get('mode') != 'official' else None
         isolation = ['--no-bin', '--no-registry']
@@ -1553,9 +1624,9 @@ class Installer:
             return self.command('python-' + source + '-' + route,
                                 [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
         try:
-            return network.download_command(self.network, 'github', attempt, self.env, category='python',
-                                            extra_sources=['user-python'] if custom else [],
-                                            notice=lambda message: self.ui.write(message + '\n'))
+            with self.download_notice('download-patient-python') as notice:
+                return network.download_command(self.network, 'github', attempt, self.env, category='python',
+                                                extra_sources=['user-python'] if custom else [], notice=notice)
         except network.PackageSourcesError as error:
             failure = RuntimeError('Python download failed on every route; see retained logs')
             failure.package_attempts = error.attempts
@@ -1831,6 +1902,7 @@ class Installer:
 
     def execute(self):
         if self.int8_check_first:
+            prepare_end(self.ui)  # The GPU precheck is already execution work.
             # The installed environment runs this source's probes (PYTHONPATH);
             # the receipt is reused by the check after installation.
             self.ui.phase('Verify installation on your GPU', 0, 8)
@@ -2038,6 +2110,7 @@ def run_main(argv, shown):
     parser.add_argument('--model-downloader', choices=['auto', 'xet'], default='auto',
                         help='xet: require official HF Xet for large weights; no ModelScope/HTTP fallback. Small configs use HTTP; existing files/partials retained')
     parser.add_argument('--plan', '--check', action='store_true', help='Read-only preflight with small network samples; no installation files are written')
+    parser.add_argument('--download-list', action='store_true', help='Verify existing managed files while planning a third-party download list')
     parser.add_argument('--json', action='store_true', help='Print preflight as JSON')
     parser.add_argument('--plain', action='store_true', help='Disable live terminal rendering; append readable log lines')
     parser.add_argument('--verbose', action='store_true', help='Show full setup details, license links and per-step log paths')
@@ -2075,7 +2148,11 @@ def run_main(argv, shown):
                      stage=None if args.plan else lambda *step: prepare_step(ui, *step))
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         prepare_end(ui, False)
-        print('Preflight failed: ' + str(error), file=sys.stderr)
+        from .model_guidance import DownloadListError
+        if isinstance(error, DownloadListError):
+            print('Download list error: ' + error.key, file=sys.stderr)
+        print('Preflight failed: ' + (error.original_error if isinstance(error, DownloadListError) else str(error)),
+              file=sys.stderr)
         return 1
     print(json.dumps(value, indent=2)) if args.json else display(value, ui, verbose=args.verbose)
     if args.plan:

@@ -58,6 +58,11 @@ class Sessions:
         self._initial_seq = {}
         self._readers = {}
         self._user_seq = {}  # Last event the user wrote; unread() skips the file when nothing is newer.
+        # When each session began or its user last acted in it (spoke, answered), and the user's first words
+        # there: the conversation the user is in, and what the page calls each one in its history.
+        self._acted = {}
+        self._said = {}
+        self._chosen = set()
         self._waiters = {}
         self._partial = set()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -91,6 +96,9 @@ class Sessions:
                     updated_at=meta['created_at'], client=meta['client'], last_seq=0, stopped=False)
                 self._ids[sid] = {}
                 self._clients[sid] = {meta['client']} if meta['client'] else set()
+                self._acted[sid] = (meta['created_at'], 1)
+                if meta.get('by') == 'user':
+                    self._chosen.add(sid)
                 for row in stream:
                     if not row.endswith(b'\n'):
                         self._partial.add(sid)
@@ -111,6 +119,12 @@ class Sessions:
         meta.update(last_seq=event['seq'], updated_at=event['at'])
         if event['by'] == 'user':
             self._user_seq[sid] = event['seq']
+            # No counter here: the order must come out the same when the files are read again after a
+            # restart, so two things in one clock tick are ordered by what they are, then by session.
+            self._acted[sid] = max(self._acted[sid], (event['at'], 0))
+            self._chosen.add(sid)
+            if event['type'] == 'message' and sid not in self._said:
+                self._said[sid] = event['text'].strip()[:60]
         if event.get('client'):
             self._clients[sid].add(event['client'])
         if event.get('id'):
@@ -149,6 +163,9 @@ class Sessions:
                 updated_at=meta['created_at'], client=client, last_seq=0, stopped=False)
             self._ids[sid], self._clients[sid] = {}, {client} if client else set()
             self._initial_seq[sid] = 0
+            self._acted[sid] = (meta['created_at'], 1)
+            if by == 'user':
+                self._chosen.add(sid)
             return deepcopy(self._meta[sid])
 
     def list(self, *, limit=50, before=None) -> dict:
@@ -244,7 +261,9 @@ class Sessions:
             self._get(sid)
             return self._events(sid, after, limit)
 
-    async def wait(self, sid, *, after, seconds, types=None, by=None) -> list[dict]:
+    async def wait(self, sid, *, after, seconds, types=None, by=None, leave=None) -> list[dict]:
+        """Events after a cursor, waiting up to some seconds. leave, when given, ends an empty wait early
+        once it answers true: wake() asks for that look when the user moves to another conversation."""
         _check(schema.session_schema('events'), dict(after=after, wait=seconds))
         if types is not None:
             _check(schema.array(schema.enum(('message', 'plan', 'step', 'confirm', 'control')), high=5), types)
@@ -294,6 +313,8 @@ class Sessions:
                 found, cursor = await offload(read)
                 if found:
                     return found
+                if leave is not None and await offload(leave):
+                    return []
                 remaining = deadline - loop.time()
                 if remaining <= 0:
                     return []
@@ -315,6 +336,46 @@ class Sessions:
         with self.lock:
             rows = [row for sid, row in self._meta.items() if client in self._clients[sid]]
             return max(rows, key=lambda r: (r['updated_at'], r['id']))['id'] if rows else None
+
+    def current_for(self, client) -> str | None:
+        """The conversation this client's user is in: the newest one, or an older one the user spoke or
+        answered in after that; what the agent or the server writes never moves the user. Until the user
+        has opened a conversation or spoken on the page, it is wherever the latest work is, as before."""
+        with self.lock:
+            rows = [sid for sid in self._meta if client in self._clients[sid]]
+            if not rows:
+                return None
+            if not self._chosen.intersection(rows):
+                return max(rows, key=lambda sid: (self._meta[sid]['updated_at'], sid))
+            return max(rows, key=lambda sid: (self._acted[sid], sid))
+
+    def has(self, client, sid) -> bool:
+        with self.lock:
+            return sid in self._meta and client in self._clients[sid]
+
+    def spoken(self, sid) -> bool:
+        """Whether the user has said anything in this conversation."""
+        with self.lock:
+            return sid in self._said
+
+    def wake(self, client) -> None:
+        """Let this client's waits look again: its user moved to another conversation."""
+        with self.lock:
+            waiters = [w for sid, group in self._waiters.items() if client in self._clients[sid] for w in group]
+        for loop, signal in waiters:
+            try:
+                loop.call_soon_threadsafe(signal.set)
+            except RuntimeError:
+                pass  # A closed client loop no longer needs notification.
+
+    def history(self, client, *, limit=50) -> list[dict]:
+        """This client's conversations the user has spoken in, for the page: latest change first."""
+        current = self.current_for(client)
+        with self.lock:
+            rows = sorted((row for sid, row in self._meta.items() if client in self._clients[sid] and sid in self._said),
+                          key=lambda r: (r['updated_at'], r['id']), reverse=True)
+            return [dict(id=r['id'], title=self._said[r['id']], updated_at=r['updated_at'], current=r['id'] == current)
+                    for r in rows[:limit]]
 
     def read_until(self, sid, reader) -> int:
         """The last event this reader has been given; unread() moves it."""

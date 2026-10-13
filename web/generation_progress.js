@@ -177,9 +177,19 @@ function trimStatus(rows, t) {
 export function thermalText(thermal, t) {
     const share = thermal.sm_clock_max_mhz ? Math.round(100 * thermal.sm_clock_mean_mhz / thermal.sm_clock_max_mhz) : null;
     const heat = Number.isFinite(thermal.temperature_mean_c) ? Math.round(thermal.temperature_mean_c) : null;
-    const detail = [heat !== null ? `${heat} °C` : '', share !== null ? t(`${share}% of its peak clock`, `频率只有峰值的 ${share}%`) : ''].filter(Boolean).join(t(', ', '，'));
+    const detail = [heat !== null ? `${heat}\u00a0°C` : '', share !== null ? t(`${share}% of its peak clock`, `频率只有峰值的 ${share}%`) : ''].filter(Boolean).join(t(', ', '，'));
     return t(`The GPU spent most of this video in thermal slowdown${detail ? ` (${detail})` : ''}, so it took much longer than usual. Improve cooling; on a laptop, plug in and choose a high-performance power mode.`,
         `生成这段视频时，显卡大部分时间因过热降频${detail ? `（${detail}）` : ''}，所以比平时慢很多。请改善散热；笔记本请接通电源并选择高性能模式。`);
+}
+
+// Other programs held a substantial share of the GPU during this run (summary.shared_gpu).
+// The share is rounded to 5% and written as at most 95%; without a usable number there is no note.
+export function sharedGpuText(shared, t) {
+    const mean = shared?.other_mean_percent;
+    if (typeof mean !== 'number' || !Number.isFinite(mean)) return '';
+    const percent = Math.min(95, Math.round(mean / 5) * 5);
+    return t(`Other programs were using about ${percent}% of the GPU.`,
+        `其他程序占用了约 ${percent}% 的显卡。`);
 }
 
 export function encoderFilePath(file) {
@@ -216,17 +226,24 @@ export function referenceTrimText(row, t) {
             `${name} 比生成的视频长，已截取前 ${used} 秒${rule}`);
 }
 
-// The time left on show `dt` seconds on, given the engine's newest estimate (null when it sent none). Never raised:
-// an estimate at or above the shown time holds it, so a slower run does not count down to "less than a minute"
-// early. A lower one is eased into.
-export function remainingShown(shown, target, dt) {
+// The time left on show `dt` seconds on, given the engine's newest estimate (null when it sent none). Once measured, an
+// estimate at or above the shown time holds it, so a slower run does not count down to "less than a minute"
+// early; one that has stayed well above it for a minute (`above` seconds so far) raises it gently, or a run
+// measured much slower would leave a low number standing for minutes. A lower one is eased into. An initial
+// estimate (made before this run was measured) is followed both ways: a slow machine must not keep a low number.
+export function remainingShown(shown, target, dt, initial = false, above = 0) {
     if (target === null) return Math.max(0, shown - dt);
+    if (initial) return shown + (target - shown) * (1 - Math.exp(-dt / 15));
     if (target < shown - dt) {
         const counted = Math.max(0, shown - dt);
         return counted + (target - counted) * (1 - Math.exp(-dt / 15));
     }
-    return target < shown ? target : shown;
+    if (target < shown) return target;
+    return above >= 60 ? Math.min(target, shown + Math.max(1, shown * .003) * dt) : shown;
 }
+// The seconds the engine's estimate has stayed well above the shown time (a quarter more), `dt` seconds on.
+export const remainingAbove = (above, shown, target, dt) =>
+    target !== null && target > Math.max(shown * 1.25, shown + 30) ? above + dt : 0;
 // The whole-video fraction the engine's last message stands for now: its estimate moved on by the seconds since the
 // step sample (stateAge) and the whole-video sample (overallAge) arrived. Null when the message carries none.
 export function estimatedFraction(state, overall, stateAge, overallAge) {
@@ -294,6 +311,13 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // Mac: the unified-memory notice of this request, and whether its first pass has ended.
     let memoryTight = null, firstPassOver = false;
     let state = {}, overall = {}, started = 0, sampledAt = 0, overallAt = 0, timer = null, elapsedShown = 0;
+    // Where the bridge's remaining time comes from: 'similar' (no record of these
+    // settings here yet), 'local' (this computer's record) or 'measured' (this run).
+    // Absent from older bridges, which keep the two-steps rule.
+    let estimateSource = null, etaChangedAt = -Infinity;
+    // The page shows its own "preparing" row at the click; the engine's first
+    // message for that request follows and must not restart the elapsed time.
+    let placeholder = false, elapsedLead = 0;
     let lastProgressAt = 0, previousProgress = null, segmentStartedAt = 0, segmentKey = '';
     let pauseAnnounced = false, lastExplanation = '', announcedMessages = new Set();
     let announcementRecord = null;
@@ -301,7 +325,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     let completedSteps = 0, previousRemaining = null, remainingAt = 0, lastActivity = null;
     // Once the shown time reaches zero before the video is saved, it stays hidden for this request.
     // The last minute runs on real time even while an estimate holds the number.
-    let remainingRetired = false, lastMinuteAt = null, lastMinute = 0;
+    let remainingRetired = false, lastMinuteAt = null, lastMinute = 0, aboveSeconds = 0;
     let shownFraction = null;
     // The visible percentage counts toward its value with the bar instead of
     // jumping. Accessible values are set exactly and immediately elsewhere.
@@ -600,7 +624,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     }
 
     // Preserve the server's heartbeat/floor policy for the raw target only.
-    // The displayed estimate has its own clock and never increases.
+    // The displayed estimate has its own clock; once it is no longer initial it never increases.
     function rawRemaining() {
         if (!valid(overall.remaining_seconds)) return null;
         return hasHeartbeat ? overall.remaining_seconds : Math.max(
@@ -608,8 +632,25 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             overall.remaining_seconds - Math.max(0, (now() - overallAt) / 1000));
     }
     function observeRemaining(message) {
-        if (completedSteps < 2 || remainingSeconds !== null || remainingRetired || !message.overall) return;
+        if (!message.overall) return;
+        const source = typeof message.overall.remaining_source === 'string' ? message.overall.remaining_source : null;
         const raw = valid(message.overall.remaining_seconds) ? rawRemaining() : null;
+        if (source) {
+            // The bridge estimates the whole request from the first message:
+            // show it at once. Leaving the initial (similar-settings) estimate replaces
+            // the number once, up or down; after that it only falls.
+            const leaving = estimateSource === 'similar' && source !== 'similar';
+            estimateSource = source;
+            // The correction starts the last minute over. Once the shown time has run
+            // out it stays hidden for this attempt, as without an initial estimate.
+            if (leaving && raw !== null && !remainingRetired) { lastMinuteAt = null; lastMinute = 0; }
+            if (raw === null || remainingRetired) return;
+            // A retry's fresh estimate still waits for the 5 s spacing of the shown
+            // minutes; only a new request starts the line over (in update()).
+            if (remainingSeconds === null || leaving) { remainingSeconds = raw; remainingAt = now(); }
+            return;
+        }
+        if (completedSteps < 2 || remainingSeconds !== null || remainingRetired) return;
         // Compare distinct received messages, never repeated timer ticks.
         // Zero is stable only against another zero.
         if (raw !== null && previousRemaining !== null
@@ -620,7 +661,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     }
     function resetRemaining() {
         completedSteps = 0; previousRemaining = null; remainingSeconds = null; remainingAt = now();
-        remainingRetired = false; lastMinuteAt = null; lastMinute = 0;
+        remainingRetired = false; lastMinuteAt = null; lastMinute = 0; aboveSeconds = 0;
     }
     function tick() {
         if (element.hidden) { drawStall(0, true); return; }
@@ -631,12 +672,16 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         // The page counts from its first message until the engine's own elapsed time
         // arrives; that switch never moves the shown time back within a request.
         const seconds = elapsedShown = Math.max(elapsedShown,
-            valid(overall.elapsed_seconds) ? overall.elapsed_seconds + overallAge : (now()-started)/1000);
+            valid(overall.elapsed_seconds) ? overall.elapsed_seconds + overallAge + elapsedLead : (now()-started)/1000);
         elapsed.textContent = `${t('Elapsed', '已用时')} ${duration(Math.max(0, seconds))}`;
         if (ended) remainingSeconds = null;
         if (remainingSeconds !== null) {
-            remainingSeconds = remainingShown(remainingSeconds, rawRemaining(), Math.max(0, (now() - remainingAt) / 1000));
+            const sent = rawRemaining(), passed = Math.max(0, (now() - remainingAt) / 1000);
+            aboveSeconds = remainingAbove(aboveSeconds, remainingSeconds, sent, passed);
+            remainingSeconds = remainingShown(remainingSeconds, sent, passed, estimateSource === 'similar', aboveSeconds);
             if (remainingSeconds < 60 && lastMinuteAt === null) { lastMinuteAt = now(); lastMinute = remainingSeconds; }
+            // An initial estimate may rise again: its last minute starts over.
+            else if (remainingSeconds >= 60 && estimateSource === 'similar') lastMinuteAt = null;
             // A run slower than estimated would leave "less than a minute" up for minutes:
             // once that minute has passed, or the time reaches zero, stop showing it.
             if (!ended && (remainingSeconds <= 0
@@ -646,9 +691,14 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         }
         remainingAt = now();
         eta.hidden = remainingSeconds === null;
-        eta.textContent = remainingSeconds === null ? '' : remainingSeconds >= 60
+        const etaText = remainingSeconds === null ? '' : remainingSeconds >= 60
             ? t(`About ${Math.ceil(remainingSeconds / 60)}\u00a0min left`, `预计还需约 ${Math.ceil(remainingSeconds / 60)}\u00a0分钟`)
             : t('Less than a minute left', '预计还需不到 1\u00a0分钟');
+        const initial = remainingSeconds !== null && estimateSource === 'similar';
+        // While it follows the bridge, the shown minutes change at most every 5 s.
+        if (eta.textContent !== etaText && (!initial || !eta.textContent || now() - etaChangedAt >= 5000)) {
+            eta.textContent = etaText; etaChangedAt = now();
+        }
         elapsed.hidden = false; times.hidden = elapsed.hidden && eta.hidden;
         drawStall(age, ended);
         drawActivity(age, ended);
@@ -662,8 +712,21 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         // not a stage change or something the user needs to act on.
         if (message.warning === 'ram_budget_warning' && !message.phase) return;
         const reset = newRequest(message);
-        if (element.hidden || reset) {
-            state = {}; overall = {}; started = now(); overallAt = now(); shownFraction = null; elapsedShown = 0;
+        const placeholderReset = element.hidden || reset;
+        const terminal = ['complete', 'failed', 'cancelled'].includes(message.phase);
+        if (placeholderReset) {
+            // The engine's first message after the page's own placeholder is the
+            // same click: keep counting from it. The placeholder lasts from this
+            // node's own start until any engine message, its end, or hide().
+            const sameClick = placeholder && message.stream_id !== undefined;
+            // From then on the engine's elapsed time is offset by the wait before it began.
+            const firstAt = valid(message.received_at) ? message.received_at : now();
+            elapsedLead = sameClick ? Math.max(0, (firstAt - started) / 1000
+                - (valid(message.overall?.elapsed_seconds) ? message.overall.elapsed_seconds : 0)) : 0;
+            if (!sameClick) { started = now(); elapsedShown = 0; }
+            placeholder = message.stream_id === undefined && !terminal;
+            state = {}; overall = {}; overallAt = now(); shownFraction = null; estimateSource = null;
+            eta.textContent = ''; etaChangedAt = -Infinity;
             lastProgressAt = valid(message.received_at) ? message.received_at : now();
             previousProgress = null; segmentKey = ''; segmentStartedAt = lastProgressAt;
             pauseAnnounced = false; lastExplanation = ''; announcedMessages.clear();
@@ -674,21 +737,32 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             samplingPlan = {}; secondPass = false; hasHeartbeat = false;
             announcementRecord = null;
         }
+        if (!placeholderReset && (message.stream_id !== undefined || terminal)) placeholder = false;
         const record = announcementsFor(message, reset);
         if (record) {
             announcementRecord = record;
             for (const text of record.messages) announcedMessages.add(text);
         }
         const receivedAt = valid(message.received_at) ? message.received_at : now();
-        const heartbeat = message.overall?.heartbeat === true;
+        // The estimate in `overall` can be newer than the engine message it rides
+        // on: a heartbeat refreshes only that (overall_received_at, from publish).
+        const overallReceivedAt = valid(message.overall_received_at) ? message.overall_received_at : receivedAt;
+        const beat = message.overall?.heartbeat === true;
+        // A heartbeat repeats the last engine message. A page that has not seen
+        // that message yet (reopened, or opened mid-run) takes it as the message.
+        const heartbeat = beat && previousProgress !== null;
         if (message.reset === true) {
-            hasHeartbeat = false; resetRemaining(); lastActivity = null;
+            hasHeartbeat = false; lastActivity = null;
+            // A stage restarting its own count (the sampler's start) leaves the
+            // bridge's whole-request estimate standing; a retry starts afresh.
+            if (estimateSource && !message.retry && message.phase !== 'recovery') { completedSteps = 0; previousRemaining = null; }
+            else resetRemaining();
             // A reset that would move a shown share back starts its stage afresh
             // (hidden, 5 s again). One before anything was counted, such as the
             // sampler's own start, keeps the stage's clock and the 2 s rule.
             if (miniFraction > 0) resetMini();
         }
-        if (heartbeat) hasHeartbeat = true;
+        if (beat) hasHeartbeat = true;
         if (!heartbeat && message.phase === 'sampling' && valid(message.done))
             completedSteps = Math.max(completedSteps, message.done);
         if (message.low_memory && typeof message.low_memory === 'object') lowMemory = true;
@@ -714,8 +788,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             samplingPlan = {...message.plan_context};
         // A heartbeat carries a newer estimate, never a newer engine event.
         // Keep sampledAt paired with the sampling counters/elapsed sample.
-        if (heartbeat && previousProgress !== null) {
-            overall = {...overall, ...message.overall}; overallAt = receivedAt;
+        if (heartbeat) {
+            overall = {...overall, ...message.overall}; overallAt = overallReceivedAt;
             observeRemaining(message);
             tick(); return;
         }
@@ -724,7 +798,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             || message.prediction || message.sampling_plan || reset;
         if (!activityEvent && previousProgress !== null) {
             if (message.overall && typeof message.overall === 'object') {
-                overall = {...message.overall}; overallAt = receivedAt; observeRemaining(message);
+                overall = {...message.overall}; overallAt = overallReceivedAt; observeRemaining(message);
             }
             tick(); return;
         }
@@ -759,14 +833,14 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         }
         element.dataset.phase = message.phase || message.timing_phase || '';
         if (message.overall && typeof message.overall === 'object') {
-            overall = {...message.overall}; overallAt = sampledAt;
+            overall = {...message.overall}; overallAt = overallReceivedAt;
             observeRemaining(message);
         }
         element.hidden = false;
         tick(); if (timer === null) timer = setInterval(tick, 250);
     }
     function hide() {
-        element.hidden = true; status.hidden = true; recovery = ''; trims.clear(); lowMemory = false; compatibility = null; references = false; hasHeartbeat = false;
+        element.hidden = true; status.hidden = true; recovery = ''; placeholder = false; elapsedLead = 0; trims.clear(); lowMemory = false; compatibility = null; references = false; hasHeartbeat = false;
         compatibilityNote.hidden = true; compatibilityNote.textContent = '';
         memoryTight = null; firstPassOver = false;
         elapsedShown = 0;

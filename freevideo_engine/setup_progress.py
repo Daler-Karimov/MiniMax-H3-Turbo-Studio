@@ -16,6 +16,7 @@ class ProgressState:
         self.tasks = {}
         self.last = {}
         self.model_groups = []
+        self.download_notices = {}
 
     def update(self, event, now=None):
         now = time.monotonic() if now is None else now
@@ -25,8 +26,15 @@ class ProgressState:
             return
         if event.get('kind') == 'phase':
             self.phase = event
+            self.download_notices.clear()
             return
         key = str(event.get('key', 'current'))
+        if event.get('kind') == 'progress' and key.startswith('download-patient-'):
+            if event.get('state', 'running') == 'running' and event.get('detail'):
+                self.download_notices[key] = event
+            else:
+                self.download_notices.pop(key, None)
+            return
         if event.get('kind') == 'task':
             self.tasks.pop(key, None)
         previous = self.tasks.get(key, {})
@@ -48,6 +56,12 @@ class ProgressState:
         active.sort(key=lambda row: (number(row.get('total')) and row['total'] > 0,
                                      row.get('unit') == 'bytes'), reverse=True)
         current = active[0] if active else self._view(self.last, now)
+        if self.download_notices:
+            notice = next(reversed(self.download_notices.values()))
+            # A temporary activity line, with the underlying stage and counters
+            # retained so clearing it restores the current operation immediately.
+            current = dict(current, label=current.get('label') or notice['label'],
+                           detail=notice['detail'], activity='', name='')
         return dict(phase_progress=dict(self.phase), active_tasks=active, progress=current, model_groups=self.model_groups)
 
     @staticmethod
@@ -86,6 +100,20 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
     """One activity line for the launcher; step counts and ETAs remain in worker events/logs."""
     t = lambda en, cn: cn if zh else en
     activity, name = event.get('activity'), event.get('name') or ''
+    if activity == 'count':
+        done, total = event.get('done'), event.get('total')
+        if number(done) and number(total) and total > 0 and done <= total:
+            return name + t(' · Completed ', ' · 已完成 ') + '%d / %d' % (done, total)
+        return name
+    if activity in ('verify', 'assemble', 'copy_bytes'):
+        verb = {'verify': ('Verifying ', '正在校验'), 'assemble': ('Assembling ', '正在合并'),
+                'copy_bytes': ('Copying ', '正在复制')}[activity]
+        # MiB rather than tenths of GiB: even slow disks change the visible text.
+        parts = [t(*verb) + name]
+        done, total = event.get('done'), event.get('total')
+        if event.get('unit') == 'bytes' and number(done) and number(total) and total > 0 and done <= total:
+            parts.append('%d / %d %s' % (done // 2**20, total // 2**20, 'MiB'))
+        return ' · '.join(parts)
     if activity == 'resume':
         return t('The connection dropped; resuming the download and keeping what was already downloaded',
                  '连接中断，正在继续下载，已下载的部分会保留')

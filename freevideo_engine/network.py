@@ -586,8 +586,8 @@ _INTEGRITY_FAILURE = re.compile(
     r"\b(?:invalid|bad|wrong|incorrect|mismatched?)\s+checksums?\b"
     r"|\bchecksums?\s+(?:mismatch|error|failed|failure)\b"
     r"|\bchecksums?\s+(?:verification|validation)\s+(?:failed|failure|error)\b"
-    r"|\bchecksums?\s+(?:does not|doesn't|did not|didn't|do not|don't)\s+match\b"
-    r"|\b(?:does not|doesn't|did not|didn't|do not|don't)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b"
+    r"|\bchecksums?\s+(?:does\s+not|doesn't|did\s+not|didn't|do\s+not|don't)\s+match\b"
+    r"|\b(?:does\s+not|doesn't|did\s+not|didn't|do\s+not|don't)\s+match\s+(?:the\s+|its\s+|expected\s+)?(?:checksums?|hash(?:es)?)\b"
     r"|\bhash\s+(?:mismatch|check\s+failed|does\s+not\s+match)\b|\bhashes\s+(?:do\s+not|didn't)\s+match\b"
     r"|\bsha-?256\s+mismatch\b|\bdigest\s+mismatch\b"
     r"|\bintegrity\s+(?:check|verification)\s+failed\b")
@@ -772,8 +772,16 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
             return False
         event(network, category=category, source=source, file=path.name, action='verifying', algorithm=algorithm)
         check = network.get('resource_check') if keep_partial else None
+        from .install_activity import byte_progress
+        report = byte_progress('verify_progress', path.name, report=lambda **row:
+            event(network, category=category, source=source, action='verify-progress', **row))
+        def verification(done, total):
+            if check:
+                check()
+            if model:
+                report(done, total)
         return hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models'),
-                         progress=(lambda done, total: check()) if check else None) == expected
+                         progress=verification if model or check else None) == expected
     if path.is_file():
         if matches(path):
             return

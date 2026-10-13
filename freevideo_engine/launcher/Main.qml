@@ -9,6 +9,9 @@ ApplicationWindow {
     color: unifiedChrome ? theme.canvas : theme.bg
     width: 1280; height: 860
     property var s: initialState
+    readonly property var downloads: backend.downloadList
+    // Keep expansion by family across language changes and new checked lists.
+    property var downloadExpanded: ({})
     Connections { target: backend; function onChanged() { win.s = backend.state } }
     property bool settingsOpen: false
     property bool terminalOpen: false
@@ -29,7 +32,7 @@ ApplicationWindow {
     property string previousReview: ""
     property bool compact: width < 1000
     property bool shortWindow: height < 700
-    property bool otherModelLinksOpen: false
+    onModelInfoOpenChanged: if (modelInfoOpen) backend.prepareDownloadList()
     readonly property bool manualEnvironment: s.offline.runtime_supported !== false && s.form.new_comfy && s.form.environment_method === "manual"
     readonly property bool usingRuntime: manualEnvironment && s.offline.runtime
     readonly property bool needsRuntime: s.page === "comfy" && manualEnvironment && !s.offline.runtime
@@ -597,19 +600,7 @@ ApplicationWindow {
                                     delegate: FButton { required property var modelData; required property int index; objectName: "offlineShare-" + index; text: t("Download from Quark ↗", "打开夸克网盘 ↗"); onClicked: backend.link(modelData.url) }
                                 }
                                 FText { objectName: "offlinePackageGuide"; text: s.offline.guide; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                                FButton { objectName: "otherModelLinks"; text: t("Alternative download sources", "其他下载渠道") + (otherModelLinksOpen ? "  −" : "  +"); flat: true; implicitHeight: theme.heightSm - 2; leftPadding: 0; font.pixelSize: theme.micro + 1; onClicked: otherModelLinksOpen = !otherModelLinksOpen }
-                                FText { visible: otherModelLinksOpen; text: t("The same models are also available from Hugging Face or ModelScope.", "同一套模型，也可从 Hugging Face 或魔搭下载。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                                Flow {
-                                    visible: otherModelLinksOpen; Layout.fillWidth: true; spacing: 8
-                                    Repeater {
-                                        model: ["video", "encoder", "decoder"]
-                                        delegate: FButton {
-                                            required property string modelData
-                                            text: modelData === "video" ? t("Video model ↗", "视频模型 ↗") : modelData === "encoder" ? t("Text encoder ↗", "文本编码器 ↗") : t("Video & audio decoders ↗", "音视频解码器 ↗")
-                                            implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: { modelInfo = modelData; modelInfoOpen = true }
-                                        }
-                                    }
-                                }
+                                FButton { objectName: "otherModelLinks"; text: downloads.copy.title + "  ›"; flat: true; enabled: !s.busy; implicitHeight: theme.heightSm; leftPadding: 0; font.pixelSize: theme.micro + 1; onClicked: modelInfoOpen = true }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; spacing: 10
@@ -635,7 +626,7 @@ ApplicationWindow {
                         FText { visible: !!s.offline.detail; text: s.offline.detail + (number(s.offline.total) ? " · " + bytes(s.offline.done) + " / " + bytes(s.offline.total) : ""); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                     }
                     FCard {
-                        visible: !usingRuntime; Layout.fillWidth: true; padding: 16
+                        visible: !manualEnvironment && !offlineSelected; Layout.fillWidth: true; padding: 16
                         FSwitch {
                             objectName: "samplingCaches"; Layout.fillWidth: true
                             text: t("Prepare all quality levels", "提前下载全部质量档位")
@@ -740,7 +731,7 @@ ApplicationWindow {
                                 }
                                 // What this group downloads, as in the plan; nothing for one already here.
                                 FText { objectName: "modelSize-" + modelData.id; visible: modelData.download > 0; text: bytes(modelData.download); font.pixelSize: theme.micro; color: theme.muted; font.features: { "tnum": 1 } }
-                                FButton { text: t("Download links ↗", "下载地址 ↗"); implicitHeight: theme.heightSm; flat: true; font.pixelSize: theme.micro + 1; visible: s.form.model_method === "manual"; onClicked: { modelInfo = modelData.id === "text" ? "encoder" : modelData.id; modelInfoOpen = true } }
+                                FButton { objectName: "modelFiles-" + modelData.id; text: downloads.copy.title + "  ›"; implicitHeight: theme.heightSm; flat: true; font.pixelSize: theme.micro + 1; visible: s.form.model_method === "manual"; onClicked: modelInfoOpen = true }
                             }
                         }
                     }
@@ -1278,25 +1269,111 @@ ApplicationWindow {
     FPopup {
         id: modelDialog; objectName: "modelDialog"
         visible: modelInfoOpen; onClosed: modelInfoOpen = false
-        width: Math.min(540, win.width-50)
-        height: Math.min(modelContents.implicitHeight + padding*2, win.height-48)
-        contentItem: ScrollView {
-            id: modelScroll; clip: true; contentWidth: availableWidth
-            ColumnLayout {
-            id: modelContents; width: modelScroll.availableWidth
-            spacing: 12
-            FText { text: t("Download models", "下载模型"); font.pixelSize: theme.section + 2; font.weight: Font.DemiBold }
-            FText { objectName: "videoModelGuide"; text: modelInfo === "video" ? s.video_model_guide : modelInfo === "decoder" ? t("Download the vae and audio_vae folders.", "下载 vae 和 audio_vae 文件夹。") : t("Download the text encoder to your model folder.", "下载文本编码器，放入模型目录。"); color: theme.muted; Layout.fillWidth: true; Layout.bottomMargin: 4 }
-            Repeater { model: modelLinks[modelInfo]; delegate: FButton { required property var modelData; required property int index; objectName: "modelLink-" + index; text: t(modelData.label, modelData.label_zh) + " ↗"; Layout.fillWidth: true; onClicked: backend.link(modelData.url) } }
-            Repeater { model: cloudLinks; delegate: FButton { required property var modelData; text: t("Quark · ", "夸克 · ") + modelData.label + " ↗"; Layout.fillWidth: true; onClicked: backend.link(modelData.url) } }
-            FText { text: t("When your download finishes, import a FreeVideo ZIP or choose the folder containing your models.", "下载完成后，导入 FreeVideo ZIP 或选择存放模型的文件夹。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true; Layout.topMargin: 6 }
-            RowLayout {
-                Layout.fillWidth: true; spacing: 8
-                FButton { text: t("Close", "关闭"); flat: true; onClicked: modelInfoOpen = false }
-                Item { Layout.fillWidth: true }
-                FButton { text: t("Choose model folder", "选择模型目录"); onClicked: { modelInfoOpen = false; backend.browse("model_dirs") } }
-                FButton { text: t("Import ZIPs", "导入 ZIP"); primary: true; onClicked: { modelInfoOpen = false; backend.browsePackages() } }
+        width: Math.min(940, win.width-50)
+        readonly property real maximumHeight: Math.min(680, win.height-48)
+        implicitHeight: Math.min(maximumHeight, modelContent.implicitHeight + topPadding + bottomPadding)
+        contentItem: ColumnLayout {
+            id: modelContent; spacing: 12
+            ScrollView {
+                id: modelScroll; objectName: "downloadListScroll"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumWidth: 0; Layout.minimumHeight: 0
+                implicitHeight: downloadBody.implicitHeight
+                clip: true; contentWidth: availableWidth
+                ColumnLayout {
+                    id: downloadBody; width: modelScroll.availableWidth; spacing: 12
+                    FText { text: downloads.copy.title; font.pixelSize: theme.section + 2; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    FText { objectName: "downloadListTotal"; visible: downloads.available; text: downloads.total; font.weight: Font.DemiBold; color: theme.accent; Layout.fillWidth: true }
+                    FText { objectName: "videoModelGuide"; text: downloads.copy.guide; color: theme.muted; Layout.fillWidth: true; font.pixelSize: theme.micro + 1 }
+                    FText { objectName: "downloadListCheck"; visible: !downloads.available && !s.download_list.inspection_error; text: s.download_list.checking ? downloads.copy.checking : downloads.copy.unavailable; Layout.fillWidth: true; color: theme.muted }
+                    FText { objectName: "downloadListReuse"; visible: downloads.available && text.length > 0; text: downloads.reused; color: theme.success; Layout.fillWidth: true; font.pixelSize: theme.micro + 1 }
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        Repeater {
+                            model: downloads.available ? downloads.groups : []
+                            delegate: ColumnLayout {
+                                id: downloadGroup
+                                required property var modelData
+                                readonly property bool expanded: !!win.downloadExpanded[modelData.id]
+                                Layout.fillWidth: true; spacing: 4
+                                FButton {
+                                    id: groupButton
+                                    objectName: "downloadGroup-" + downloadGroup.modelData.id
+                                    text: (downloadGroup.expanded ? "−  " : "+  ") + downloadGroup.modelData.title
+                                    Accessible.name: text + " · " + downloadGroup.modelData.summary
+                                    Layout.fillWidth: true; flat: true; leftPadding: 8; rightPadding: 8
+                                    contentItem: RowLayout {
+                                        spacing: 8
+                                        FText { objectName: groupButton.objectName + "-title"; text: groupButton.text; font: groupButton.font; Layout.fillWidth: true; horizontalAlignment: Text.AlignLeft; color: groupButton.hovered ? theme.text : theme.muted }
+                                        FText { objectName: groupButton.objectName + "-summary"; text: downloadGroup.modelData.summary; font: groupButton.font; horizontalAlignment: Text.AlignRight; color: theme.muted }
+                                    }
+                                    onClicked: {
+                                        var expanded = Object.assign({}, win.downloadExpanded)
+                                        expanded[downloadGroup.modelData.id] = !downloadGroup.expanded
+                                        win.downloadExpanded = expanded
+                                    }
+                                }
+                                Loader {
+                                    active: downloadGroup.expanded; visible: active; Layout.fillWidth: true
+                                    sourceComponent: ColumnLayout {
+                                        spacing: 2
+                                        Repeater {
+                                            model: downloadGroup.modelData.files
+                                            delegate: RowLayout {
+                                                required property var modelData; required property int index
+                                                objectName: "downloadFile-" + downloadGroup.modelData.id + "-" + index
+                                                Layout.fillWidth: true; spacing: 8
+                                                FText { objectName: parent.objectName + "-name"; text: modelData.name; Layout.fillWidth: true; elide: Text.ElideMiddle; maximumLineCount: 1; font.pixelSize: theme.micro }
+                                                FText { text: modelData.size; Layout.preferredWidth: 104; font.pixelSize: theme.micro; color: theme.muted; horizontalAlignment: Text.AlignRight }
+                                                FButton { objectName: "downloadHF-" + downloadGroup.modelData.id + "-" + index; text: "Hugging Face ↗"; flat: true; implicitHeight: theme.heightSm; font.pixelSize: theme.micro; onClicked: backend.link(modelData.hf_url) }
+                                                Item {
+                                                    id: mirrorSlot
+                                                    readonly property var file: modelData
+                                                    readonly property string suffix: downloadGroup.modelData.id + "-" + index
+                                                    objectName: "downloadMSSlot-" + suffix
+                                                    // Reserve the same width whether a mirror exists or not.
+                                                    implicitWidth: Math.max(80, mirrorMetrics.width + 32, missingMetrics.width + 32)
+                                                    implicitHeight: theme.heightSm
+                                                    TextMetrics { id: mirrorMetrics; text: sourceName("modelscope") + " ↗"; font.pixelSize: theme.micro; font.weight: Font.Medium }
+                                                    TextMetrics { id: missingMetrics; text: downloads.copy.missing_mirror; font.pixelSize: theme.micro }
+                                                    Loader {
+                                                        anchors.fill: parent
+                                                        sourceComponent: mirrorSlot.file.modelscope_url ? mirrorButton : mirrorUnavailable
+                                                    }
+                                                    Component {
+                                                        id: mirrorButton
+                                                        FButton { objectName: "downloadMS-" + mirrorSlot.suffix; text: sourceName("modelscope") + " ↗"; flat: true; implicitHeight: theme.heightSm; font.pixelSize: theme.micro; onClicked: backend.link(mirrorSlot.file.modelscope_url) }
+                                                    }
+                                                    Component {
+                                                        id: mirrorUnavailable
+                                                        FText { objectName: "downloadMSMissing-" + mirrorSlot.suffix; text: downloads.copy.missing_mirror; color: theme.muted; font.pixelSize: theme.micro; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    RowLayout {
+                        visible: s.download_list.folder.length > 0; Layout.fillWidth: true; spacing: 8
+                        FText { objectName: "downloadListNotice"; visible: text.length > 0; text: s.download_list.notice; color: theme.success; Layout.fillWidth: true; font.pixelSize: theme.micro + 1 }
+                        FButton { objectName: "openDownloadFolder"; text: downloads.copy.open_folder; flat: true; implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.openDownloadFolder() }
+                    }
+                    FText { objectName: "downloadListError"; visible: text.length > 0; text: s.download_list.error; color: theme.danger; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: theme.micro + 1 }
+                    FText { objectName: "downloadListRawError"; visible: s.error.length > 0 && !s.download_list.inspection_error; text: s.error; color: theme.danger; Layout.fillWidth: true; maximumLineCount: 2; elide: Text.ElideRight; font.pixelSize: theme.micro }
+                }
             }
+            RowLayout {
+                objectName: "downloadListActions"; Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 8
+                // The actions share what the Close button leaves, so a long label wraps instead of leaving the dialog.
+                readonly property int actionCount: checkDownloadList.visible ? 3 : 2
+                readonly property real actionWidth: Math.max(80, Math.floor((width - closeDownloadList.implicitWidth - (actionCount + 1) * spacing) / actionCount))
+                FButton { id: closeDownloadList; text: downloads.copy.close; flat: true; onClicked: modelInfoOpen = false }
+                Item { Layout.fillWidth: true }
+                FButton { id: checkDownloadList; objectName: "checkDownloadList"; Layout.maximumWidth: parent.actionWidth; visible: !downloads.available || s.download_list.needs_check; text: downloads.copy.check; enabled: !s.busy; onClicked: backend.prepareDownloadList() }
+                FButton { objectName: "useDownloadedFolder"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.use_folder; enabled: !s.busy; onClicked: backend.useDownloadedFolder() }
+                FButton { objectName: "exportDownloadList"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.export; primary: true; enabled: downloads.available && !s.busy; onClicked: backend.exportDownloadList() }
             }
         }
     }
