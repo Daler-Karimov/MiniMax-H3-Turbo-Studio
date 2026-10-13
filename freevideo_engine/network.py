@@ -772,8 +772,16 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
             return False
         event(network, category=category, source=source, file=path.name, action='verifying', algorithm=algorithm)
         check = network.get('resource_check') if keep_partial else None
+        from .install_activity import byte_progress
+        report = byte_progress('verify_progress', path.name, report=lambda **row:
+            event(network, category=category, source=source, action='verify-progress', **row))
+        def verification(done, total):
+            if check:
+                check()
+            if model:
+                report(done, total)
         return hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models'),
-                         progress=(lambda done, total: check()) if check else None) == expected
+                         progress=verification if model or check else None) == expected
     if path.is_file():
         if matches(path):
             return

@@ -100,6 +100,20 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
     """One activity line for the launcher; step counts and ETAs remain in worker events/logs."""
     t = lambda en, cn: cn if zh else en
     activity, name = event.get('activity'), event.get('name') or ''
+    if activity == 'count':
+        done, total = event.get('done'), event.get('total')
+        if number(done) and number(total) and total > 0 and done <= total:
+            return name + t(' · Completed ', ' · 已完成 ') + '%d / %d' % (done, total)
+        return name
+    if activity in ('verify', 'assemble', 'copy_bytes'):
+        verb = {'verify': ('Verifying ', '正在校验'), 'assemble': ('Assembling ', '正在合并'),
+                'copy_bytes': ('Copying ', '正在复制')}[activity]
+        # MiB rather than tenths of GiB: even slow disks change the visible text.
+        parts = [t(*verb) + name]
+        done, total = event.get('done'), event.get('total')
+        if event.get('unit') == 'bytes' and number(done) and number(total) and total > 0 and done <= total:
+            parts.append('%d / %d %s' % (done // 2**20, total // 2**20, 'MiB'))
+        return ' · '.join(parts)
     if activity == 'resume':
         return t('The connection dropped; resuming the download and keeping what was already downloaded',
                  '连接中断，正在继续下载，已下载的部分会保留')

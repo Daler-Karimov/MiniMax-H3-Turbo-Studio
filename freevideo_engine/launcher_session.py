@@ -1632,6 +1632,10 @@ class Session:
                            done=min(group['download_bytes'], group.get('downloaded_bytes') or 0),
                            rate=group.get('bytes_per_second') or progress.get('rate'))
         file_text = progress_text(current, zh, decimal_sizes=sys.platform == 'darwin')
+        if self.importer.busy and self.importer.state.get('activity'):
+            imported = self.importer.state
+            file_text = progress_text(dict(activity=imported['activity'], unit='bytes',
+                name=display('Package files', zh), done=imported.get('activity_done'), total=imported.get('activity_total')), zh)
         # The time row's estimate: only while downloading, from what is left at the current speed.
         from .setup_progress import number
         left, rate = (current.get('total') or 0) - (current.get('done') or 0), current.get('rate')

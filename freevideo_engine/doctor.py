@@ -11,7 +11,12 @@ from .monitoring import save
 from . import processes, subprocess_output
 
 
-def doctor(*, probe=False, hardware=None, backends=None):
+def doctor(*, probe=False, hardware=None, backends=None, progress=None):
+    if progress is None and os.environ.get('FREEVIDEO_INSTALL_PROGRESS') == '1':
+        from .install_activity import step
+        progress = step
+    if progress:
+        progress('GPU information reading')
     from .triton_compat import own_temporary_environment
     own_temporary_environment()
     versions = package_versions()
@@ -28,7 +33,10 @@ def doctor(*, probe=False, hardware=None, backends=None):
         with runtime_lock() as descriptor:
             env = dict(os.environ, **{LOCK_ENV: str(descriptor)})
             linear = ['linear'] + (['linear-int8'] if hardware.system in ('Windows', 'Linux') else [])
-            for backend in [*sorted(backends), *linear]:
+            probes = [*sorted(backends), *linear]
+            for index, backend in enumerate(probes):
+                if progress:
+                    progress('GPU tests running', index, len(probes))
                 command = [sys.executable, '-m', 'freevideo_engine.probe', backend]
                 try:
                     child = subprocess_output.run_python(command, capture_output=True, timeout=180, env=env,
@@ -52,6 +60,8 @@ def doctor(*, probe=False, hardware=None, backends=None):
                 except OSError as error:
                     row = {'backend': backend, 'status': 'error', 'error': 'Could not start kernel probe: ' + str(error)}
                 result['kernel_probes'].append(row)
+                if progress:
+                    progress('GPU tests running', index + 1, len(probes))
             result.update(readiness(result['kernel_probes']), identity=identity(hardware, versions),
                           view_root=view_root())
             if temp_root():
@@ -59,4 +69,6 @@ def doctor(*, probe=False, hardware=None, backends=None):
             result['receipt'] = str(receipt_path())
             result['validation'] = 'Small kernels executed on the listed GPU; this does not validate full-video speed, quality or capacity.'
             save(receipt_path(), result)
+            if progress:
+                progress('GPU tests finished', len(probes), len(probes))
     return result

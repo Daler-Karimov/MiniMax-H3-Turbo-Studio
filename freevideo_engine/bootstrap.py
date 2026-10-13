@@ -998,6 +998,8 @@ def setup_task(label):
     routes = {'official': 'official source', 'nju': 'Nanjing University mirror',
               'tuna': 'Tsinghua mirror', 'ghfast': 'GitHub mirror',
               'user-python': 'your Python mirror', 'user': 'your configured source'}
+    # Python route retries append the route after the source.
+    label = re.sub(r'-(?:direct|proxy)$', '', label)
     source = next((name for name in routes if label.endswith('-' + name)), None)
     key = label[:-(len(source) + 1)] if source else label
     for prefix in ('unified-', 'engine-', 'encoder-'):
@@ -1098,7 +1100,8 @@ class Installer:
             from .runtime_libraries import damaged
             if ui is not None:
                 prepare_step(ui, 'Checking the environment')
-            self.damaged_before = damaged(self.pythons['engine'])
+            self.damaged_before = damaged(self.pythons['engine'], progress=(
+                lambda done, total: prepare_step(ui, 'Checking the environment', done, total)) if ui is not None else None)
         # Moving a working installation to int8 checks the int8 kernels first
         # (execute), so a GPU that fails them keeps its configuration as it was.
         # With changed files that check cannot run; the one after installing still does.
@@ -1304,6 +1307,7 @@ class Installer:
             raise RuntimeError(self.state.get('resource_guard', 'Installation cancelled.'))
         from .triton_compat import temporary_environment
         env = temporary_environment(self.root, env or self.env)
+        env = dict(env, FREEVIDEO_INSTALL_PROGRESS='1')
         args, cwd = uv_file_arguments(args, cwd)
         with self.state_lock:
             index = len(self.state['steps'])
@@ -1316,6 +1320,10 @@ class Installer:
         if label == 'models' and self.plan.get('local_models'):
             title, detail = 'Reuse models / download missing files', 'Import verified local models; source files stay in place'
         self.ui.begin(key, title, detail=str(log) if self.ui.verbose else detail)
+        initial = ('Python downloading' if title == 'Install Python' else
+                   'Environment creating' if title == 'Create Python environment' else '')
+        if initial:
+            self.ui.update(key, activity='note', name=initial, detail=initial)
         progress = LogProgress(log)
         parallel_tasks = set()
         models_step = label == 'models'
@@ -1445,11 +1453,13 @@ class Installer:
                                constraints=['-c', constraints_file(label, self.system)], check=check):
                         return
                 from .runtime_libraries import damaged, reinstall_arguments
-                fresh = damaged(executable)
+                fresh = self.check_runtime_libraries(executable, label)
                 result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(fresh), *argv[5:]], group)
                 # Files linked from a changed uv cache arrive with a new environment.
-                if not fresh and damaged(executable):
-                    result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(damaged(executable)), *argv[5:]], group)
+                if not fresh:
+                    changed = self.check_runtime_libraries(executable, label)
+                    if changed:
+                        result = self.packages(label + '-torch', [*argv[:5], *reinstall_arguments(changed), *argv[5:]], group)
                 return result
             task(name + '-torch', torch_packages,
                  (name + '-venv',), writer)
@@ -1501,6 +1511,18 @@ class Installer:
             task('package-cache', lambda: self.release_package_cache(uv), prerequisites)
             tasks['models']['after'] = ('package-cache',)
         return tasks, pythons, comfy
+
+    def check_runtime_libraries(self, python, role):
+        from .runtime_libraries import damaged
+        key = role + '-runtime-libraries'
+        self.ui.begin(key, 'Runtime libraries verifying')
+        def progress(done, total):
+            self.ui.update(key, activity='count', name='Runtime libraries verifying',
+                           detail='Runtime libraries verifying', done=done, total=total, unit='items')
+        try:
+            return damaged(python, progress=progress)
+        finally:
+            self.ui.end(key)
 
     def release_package_cache(self, uv):
         cache = self.root / 'downloads' / 'uv-cache'
@@ -1851,6 +1873,7 @@ class Installer:
 
     def execute(self):
         if self.int8_check_first:
+            prepare_end(self.ui)  # The GPU precheck is already execution work.
             # The installed environment runs this source's probes (PYTHONPATH);
             # the receipt is reused by the check after installation.
             self.ui.phase('Verify installation on your GPU', 0, 8)

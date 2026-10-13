@@ -69,7 +69,7 @@ def _canonical(path):
     return os.path.normcase(plain(text))
 
 
-def check(site):
+def check(site, progress=None):
     """Compare every recorded cuDNN file under ``site`` with its RECORD hash.
 
     A file is changed only when it matches none of the hashes recorded for its
@@ -100,6 +100,8 @@ def check(site):
             if name not in result['owners']:
                 result['owners'].append(name)
     directories = set()
+    if progress:
+        progress(0, len(expected))
     for path, records in expected.values():
         owners = sorted({name for name, _, _ in records})
         entry = dict(name=os.path.basename(path), owner=owners[0], owners=owners)
@@ -125,6 +127,9 @@ def check(site):
                                               expected_size=sizes[0] if len(sizes) == 1 else sizes or None))
         except OSError as error:
             result['unreadable'].append(dict(entry, error=type(error).__name__))
+        finally:
+            if progress:
+                progress(result['checked'], len(expected))
     recorded = {_canonical(path) for path, _ in expected.values()}
     for directory in sorted(directories):
         try:
@@ -301,7 +306,7 @@ def dependency_closure(python, requirements, additional=()):
     return set(seen)
 
 
-def damaged(python):
+def damaged(python, progress=None):
     """Distributions whose recorded cuDNN files differ in this Python's environment.
 
     Sizes are compared first and only files of the recorded size are hashed,
@@ -310,7 +315,7 @@ def damaged(python):
     """
     try:
         site = site_for(python)
-        found = check(site) if site is not None else {'changed': []}
+        found = check(site, **({'progress': progress} if progress else {})) if site is not None else {'changed': []}
     except Exception:
         return []
     return sorted({owner for row in found['changed'] for owner in row['owners']})
