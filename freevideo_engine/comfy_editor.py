@@ -39,6 +39,8 @@ _CLIP = re.compile(r'c[1-9][0-9]{0,8}')
 _TOKEN = re.compile(r'[A-Za-z0-9_-]{1,128}')
 _REASON = re.compile(r'[a-z_]{1,80}')
 _REF = re.compile(r'[A-Za-z0-9_-]{1,128}')
+# A note is one line: the page refuses the same characters (editor_model.js NOTE_BREAK) and the same ends.
+_NOTE_BREAK = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029]')
 _STATE = threading.RLock()
 _TRANSCODING = threading.Lock()
 _FAILED_IMPORTS = {}  # terminal statuses awaiting writable storage
@@ -279,6 +281,12 @@ def validate(record):
                 if not isinstance(raw['ref'], str) or not _REF.fullmatch(raw['ref']):
                     raise ValueError('Invalid block reference')
                 clip['ref'] = raw['ref']
+            if 'note' in raw:
+                note = raw['note']
+                if (not _text(note, 120) or not note or note != note.strip() or '\ufeff' in (note[0], note[-1])
+                        or _NOTE_BREAK.search(note)):
+                    raise ValueError('Invalid block note')
+                clip['note'] = note
             if source is None and ('take' in raw or 'made_text' in raw):
                 raise ValueError('Invalid clip versions')
             _made(raw, clip)

@@ -753,7 +753,7 @@ def project_schema(name):
     if name != 'operations':
         return EMPTY
     fields = {
-        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end.'),
+        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end. Then write the new picture clip\'s note.'),
         'split': (dict(clip_ids=ids, frame=EDITOR_FRAME), ('clip_ids', 'frame'), 'Cut selected clips and their linked partners. The frame must be inside a selected segment.'),
         'trim': (dict(clip_ids=ids, frame=EDITOR_FRAME, edge=enum(('start', 'end'))), ('clip_ids', 'frame', 'edge'), 'Trim a selected edge at the frame. The frame must be inside a selected segment.'),
         'remove': (dict(clip_ids=ids), ('clip_ids',), 'Remove selected clips and linked partners. Use clip IDs from this revision.'),
@@ -763,6 +763,7 @@ def project_schema(name):
         'move': (dict(clip_ids=ids, frames=number(-10**7, 10**7, integer=True)), ('clip_ids', 'frames'), 'Move selected clips by a signed relative frame offset. Use clip IDs from this revision; linked partners move together.'),
         'describe': (dict(clip_ids=ids, text=dict(type='string', maxLength=8000)), ('clip_ids', 'text'), 'Set the description of selected clips. Use clip IDs from this revision and one paragraph of text.'),
         'set_ref': (dict(clip_ids=ids, ref=dict(type='string', maxLength=128, pattern=r'^[A-Za-z0-9_-]{0,128}$')), ('clip_ids', 'ref'), 'Set an outside shot reference on selected clips. Use clip IDs from this revision; an empty ref removes it.'),
+        'note': (dict(clip_ids=ids, text=dict(type='string', maxLength=120)), ('clip_ids', 'text'), 'Write the one line the user sees under selected picture clips; without it they see the start of the generation text. Do it after you add, generate or change a clip: in the user\'s language, what is in the picture, subject first ("Train through morning mist"); a short clip shows only the first few characters. Not the clip\'s position (opening, part 2) and not its progress. Up to 120 characters on one line; an empty text removes it. It never changes the description used for generation.'),
         'use_version': (dict(clip_id=CLIP, index=number(0, 49, integer=True)), ('clip_id', 'index'), 'Restore a stored clip version. First get the clip ID and its versions array; index is zero based.'),
         'subtitles': (dict(cues=array(obj(dict(start=EDITOR_FRAME, frames=number(1, 10**7, integer=True), text=dict(type='string', minLength=1, maxLength=400)),
                                          ('start', 'frames', 'text')), 1, 500), replace=dict(type='boolean')), ('cues',),

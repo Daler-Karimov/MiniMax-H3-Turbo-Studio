@@ -33,6 +33,19 @@ RULE_EXPECTED = {
     'source': 'a source that has a picture or sound',
     'invalid': 'an op named in the operations schema with its fields',
 }
+# The note operation shares the page's 'text' code with describe; what it needed is its own.
+NOTE_EXPECTED = 'picture clips and a text of at most 120 characters on one line (an empty text removes the note)'
+# An agent acts on the last answer it read, so the answer that brings new picture clips asks for their notes.
+NOTE_NEXT = ('Picture clips %s have no note yet. Write each one now with a note operation: in the user\'s language, '
+             'what is in the picture, subject first; not its position and not its progress.')
+
+
+def note_next(result, project, ids):
+    missing = [clip['id'] for track in project['tracks'] if track['kind'] == 'video' for clip in track['clips']
+               if clip['id'] in ids and not clip.get('note')]
+    if missing:
+        result['next'] = NOTE_NEXT % ', '.join(missing)
+    return result
 
 
 def new_project(given):
@@ -168,6 +181,8 @@ class Projects:
     def _rejected(self, error, stored, path, received, *, operation=None):
         if error['code'] in STATE_CODES:
             raise ProjectError(STATE_CODES[error['code']], project=stored, operation=operation)
+        if error['code'] == 'text' and isinstance(received, dict) and received.get('op') == 'note':
+            raise _invalid(path, NOTE_EXPECTED, received)
         raise _invalid(path, RULE_EXPECTED.get(error['code'], 'an operation this timeline allows'), received)
 
     # Reads ---------------------------------------------------------------------------------------------
@@ -270,6 +285,7 @@ class Projects:
                            operations[index] if index is not None else None, operation=index)
         saved = self._save(reply['project'], ref=ref, client=client)
         result = dict(project=saved, changed_clip_ids=changed_clip_ids(stored, saved), results=reply['results'])
+        note_next(result, saved, set(result['changed_clip_ids']) - set(_clips(stored)))
         self._remember(ref, digest, result, client)
         return result
 
@@ -331,7 +347,8 @@ class Projects:
             raise
         with self.lock:
             self.prepared[job['id']] = saved
-        result = dict(job=jobs.view(job), jobs=[jobs.view(job)], project=saved, clip_ids=plan['ids'])
+        result = note_next(dict(job=jobs.view(job), jobs=[jobs.view(job)], project=saved, clip_ids=plan['ids']),
+                           saved, set(plan['ids']))
         self._remember(ref, digest, result, client)
         return result
 

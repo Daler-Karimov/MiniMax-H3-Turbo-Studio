@@ -48,7 +48,7 @@ export function readTextProject(raw, parseMedia) {
             check(typeof c.text === 'string' && Array.from(c.text).length <= TEXT_LIMIT && !/[\u0000-\u0008\u000b-\u001f\u007f\ud800-\udfff]/u.test(c.text));
             check(['source','pending','link','part','job','reason'].every(k => c[k] == null) && (c.extend === undefined || c.extend === false) && (c.versions === undefined || (Array.isArray(c.versions) && c.versions.length === 0)));
             check((c.in === undefined || c.in === 0) && (c.length === undefined || c.length === c.frames));
-            check(!['volume', 'fit', 'splice', 'target_frames', 'text_by', 'ref', 'take', 'made_text'].some(k => c[k] !== undefined));
+            check(!['volume', 'fit', 'splice', 'target_frames', 'text_by', 'ref', 'note', 'take', 'made_text'].some(k => c[k] !== undefined));
             const clip = {id: c.id, start: c.start, frames: c.frames, in: 0, length: c.frames, source: null, link: null,
                 text: c.text, part: null, pending: null, reason: null, job: null, extend: false, versions: [], text_kind: track.kind};
             check(track.kind !== 'subtitle' || c.text_style === undefined);

@@ -24,6 +24,10 @@ const check = (yes, code = 'invalid', message = code) => { if (!yes) reject(code
 const ID = /^c[1-9]\d{0,8}$/;
 // Who last wrote a block's description (its note on the timeline), and an outside reference (a shot id).
 const TEXT_BY = ['user', 'agent'], REF = /^[A-Za-z0-9_-]{1,128}$/;
+// A short line about a block for whoever looks at the timeline; regenerating never reads it.
+// One line: no control or line-break character anywhere, nothing at its ends that either side would strip.
+const NOTE_BREAK = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const validNote = text => validText(text) && text === text.trim() && !NOTE_BREAK.test(text) && Array.from(text).length >= 1 && Array.from(text).length <= 120;
 const WORK = /^\d{4}-\d{2}-\d{2}\/[0-9a-f]{32}$/;
 const PENDING = [null, 'draft', 'queued', 'running', 'failed', 'stopped'];
 const key = source => `${source.kind}:${source.id}`;
@@ -168,6 +172,7 @@ export function parse(value) {
             // Who last wrote the description, and an outside reference (a shot id) for callers.
             if (item.text_by !== undefined) { check(TEXT_BY.includes(item.text_by), 'text'); clip.text_by = item.text_by; }
             if (item.ref !== undefined) { check(typeof item.ref === 'string' && REF.test(item.ref), 'ref'); clip.ref = item.ref; }
+            if (item.note !== undefined) { check(validNote(item.note), 'text'); clip.note = item.note; }
             // The part this one was pulled out of, or the part before it in the same range.
             if (item.follows !== undefined) { check(kind === 'video' && typeof item.follows === 'string' && ID.test(item.follows) && item.follows !== item.id, 'follows'); clip.follows = item.follows; }
             check(source !== null || (item.take === undefined && item.made_text === undefined), 'versions'); madeFields(item, clip);
@@ -335,14 +340,31 @@ export function setRef(record, ids, ref) {
     check(typeof ref === 'string' && (!ref || REF.test(ref)), 'ref');
     return onBlocks(record, ids, clip => { if (ref) clip.ref = ref; else delete clip.ref; }, false);
 }
+// A note kept with the block; an empty value removes it. A block being generated can still be noted.
+export function setNote(record, ids, text) {
+    check(typeof text === 'string' && (!text.trim() || validNote(text.trim())), 'text');
+    return onBlocks(record, ids, clip => { if (text.trim()) clip.note = text.trim(); else delete clip.note; }, false, {picture: true, kept: true});
+}
 // Only an agent's description is marked; no mark means the user wrote it, as in every earlier edit.
-function written(clip, text, by) { clip.text = text; if (text && by === 'agent') clip.text_by = by; else delete clip.text_by; }
-function onBlocks(record, ids, change, refuseBusy) {
+// A note was written about the description it came with, so it goes when the user writes another one.
+function written(clip, text, by) {
+    if (by === 'user' && text !== clip.text) delete clip.note;
+    clip.text = text; if (text && by === 'agent') clip.text_by = by; else delete clip.text_by;
+}
+function onBlocks(record, ids, change, refuseBusy, {picture = false, kept = false} = {}) {
     check(Array.isArray(ids) && ids.length > 0 && ids.every(id => typeof id === 'string'), 'id');
     for (const id of ids) check(find(record, id), 'missing');
     const selected = linkedIds(record, ids), clips = all(record).filter(clip => selected.has(clip.id));
-    check(!clips.some(isText), 'text'); assertUnlocked(record, [...selected]); if (refuseBusy) busy(clips);
+    check(!clips.some(isText), 'text');
+    // A sound block takes the change only together with the picture it is linked to.
+    check(!picture || clips.every(clip => trackOf(record, clip.id).kind === 'video' || clip.link), 'text');
+    assertUnlocked(record, [...selected]); if (refuseBusy) busy(clips);
     const next = copy(record); for (const clip of all(next)) if (selected.has(clip.id)) change(clip);
+    // The blocks set aside while a part is being replaced take the change too: whichever of them comes back shows it.
+    if (kept) for (const tx of next.replacements || []) for (const row of [...tx.originals, ...tx.clips]) {
+        const shown = clips.filter(clip => trackOf(record, clip.id).id === row.id);
+        for (const clip of row.clips) if (shown.some(v => v.id === clip.id || (clip.start >= v.start && end(clip) <= end(v)))) change(clip);
+    }
     return finish(next);
 }
 export function linkedIds(record, ids) {
