@@ -4,6 +4,11 @@
     ./freevideo agent submit shot.json --wait
     ./freevideo agent batch storyboard.json --wait
     ./freevideo agent job j0123456789ab
+
+Linux x86_64 uses ./freevideo; Windows uses freevideo.cmd. On macOS and other
+Unix platforms, use the installed interpreter and source folder:
+    env FREEVIDEO_AGENT=1 PYTHONPATH=/path/to/FreeVideo/engine-source \
+        /path/to/installed/python -X utf8 -m freevideo_engine.agent.cli --root /path/to/FreeVideo status
 """
 import argparse
 import json
@@ -137,6 +142,9 @@ def build_parser():
 
 
 def main(argv=None):
+    for stream in (sys.stdin, sys.stdout):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     parser = build_parser()
     args = parser.parse_args(argv)
     values = vars(args)

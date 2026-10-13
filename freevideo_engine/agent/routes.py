@@ -679,7 +679,7 @@ def register():
         # For Settings: how to connect an agent on this computer. The token itself stays in its file.
         from ..comfy_bridge import installation_root, source_root
         from .guide import page_language
-        from .mcp import client_config
+        from .mcp import client_config, linux_wrapper_supported, python_shell_command, shell_quote
         page_language(request[query_key].get('lang'))
         try:
             root = installation_root()
@@ -687,16 +687,19 @@ def register():
         except (OSError, ValueError) as error:
             return problem('not_ready', str(error), 503)
         config = await asyncio.to_thread(client_config, root)
-        script = next((folder / name for folder in (root, source_root())
-                       for name in (('freevideo.cmd',) if os.name == 'nt' else ('freevideo',))
-                       if (folder / name).is_file()), None)
+        if os.name != 'nt' and not linux_wrapper_supported():
+            cli = python_shell_command(config, 'freevideo_engine.agent.cli') + ' status'
+        else:
+            script = next((folder / name for folder in (root, source_root())
+                           for name in (('freevideo.cmd',) if os.name == 'nt' else ('freevideo',))
+                           if (folder / name).is_file()), None)
+            cli = shell_quote(str(script), windows=os.name == 'nt') + ' agent status' if script else None
         seen = {}
         for row in jobs.rows():
             if row.get('client'):
                 seen[row['client']] = max(seen.get(row['client'], 0), row['created_at'])
         return reply(dict(address=local_address(request), api=PREFIX, token_file=str(token_path(root)), claude_code=config['claude_code'],
-                          mcp_json=config['mcp_json'], cli=('"%s"' % script if ' ' in str(script) else str(script))
-                          + ' agent status' if script else None,
+                          mcp_json=config['mcp_json'], cli=cli,
                           token_from_environment=False,
                           agents=[dict(client=name, last_seen=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(stamp)))
                                   for name, stamp in sorted(seen.items(), key=lambda item: -item[1])[:5]]))
