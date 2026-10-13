@@ -358,7 +358,7 @@ def connection_guide(root, base, lang=None, offers=None):
         '# Only after the user asks for a video:',
         '# label is the short name the user sees on the job, in their language: what the video shows, 2 to 8 characters.',
         '# seconds and aspect are what the user asked for (10 seconds and 16:9 when they said nothing): send them the first time.',
-        '# ref is a new name for every new request; the same ref again only repeats a submission whose answer was lost.',
+        '# ref is a new name for every new request, with the date and time in it; the same ref again only repeats a submission whose answer was lost.',
         '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "seconds": 5, "aspect": "16:9", "label": "SHORT NAME",',
         '#                               "ref": "A-NEW-NAME-FOR-THIS-REQUEST"})["job"]',
         '# while job["status"] not in ("succeeded", "failed", "cancelled", "interrupted"):',
@@ -367,6 +367,7 @@ def connection_guide(root, base, lang=None, offers=None):
         '# The conversation inside FreeVideo (see below): each wait is its own command; when it returns, run the next one.',
         '# box = call("GET", "/inbox?wait=50")   # {"session": ..., "inbox": [what the user said], "again": true if nothing yet}',
         '# call("POST", "/sessions/" + box["session"] + "/events", {"type": "message", "text": "YOUR WORDS"})',
+        '# Post what you say first, then wait: never one command that waits and then posts, your words would be up to 50 s late.',
     ])
     return dict(language=lang, api=base + PREFIX, token_file=token_file, claude_code=config['claude_code'],
         codex=config['codex'], mcp_json=config['mcp_json'], command=config['command'],
@@ -403,7 +404,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      '返回后接着发下一条。'
                      '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
                      '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
-                     '或者一句用户需要知道的话，发回同一个 session，再接着等。中文用全角标点。'
+                     '或者一句用户需要知道的话，发回同一个 session，再接着等。先把话发出去，再调等待接口；不要写成“等待返回后才发话”，那样这句话会晚到将近一分钟。中文用全角标点。'
                      '做完一条视频也不是结尾：这句话就是汇报，不要再在自己窗口里写总结（一写总结这一轮就结束了，'
                      '用户的下一句话没人听），紧接着再调等待接口，空等多少轮都接着等。'
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
@@ -422,7 +423,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
                      '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
                      'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
-                     'user needs to know, to the same session, and wait again. Chinese text takes full-width punctuation. '
+                     'user needs to know, to the same session, and wait again. Post your words first and call the wait after; never wait and then post, or they reach the user up to a minute late. Chinese text takes full-width punctuation. '
                      'A finished video is not the end either: that sentence is the report, so write no summary in your own '
                      'window (a summary ends your turn, and then nobody hears the next thing the user says); call the wait '
                      'again right away, and keep waiting however many waits come back empty. Do not create another session for this conversation. '
