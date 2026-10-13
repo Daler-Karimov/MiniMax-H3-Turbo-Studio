@@ -3,6 +3,7 @@ import { wordmark } from './wordmark.js';
 import { openCompatibility } from './compatibility.js';
 import { animateDetails, closeDialog } from './motion.js';
 import { agentConnect } from './agent_connect.js';
+import { createGuideReplayEntry } from './first_run_guide.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./setup.css', import.meta.url).href;
@@ -148,7 +149,11 @@ export async function openSetup() {
     // Why Install / repair is unavailable, so it never looks like a broken button.
     const blocked = note(""); blocked.classList.add("fv-setup-why"); blocked.setAttribute("aria-live", "polite"); blocked.hidden = true;
     installation.append(blocked);
-    dialog.append(heading, installation, downloads, agentConnect(t, api), advanced);
+    const guideReplay = createGuideReplayEntry({dialog, cn, openWorkspace: async () => {
+        const {openCreativeWorkspace} = await import('./view_navigation.js');
+        return openCreativeWorkspace();
+    }});
+    dialog.append(heading, installation, downloads, agentConnect(t, api), advanced, guideReplay);
     const motions = [...dialog.querySelectorAll('details')].map(animateDetails);
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     document.body.append(dialog); dialog.showModal();

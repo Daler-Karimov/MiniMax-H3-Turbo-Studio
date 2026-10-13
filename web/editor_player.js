@@ -4,6 +4,9 @@ import {pictureSession} from './editor_picture_session.js';
 import {createPreviewPicture} from './editor_preview_picture.js';
 import {sourceKey, mediaURL} from './editor_store.js';
 import {clipPictureSize, createPictureGuide} from './editor_frame.js';
+import {createPlaybackClock} from './editor_transport_model.js';
+import {createAudioPreview} from './editor_audio.js';
+import {previewSpeed, speedSeek, speedAudioFrame, separateSpeedAudio} from './editor_speed.js';
 const el = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
 export function audioSeconds(clip, sourceFrame) {
     // The chain receipt counts samples at 32 kHz, even if the media is 48 kHz.
@@ -13,7 +16,7 @@ export const transportTime = frames => {
     const seconds = Math.floor(Math.max(0, frames) / 24);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
-export function createEditorPlayer(host, transport, {state, sources, api, t, preservePreview = () => false}) {
+export function createEditorPlayer(host, transport, {state, sources, api, t, error = () => {}, readAudioSamples = null, preservePreview = () => false}) {
     const frame = el('div', 'fv-ed-picture'); frame.setAttribute('aria-label', t('Video preview', '视频预览'));
     const empty = el('div', 'fv-ed-empty-preview'), pictureIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     pictureIcon.setAttribute('viewBox', '0 0 24 24'); pictureIcon.setAttribute('aria-hidden', 'true');
@@ -33,7 +36,9 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
     const time = el('span', 'fv-ed-time'); time.setAttribute('aria-live', 'off'); transport.append(playButton, time);
     let active = 0, clipId = null, playing = false, disposed = false, raf = null, clockStart = 0, frameStart = 0, ticking = false, preview = null, previewSize = null, previewProject = null;
     let audioContext = null, textRenderer = null;
+    const playback = createPlaybackClock();
     const gains = new WeakMap(), volumePreview = new Map();
+    const audioPreview = createAudioPreview({state, sources, api, volumePreview, readSamples: readAudioSamples, error});
     const clipVolume = clip => volumePreview.get(clip?.id) ?? clip?.volume ?? 1;
     function volume(media, value) {
         // HTMLMediaElement stops at 1. A GainNode implements the record's 0–2 range.
@@ -47,11 +52,13 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
         media.volume = Math.min(1, Math.max(0, value));
     }
     function seekMedia(media, url, seconds, running, gain = 1) {
+        media.playbackRate *= Math.max(1, playback.rate); if (media.tagName === 'AUDIO') media.muted ||= playback.rate < 0;
+        running = running && playback.rate > 0;
         const changed = media.dataset.source !== url;
         if (changed) { media.pause(); media.dataset.source = url; media.src = url; media.load(); }
         media._editorTime = Math.max(0, seconds); media._editorRunning = running;
         volume(media, gain);
-        if (media.readyState >= 1 && (changed || !running || Math.abs(media.currentTime - seconds) > .08)) {
+        if (media.readyState >= 1 && (speedSeek(media) || changed || !running || Math.abs(media.currentTime - seconds) > .08)) {
             try { media.currentTime = Math.max(0, seconds); } catch {}
         }
         if (running) { if (media.paused) media.play().catch(() => {}); } else media.pause();
@@ -81,6 +88,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
         empty.hidden = hasContent || preview?.tagName === 'VIDEO'; frame.dataset.empty = String(!empty.hidden);
         playButton.disabled = !total || !hasContent;
         time.textContent = `${transportTime(position)} / ${transportTime(total)}`;
+        transport.dataset.rate = String(playing ? playback.rate : 0);
         if (playButton.dataset.playing !== String(playing)) {
             playButton.dataset.playing = String(playing);
             const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); glyph.setAttribute('viewBox', '0 0 16 16'); glyph.setAttribute('aria-hidden', 'true'); glyph.style.width = glyph.style.height = '16px';
@@ -102,20 +110,22 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
             clipId = clip.id;
         }
         const linked = hasPicture ? [...map.values()].find(row => row.clip.id === clip.link) : null;
-        const separate = !!linked?.clip.splice || !hasPicture;
+        const processedAudio = audioPreview.render({record, position, playing: playing && playback.rate > 0, playbackRate: playback.rate}), separate = processedAudio || !!linked?.clip.splice || !hasPicture || separateSpeedAudio(linked?.clip);
         if (hasPicture) {
-            const video = videos[active]; video.muted = !linked || separate;
-            seekMedia(video, mediaURL(api, source.video), (videoRow.frame + (playing ? 0 : .5)) / 24, playing && map.get('v1')?.clip.id === clip.id, clipVolume(linked?.clip));
+            const video = videos[active], speedPlayback = previewSpeed(video, clip, playing, linked?.clip); video.muted = !linked || separate || playback.rate < 0 || speedPlayback.muted;
+            seekMedia(video, mediaURL(api, source.video), (videoRow.frame + (playing && playback.rate > 0 ? 0 : .5)) / 24, speedPlayback.running && map.get('v1')?.clip.id === clip.id, clipVolume(linked?.clip));
             videos.forEach((value, index) => { value.classList.toggle('fv-ed-visible', index === active); if (index !== active) stopMedia(value); });
         }
         picturePreview.update({clip: hasPicture ? clip : null, size: hasPicture && clipPictureSize(clip, sources), video: videos[active], preview: !!preview, playing});
         let slot = 0;
         for (const [track, row] of map) {
+            if (processedAudio) break;
             if (isText(row.clip) || track === 'v1' || (hasPicture && row.clip.link === clip.id && !separate)) continue;
             const metadata = sources.get(sourceKey(row.clip.source));
             if (!metadata || metadata.missing || slot >= audio.length) continue;
             const url = mediaURL(api, metadata.audio); if (!url) continue;
-            seekMedia(audio[slot++], url, audioSeconds(row.clip, row.frame), playing, clipVolume(row.clip));
+            const sound = audio[slot++], playback = previewSpeed(sound, row.clip, playing); sound.muted = playback.muted;
+            seekMedia(sound, url, audioSeconds(row.clip, speedAudioFrame(row.clip, position - row.clip.start)), playback.running, clipVolume(row.clip));
         }
         while (slot < audio.length) stopMedia(audio[slot++]);
         const next = record.tracks[0].clips.find(value => value.start >= (clip ? clip.start + clip.frames : position) && value.source);
@@ -128,9 +138,10 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
     }
     function tick(now) {
         if (!playing || disposed) return;
-        const total = model.exportFrames(state.record), position = frameStart + Math.max(0, Math.floor((now - clockStart) * 24 / 1000)), last = Math.max(0, total - 1);
-        ticking = true; state.seek(Math.min(position, last)); ticking = false; render();
-        if (position >= total) { pause(); return; }
+        const total = model.exportFrames(state.record), {frame: position, stop} = playback.advance(now, total);
+        const target = stop && playback.rate > 0 && !playback.range ? Math.max(0, total - 1) : position;
+        ticking = true; state.seek(target); ticking = false; render();
+        if (stop) { pause(); return; }
         raf = requestAnimationFrame(tick);
     }
     const pictureLayout = record => JSON.stringify([record.width, record.height, record.tracks, record.replacements]);
@@ -138,10 +149,13 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
     closePreview.onclick = () => { clearPreview(); render(); };
     function play() {
         if (disposed || playing || playButton.disabled) return;
-        clearPreview(); if (state.playhead >= Math.max(0, model.exportFrames(state.record) - 1)) state.seek(0);
+        clearPreview();
+        const total = model.exportFrames(state.record), restart = !playback.range && !playback.loop && playback.rate > 0 && state.playhead >= Math.max(0, total - 1);
+        state.seek(playback.begin(restart ? 0 : state.playhead, total));
         playing = true; clockStart = performance.now(); frameStart = state.playhead; render(); raf = requestAnimationFrame(tick);
+        playback.reset(clockStart, frameStart);
     }
-    function pause() { playing = false; cancelAnimationFrame(raf); [...videos, ...audio].forEach(stopMedia); render(); }
+    function pause() { playing = false; playback.rate = 1; cancelAnimationFrame(raf); [...videos, ...audio].forEach(stopMedia); render(); }
     playButton.onclick = () => playing ? pause() : play();
     const unsubscribe = state.subscribe(event => {
         if (event.type === 'selection') { if (pictureEdit.panelOpen && pictureEdit.selected()) clearPreview(); render(); return; }
@@ -149,6 +163,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
         if (preview && preservePreview()) previewProject = pictureLayout(state.record);
         else if (event.type === 'playhead' || previewProject !== pictureLayout(state.record)) clearPreview();
         if (playing && !ticking) { clockStart = performance.now(); frameStart = state.playhead; }
+        if (playing && !ticking) playback.reset(clockStart, frameStart);
         render();
     });
     const stopPictureEdit = pictureEdit.subscribe(() => {
@@ -159,7 +174,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
         else if ((row?.clip.id || null) !== clipId) render();
     });
     render();
-    return {element: frame, picturePreview, play, pause, toggle: () => playing ? pause() : play(), refresh: render,
+    return {element: frame, playback, picturePreview, play, pause, toggle: () => playing ? pause() : play(), refresh: render,
         clearPreview() { clearPreview(); render(); },
         get playing() { return playing; },
         setTextRenderer(callback) { textRenderer = callback; },
@@ -177,7 +192,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, pre
             preview.onended = () => { clearPreview(); render(); };
             preview.src = mediaURL(api, metadata.video || metadata.audio); frame.append(preview); closePreview.hidden = false; render(); preview.play().catch(() => {});
         },
-        dispose() { disposed = true; playing = false; cancelAnimationFrame(raf); unsubscribe(); stopPictureEdit(); clearPreview();
+        dispose() { disposed = true; playing = false; cancelAnimationFrame(raf); unsubscribe(); stopPictureEdit(); clearPreview(); audioPreview.dispose();
             [...videos, ...audio].forEach(media => { media.pause(); media.onloadedmetadata = null; media.removeAttribute('src'); delete media.dataset.source; media.load(); media.remove(); }); playButton.onclick = closePreview.onclick = null; picturePreview.dispose(); pictureGuide.dispose(); audioContext?.close().catch(() => {}); },
     };
 }

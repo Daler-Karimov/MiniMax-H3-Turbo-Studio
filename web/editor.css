@@ -1,5 +1,6 @@
 /* Share the studio shell and header geometry; only the editor rows differ. */
-.fv-studio.fv-editor{display:grid;grid-template-columns:264px minmax(0,1fr);grid-template-rows:auto minmax(272px,1fr) 40px 56px 40px minmax(var(--fv-ed-tracks-min,174px),clamp(174px,calc(100dvh - 704px),236px));animation:none}
+.fv-studio.fv-editor{display:grid;grid-template-columns:264px minmax(0,1fr);grid-template-rows:auto minmax(272px,1fr) 40px var(--fv-ed-generation-row,56px) 40px minmax(var(--fv-ed-tracks-min,174px),clamp(174px,calc(100dvh - 704px),236px));animation:none}
+.fv-studio.fv-editor[data-generation-ready=false]{--fv-ed-generation-row:0px}
 @media(min-width:1280px){.fv-studio.fv-editor[data-adjust-available=true]{grid-template-columns:264px minmax(0,1fr) 264px}}
 .fv-editor *{box-sizing:border-box}
 .fv-editor [hidden]{display:none!important}
@@ -100,7 +101,7 @@
 .fv-ed-rename{width:100%;margin-bottom:4px}
 .fv-ed-notice{position:absolute;bottom:340px;right:16px;max-width:min(560px,calc(100vw - 32px));border:1px solid var(--fv-border);background:var(--fv-card);padding:10px 14px;border-radius:8px;z-index:9;color:var(--fv-ink)}
 @media(max-width:680px){
- .fv-studio.fv-editor{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(180px,1fr) 40px auto 40px 236px;overflow:hidden}
+ .fv-studio.fv-editor{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(180px,1fr) 40px var(--fv-ed-generation-row,auto) 40px 236px;overflow:hidden}
  .fv-editor .fv-header{overflow-x:auto}
  .fv-editor .fv-ed-name{font-size:13px;max-width:112px;flex:1;padding:0 2px}
  .fv-editor .fv-ed-icon{width:28px;flex:none;font-size:20px}

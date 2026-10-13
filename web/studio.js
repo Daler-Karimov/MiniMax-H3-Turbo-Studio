@@ -19,10 +19,11 @@ import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { rememberPromptDraft } from './prompt_draft.js';
+import { canvasDimensions, imageSizeSelection } from './studio_size.js';
+import { createCapabilityView } from './capability_view.js';
 import { openEditorView } from './editor_entry.js';
 import { frameShapes, frameSize } from './frame_sizes.js';
-import { imageSizeSelection } from './studio_size.js';
-import { createCapabilityView } from './capability_view.js';
+import { createFirstRunGuide } from './first_run_guide.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -173,6 +174,7 @@ export function openStudio(node) {
     const untouched = () => Boolean(starter) && value(node, 'text') === starter;
     const shown = text => starter && text === starter ? '' : String(text || '');
     const prompt = el('textarea'); prompt.value = shown(value(node, 'text')); prompt.setAttribute('aria-label', t('Prompt', '提示词'));
+    prompt.dataset.fvGuide = 'describe';
     const placeholder = () => { prompt.placeholder = untouched() ? starter : t('Describe the scene… Type @ to reference media', '描述画面… 输入 @ 引用素材'); };
     placeholder();
     prompt.disabled = linked(node, 'text'); prompt.oninput = () => { set(node, 'text', prompt.value); placeholder(); };
@@ -641,6 +643,7 @@ export function openStudio(node) {
     count.oninput = () => updateRunButton();
     runOptions.append(optionsToggle, optionsPanel);
     const generate = button('', submitDraft, 'fv-primary');
+    generate.dataset.fvGuide = 'generate';
     runrow.append(generate, runOptions);
     runButtonReady = true;
     const queueActions = el('div', null, 'fv-queue-actions');
@@ -806,7 +809,7 @@ export function openStudio(node) {
     }
     function applySize() {
         if (dimensionsLinked) return;
-        const {width: w, height: h} = frameSize(pixels, ratio);
+        const [w, h] = canvasDimensions(pixels, ratio);
         if (w < 256 || h < 256 || w > 4096 || h > 4096) throw new Error(t('This aspect ratio and pixel count exceed the supported dimensions. Use custom dimensions.', '该比例与像素数超出尺寸范围，请使用自定义宽高。'));
         set(node, 'width', w); set(node, 'height', h); node.properties.freevideo_aspect = selected; node.properties.freevideo_pixels = pixels; updateCanvas();
     }
@@ -889,6 +892,7 @@ export function openStudio(node) {
     rangeMount.append(capabilityView.element); cleanup.push(capabilityView.dispose);
     controls.addEventListener('change', () => capabilityView.update());
     document.body.append(dialog); dialog.showModal(); viewChanged('studio', node); updateCanvas();
+    const guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing}); cleanup.push(guide.dispose);
     const recentLoad = recent.refresh();
     if (node.freevideoProgress) showProgress(node.freevideoProgress);
     else if (result) showResult(result);
@@ -901,6 +905,6 @@ export function openStudio(node) {
             if (!disposed && !busy && !result && saved) showResult(saved);
         }
     }).catch(() => {});
-    requestAnimationFrame(() => { if (!document.querySelector('dialog.fv-editor[open]')) generate.focus({preventScroll: true}); });
+    requestAnimationFrame(() => { if (dialog.open && !dialog.querySelector('.fv-guide-layer') && !document.querySelector('dialog.fv-editor[open]')) generate.focus({preventScroll: true}); });
     return dialog;
 }

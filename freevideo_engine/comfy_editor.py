@@ -26,6 +26,7 @@ from .comfy_library import _ID, _plain, _video
 from .system import windows
 from .editor_frames import frame_not_after, last_frame_end
 from .editor_speed import validate_clip, register_reverse
+from .editor_transport import marker_fields
 from .editor_audio import clip_fields, track_fields
 
 FPS = 24
@@ -275,6 +276,7 @@ def validate(record):
             if source is None and ('take' in raw or 'made_text' in raw):
                 raise ValueError('Invalid clip versions')
             _made(raw, clip)
+            clip.update(clip_fields(raw, kind))
             clips.append(clip)
             seen[identity] = (kind, clip)
         tracks.append(dict(id=track_id, kind=kind, clips=clips, **track_fields(raw_track)))
@@ -292,6 +294,7 @@ def validate(record):
         raise ValueError('Invalid size mode')
     if size_mode == 'fixed':
         result['size_mode'] = size_mode
+    result.update(marker_fields(record))
     if 'replacements' in record:
         replacements = record['replacements']
         if not isinstance(replacements, list) or not 1 <= len(replacements) <= 500:

@@ -88,6 +88,7 @@ export function createBlockNotes({state, t, actions}) {
         const off = !block || !!ctx?.busy || generating(block);
         box.disabled = off;
         if (document.activeElement !== box || editing !== block?.id) { box.value = block?.text || ''; grow(); }
+        again.hidden = actions.generationAvailable?.() === false;
         again.disabled = off || !block.text.trim() || !actions.canGenerate?.(block.text);
         // Blue once the description no longer matches the one the version in use was made from.
         again.classList.toggle('fv-primary', !again.disabled && model.describedSince(block));

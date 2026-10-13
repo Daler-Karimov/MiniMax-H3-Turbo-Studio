@@ -8,6 +8,10 @@ import {timeEstimate} from './editor_genbar.js';
 import {clipPictureSize, updatePictureBadge} from './editor_frame.js';
 import {createSelectionGestures, isMultiple, isTyping} from './editor_select.js';
 import {createTrackMenu} from './editor_menu.js';
+import {transportSnapPoints, setSnapping as setTransportSnapping} from './editor_transport_model.js';
+import {attachAudioTracks} from './editor_audio.js';
+import {renderSpeedBadge} from './editor_speed.js';
+import {speedEdited} from './editor_speed_model.js';
 
 export const SOURCE_TYPE = 'application/x-freevideo-source';
 export const SNAP_DISTANCE = 8;
@@ -71,11 +75,12 @@ export function rangeMoveParameters(record, range, anchor, frame, points, zoom, 
 
 // Classification uses the source tail only to decide which gesture to preview.
 // trim/extendClip still validate the requested edit (including pairs and limits).
-export function edgeParameters(clip, edge, frame, points, zoom) {
+export function edgeParameters(clip, edge, frame, points, zoom, {canExtend = true} = {}) {
     const snapped = snapFrame(frame, points, zoom);
     if (clip.pending && !clip.source) return {kind: 'planned', edge, frame: snapped.frame, guide: snapped.guide};
     const sourceEnd = clip.start + clip.length - clip.in;
-    if (edge === 'end' && clip.extend && snapped.frame > sourceEnd) {
+    if (speedEdited(clip)) return {kind: 'trim', edge, frame: snapped.frame, guide: snapped.guide};
+    if (edge === 'end' && canExtend && clip.extend && snapped.frame > sourceEnd) {
         const extra = Math.max(2 * model.FPS, Math.round((snapped.frame - sourceEnd) / model.FPS) * model.FPS);
         return {kind: 'extend', frame: sourceEnd, frames: extra, guide: snapped.guide};
     }
@@ -190,12 +195,12 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     const frameAt = event => Math.max(0, pixelsToFrame(event.clientX - content.getBoundingClientRect().left, state.zoom));
     const trackAt = event => event.target.closest?.('[data-track]')?.dataset.track || 'v1';
     const sourceInfo = key => typeof sources === 'function' ? sources(key) : sources.get?.(key) || sources[key];
-    let snapping = true;
-    const snap = (frame, points, zoom, options = {}) => snapFrame(frame, points, zoom, {...options, enabled: snapping});
-    const allPoints = except => snapping ? [...new Set([0, state.playhead, ...model.snapPoints(state.record, except)])] : [];
-    const seekPlayhead = frame => {
+    // The snapping switch lives in the transport model: it empties the point list (and Alt flips it per gesture).
+    const snap = snapFrame;
+    const allPoints = except => [...new Set([0, state.playhead, ...model.snapPoints(state.record, except)])];
+    const seekPlayhead = (frame, event) => {
         if (!Number.isSafeInteger(frame) || frame < 0) return {ok: false, reason: 'range'};
-        const at = snap(frame, model.snapPoints(state.record, []), state.zoom).frame;
+        const at = snap(frame, transportSnapPoints(state, model.snapPoints(state.record, []), event), state.zoom).frame;
         return {ok: true, frame: state.seek(at)};
     };
     const selectGestures = createSelectionGestures({state, element, content, scroll, clips, rows,
@@ -456,6 +461,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 if (!item) { item = makeClip(clip, track); clips.set(clip.id, item); row.element.append(item.element); }
                 item.clip = clip; item.track = track.id;
                 item.element.classList.toggle('fv-ed-tiny', pixels(clip.frames) < 2);
+                renderSpeedBadge(item.element, clip, t);
                 // Commits reorder only displaced buttons for sensible Tab order;
                 // pointermove never enters this reconciliation path.
                 const next = previous ? previous.nextElementSibling : row.element.firstElementChild;
@@ -463,7 +469,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 previous = item.element;
                 const visual = model.clipState(clip), key = sourceKey(clip);
                 item.element.dataset.state = visual; item.element.dataset.track = track.id;
-                item.element.dataset.busy = String(busy(clip)); item.element.dataset.extend = String(clip.extend && !busy(clip));
+                item.element.dataset.busy = String(busy(clip)); item.element.dataset.extend = String(clip.extend && actions.generationAvailable?.() !== false && !busy(clip));
                 item.element.classList.toggle('fv-ed-joined-left', track.clips[index - 1]?.start + track.clips[index - 1]?.frames === clip.start);
                 item.element.classList.toggle('fv-ed-joined-right', track.clips[index + 1]?.start === clip.start + clip.frames);
                 if (visual === 'failed' && track.kind === 'video') item.status.replaceChildren(icon('warning'));
@@ -623,27 +629,27 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         element.setPointerCapture(event.pointerId);
     }
     function dragPoints(frame, length = 0) {
-        if (!snapping) return [];
         const grid = 5 * model.FPS, points = [...cachedPoints];
         for (const value of [frame, frame + length]) points.push(Math.round(value / grid) * grid);
-        return points;
+        return transportSnapPoints(state, points, pointerEvent);
     }
     function boundaryLimits(start, part = null) {
         const limits = actions.generationLimits?.() || {}, maxSeconds = limits.maxSeconds ?? model.RULES.maxSeconds;
         const maxFollowSeconds = limits.maxFollowSeconds ?? maxSeconds;
         const before = state.record.tracks[0].clips.some(clip => clip.start + clip.frames === start
-            && ((part && clip.part === part && clip.pending) || (clip.source && clip.extend && clip.in + clip.frames === clip.length)));
+            && ((part && clip.part === part && clip.pending) || (clip.source && clip.extend && actions.generationAvailable?.() !== false && clip.in + clip.frames === clip.length)));
         return {maxSeconds: before ? maxFollowSeconds : maxSeconds, maxFollowSeconds};
     }
     function updatePointer(event) {
         if (!gesture || gesture.pointer !== event.pointerId) return;
-        const frame = frameAt(event); dragX = event.clientX;
+        const frame = frameAt(event); dragX = event.clientX; pointerEvent = event;
+        const points = transportSnapPoints(state, cachedPoints, event);
         gesture.moved ||= Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 4;
         if (gesture.blocked && gesture.moved && !gesture.warned) {
             gesture.warned = true; actions.editError?.(new model.EditError('busy'));
         }
         if (gesture.type === 'seek') {
-            seekPlayhead(frame); return;
+            seekPlayhead(frame, pointerEvent); return;
         }
         if (!gesture.moved || gesture.type === 'click') return;
         if (gesture.type === 'rangeBoundary' || gesture.type === 'plannedBoundary') {
@@ -669,7 +675,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             let aligned;
             if (gesture.type === 'rangeMove') {
                 const desired = original.start + frame - gesture.anchor;
-                aligned = rangeMoveParameters(state.record, original, gesture.anchor, frame, dragPoints(desired, original.frames), state.zoom, {enabled: snapping});
+                const rangePoints = dragPoints(desired, original.frames);
+                aligned = rangeMoveParameters(state.record, original, gesture.anchor, frame, rangePoints, state.zoom, {enabled: rangePoints.length > 0});
                 gesture.rangeBlocked = aligned.blocked;
                 element.dataset.cursor = aligned.blocked ? 'not-allowed' : 'grabbing';
                 gesture.selection = {...original, start: aligned.frame};
@@ -684,7 +691,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             hint(gesture.selection, event, false, gesture.type === 'rangeMove');
             if (gesture.type === 'rangeMove' && gesture.rangeBlocked) tooltip.hidden = true;
         } else if (gesture.type === 'range') {
-            const aligned = snap(frame, cachedPoints, state.zoom);
+            const aligned = snap(frame, points, state.zoom);
             gesture.selection = rangeParameters(gesture.anchor, aligned.frame);
             previewSelection = gesture.selection; showGuide(aligned.guide);
             renderSelection(); hint(gesture.selection, event);
@@ -720,7 +727,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             selectionBox.classList.toggle('fv-ed-cannot-drop', !!error);
             if (error) tooltip.hidden = true;
         } else if (gesture.type === 'edge') {
-            let result = edgeParameters(gesture.clip, gesture.edge, frame, cachedPoints, state.zoom);
+            let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom, {canExtend: actions.generationAvailable?.() !== false});
             if (result.kind === 'planned') {
                 let preview;
                 try { preview = model.resizePlanned(state.record, gesture.id, gesture.edge, result.frame, actions.generationLimits?.()); }
@@ -823,6 +830,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         else if (finished.type === 'plannedBoundary') attempt(t('Resize parts', '调整段长'), record => model.resizePlannedBoundary(record, finished.id, finished.neighbor.clip.id, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'extend') {
+            if (actions.generationAvailable?.() === false) return;
             const frames = result.frame - finished.clip.start - finished.clip.frames + result.frames;
             let next = null;
             try { next = model.extendClip(state.record, finished.id, frames, actions.generationLimits?.() || {}); }
@@ -941,7 +949,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     function dropOver(event) {
         if (!Array.from(event.dataTransfer?.types || []).includes(SOURCE_TYPE)) return;
         event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy';
-        const frame = snap(frameAt(event), allPoints([]), state.zoom);
+        const frame = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom);
         const key = `${frame.frame}/${state.zoom}/${draggedSource ? JSON.stringify(draggedSource) : trackAt(event)}`;
         if (key !== dropPreviewKey || sourcePreview?.record !== state.record) {
             clearSourcePreview();
@@ -979,7 +987,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         event.preventDefault(); event.stopPropagation();
         // Use the pointer position; the model chooses the audio track and shifts
         // following clips. The insertion line is an indication, not an edit.
-        const at = snap(frameAt(event), allPoints([]), state.zoom).frame;
+        const at = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom).frame;
         if (actions.insertSource) Promise.resolve(actions.insertSource({...payload, at}, {loadMetadata: true})).catch(error => actions.editError?.(error));
         else attempt(t('Insert source', '放入素材'), record => model.insertSource(record, {...payload, at}), {clearRange: true});
         showInsertion(null); showGuide(null); dropPoint = null; dropPreviewKey = ''; draggedSource = null;
@@ -1064,7 +1072,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     });
     const observer = new ResizeObserver(layout); observer.observe(scroll);
     selectionBox.hidden = previewBox.hidden = guide.hidden = insertion.hidden = true;
-    renderRecord();
+    const audioControls = attachAudioTracks(element, {state, t, actions});
+    renderRecord(); audioControls.refresh();
     let blockedTimer = null, blockedIds = [];
     function flashBlocked(frame = state.playhead) {
         clearTimeout(blockedTimer);
@@ -1081,10 +1090,10 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     return {element, keyboard, menu, dismissPopup, flashBlocked, seekPlayhead,
         setSnapping(enabled) {
             if (typeof enabled !== 'boolean') return {ok: false, reason: 'snapping'};
-            snapping = enabled; cachedPoints = allPoints(gesture?.ids || []);
+            setTransportSnapping(state, enabled); cachedPoints = allPoints(gesture?.ids || []);
             return {ok: true, enabled};
         },
-        refresh() { if (!disposed) renderRecord(); },
+        refresh() { if (!disposed) { renderRecord(); audioControls.refresh(); } },
         cancelGesture() { if (selectGestures.finish(null, true)) return true; if (!gesture) return false; stopPointer(null, true); return true; },
         getScrollLeft() { return scroll.scrollLeft; },
         setScrollLeft(value) { if (Number.isFinite(value) && value >= 0) { scroll.scrollLeft = value; renderRuler(); } },
@@ -1099,6 +1108,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             selectGestures.dispose();
             menu.dispose();
             disposed = true; clearTimeout(blockedTimer); unsubscribe(); observer.disconnect(); listeners.forEach(remove => remove());
+            audioControls.dispose();
             addAudio.onkeydown = null;
             cancelAnimationFrame(pointerFrame); stopAutoScroll(); clearTimeout(estimateTimer); estimateToken++;
             clips.forEach(item => item.component?.dispose()); element.remove();

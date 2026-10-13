@@ -1,6 +1,9 @@
 import {hasTextData, readTextProject, isText, trimText, assertUnlocked, changeText} from './editor_text_model.js';
 // Immutable editor records and frame arithmetic; usable without a browser.
 import {pictureFields, pictureEditor} from './editor_picture_fields.js';
+import {markerFields} from './editor_transport_model.js';
+import {audioClipFields, audioTrackFields, normalizeAudioEdits, splitAudioFields} from './editor_audio_model.js';
+import {speedRange, parseSpeedData, validateSpeedPair, sourceFrame, speedEdited, trimSpeed, splitSpeed, connectSpeedOperations} from './editor_speed_model.js';
 export const VERSION = 1;
 export const FPS = 24;
 export const RULES = Object.freeze({maxSeconds: 15, singleSeconds: 30, minSeconds: 2, tailSeconds: 5,
@@ -127,7 +130,7 @@ export function parse(value) {
             ids.add(item.id);
             check(item.text_kind === undefined && item.text_style === undefined, 'text');
             check(whole(item.start) && whole(item.frames, 1) && whole(item.in)
-                && whole(item.length, item.in + item.frames) && whole(item.start + item.frames), 'range');
+                && speedRange(item) && whole(item.start + item.frames), 'range');
             check(item.start >= boundary, 'overlap'); boundary = end(item);
             const source = item.source === null ? null : sourceData(item.source);
             const pending = item.pending ?? null;
@@ -158,20 +161,24 @@ export function parse(value) {
             if (item.text_by !== undefined) { check(TEXT_BY.includes(item.text_by), 'text'); clip.text_by = item.text_by; }
             if (item.ref !== undefined) { check(typeof item.ref === 'string' && REF.test(item.ref), 'ref'); clip.ref = item.ref; }
             check(source !== null || (item.take === undefined && item.made_text === undefined), 'versions'); madeFields(item, clip);
+            Object.assign(clip, audioClipFields(item, kind));
+            Object.assign(clip, parseSpeedData(item, kind));
             return clip;
         });
-        return {id, kind, clips};
+        return {id, kind, clips, ...audioTrackFields(raw)};
     });
     const byId = new Map(tracks.flatMap(track => track.clips.map(clip => [clip.id, {clip, track}])));
     for (const {clip, track} of byId.values()) if (clip.link) {
         const mate = byId.get(clip.link);
         check(mate && mate.clip.link === clip.id && mate.track.kind !== track.kind, 'link');
         check(mate.clip.start === clip.start && mate.clip.frames === clip.frames && mate.clip.in === clip.in, 'link');
+        validateSpeedPair(clip, mate.clip);
     }
     const result = {version: VERSION, id: value.id, revision: value.revision, name: value.name, fps: FPS,
         width: value.width, height: value.height, settings, serial: value.serial, tracks};
     check(value.size_mode === undefined || value.size_mode === 'first' || value.size_mode === 'fixed', 'size_mode');
     result.size_mode = value.size_mode ?? 'first';
+    Object.assign(result, markerFields(value));
     if (value.replacements !== undefined) {
         check(Array.isArray(value.replacements) && value.replacements.length > 0 && value.replacements.length <= RULES.maxClips, 'invalid');
         const parts = new Set();
@@ -220,7 +227,7 @@ export function at(record, frame) {
     check(whole(frame), 'range');
     return Object.fromEntries(record.tracks.map(track => {
         const clip = track.clips.find(item => overlaps(item, frame, 1));
-        return [track.id, clip ? {clip, frame: clip.in + frame - clip.start} : null];
+        return [track.id, clip ? {clip, frame: sourceFrame(clip, frame - clip.start)} : null];
     }));
 }
 export function snapPoints(record, exceptIds = []) {
@@ -244,6 +251,7 @@ export const emptyFrames = record => duration(record) - trackBy(record, 'v1').cl
 export const secondsLabel = frames => { check(whole(frames), 'range'); return String(Math.round(frames / FPS)); };
 const copy = record => JSON.parse(JSON.stringify(parse(record)));
 function finish(record) {
+    normalizeAudioEdits(record);
     for (const track of record.tracks) track.clips.sort((a, b) => a.start - b.start);
     // Track presence is an edit in its own right, including an empty a2.
     if (record.replacements) {
@@ -461,6 +469,7 @@ function detachAttempt(record, ids) {
 export function trim(record, id, edge, frame, {minimumFrames = FPS, by = 'user'} = {}) {
     if (isText(find(record, id))) { check(['start', 'end'].includes(edge) && whole(frame), 'range'); return trimText(record, id, edge, frame); }
     check(['start', 'end'].includes(edge) && whole(frame) && whole(minimumFrames, 1) && TEXT_BY.includes(by), 'range');
+    if (speedEdited(find(record, id))) return trimSpeed(record, id, edge, frame, by);
     const clips = pair(record, id); check(clips.length, 'missing'); busy(clips);
     const primary = clips[0], minimum = Math.min(minimumFrames, primary.frames);
     const delta = edge === 'start' ? Math.min(primary.frames - minimum, Math.max(-Math.min(...clips.map(clip => clip.in)), frame - primary.start))
@@ -483,7 +492,9 @@ export function trim(record, id, edge, frame, {minimumFrames = FPS, by = 'user'}
 }
 export function split(record, id, frame, {by = 'user'} = {}) {
     assertUnlocked(record, [id]);
-    check(whole(frame) && TEXT_BY.includes(by), 'range'); const clips = pair(record, id); check(clips.length, 'missing'); busy(clips);
+    check(whole(frame) && TEXT_BY.includes(by), 'range');
+    if (speedEdited(find(record, id))) return splitSpeed(record, id, frame, by);
+    const clips = pair(record, id); check(clips.length, 'missing'); busy(clips);
     const primary = clips[0]; check(frame >= primary.start && frame <= end(primary), 'range');
     if (frame === primary.start || frame === end(primary)) return parse(record);
     const next = copy(record), left = frame - primary.start, rights = [];
@@ -492,6 +503,7 @@ export function split(record, id, frame, {by = 'user'} = {}) {
         const clip = find(next, old.id); touchedBy(clip, by);
         const right = structuredClone(clip); right.id = freshId(next); right.start = frame; right.frames -= left; right.in += left;
         clip.frames = left; clearPlan(clip); clearPlan(right);
+        splitAudioFields(clip, right);
         if (!clip.source) { clip.in = right.in = 0; clip.length = clip.frames; right.length = right.frames; }
         right.versions = right.versions.map(version => ({...version, in: version.in + left}));
         for (const item of [clip, right]) item.versions = item.versions.filter(version => version.in < version.length);
@@ -753,6 +765,7 @@ export function planRange(record, {start, frames, parts, target = 'both', text =
     return finish(next);
 }
 export function extendClip(record, id, frames, {maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds} = {}) {
+    if (speedEdited(find(record, id))) { check(whole(frames, 1), 'range'); return trim(record, id, 'end', end(find(record, id)) + frames); }
     check(whole(frames, 1), 'range'); const selected = pair(record, id); check(selected.length, 'missing'); busy(selected);
     const clip = selected[0]; check(clip.extend && clip.source && trackOf(record, clip.id).id === 'v1', 'unsupported');
     // frames is total growth beyond the current visible edge. Restore retained
@@ -930,7 +943,7 @@ export function restoreVersion(record, id, index, {by = 'user'} = {}) {
     detachAttempt(next, clips.map(c => c.id));
     for (const old of clips) {
         const clip = find(next, old.id); numberTakes(clip);
-        const version = clip.versions[index]; check(version && version.in + clip.frames <= version.length, 'range');
+        const version = clip.versions[index]; check(version && speedRange({...clip, in: version.in, length: version.length}), 'range');
         remember(clip, version); clip.source = {kind: version.kind, id: version.id}; clip.in = version.in; clip.length = version.length;
         delete clip.take; delete clip.made_text; madeFields(version, clip); touchedBy(clip, by);
         // Placement belongs to this timeline part, including when its media changes.
@@ -939,3 +952,6 @@ export function restoreVersion(record, id, index, {by = 'user'} = {}) {
     }
     return finish(next);
 }
+connectSpeedOperations({copy, finish, detachAttempt, trackOf, freshId,
+    makeRoom: (record, track, start, frames, excluded) => applyRoom(record, start, frames, {tracks: [].concat(track), excluded: [...excluded]}),
+});

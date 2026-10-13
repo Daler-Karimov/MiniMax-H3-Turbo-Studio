@@ -21,6 +21,9 @@
 .fv-setup-head .fv-close{min-height:34px;width:34px;padding:0;font-size:20px;line-height:1;background:transparent;border-color:transparent;color:var(--fv-muted)}
 .fv-setup-head .fv-close:hover{background:var(--fv-raised);color:var(--fv-ink)}
 .fv-setup h3{font-size:var(--fv-body);font-weight:var(--fv-semibold);margin:0 0 12px}
+.fv-setup .fv-guide-replay-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.fv-setup .fv-guide-replay-row h3{margin:0}
+.fv-setup .fv-guide-replay [role=status]{margin-top:8px}
 
 /* Sections: one card each; details use the Studio's chevron, not the UA marker. */
 .fv-setup>details,.fv-setup>section{margin:12px 0 0;padding:16px 18px;border:1px solid var(--fv-border);border-radius:var(--fv-r-md);background:var(--fv-card)}

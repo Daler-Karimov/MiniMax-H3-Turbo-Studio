@@ -1,6 +1,7 @@
 // One bounded history holds record edits and committed range gestures.
 // Generation results update record snapshots; ranges never change the record.
 import {parse, EditError, duration, linkedIds, find, copyName, planRange} from './editor_model.js';
+import {assertLockedUnchanged, unlockedSelection} from './editor_audio_model.js';
 const freeze = value => {
     if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
     return value;
@@ -20,6 +21,7 @@ export function createEditorState(record, {limit = 200} = {}) {
         for (const listener of [...listeners]) listener(event);
     };
     function normalized(value, project = current) {
+        value = unlockedSelection(project, value);
         if (value === null) return null;
         if (!value || typeof value !== 'object') throw new EditError('selection');
         if (value.kind === 'clip') {
@@ -63,6 +65,7 @@ export function createEditorState(record, {limit = 200} = {}) {
         get canUndo() { return undo.length > 0; }, get canRedo() { return redo.length > 0; },
         apply(label, change, {clearRange = false, checkpoint = false, selectionAfter, rangeText = null} = {}) {
             const next = retainSerial(parse(change(current))); // Validate before touching history or UI state.
+            assertLockedUnchanged(current, next);
             if (JSON.stringify(next) === JSON.stringify(current)) return current;
             const cleared = clearRange && selection?.kind === 'range';
             const selectionChanged = cleared || selectionAfter !== undefined;

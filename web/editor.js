@@ -9,23 +9,42 @@ import {createEditorStore, sourceKey, mediaURL} from './editor_store.js';
 import {generationSize} from './editor_generation.js';
 import {createEditorLibrary} from './editor_library.js';
 import {createEditorPlayer} from './editor_player.js';
-import {createAdjustPanel, row} from './editor_adjust.js';
+import {createEditorTransport, registerEditorShortcuts} from './editor_transport.js';
+import {createAdjustPanel} from './editor_adjust.js';
 import {createAdjustPicture} from './editor_adjust_picture.js';
 import {pictureSession} from './editor_picture_session.js';
 import {createPictureTools} from './editor_frame.js';
 import {openExportDialog} from './editor_export_dialog.js';
+import {createAudioIntegration, handleAudioShortcut, AUDIO_SHORTCUTS} from './editor_audio.js';
+import {createSpeedComponent, readSpeedAudioSamples, handleSpeedKey, speedShortcuts} from './editor_speed.js';
 import {createEditorGenbar, loadEditorComponents, editorBlockStates, blockMessages} from './editor_genbar.js';
 import {createProgressConnection} from './progress_connection.js';
 import {createSelectionActions, deletionStatus, isMultiple, isTyping, playheadIds, removableGaps, removeGaps} from './editor_select.js';
 import {isolateDialogKeys, topDialog} from './dialog_keys.js';
 import {createBlockNotes, describedTrack} from './editor_notes.js';
-const editorStyles = Promise.all(['editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css'].map(name => {
+const editorStyles = Promise.all(['editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
     document.head.append(style); return ready;
 }));
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const language = () => new URLSearchParams(location.search).get('freevideo_lang') || navigator.language;
+function restoreGeneration(record, before, prepared) {
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const entries = value => new Map(value.tracks.flatMap(track => track.clips.map(clip => [clip.id, {track: track.id, clip}])));
+    const originals = entries(before), submitted = entries(prepared), current = entries(record), restore = new Map();
+    const changed = new Set([...originals.keys(), ...submitted.keys()].filter(id => !same(originals.get(id), submitted.get(id))));
+    for (const id of changed) if (same(current.get(id), submitted.get(id))) restore.set(id, originals.get(id));
+    const next = {...record, tracks: record.tracks.map(track => ({...track, clips: [
+        ...track.clips.filter(clip => !restore.has(clip.id)),
+        ...[...restore.values()].filter(value => value?.track === track.id).map(value => value.clip),
+    ].sort((a, b) => a.start - b.start)})).filter(track => track.clips.length || before.tracks.some(old => old.id === track.id) || !prepared.tracks.some(old => old.id === track.id))};
+    for (const key of new Set([...Object.keys(before), ...Object.keys(prepared)])) {
+        if (['tracks', 'id', 'revision', 'serial'].includes(key) || same(before[key], prepared[key]) || !same(record[key], prepared[key])) continue;
+        if (Object.hasOwn(before, key)) next[key] = before[key]; else delete next[key];
+    }
+    return next;
+}
 const icon = path => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true'); svg.classList.add('fv-ed-glyph'); const line = document.createElementNS(svg.namespaceURI, 'path'); line.setAttribute('d', path); svg.append(line); return svg; };
 function basicBlockProgress(clipId, clipElement) {
     const element = el('div', 'fv-ed-basic-progress'), water = el('div', 'fv-ed-basic-water'), percent = el('span', 'fv-ed-basic-percent');
@@ -125,7 +144,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     let discardOnSwitch = false, initialSelection = null;
     let viewKey = null, viewReady = false;
     let library = null, closing = false, closePromise = null, exportSnapshot = null, lastSeed = null, projectEpoch = 0;
-    let disposed = false, suppressSave = false, savedContent = '', initializing = true, tracks = null, genbar = null, exportStatus = null, pointerEditing = false, deferredStamp = null;
+    let disposed = false, suppressSave = false, savedContent = '', initializing = true, tracks = null, genbar = null, adjustPanel = null, exportStatus = null, pointerEditing = false, deferredStamp = null;
     let capability = {maxSeconds: 15, maxFollowSeconds: 15, maxRequestFrames: null, estimate: () => null}, generationBusy = false, switching = false, generationDone = null, finishGeneration = null;
     let noticeTimer = null, stopExport = null, mostRecentJob = null;
     const jobWatchers = new Map(), progress = new Map(), jobStatuses = new Map(), runProgress = new Map();
@@ -164,14 +183,21 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     function notify(text) { if (disposed) return; notice.textContent = text; notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000); }
     function error(value) {
         const code = value?.code || value?.message;
+        if (['audio_prepare', 'speed_pending', 'speed_locked', 'speed'].includes(code)) return {ok: false, reason: code};
         if (code === 'unsupported') { genbar?.update(null); return; }
         if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
-            return;
+            return {ok: false, reason: code};
         }
         notify(t('Could not complete. Try again.', '没有完成，请重试'));
     }
-    const store = createEditorStore(api, {t, notify});
+    const store = createEditorStore(api, {t, notify, onGenerationReady: ready => {
+        if (disposed) return;
+        genHost.hidden = !ready; element.dataset.generationReady = String(ready);
+        tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
+        updateTransport(); adjustPanel?.update();
+    }});
+    store.generationReady();
     const queue = store.createSaveQueue({get record() { return state.record; },
         adopt(value) {
             if (pointerEditing) { deferredStamp = value; return; }
@@ -181,7 +207,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }, {onStatus: () => {
         if (!queue.dirty) { discardOnSwitch = false; saveWarning.hidden = true; }
     }});
-    const player = createEditorPlayer(preview, transport, {state, sources: store.sources, api, t, preservePreview: () => initializing});
+    const player = createEditorPlayer(preview, transport, {state, sources: store.sources, api, t, error, readAudioSamples: panel.readAudioSamples || readSpeedAudioSamples, preservePreview: () => initializing});
     function selectionClips(selection = state.selection) {
         if (selection?.kind !== 'clip') return [];
         return state.record.tracks[0].clips.filter(clip => selection.ids.includes(clip.id) || selection.ids.includes(clip.link));
@@ -299,10 +325,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); progressConnection?.reset();
         mostRecentJob = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
         suppressSave = true; try { state.replace(record); savedContent = content(record); } finally { suppressSave = false; }
-        const width = tracksHost.clientWidth - 104; if (width > 0) state.setZoom(width / 90);
+        const width = tracksHost.clientWidth - 148; if (width > 0) state.setZoom(width / 90);
         tracks?.setScrollLeft(0);
         // An empty edit opens with one part's length selected at the start, ready to generate.
-        const selectInitial = () => { initialSelection = state.select({kind: 'range', start: 0,
+        const selectInitial = () => { if (!store.generationAvailable) return; initialSelection = state.select({kind: 'range', start: 0,
             frames: Math.round(Math.min(15, capability.maxSeconds ?? 15) * model.FPS), tracks: ['v1', 'a1']}); };
         const epoch = projectEpoch;
         let pointer = null;
@@ -376,9 +402,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (!closing && !disposed) player.previewSource(source);
         },
         generationLimits: () => ({maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds}),
+        generationAvailable: () => store.generationAvailable,
         gestureStart({selectionGesture = false} = {}) {
             pointerEditing = true;
-            if (selectionGesture && !menu.hidden) menu.hidden = true;
+            if (selectionGesture && !menu.hidden) { menu.hidden = true; updateTransport(); }
         },
         gestureEnd() { releaseStamp(); },
         insertSource(value, {loadMetadata = false} = {}) {
@@ -419,7 +446,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             catch (value) { if (value instanceof model.EditError) return value.code === 'busy'; throw value; }
         },
         canGenerate(text) {
-            if (!actions.supportedSelection() || jobActive()) return false;
+            if (!store.generationAvailable || !actions.supportedSelection() || jobActive()) return false;
             const range = selectionRange();
             const before = state.record.tracks[0].clips.find(clip => clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return !!text.trim() || !!before;
@@ -436,10 +463,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (!actions.canGenerate(text)) throw new model.EditError('text');
             generationBusy = true; updateTop(); updateTransport();
             generationDone = new Promise(resolve => { finishGeneration = resolve; });
-            let ids = [], prepared = null;
+            let ids = [], prepared = null, beforeAttempt = null, priorSelection = null, priorText = null, submittedSelection = null;
             const epoch = projectEpoch, range = selectionRange(), selectedIds = selectionClips().map(clip => clip.id);
             try {
-                const frozen = await snapshot(); if (epoch !== projectEpoch || closing || disposed) return;
+                const frozen = await snapshot(); if (epoch !== projectEpoch || closing || disposed || !store.generationAvailable) return;
+                beforeAttempt = state.record; priorSelection = state.selection; priorText = state.rangeText;
                 state.apply(label, record => {
                     const selected = selectedIds.map(id => model.find(record, id)).filter(Boolean), alreadyPlanned = selected.length && selected.every(clip => !clip.source && clip.pending && !['queued', 'running'].includes(clip.pending));
                     let next = alreadyPlanned ? model.startAttempt(record, selected.map(clip => clip.id), text) : model.planRange(record, {...range, target: 'both', text, maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds});
@@ -448,7 +476,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     return model.prepare(next, ids);
                 }, {checkpoint: true});
                 prepared = state.record;
-                state.select({kind: 'clip', ids}); await completeSources();
+                submittedSelection = state.select({kind: 'clip', ids}); await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
                 const tooLong = request.blocks.filter(block => capability.maxRequestFrames != null && block.frames > capability.maxRequestFrames);
@@ -461,6 +489,16 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const seed = values[0] === lastSeed ? (values[0] + 1) >>> 0 : values[0]; lastSeed = seed;
                 const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i}));
                 const job = await store.startChain({...frozen, blocks});
+                if (!job && !store.generationAvailable) {
+                    if (epoch === projectEpoch) {
+                        const restoreSelection = state.selection === submittedSelection;
+                        // Reverse only this submission's changes. Keep save receipts,
+                        // reserved IDs and unrelated edits made while POST was pending.
+                        state.settle(record => restoreGeneration(record, beforeAttempt, prepared));
+                        if (restoreSelection) state.select(priorSelection, {text: priorText});
+                    }
+                    return;
+                }
                 if (!job?.id) throw new Error('chain_missing');
                 if (epoch !== projectEpoch) return;
                 state.settle(record => model.assignJob(record, ids, job.id, {prepared}));
@@ -473,6 +511,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         async cancel() { const id = mostRecentJob; if (id) await deliverChain(await store.chainAction(id, 'cancel')); },
         async resume() {
+            if (!store.generationAvailable) return;
             const epoch = projectEpoch;
             const id = mostRecentJob || selectionClips().find(clip => clip.job)?.job; if (!id) return;
             const job = await store.chainAction(id, 'resume'); if (epoch !== projectEpoch || disposed) return;
@@ -480,7 +519,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const ids = state.record.tracks[0].clips.filter(clip => clip.job === id && clip.pending).map(clip => clip.id);
             state.settle(record => model.settle(record, ids, 'queued')); if (job) { await deliverChain(job); watchJob(id); }
         },
-        async retry(id) { state.select({kind: 'clip', ids: [id]}); const clip = model.find(state.record, id); if (clip.job) { mostRecentJob = clip.job; await actions.resume(); } else await actions.generate({text: clip.text || panel.text || ''}); },
+        async retry(id) { if (!store.generationAvailable) return; state.select({kind: 'clip', ids: [id]}); const clip = model.find(state.record, id); if (clip.job) { mostRecentJob = clip.job; await actions.resume(); } else await actions.generate({text: clip.text || panel.text || ''}); },
         async export(options) {
             if (['running', 'queued'].includes(exportStatus?.state)) return;
             if (exportStatus?.state === 'done' && exportMatches()) { await viewExport(exportStatus); return; }
@@ -524,7 +563,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }
 
     genbar = createEditorGenbar(genHost, {state, t, actions, text: ''});
-    const adjust = createAdjustPanel(adjustHost, {state, t, actions});
+    const adjust = adjustPanel = createAdjustPanel(adjustHost, {state, t, actions});
     const pictureEdit = pictureSession(state, t);
     const notes = createBlockNotes({state, t, actions}); actions.blockNote = notes.decorate; actions.describedTrack = describedTrack;
     adjust.register('video', createAdjustPicture({state, sources: store.sources, t, player, notes}));
@@ -543,20 +582,19 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         () => selectionActions.run('delete'), 'fv-ed-delete');
     const closeGap = toolButton(t('Remove gaps', '移除空隙'), 'M1 3v10M15 3v10M3 8h4m-2-2 2 2-2 2M13 8H9m2-2-2 2 2 2',
         () => selectionActions.run('gaps'), 'fv-ed-close-gap');
-    const volume = el('input', 'fv-ed-volume'), volumeLabel = el('span', 'fv-ed-volume-value');
-    volume.type = 'range'; volume.min = '0'; volume.max = '200'; volume.step = '1'; volume.value = '100';
-    volume.setAttribute('aria-label', t('Volume', '音量'));
     const previous = toolButton(t('Previous version', '上一版'), 'M3 6V2M3 6h4M3 6a5 5 0 1 1-1 5M8 5v3l2 2', () => {
         const clip = selectedContent().find(clip => clip.versions.length);
         if (clip) try { state.apply(t('Previous version', '上一版'), record => model.restoreVersion(record, clip.id, 0)); } catch (value) { error(value); }
     }, 'fv-ed-previous');
-    adjust.register('audio', {render: host => host.append(row(t('Volume', '音量'), volume, volumeLabel))});
     historyTools.append(toolUndo, toolRedo); editTools.append(split, remove, closeGap, previous);
     const pictureTools = createPictureTools({state, sources: store.sources, t, capabilities: () => capability, error});
     toolbar.append(historyTools, editTools, zoomHost); element.insertBefore(toolbar, tracksHost);
+    const transportControls = createEditorTransport({element, preview, transport, toolbar, editTools, zoomHost, state, player, t, notify});
     toolbar.append(adjust.toggleButton);
     const textTools = createEditorText({element, state, t, actions, adjust, player, toolbar, exportBox, tracksHost});
-    let volumeEditing = false;
+    const audio = createAudioIntegration({state, player, t, error, adjust, library: libraryHost, store});
+    registerEditorShortcuts(AUDIO_SHORTCUTS, speedShortcuts);
+    adjust.register('speed', createSpeedComponent({state, t, onError: error}));
     function selectedContent() {
         const selection = state.selection;
         if (!selection) return [];
@@ -587,7 +625,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         }
     }
     function updateTransport() {
-        const clips = selectedContent(), busy = clips.some(isBusy), audio = jobActive() || busy ? [] : clips.filter(clip => clip.volume !== undefined && clip.source);
+        const clips = selectedContent(), busy = clips.some(isBusy);
         toolUndo.disabled = !state.canUndo; toolRedo.disabled = !state.canRedo;
         toolUndo.title = t('Undo', '撤销') + ` ${modifier}+Z`;
         toolRedo.title = t('Redo', '重做') + ` ${modifier}+Shift+Z`;
@@ -596,22 +634,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         remove.title = t('Delete Delete', '删除 Delete');
         const gaps = removableGaps(state.record, state.selection); closeGap.disabled = !gaps.length || !removeGaps(state.record, state.selection).removed;
         closeGap.title = t('Remove gaps Delete', '移除空隙 Delete');
-        volume.disabled = !audio.length;
-        if (!volumeEditing) volume.value = String(Math.round((audio[0]?.volume ?? 1) * 100));
-        volumeLabel.textContent = volume.value + '%';
         const multiple = isMultiple(state.record, clips.map(clip => clip.id));
         previous.disabled = busy || multiple || !clips.some(clip => clip.versions.length);
         previous.title = t('Previous version', '上一版');
         updateZoom();
     }
-    volume.oninput = () => { volumeEditing = true; for (const clip of selectedContent().filter(clip => clip.volume !== undefined)) player.previewVolume(clip.id, Number(volume.value) / 100); volumeLabel.textContent = volume.value + '%'; };
-    volume.onchange = () => {
-        const ids = selectedContent().filter(clip => clip.volume !== undefined).map(clip => clip.id), value = Number(volume.value) / 100;
-        volumeEditing = false;
-        try { state.apply(t('Volume', '音量'), record => ids.reduce((next, id) => model.setVolume(next, id, value), record)); }
-        catch (value) { error(value); }
-        finally { player.clearVolumePreview(); updateTransport(); }
-    };
     updateTransport();
     const stopSources = store.subscribeSources(() => { player.refresh(); tracks?.refresh?.(); pictureTools.update(); updateTop(); });
     let capabilitySize = `${state.record.width}x${state.record.height}`;
@@ -665,6 +692,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (typing || initializing) return;
         if (selectionActions.keyboard(event)) return;
         if (!mod && !event.altKey && (key === 'arrowup' || key === 'arrowdown' || (key === 'z' && event.shiftKey))) { tracks?.keyboard(event); return; }
+        if (handleSpeedKey(event)) return;
         if (key === ' ') { event.preventDefault(); player.toggle(); }
         else if (key === 'arrowleft' || key === 'arrowright') { event.preventDefault(); state.seek(Math.max(0, state.playhead + (key === 'arrowright' ? 1 : -1))); }
         else if (mod && key === 'z') { event.preventDefault(); event.shiftKey ? state.redo() : state.undo(); }
@@ -676,6 +704,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (topDialog() === element && !dismissPopup(event)) state.select(null, {history: true});
     });
     const stopKeys = isolateDialogKeys(element, (event, inside) => {
+        if (event.type === 'keyup') { transportControls.keyboard(event); return; }
         if (event.type !== 'keydown') return;
         if (event.isComposing || event.keyCode === 229) return;
         if (event.key.toLowerCase() === 'escape') {
@@ -683,12 +712,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (tracks?.cancelGesture()) { event.preventDefault(); return; }
             if (document.fullscreenElement) { event.preventDefault(); document.exitFullscreen().catch(() => {}); return; }
         }
+        if (handleAudioShortcut(event, state, {t, error})) return;
+        if (!inside && transportControls.keyboard(event, {ready: !initializing})) return;
         if (inside) {
             // Preserve the input/library controls' own handlers before shortcuts.
             for (let target = event.target; target && target !== element; target = target.parentNode) {
                 if (target.onkeydown?.(event) === false) event.preventDefault();
                 if (event.defaultPrevented) return;
             }
+            if (!event.target.closest('.fv-ed-adjust,.fv-ed-library') && transportControls.keyboard(event, {ready: !initializing})) return;
             if (event.target.closest('.fv-ed-tracks')) { if (!textTools.keyboard(event)) tracks?.keyboard(event); return; }
         }
         keyboard(event);
@@ -707,7 +739,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     });
     const leaving = () => { player.pause(); rememberView(); if (queue.dirty) queue.flush(); };
     window.addEventListener('pagehide', leaving);
-    const handle = {element, state, actions, store, adjust,
+    const handle = {element, state, actions, store, adjust, audio,
         async switchView(view) {
             if (closing || disposed || view === 'editor') return;
             if (await handle.close() !== false) await onView(view);
@@ -725,8 +757,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
-                rememberView(); disposed = true; player.dispose();
+                rememberView(); disposed = true; transportControls.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
+                audio.dispose();
                 listeners.splice(0).forEach(remove => remove());
                 for (const node of [element, ...element.querySelectorAll('*')]) for (const name of ['onclick', 'ondblclick', 'oninput', 'onchange', 'onkeydown', 'ondragstart']) node[name] = null;
                 unsubscribe(); stopSources(); library?.dispose(); genbar.dispose(); tracks?.dispose(); stopExport?.();
@@ -796,6 +829,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         };
         tracks = module.createTracks(tracksHost, {state, sources: store.sources, t, actions, blockProgress});
         listeners.push(notes.attach(tracks.element));
+        transportControls.attachTracks(tracks, module.snapFrame);
         if (api.addEventListener && api.removeEventListener) {
             progressConnection = createProgressConnection(api, receiveProgress); progressConnection.start();
         }

@@ -1,6 +1,7 @@
 import * as model from './editor_model.js';
 import {clipPictureSize, differentPictureShape} from './editor_frame.js';
 import {transportTime} from './editor_player.js';
+import {selectedRange} from './editor_transport_model.js';
 import {isolateDialogKeys, listenDialogKey, routeDialogKey} from './dialog_keys.js';
 
 export const EXPORT_SETTINGS_KEY = 'freevideo.editor.export-settings';
@@ -23,16 +24,12 @@ export function exportSizes(record) {
     }))];
 }
 
-// Q14: a drawn range or a gap is its own span; selected parts run from the earliest start to the latest end.
+// Q14: the selected range is the one playback uses; a selected part brings its linked partner along.
 export function exportRange(record, selection) {
-    let from, to;
-    if (['range', 'gap'].includes(selection?.kind)) { from = selection.start; to = selection.start + selection.frames; }
-    else if (selection?.kind === 'clip') {
-        const ids = model.linkedIds(record, selection.ids), parts = record.tracks.flatMap(track => track.clips).filter(clip => ids.has(clip.id));
-        if (!parts.length) return null;
-        from = Math.min(...parts.map(clip => clip.start)); to = Math.max(...parts.map(clip => clip.start + clip.frames));
-    } else return null;
-    const start = Math.max(0, from), end = Math.min(model.exportFrames(record), to);
+    const picked = selection?.kind === 'clip' ? {...selection, ids: [...model.linkedIds(record, selection.ids)]} : selection;
+    const range = selectedRange(record, picked, model.exportFrames(record));
+    if (!range) return null;
+    const start = Math.max(0, range.start), end = range.end;
     return Number.isSafeInteger(start) && Number.isSafeInteger(end) && end > start ? {start, frames: end - start} : null;
 }
 
@@ -114,8 +111,8 @@ export async function openExportDialog({parent, state, sources, t = en => en, on
     const contentRow = group('only', t('Content', '内容'), [[null, t('Video and audio', '画面和声音')], ['sound', t('Audio only', '只声音')]]);
     const formatRow = group('sound_format', t('Audio only', '只声音'), [['m4a', 'M4A'], ['wav', 'WAV']], contentRow);
     formatRow.classList.add('fv-ed-export-format'); formatRow.querySelector('.fv-ed-export-label').hidden = true;
-    const selectedRange = () => value.range === 'selected' ? exportRange(state.record, state.selection) : null;
-    const affected = () => croppedParts(state.record, sources, selectedRange());
+    const chosenRange = () => value.range === 'selected' ? exportRange(state.record, state.selection) : null;
+    const affected = () => croppedParts(state.record, sources, chosenRange());
     const review = button(t('Review them', '逐段查看'), () => {
         const parts = affected(), ids = state.selection?.ids || [], index = parts.findIndex(c => ids.includes(c.id));
         const clip = parts[(index + 1) % parts.length];
@@ -137,7 +134,7 @@ export async function openExportDialog({parent, state, sources, t = en => en, on
     buttons.append(cancel, confirm); footer.append(summary, buttons); dialog.append(heading, rows, notices, footer);
     function update() {
         if (!exportRange(state.record, state.selection)) value.range = 'whole';
-        const audible = hasSound(state.record, selectedRange());
+        const audible = hasSound(state.record, chosenRange());
         if (!audible) value.only = null;
         const sound = value.only === 'sound';
         for (const {name, controls, choices} of groups) [...controls.children].forEach((node, i) => {
@@ -147,7 +144,7 @@ export async function openExportDialog({parent, state, sources, t = en => en, on
                 || name === 'only' && choices[i][0] === 'sound' && !audible;
         });
         formatRow.hidden = !sound;
-        const range = selectedRange(), parts = affected(), n = parts.length;
+        const range = chosenRange(), parts = affected(), n = parts.length;
         const seconds = sound ? 0 : generatingSeconds(state.record, range);
         pending.hidden = !seconds;
         pending.textContent = t(`${seconds} s still generating; that part exports as black.`, `有 ${seconds} 秒还在生成，导出后这部分是黑屏`);

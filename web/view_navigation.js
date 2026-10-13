@@ -53,6 +53,15 @@ export function refreshNavigation() {
     }
 }
 
+export function openCreativeWorkspace() {
+    refreshNavigation();
+    const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
+    const node = currentView === 'studio' ? selected : focused || selected;
+    if (!node || !open) return false;
+    open(node);
+    return true;
+}
+
 export function installNavigation(openStudio) {
     open = openStudio;
     if (toolbar) { refreshNavigation(); return; }
@@ -68,7 +77,7 @@ export function installNavigation(openStudio) {
     };
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
-    row.append(grip, brand, viewSwitch('nodes', () => choose(open), () => {}, () => choose(node =>
+    row.append(grip, brand, viewSwitch('nodes', openCreativeWorkspace, () => {}, () => choose(node =>
         import('./editor_entry.js').then(({openEditorView}) => openEditorView(node)))), createVersionInfo(cn).element, settings); toolbar.append(row);
     let shown = false;
     try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }

@@ -3,6 +3,8 @@ import * as model from './editor_model.js';
 import * as actionsModel from './editor_actions.js';
 import {copyContent, pasteContent, copyRange, pasteRange, playheadTargets, removableGaps as findGaps} from './editor_room.js';
 export {copyContent, pasteContent} from './editor_room.js';
+import {transportSnapPoints} from './editor_transport_model.js';
+import {unlockedIds} from './editor_audio_model.js';
 
 const end = clip => clip.start + clip.frames;
 const busy = clip => ['queued', 'running'].includes(clip.pending);
@@ -80,7 +82,7 @@ export function createSelectionActions({state, t = en => en, actions = {}, clipb
     function run(key) {
         try {
             const ids = selectedIds(state.record, state.selection);
-            if (key === 'a') { const locked = lockedIds(state.record); state.select(selection(all(state.record).filter(clip => !locked.has(clip.id)).map(clip => clip.id))); return {ok: true}; }
+            if (key === 'a') { state.select(selection(unlockedIds(state.record))); return {ok: true}; }
             if (['b', 'q', 'w'].includes(key) && !playheadIds(state.record, state.selection, state.playhead).length) {
                 return {ok: false, reason: 'playhead'};
             }
@@ -238,7 +240,7 @@ export function createSelectionGestures({state, element, content, scroll, clips,
         } else {
             const clip = clips.get(g.id).clip, desired = clip.start + Math.round((p.x - g.start.x) * model.FPS / state.zoom);
             const points = [...g.points, ...[desired, desired + clip.frames].map(frame => Math.round(frame / (5 * model.FPS)) * 5 * model.FPS)];
-            const aligned = snap(Math.max(0, desired), points, state.zoom, {offsets: [0, clip.frames]});
+            const aligned = snap(Math.max(0, desired), transportSnapPoints(state, points, event), state.zoom, {offsets: [0, clip.frames]});
             const result = g.plan.preview(aligned.frame - clip.start); g.result = result;
             if (result.code === 'busy') {
                 if (!g.warned) { g.warned = true; commands.report(new model.EditError('busy')); }

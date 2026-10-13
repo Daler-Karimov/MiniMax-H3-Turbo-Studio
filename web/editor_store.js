@@ -226,9 +226,10 @@ export function mediaURL(api, value) {
     return api.apiURL?.(path) || path;
 }
 
-export function createEditorStore(api, {t = en => en, notify = () => {}, clock = clockDefault, pollMs = 2000} = {}) {
+export function createEditorStore(api, {t = en => en, notify = () => {}, onGenerationReady = () => {}, clock = clockDefault, pollMs = 2000} = {}) {
     const sources = new Map(), sourceReads = new Map(), watchers = new Set(), pollers = new Set(), once = new Set();
     let recovered = null, capabilityPoll = null;
+    let generationAvailable = true, generationProbe = null;
     let disposed = false; const uploads = new Set();
     const session = holdSession();
     const notice = (key, en, zh) => { if (!once.has(key)) { once.add(key); notify(t(en, zh)); } };
@@ -256,6 +257,11 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, clock =
         return () => { poller.dispose(); pollers.delete(poller); };
     }
     function fakeEnabled() { try { return localStorage.getItem('fv-editor-fake') === '1'; } catch { return false; } }
+    function generationAbsent() {
+        if (!generationAvailable) return;
+        generationAvailable = false;
+        if (!disposed) onGenerationReady(false);
+    }
     function persistFake(job) {
         fakeJobs.set(job.id, copy(job));
         try { localStorage.setItem('fv-editor-job:' + job.id, JSON.stringify(job)); } catch {}
@@ -296,6 +302,28 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, clock =
     }
     const store = {
         sources, cache,
+        get generationAvailable() { return fakeEnabled() || generationAvailable; },
+        generationReady() {
+            if (fakeEnabled()) return Promise.resolve(true);
+            if (!generationAvailable) return Promise.resolve(false);
+            // One bounded request per store, shared by concurrent callers. Only
+            // an explicit 404 hides generation; outages leave the editor usable.
+            return generationProbe ||= (async () => {
+                const controller = new AbortController();
+                let timer, finish;
+                const timeout = new Promise(resolve => { finish = resolve; timer = clock.setTimeout(() => {
+                    controller.abort(); resolve(true);
+                }, 5000); });
+                const probe = {dispose() { clock.clearTimeout(timer); controller.abort(); finish(true); pollers.delete(probe); }};
+                pollers.add(probe);
+                try {
+                    const ready = await Promise.race([Promise.resolve().then(() => request('/freevideo/chains', {signal: controller.signal}))
+                        .then(response => response.status !== 404, () => true), timeout]);
+                    if (!ready && !disposed) generationAbsent();
+                    return generationAvailable;
+                } finally { probe.dispose(); }
+            })();
+        },
         async recoverOutbox() {
             await session.ready;
             for (const [key, entry] of outbox()) {
@@ -445,14 +473,20 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, clock =
         },
         async startChain(payload) {
             if (fakeEnabled()) return startFake(payload);
-            const value = await json(chainRoute(), post(payload));
-            if (!value) { console.info('[FreeVideo editor] Chain endpoint absent; using the local fake generator.'); return startFake(payload); }
-            return value.chain;
+            if (!generationAvailable) return null;
+            const response = await request(chainRoute(), post(payload));
+            if (response.status === 404) {
+                generationAbsent();
+                notice('generate', 'Generating is unavailable until you restart after updating.', '更新后重启即可生成。');
+                return null;
+            }
+            if (!response.ok) throw errorFor(response);
+            return (await response.json()).chain;
         },
-        async chain(id) { return id.startsWith('fake-') ? fakeState(id) : (await json(chainRoute(id)))?.chain || null; },
+        async chain(id) { return fakeEnabled() && id.startsWith('fake-') ? fakeState(id) : (await json(chainRoute(id)))?.chain || null; },
         watchChain(id, fn) { return watch(() => store.chain(id), fn); },
         async chainAction(id, action) {
-            if (id.startsWith('fake-')) {
+            if (fakeEnabled() && id.startsWith('fake-')) {
                 const job = fakeJob(id); if (!job) return null;
                 if (action === 'cancel' && job.active) { job.elapsed += clock.now() - job.started; job.active = false; }
                 if (action === 'resume' && !job.active) { job.started = clock.now(); job.active = true; }
