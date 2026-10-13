@@ -933,6 +933,12 @@ export function prepare(record, ids) {
     }
     return finish(next);
 }
+// The finished footage each video of a generation request continues, as source keys; null for one that starts fresh.
+export function generationBefore(record, ids) {
+    const clips = generationClips(record, ids);
+    return generationPlan(record, clips).filter(row => !row.before || !clips.some(clip => clip.id === row.before.id))
+        .map(row => row.before ? key(row.before.source) : null);
+}
 export function generationRequest(record, ids, {text, paths = {}} = {}) {
     check(object(paths), 'source');
     if (text !== undefined) check(validText(text), 'text');

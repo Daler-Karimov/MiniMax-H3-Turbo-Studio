@@ -6,7 +6,7 @@ import {openSetup} from './setup.js';
 import * as model from './editor_model.js';
 import {createEditorState} from './editor_state.js';
 import {createEditorStore, sourceKey, mediaURL} from './editor_store.js';
-import {generationSize} from './editor_generation.js';
+import {generationSize, continuedSize} from './editor_generation.js';
 import {createEditorLibrary} from './editor_library.js';
 import {createEditorPlayer} from './editor_player.js';
 import {createEditorTransport, registerEditorShortcuts} from './editor_transport.js';
@@ -506,7 +506,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 submittedSelection = state.select({kind: 'clip', ids}); await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
-                const tooLong = request.blocks.filter(block => capability.maxRequestFrames != null && block.frames > capability.maxRequestFrames);
+                const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
+                Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
+                // Parts made at another size than the edit's have that size's limit.
+                const limit = (follow && (follow.width !== edit.width || follow.height !== edit.height)
+                    ? await store.requestFrames(follow, state.record.settings) : null) ?? capability.maxRequestFrames;
+                const tooLong = request.blocks.filter(block => limit != null && block.frames > limit);
                 if (tooLong.length) {
                     state.settle(record => tooLong.reduce((next, block) => model.fail(next, block.id, 'too_long', null), record));
                     return;
