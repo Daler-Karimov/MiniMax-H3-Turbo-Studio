@@ -356,9 +356,12 @@ def connection_guide(root, base, lang=None, offers=None):
         'print(call("GET", ""))',
         '# Only after the user asks for a video:',
         '# label is the short name the user sees on the job, in their language: what the video shows, 2 to 8 characters.',
-        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "label": "SHORT NAME", "ref": "shot-1"})["job"]',
+        '# seconds and aspect are what the user asked for (10 seconds and 16:9 when they said nothing): send them the first time.',
+        '# ref is a new name for every new request; the same ref again only repeats a submission whose answer was lost.',
+        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "seconds": 5, "aspect": "16:9", "label": "SHORT NAME",',
+        '#                               "ref": "A-NEW-NAME-FOR-THIS-REQUEST"})["job"]',
         '# job = call("GET", "/jobs/" + job["id"] + "?wait=25")',
-        '# Poll the same ID until succeeded. Retry a lost submission using the same ref.',
+        '# Poll the same ID until succeeded.',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
         '# The conversation inside FreeVideo (see below): each wait is its own command; when it returns, run the next one.',
         '# box = call("GET", "/inbox?wait=50")   # {"session": ..., "inbox": [what the user said], "again": true if nothing yet}',
@@ -406,7 +409,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
                      'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
                      'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
-                     '"Connected. Tell me what video you want." Give the introduction in your own window as usual, but it '
+                     '"Connected. Tell me what video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '
                      'does not end your turn: right after it, call the wait. Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
                      '"again": true means the user has not spoken yet, so call it again at once, time after time, with no '
                      'limit. Nothing new is not a reason to finish: do not end your reply and do not stop to ask the '
