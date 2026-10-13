@@ -395,9 +395,9 @@ def _run(args):
             continuation = prepare_continuation(continue_from, canvas)
         continuation = dict(continuation, audio_context=audio_context(), source_video=str(continue_from))
         if first_frame is not None:
-            from .continuation import anchor_media, chain_first_frame, first_frame_reference, unpack_first_frame
+            from .continuation import anchor_media, chain_first_frame_picture
             try:
-                kept = chain_first_frame(continuation, continue_from)
+                kept = chain_first_frame_picture(continuation, continue_from)
             except ValueError:
                 kept = None
                 first_frame['reason'] = 'unreadable'
@@ -409,7 +409,7 @@ def _run(args):
                     raise FileExistsError(args.out.resolve())
                 args.out.resolve().parent.mkdir(parents=True, exist_ok=True)
                 continue_anchor = args.out.resolve().with_suffix('.first-frame.png')
-                picture, picture_width, picture_height = first_frame_reference(unpack_first_frame(kept))
+                picture, picture_width, picture_height = kept
                 continue_anchor.write_bytes(picture)
                 media = anchor_media(media, continue_anchor)
                 validate_route(task=getattr(args, 'task', None) or 'ref2va', anchor=True, two_pass=two_pass,

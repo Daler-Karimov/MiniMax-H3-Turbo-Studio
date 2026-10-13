@@ -173,6 +173,18 @@ def chain_first_frame(request, video_path=None):
         raise ValueError('Invalid first frame') from None
 
 
+def chain_first_frame_picture(request, video_path=None):
+    """(PNG bytes, width, height) of the picture a continuation of `request` is given; None when nothing
+    has the film's first frame. The bridge and the engine both decide with this, so they cannot disagree."""
+    try:
+        kept = chain_first_frame(request, video_path)
+        return None if kept is None else first_frame_reference(unpack_first_frame(kept))
+    except (ValueError, MemoryError):
+        raise
+    except Exception:
+        raise ValueError('Invalid first frame') from None
+
+
 def _chain_first_frame(request, video_path):
     metadata = _snapshot_value(request)['metadata']
     if metadata.get('first_frame') is not None:

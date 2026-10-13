@@ -634,9 +634,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     # The engine decides the same way from the same record: whether the film's first frame is there to use.
     anchored = False
     if continue_from is not None and first_frame_reference:
-        from .continuation import chain_first_frame
+        from .continuation import chain_first_frame_picture
         try:
-            anchored = chain_first_frame(continuation, continue_from) is not None
+            anchored = chain_first_frame_picture(continuation, continue_from) is not None
         except ValueError:
             pass
     environment = engine_environment(root, source, environ)
