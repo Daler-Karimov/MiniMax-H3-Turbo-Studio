@@ -212,6 +212,19 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             actions.editError?.(error); return false;
         }
     }
+    function extendClip(id, frames, {silent = false} = {}) {
+        if (disposed || actions.generationAvailable?.() === false) return false;
+        let next;
+        try { next = model.extendClip(state.record, id, frames, actions.generationLimits?.() || {}); }
+        catch (error) {
+            if (!(error instanceof model.EditError)) throw error;
+            if (!silent) actions.editError?.(error);
+            return false;
+        }
+        const ids = next.tracks[0].clips.filter(clip => clip.pending === 'draft' && !model.find(state.record, clip.id))
+            .flatMap(clip => model.pair(next, clip.id).map(member => member.id));
+        return attempt(t('Extend', '拉长'), () => next, ids.length ? {selectionAfter: {kind: 'clip', ids}} : undefined);
+    }
     function position(node, start, frames) {
         node.style.left = `${pixels(start)}px`; node.style.width = `${Math.max(2, pixels(frames))}px`;
     }
@@ -840,18 +853,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         else if (finished.type === 'plannedBoundary') attempt(t('Resize parts', '调整段长'), record => model.resizePlannedBoundary(record, finished.id, finished.neighbor.clip.id, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'extend') {
-            if (actions.generationAvailable?.() === false) return;
             const frames = result.frame - finished.clip.start - finished.clip.frames + result.frames;
-            let next = null;
-            try { next = model.extendClip(state.record, finished.id, frames, actions.generationLimits?.() || {}); }
-            catch (error) { if (!(error instanceof model.EditError)) throw error; actions.editError?.(error); }
-            if (next) {
-                // The new parts stay selected through undo and redo, so Generate stays usable.
-                const clip = model.find(next, finished.id), start = clip.start + clip.frames;
-                const ids = next.tracks[0].clips.filter(c => c.pending === 'draft' && c.start >= start && c.start < start + result.frames)
-                    .flatMap(c => model.pair(next, c.id).map(member => member.id));
-                attempt(t('Extend', '拉长'), () => next, ids.length ? {selectionAfter: {kind: 'clip', ids}} : undefined);
-            }
+            extendClip(finished.id, frames);
         } else attempt(t('Trim', '裁短'), record => model.trim(record, finished.id, finished.edge, result.frame));
         renderSelection();
         } finally { actions.gestureEnd?.(); }
@@ -1097,7 +1100,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             showInsertion(null); insertion.classList.remove('fv-ed-blocked-insertion');
         }, 700);
     }
-    return {element, keyboard, menu, dismissPopup, flashBlocked, seekPlayhead,
+    return {element, keyboard, menu, dismissPopup, flashBlocked, seekPlayhead, extendClip,
         setSnapping(enabled) {
             if (typeof enabled !== 'boolean') return {ok: false, reason: 'snapping'};
             setTransportSnapping(state, enabled); cachedPoints = allPoints(gesture?.ids || []);

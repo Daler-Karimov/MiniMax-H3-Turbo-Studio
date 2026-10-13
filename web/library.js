@@ -2,6 +2,7 @@ import { api } from '../../scripts/api.js';
 import { closeDialog } from './motion.js';
 import { resultActions, previewBadge } from './result_actions.js';
 import { extendSourceExists } from './studio_extend.js';
+import { topDialog } from './dialog_keys.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./library.css', import.meta.url).href; document.head.append(style);
@@ -152,9 +153,11 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             date.textContent = timestamp(row); geometry.textContent = dimensions(row);
             links.replaceChildren(resultActions(row, t, {
                 extend: async saved => {
+                    const isCurrent = () => !disposed && dialog.open && dialog.dataset.closing !== 'true' && topDialog() === dialog && selected === saved.video;
+                    if (!isCurrent()) return;
                     player?.pause();
-                    const run = extend || (async record => (await import('./studio.js')).extendVideo(record));
-                    try { const studio = await run(saved); dialog.close(); studio?.querySelector('.fv-prompt-editor textarea')?.focus({preventScroll: true}); }
+                    const run = extend || (async (record, options) => (await import('./studio.js')).openExtendEditor(record, undefined, options));
+                    try { const editor = await run(saved, {isCurrent}); if (editor && !disposed) { dialog.close(); editor.element?.focus({preventScroll: true}); } }
                     catch (error) { notice.textContent = error.message; }
                 },
                 secondPass: row.preview && upscale ? () => secondPass(row) : null,

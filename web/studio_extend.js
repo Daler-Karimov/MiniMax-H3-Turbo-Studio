@@ -8,8 +8,8 @@ export const EXTEND_TEXT = Object.freeze({
 });
 export const extendText = (t, key) => t(...EXTEND_TEXT[key]);
 
-// The saved video of a continuation holds only what it adds, so the result card and the library keep this entry
-// closed until the joined whole video is made; the editor's own extension is unaffected.
+// Only the legacy in-studio continuation entry waits for a joined whole video.
+// Result cards and Creations continue on the editor timeline independently.
 export const EXTEND_ENTRY_OPEN = false;
 export function canExtend(record) {
     return Boolean(record?.video && /\.mp4$/i.test(record.video) && !record.preview

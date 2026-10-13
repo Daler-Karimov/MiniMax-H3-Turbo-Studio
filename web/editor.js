@@ -141,7 +141,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     tracksHost.inert = genHost.inert = true; title.disabled = true;
     // CSS delays the pending indication; fast opens stay at full opacity.
     tracksHost.classList.add('fv-ed-pending'); genHost.classList.add('fv-ed-pending');
-    let discardOnSwitch = false, initialSelection = null, offerInitial = null;
+    let discardOnSwitch = false, initialSelection = null, offerInitial = null, extendEntry = null;
     let viewKey = null, viewReady = false;
     let library = null, closing = false, closePromise = null, exportSnapshot = null, lastSeed = null, projectEpoch = 0;
     let disposed = false, suppressSave = false, savedContent = '', initializing = true, tracks = null, genbar = null, adjustPanel = null, exportStatus = null, pointerEditing = false, deferredStamp = null;
@@ -199,7 +199,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
         generationAsked = true; genHost.hidden = !ready; element.dataset.generationReady = String(ready);
-        settleGenbar(); if (ready) offerInitial?.();
+        settleGenbar(); if (ready) { offerInitial?.(); extendEntry?.(); }
         tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
         updateTransport(); adjustPanel?.update();
     }});
@@ -332,7 +332,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         viewKey = record.id || key || 'draft:' + (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
         let remembered = editorViews.get(viewKey);
         if (!remembered) try { remembered = JSON.parse(localStorage.getItem(viewPrefix + viewKey)); } catch {}
-        initialSelection = offerInitial = null;
+        initialSelection = offerInitial = extendEntry = null;
         projectEpoch++;
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); progressConnection?.reset();
         mostRecentJob = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
@@ -610,10 +610,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         // A sound-only export is not a work: it opens as a file the browser plays and can save.
         if (value.only === 'sound') { if (value.url) window.open(mediaURL(api, value.url), '_blank', 'noopener'); return; }
         const module = await import('./library.js');
-        module.openLibrary(t, {selectedWork: value.work, extend: async record => {
+        module.openLibrary(t, {selectedWork: value.work, extend: async (record, options) => {
             if (await handle.close() === false) throw new Error(saveWarning.textContent);
             await onView('studio');
-            return (await import('./studio.js')).extendVideo(record);
+            return (await import('./studio.js')).openExtendEditor(record, undefined, options);
         }});
     }
     function updateExport(value) {
@@ -914,6 +914,29 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         }
         for (const [id, value] of progress) tracks.setProgress(id, value);
         tracks.setScrollLeft(editorViews.get(viewKey)?.scrollLeft);
+        if (from?.work && from.extend) {
+            const id = from.work.id || from.work.video?.replace(/^FreeVideo\//, '').replace(/\/video\.mp4$/, '');
+            const epoch = projectEpoch;
+            // Selects the work and, when nothing follows it yet, adds one minimum draft. Runs once; when the
+            // generation probe failed this time it runs after a later probe succeeds.
+            const enter = (select = true) => {
+                if (closing || disposed || epoch !== projectEpoch) return true;
+                const clip = state.record.tracks[0].clips.findLast(clip => clip.source?.kind === 'work' && clip.source.id === id);
+                if (!clip) return true;
+                // Coming back to a work that already has parts after it selects the waiting draft instead of adding another.
+                const edge = clip.start + clip.frames;
+                const after = state.record.tracks[0].clips.filter(other => other.id !== clip.id && other.start >= edge);
+                const waiting = after.find(other => other.pending === 'draft');
+                if (select) state.select({kind: 'clip', ids: model.pair(state.record, (waiting || clip).id).map(member => member.id)});
+                if (after.length || !clip.extend || !clip.source || store.sources.get(sourceKey(clip.source))?.missing) return true;
+                if (!store.generationAvailable) return false;
+                const spare = Math.min(...model.pair(state.record, clip.id).map(member => member.length - member.in - member.frames));
+                tracks.extendClip(clip.id, spare + model.RULES.minSeconds * model.FPS, {silent: true});
+                return true;
+            };
+            await store.generationReady();
+            if (!enter() && !closing && !disposed) extendEntry = () => { if (enter(false) || closing || disposed) extendEntry = null; };
+        }
     })().catch(error).finally(() => {
         // Every exit (including close and partial failure) settles readiness.
         // After a completed start the saved baseline is already set; edits made since must stay unsaved.

@@ -1,4 +1,5 @@
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
+import {topDialog} from './dialog_keys.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
@@ -188,6 +189,14 @@ const studioQueues = new WeakMap();
 export async function extendVideo(record, node = current?.node || app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate')) {
     if (!node || !await extendSourceExists(api, record)) throw new Error(extendText(t, 'unavailable'));
     return openStudio(node, {extendFrom: await readExtendRecord(api, record)});
+}
+
+export async function openExtendEditor(record, node = current?.node || app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate'),
+    {studio = current?.node === node ? current?.dialog : undefined, isCurrent} = {}) {
+    if (!node || isCurrent?.() === false) return null;
+    const handle = await openEditorView(node, {studio, work: record, extend: true, isCurrent});
+    await handle?.ready;
+    return handle;
 }
 
 export function openStudio(node, {extendFrom = null} = {}) {
@@ -541,7 +550,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const previewCaption = el('span'), previewTools = el('div', null, 'fv-preview-tools');
     previewTools.append(previewCaption);
     previewTools.append(button(t('Creations', '作品'), () => {
-        stage.querySelector('video')?.pause(); openLibrary(t, {upscale: value => node.freevideoUpscaleResult(value), extend: saved => extendVideo(saved, node)});
+        stage.querySelector('video')?.pause(); openLibrary(t, {upscale: value => node.freevideoUpscaleResult(value),
+            extend: (saved, options) => openExtendEditor(saved, node, {studio: dialog, ...options})});
     })); previewHead.append(previewTools); output.append(previewHead);
     const previewSpace = el('div', null, 'fv-preview-space'); output.append(previewSpace);
     const stage = el('div', null, 'fv-stage');
@@ -698,7 +708,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const reported = progress.hasReport();
         const tipShowing = !!links.querySelector('.fv-report-tip:not(.fv-report-tip-leaving)');
         links.replaceChildren(resultActions(r, t, {diagnostic: reported ? downloadReport : null,
-                                                   extend: async saved => { try { await extendVideo(saved, node); } catch (error) { resultActionFailed(error); } },
+                                                   extend: saved => openExtendEditor(saved, node, {studio: dialog,
+                                                       isCurrent: () => dialog.open && dialog.dataset.closing !== 'true' && topDialog() === dialog && result === r}),
                                                    secondPass: r.preview ? secondPass(r) : null}));
         if (runButtonReady) updateExtendButton();
         // After a video finished just now, point at the report menu until the
