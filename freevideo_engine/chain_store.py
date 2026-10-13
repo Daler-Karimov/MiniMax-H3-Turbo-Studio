@@ -16,6 +16,8 @@ ACTIVE = ('queued', 'running', 'cancelling')
 CHAIN_STATES = (*ACTIVE, 'cancelled', 'failed', 'interrupted', 'done')
 BLOCK_STATES = ('pending', 'queued', 'running', 'done', 'cancelled', 'failed', 'interrupted')
 OUTPUT_STATES = ('none', 'pending', 'joining', 'done', 'failed')
+# Parts one video may be continued through: the first part and four continuations.
+MAX_PARTS = 5
 
 
 def reference(value):

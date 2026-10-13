@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import logging
 import math
+from pathlib import PurePosixPath
 import threading
 import time
 import uuid
@@ -13,6 +14,20 @@ from . import chain_store as store
 
 class ChainBusy(ValueError):
     pass
+
+
+class ChainTooLong(ValueError):
+    """A chain that would continue a video through more parts than a video may have."""
+    code = 'chain_too_long'
+
+    def __init__(self, parts, limit):
+        super().__init__('This video can have up to %d parts. Make it shorter.' % limit)
+        self.parts, self.limit = parts, limit
+        self.message_zh = '这条视频最多 %d 段，请缩短一些。' % limit
+
+
+def _work_key(path):
+    return PurePosixPath(str(path).replace('\\', '/')).as_posix()
 
 
 def _number(value):
@@ -42,8 +57,10 @@ def node_prompt(prompt, node):
 
 
 class ChainRunner:
-    def __init__(self, store_dir, host, clock=time.monotonic, wall=time.time, estimate=None, poll=0.5, inputs=None):
+    def __init__(self, store_dir, host, clock=time.monotonic, wall=time.time, estimate=None, poll=0.5, inputs=None,
+                 max_parts=None):
         self.store_dir, self.host = store_dir, host
+        self.max_parts = max_parts or store.MAX_PARTS
         self.clock, self.wall, self.estimate, self.poll = clock, wall, estimate, poll
         self.inputs = inputs or host.inputs
         self.lock = threading.RLock()
@@ -118,9 +135,49 @@ class ChainRunner:
             value['current'] = block['id']
         return value
 
+    def _depths(self, record, seen=()):
+        """Parts each block of `record` continues through, itself included (a block with no source is the
+        first part). A source that is an existing video counts the parts that video was made of, as far
+        as this runner's records know them; one they do not know counts as one part."""
+        rows = {row['id']: row for row in record['blocks']}
+        depth, pending = {}, list(rows)
+        while pending:
+            rest = []
+            for identity in pending:
+                row = rows[identity]
+                sources = [row[key] for key in ('after', 'before') if row[key] is not None]
+                if any(isinstance(value, str) and value not in depth for value in sources):
+                    rest.append(identity)
+                    continue
+                depth[identity] = 1 + sum(depth[value] if isinstance(value, str)
+                                          else self._work_parts(value['work'], seen + (record['id'],))
+                                          for value in sources)
+            if len(rest) == len(pending):
+                raise ValueError('Block references cannot contain a cycle or self reference')
+            pending = rest
+        return depth
+
+    def _work_parts(self, work, seen):
+        key = _work_key(work)
+        for record in list(self.records.values()):
+            if record['id'] in seen:
+                continue
+            if record.get('output') and _work_key(record['output']) == key:
+                names = [row['id'] for row in store.leading_blocks(record)[:record.get('output_blocks') or None]]
+            else:
+                names = [row['id'] for row in record['blocks'] if row['output'] and _work_key(row['output']) == key]
+            if names:
+                depth = self._depths(record, seen)
+                return max(depth[name] for name in names)
+        return 1
+
     def create(self, payload):
         record = store.validate(payload)
         with self.lock:
+            # Before anything is written or queued: a refused chain leaves every record and file as it was.
+            parts = max(self._depths(record).values())
+            if parts > self.max_parts:
+                raise ChainTooLong(parts, self.max_parts)
             record['created'] = self.wall()
             self._save(record)
             self.records[record['id']] = record
