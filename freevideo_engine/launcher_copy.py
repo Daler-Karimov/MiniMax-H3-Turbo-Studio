@@ -15,6 +15,8 @@ SOURCES = {
 ZH = dict([
     ('Prepare Python', '准备 Python'), ('Install Python', '安装 Python'),
     ('Prepare download tools', '准备下载工具'), ('Tsinghua mirror', '清华镜像'),
+    ('Preparing installation', '准备安装'), ('Checking the environment', '正在检查运行环境'),
+    ('Testing download sources', '正在测试下载源'), ('Preparing download tools', '正在准备下载工具'),
     ('GitHub mirror', 'GitHub 镜像'), ('attempt', '正在连接'),
     ('fallback', '正在切换下载源'), ('route-retry', '正在切换连接'),
     ('verifying', '正在校验'), ('no-progress', '下载无进展'),
@@ -161,6 +163,7 @@ def display(value, zh=False):
         (r'Downloading packages · about (.+) across (\d+) files', r'下载组件 · 约 \1，共 \2 个文件'),
         (r'about (.+) across (\d+) files', r'约 \1，共 \2 个文件'),
         (r'(\d+) files / folders scanned', r'已扫描 \1 个文件和目录'),
+        (r'Testing download sources (\d+ / \d+)', r'正在测试下载源 \1'),
         (r'(\d+ / \d+) files', r'\1 个文件'), (r'shard (\d+ / \d+)', r'分片 \1'),
         (r'([\d.]+ MiB) retained', r'已保留 \1'), (r'([\d.]+ GiB) released', r'已释放 \1'),
         (r'([\d.]+ MiB) downloaded', r'已下载 \1'),

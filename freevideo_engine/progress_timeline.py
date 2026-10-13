@@ -168,6 +168,7 @@ LABEL_KEYS = frozenset((
     'Prepare ComfyUI environment',
     'Prepare FreeVideo',
     'Prepare download tools',
+    'Preparing installation',
     'Preparing # s video + audio · # × #',
     'Preparing offloaded weight storage',
     'Preparing offloaded weight storage · # / # blocks',

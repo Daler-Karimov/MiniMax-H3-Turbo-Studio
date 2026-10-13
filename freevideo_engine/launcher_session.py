@@ -1342,6 +1342,10 @@ class Session:
                   'verifying': ('Downloaded; verifying', '已下载，正在校验'),
                   'paused': ('Paused', '已暂停')}
         review = row.get('status') == 'review'
+        # The model files are checked once the environment is installed; until their step
+        # reports, say that instead of a bare "waiting".
+        before_models = (row.get('action') == 'install' and row.get('status') == 'running'
+                         and not (row.get('task', {}).get('model_groups') or row.get('model_groups')))
         for name in FAMILIES:
             if name == 'sampling' and name not in by_id and not self.form['sampling_caches']:
                 continue
@@ -1361,8 +1365,12 @@ class Session:
             total = item.get('total_bytes', 0)
             done = total if state == 'ready' else min(total,
                     item.get('verified_bytes', 0)+item.get('downloaded_bytes', 0))
+            if state == 'waiting' and before_models:
+                shown = ('Checked after setup', '安装环境后检查')
+            else:
+                shown = states.get(state, states['waiting'])
             models.append(dict(id=name, title=self.t(*NAMES[name]), state=state,
-                detail=self.t(*states.get(state, states['waiting'])), done=done, total=total,
+                detail=self.t(*shown), done=done, total=total,
                 found=item.get('existing_bytes', 0), download=item.get('download_bytes', 0),
                 rate='%.1f MiB/s' % (item['bytes_per_second']/2**20) if item.get('bytes_per_second') else ''))
         # A model download names its group, so it shows the group's download, as in the plan and the rows below.

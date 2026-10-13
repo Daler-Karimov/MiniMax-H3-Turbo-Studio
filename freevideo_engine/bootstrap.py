@@ -396,7 +396,36 @@ def offline_installation(root):
     return (root.parent / 'portable.json').is_file()
 
 
-def plan(args, *, local_progress=None):
+PREPARE_KEY = 'install-prepare'
+
+
+def prepare_step(ui, name, done=None, total=None):
+    """One running task for the silent steps between the model scan and the first real task.
+
+    Without it the card keeps the last finished event (the model scan) for as long as the
+    environment, the network and the download tools are examined.
+    """
+    with ui._lock:
+        if PREPARE_KEY not in ui.tasks:
+            ui.begin(PREPARE_KEY, 'Preparing installation')
+        elif ui.tasks[PREPARE_KEY]['state'] != 'running':
+            return  # Finished: a late step must not bring the card back to it.
+        if ui.tasks[PREPARE_KEY].get('step') != name:
+            ui.tasks[PREPARE_KEY]['event_tick'] = 0.  # Short steps must each reach the card.
+        ui.tasks[PREPARE_KEY]['step'] = name
+        shown = '%s %d / %d' % (name, done or 0, total) if total else name
+        ui.update(PREPARE_KEY, activity='note', name=shown, detail=shown, unit='items',
+                  done=done or 0, total=total or 0)
+
+
+def prepare_end(ui, success=True):
+    """Finish the step once; a repeated end would bring its finished line back as the card's last event."""
+    with ui._lock:
+        if ui.tasks.get(PREPARE_KEY, {}).get('state') == 'running':
+            ui.end(PREPARE_KEY, success=success)
+
+
+def plan(args, *, local_progress=None, stage=None):
     root = args.root.expanduser().resolve()
     saved = json.loads((root / 'machine.json').read_text(encoding='utf-8')) if (root / 'machine.json').is_file() else {}
     storage = getattr(args, 'storage', None) or saved.get('storage', 'compact')
@@ -569,6 +598,8 @@ def plan(args, *, local_progress=None):
     # Stream directly into final FP8 groups. The pinned model occupies ~45.3
     # GiB; allow 52 GiB including the largest group in progress. Never credit
     # future source deletion toward the space needed to complete conversion.
+    if stage:
+        stage('Checking the environment')
     dependencies = dependency_status(root, layout, system)
     environments_ready = all(r['exists'] and not r['missing'] and not r['mismatched'] for r in dependencies.values())
     python_version = None if mac_target else bootstrap_versions(
@@ -592,6 +623,8 @@ def plan(args, *, local_progress=None):
     errors.extend(disk_plan['errors'])
     # A repair also reinstalls what is damaged in the ComfyUI environment the launcher made.
     frontend_python = getattr(args, 'frontend_repair_python', None)
+    if stage:
+        stage('Checking the environment')
     package_download_bytes = reinstall_download_bytes(dependencies, system, root=root,
         frontend_python=str(frontend_python.expanduser().absolute()) if frontend_python else None,
         disk_mode=disk_plan['mode'])
@@ -600,18 +633,23 @@ def plan(args, *, local_progress=None):
     if reuse_cache and not cache_compatible(reuse_cache, **cache_format):
         errors.append('--cache must contain a prepared FP8 cache compatible with this GPU scale format.')
     from .download_settings import read as download_preferences
+    if stage:
+        stage('Testing download sources')
     networking = network.plan(json.loads((PACKAGE / 'dependencies.json').read_text(encoding='utf-8')),
         bootstrap_versions(json.loads((PACKAGE / 'bootstrap_versions.json').read_text(encoding='utf-8')), system), layout,
         mode=getattr(args, 'network', 'auto'), timeout=getattr(args, 'network_timeout', 5),
         offline=bool(args.hardware_json or errors),
         env=dict(os.environ, FREEVIDEO_HOME=str(root)),
-        proxy_mode=download_preferences(root / 'download-settings.json')['proxy_mode'])
+        proxy_mode=download_preferences(root / 'download-settings.json')['proxy_mode'],
+        progress=(lambda message: stage('Testing download sources', message['done'], message['total'])) if stage else None)
     networking['download_settings_path'] = str(root / 'download-settings.json')
     prepared_missing = prepared and any(
         not model_target(row, model_dir, encoder_dir, prepared_dir).is_file()
         for row in files if row.get('prepared') and not
         (local_reuse or {}).get('matches', {}).get(row['repo'] + '/' + row['file']))
     if prepared_missing and not args.hardware_json and not errors:
+        if stage:
+            stage('Testing download sources')
         error = prepared_model.access_error(prepared, networking)
         if error:
             errors.append(error)
@@ -1058,6 +1096,8 @@ class Installer:
         self.damaged_before = []
         if self.system != 'Darwin' and self.pythons['engine'].is_file():
             from .runtime_libraries import damaged
+            if ui is not None:
+                prepare_step(ui, 'Checking the environment')
             self.damaged_before = damaged(self.pythons['engine'])
         # Moving a working installation to int8 checks the int8 kernels first
         # (execute), so a GPU that fails them keeps its configuration as it was.
@@ -1799,6 +1839,7 @@ class Installer:
             require_int8_kernels(self.plan, report)
             self.mark_unfinished()
         self.ui.phase('Prepare download tools', 0, 8)
+        prepare_step(self.ui, 'Preparing download tools')
         uv = self.prepare_tools()
         self.env['FREEVIDEO_UV'] = str(uv)
         from .install_schedule import run
@@ -1814,6 +1855,7 @@ class Installer:
                 weighted['shown'] = done = max(weighted['shown'], 1 + units)
             self.ui.phase(phase, done, total)
         def scheduling(name, status, completed, count):
+            prepare_end(self.ui)  # The first real task shows from here on.
             with self.state_lock:
                 self.state.setdefault('schedule', {})[name] = dict(status=status, after=tasks[name]['after'],
                     exclusive_writers=tasks[name]['writes'], epoch=time.time())
@@ -1943,6 +1985,16 @@ def run_prefetch(value, ui):
 
 
 def main(argv=None):
+    shown = []
+    try:
+        return run_main(argv, shown)
+    finally:
+        # An interrupt or an unexpected error anywhere must not leave the step running on the card.
+        for ui in shown:
+            prepare_end(ui, False)
+
+
+def run_main(argv, shown):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('FREEVIDEO_HOME', DEFAULT_ROOT)))
     parser.add_argument('--gpu', help='Physical nvidia-smi index or full GPU UUID')
@@ -2011,6 +2063,7 @@ def main(argv=None):
         parser.error('--prefetch-only needs --prepared-format int8 or fp8')
     ui = TerminalUI(platform.system() + ' setup', plain=args.plain, no_color=args.no_color,
                     verbose=args.verbose, show_location=args.verbose)
+    shown.append(ui)
     try:
         from .local_models import progress_output
         if platform.system() == 'Windows' and not args.plan:
@@ -2018,27 +2071,34 @@ def main(argv=None):
             def curl_progress(message):
                 print(json.dumps(message), flush=True)
             os.environ['FREEVIDEO_CURL'] = execution_paths.execution_path(ensure(args.root, progress=curl_progress))
-        value = plan(args, local_progress=progress_output if os.environ.get('FREEVIDEO_UI_EVENTS') == '1' or not args.json else None)
+        value = plan(args, local_progress=progress_output if os.environ.get('FREEVIDEO_UI_EVENTS') == '1' or not args.json else None,
+                     stage=None if args.plan else lambda *step: prepare_step(ui, *step))
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        prepare_end(ui, False)
         print('Preflight failed: ' + str(error), file=sys.stderr)
         return 1
     print(json.dumps(value, indent=2)) if args.json else display(value, ui, verbose=args.verbose)
     if args.plan:
         return 1 if value['errors'] else 0
     if value['errors']:
+        prepare_end(ui, False)
         return 1
     try:
         accepted = confirmed(args, value, ui=ui)
     except KeyboardInterrupt:
+        prepare_end(ui, False)
         print('\nCancelled. No engine or model installation was started.')
         return 130
     except ValueError as error:
+        prepare_end(ui, False)
         print(str(error), file=sys.stderr)
         return 1
     if not accepted:
+        prepare_end(ui, False)
         print('Cancelled. No engine or model installation was started.')
         return 0
     if args.prefetch_only:
+        prepare_end(ui)
         return run_prefetch(value, ui)
     try:
         installer_class = Installer
@@ -2046,6 +2106,7 @@ def main(argv=None):
             from .macos_setup import Installer as installer_class
         installer = installer_class(value, ui)
     except BlockingIOError:
+        prepare_end(ui, False)
         print('Setup, testing or generation is using this installation/GPU lock. Retry after it finishes.', file=sys.stderr)
         from .locking import lock_holders
         owners = lock_holders([Path(value['root']) / 'setup.lock', os.environ.get('FREEVIDEO_LOCK_PATH', str(Path(value['root']) / 'engine.lock'))])
@@ -2053,6 +2114,7 @@ def main(argv=None):
             print('Processes with open lock handles: %s. Stop the old task before retrying; do not delete lock files.' % ', '.join(map(str, owners)), file=sys.stderr)
         return 1
     except (OSError, ValueError) as error:
+        prepare_end(ui, False)
         print('Setup could not start: ' + str(error), file=sys.stderr)
         return 1
     def interrupted(signum, frame):
@@ -2061,10 +2123,13 @@ def main(argv=None):
     try:
         ui.start(installer.run_dir)
         installer.start_monitor()
+        if value.get('device_backend') == 'mps':
+            prepare_end(ui)  # The Mac installer does not schedule through execute() above.
         installer.execute()
         installer.state['status'] = 'complete'
     except BaseException as error:
         installer.state.update(status='failed', error='%s: %s' % (type(error).__name__, error))
+        prepare_end(ui, False)
         ui.phase('Setup interrupted' if isinstance(error, KeyboardInterrupt) else 'Setup failed', ui.done, ui.total)
     finally:
         try:
