@@ -1,5 +1,4 @@
 """Create a file that only the current user can open."""
-import logging
 import os
 
 WINDOWS = os.name == 'nt'
@@ -16,9 +15,9 @@ def create(path):
             return _create_windows(path)
         except FileExistsError:
             raise
-        except Exception as error:
-            # A volume that keeps no permissions (FAT, some shares) still gets its file, as before.
-            logging.getLogger(__name__).warning('Could not restrict %s to this user: %s', path, error)
+        except Exception:
+            # Windows mode bits cannot replace a protected DACL. Fail closed.
+            raise PermissionError('Could not create a private installation token') from None
     return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
 

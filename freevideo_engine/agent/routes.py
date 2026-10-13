@@ -44,9 +44,37 @@ def token_path(root):
     return Path(root) / 'agent' / 'token'
 
 
+class TokenUnavailable(JobError):
+    def __init__(self):
+        super().__init__('not_ready', 'Agent unavailable: a private installation token could not be prepared.')
+
+    def view(self):
+        return errors.build(self.code, validation=True, message=self.message)
+
+
 def ensure_token(root):
-    """Exclusive creation of the final file; concurrent readers wait for its complete line."""
+    """Read/create a private token; replace existing Windows files with a protected DACL."""
     path = token_path(root)
+
+    def secure_existing(value):
+        temporary = path.with_name('.token-' + uuid.uuid4().hex + '.tmp')
+        descriptor = private_file.create(temporary)
+        try:
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write((value + '\n').encode('ascii'))
+                stream.flush()
+                os.fsync(stream.fileno())
+            for attempt in range(8):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    # Another program may hold the old file open for a moment.
+                    if attempt == 7:
+                        raise
+                    time.sleep(.1 * (attempt + 1))
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def read_existing():
         info = path.lstat()
@@ -67,6 +95,8 @@ def ensure_token(root):
         except UnicodeDecodeError:
             raise ValueError('Invalid installation token') from None
         if data.endswith(b'\n') and 32 <= len(value) <= 128 and all(c.isalnum() or c in '-_' for c in value):
+            if os.name == 'nt':
+                secure_existing(value)
             return value
         return None
 
@@ -295,15 +325,30 @@ def register():
     confirmations = Confirmations(port.output_root / 'FreeVideo' / '.agent' / 'confirm.json', sessions)
     jobs.productions.gate = confirmations.gate
     tokens = {}
+    token_failures = set()
     thumbnails = asyncio.Semaphore(1)
     upload_decoders = asyncio.Semaphore(1)
 
-    def expected():
+    def expected(root=None):
         from ..comfy_bridge import installation_root
-        root = installation_root()
+        root = installation_root() if root is None else root
+        if root in token_failures:
+            raise TokenUnavailable()
         if root not in tokens:
-            tokens[root] = ensure_token(root)
+            try:
+                tokens[root] = ensure_token(root)
+            except (OSError, ValueError):
+                if os.name != 'nt':
+                    raise
+                # Do not retry/enable an unsafe Windows token during this server startup.
+                token_failures.add(root)
+                logging.getLogger(__name__).warning('%s', TokenUnavailable())
+                raise TokenUnavailable() from None
         return tokens[root]
+
+    def prepare_token(root):
+        # Startup and public connection help share authentication's Windows cache.
+        return expected(root) if os.name == 'nt' else ensure_token(root)
 
     def reply(value, status=200):
         return web.json_response(value, status=status, headers={'Cache-Control': 'no-store'},
@@ -638,7 +683,7 @@ def register():
         page_language(request[query_key].get('lang'))
         try:
             root = installation_root()
-            ensure_token(root)
+            prepare_token(root)
         except (OSError, ValueError) as error:
             return problem('not_ready', str(error), 503)
         config = await asyncio.to_thread(client_config, root)
@@ -666,7 +711,7 @@ def register():
         root = installation_root()
         token_path(root).unlink(missing_ok=True)
         tokens.pop(root, None)
-        ensure_token(root)
+        prepare_token(root)
         return reply(dict(reset=True))
 
     @routes.get(PREFIX + '/connect')
@@ -675,7 +720,7 @@ def register():
         from ..comfy_bridge import installation_root
         from .guide import connection_guide, connection_text
         root = installation_root()
-        ensure_token(root)
+        prepare_token(root)
         value = connection_guide(root, request.scheme + '://' + request.host, request[query_key].get('lang'))
         if request[query_key].get('format') == 'json':
             return reply(value)
@@ -1413,7 +1458,7 @@ def register():
         from ..comfy_bridge import installation_root
         from comfy.cli_args import args
         root = installation_root()
-        ensure_token(root)
+        prepare_token(root)
         listen = (args.listen or '127.0.0.1').split(',')[0]
         host = '127.0.0.1' if listen in ('0.0.0.0', '') else '[::1]' if listen == '::' else listen
         scheme = 'https' if getattr(args, 'tls_keyfile', None) else 'http'
