@@ -27,7 +27,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     const notice=el('span');notice.setAttribute('role','button');notice.tabIndex=0;notice.onclick=()=>jumpMissing();notice.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();jumpMissing();}}; notice.classList.add('fv-ed-text-notice'); notice.hidden=true; exportBox.prepend(notice);
     const menu=el('div','fv-ed-text-menu'); menu.hidden=true; menu.setAttribute('role','menu'); element.append(menu);
     const names={sans:t('Sans','黑体'),serif:t('Serif','宋体'),kai:t('Kai','楷体'),mono:t('Mono','等宽')};
-    let disposed=false,ready=false,table=null,loadError=false,draft=null,lastStyle={},editing=null,drag=null,raf=null,layouts=new Map(),mapped={x:0,y:0,w:1,h:1};
+    let disposed=false,ready=false,table=null,loadError=false,draft=null,fresh=null,typing=null,lastStyle={},editing=null,drag=null,raf=null,layouts=new Map(),mapped={x:0,y:0,w:1,h:1};
     const panels=new Map(), commands=createSelectionActions({state,t,actions});
     const selected=()=>state.selection?.kind==='clip' && state.selection.ids.length===1 ? model.find(state.record,state.selection.ids[0]) : null;
     const record=()=>draft?.record||state.record;
@@ -48,14 +48,23 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         apply(t('Content','内容'),change);
     }
     function commitDraft(){if(draft){const change=draft.change;apply(t('Text','文字'),change);const c=selectedText();if(c?.text_kind==='text')lastStyle={...styleOf(state.record,c)};}}
+    // Editing a text ended. One left without words is taken away; one that never had any leaves no step behind.
+    function endEditing(id){
+        const shown=model.find(record(),id),made=fresh?.id===id?fresh:null;if(made)fresh=null;
+        if(!isText(shown)||shown.text.trim()||locked(shown)){commitDraft();return;}
+        draft=null;if(!model.find(state.record,id)){render();return;}
+        if(!made||!state.withdraw(made.step))apply(t('Delete','删除'),r=>model.remove(r,[id]));
+        render();
+    }
+    function finishContent(){if(typing){const id=typing;typing=null;endEditing(id);}else commitDraft();}
     function add(kind,at=state.playhead){
         commitDraft(); finishInline(); player.pause();
         const text='';
         let id;
         if(!apply(kind==='text'?t('Text','文字'):t('Subtitles','字幕'),r=>{const next=addText(r,{kind,at,text,style:{...lastStyle,x:.5,y:.5}});id=`c${next.serial}`;return next;}))return;
-        state.select({kind:'clip',ids:[id]});state.seek(at);adjust.open();
+        fresh={id,step:state.step};state.select({kind:'clip',ids:[id]});state.seek(at);adjust.open();
         if(kind==='text') startInline(id,true);
-        else {const content=panels.get(kind)?.content;content?.focus();content?.select();}
+        else {const content=panels.get(kind)?.content;content?.focus();content?.select();typing=id;}
     }
     actions.addText=(kind,at)=>add(kind,at);
     function buildPanel(host,kind){
@@ -99,11 +108,12 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text);}catch{actions.notify?.(t('Could not read this subtitle file','读不出这个字幕文件'));return;}finally{file.value='';}
                 if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}};host.append(importButton,file);
         }
-        content.oninput=()=>{const c=selectedText();if(c)updateContent(c,content.value,true);};content.onchange=commitDraft;
+        content.oninput=()=>{const c=selectedText();if(c)updateContent(c,content.value,true);};content.onchange=finishContent;
+        content.onfocus=()=>{typing=selectedText()?.id??null;};content.onblur=finishContent;
         content.onkeydown=e=>{
             e.stopPropagation();
-            if(e.key==='Escape'){e.preventDefault();commitDraft();content.blur();}
-            else if(kind==='subtitle' && e.key==='Enter' && !e.shiftKey && !e.isComposing){e.preventDefault();const c=selectedText();commitDraft();if(c)add('subtitle',c.start+c.frames);}
+            if(e.key==='Escape'){e.preventDefault();finishContent();content.blur();}
+            else if(kind==='subtitle' && e.key==='Enter' && !e.shiftKey && !e.isComposing){e.preventDefault();const c=selectedText();if(!c||!model.find(record(),c.id)?.text.trim())return;commitDraft();add('subtitle',c.start+c.frames);content.value='';}
         };
         panels.set(kind,{content,warning,overflow,font,size,sizeNumber,custom,backing,bold,align,position,duration,fade,host});
         updatePanel(kind);
@@ -220,7 +230,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         input.onkeydown=e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();finishInline();} };input.onkeyup=e=>e.stopPropagation();
         input.onblur=()=>finishInline();render();input.focus();if(selectAll)input.select();
     }
-    function finishInline(){if(!editing)return;const old=editing;editing=null;old.input.onblur=null;const c=model.find(state.record,old.id);if(c&&c.text!==old.input.value)updateContent(c,old.input.value);else commitDraft();old.input.remove();render();}
+    function finishInline(){if(!editing)return;const old=editing;editing=null;old.input.onblur=null;const c=model.find(state.record,old.id);if(!old.input.value.trim())endEditing(old.id);else if(c&&c.text!==old.input.value)updateContent(c,old.input.value);else commitDraft();old.input.remove();render();}
     function guide(axis,value){const line=el('span','fv-ed-text-guide '+axis);line.style[axis==='x'?'left':'top']=`${value*100}%`;boundsLayer.append(line);}
     function beginDrag(e,c){
         if(e.button!==0||locked(c)||editing)return;e.preventDefault();e.stopPropagation();

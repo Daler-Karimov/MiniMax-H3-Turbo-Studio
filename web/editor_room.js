@@ -90,6 +90,8 @@ export function pasteContent(record, content, at) {
     for (const item of entries) {
         const clip = item.clip;
         clip.id = ids.get(clip.id); clip.link = ids.get(clip.link) ?? null;
+        // A copy continues only what was copied with it.
+        if (clip.follows !== undefined) { if (ids.has(clip.follows)) clip.follows = ids.get(clip.follows); else delete clip.follows; }
         if (clip.part) { if (!parts.has(clip.part)) parts.set(clip.part, `c${++next.serial}`); clip.part = parts.get(clip.part); }
         if (item.kind === 'video') item.track = 'v1';
         let track = next.tracks.find(track => track.id === item.track);

@@ -12,8 +12,8 @@ export function createEditorState(record, {limit = 200} = {}) {
     let current = parse(record), selection = null, rangeDraft = null, playhead = 0, zoom = 12;
     let maxSerial = current.serial;
     const retainSerial = record => { maxSerial = Math.max(maxSerial, record.serial); return record.serial < maxSerial ? parse({...record, serial: maxSerial}) : record; };
-    let undo = [], redo = []; const listeners = new Set();
-    const remember = entry => { undo = limit ? [...undo, entry].slice(-limit) : []; redo = []; };
+    let undo = [], redo = [], step = 0; const listeners = new Set();
+    const remember = entry => { step++; undo = limit ? [...undo, entry].slice(-limit) : []; redo = []; };
     const selected = () => ({selection, rangeDraft});
     const restore = value => { selection = value.selection; rangeDraft = value.rangeDraft; };
     const emit = (type, label) => {
@@ -49,7 +49,7 @@ export function createEditorState(record, {limit = 200} = {}) {
     }
     function travel(from, to, side) {
         if (!from.length) return current;
-        const entry = from.pop();
+        step++; const entry = from.pop();
         to.push(entry.record ? {...entry, record: current} : entry);
         if (entry.record) current = retainSerial(entry.record);
         if (entry[side]) restore(entry[side]);
@@ -71,7 +71,7 @@ export function createEditorState(record, {limit = 200} = {}) {
             const selectionChanged = cleared || selectionAfter !== undefined;
             const entry = {record: current, label, ...(selectionChanged ? {before: selected(), after: {selection: normalized(selectionAfter ?? null, next), rangeDraft: selectionAfter?.kind === 'range' && typeof rangeText === 'string' ? {text: rangeText} : null}} : {})};
             // Generation is a barrier: older full-record snapshots must not remove it.
-            if (checkpoint) { undo = []; redo = []; } else remember(entry);
+            if (checkpoint) { step++; undo = []; redo = []; } else remember(entry);
             if (selectionChanged) restore(entry.after);
             current = next; emit('record', label); reconcile();
             if (selectionChanged) emit('selection');
@@ -79,6 +79,10 @@ export function createEditorState(record, {limit = 200} = {}) {
         },
         undo() { return travel(undo, redo, 'before'); },
         redo() { return travel(redo, undo, 'after'); },
+        // Counts the steps taken through the history, so a caller can tell that its own step is still the newest.
+        get step() { return step; },
+        // Takes the newest step back as if it never happened: nothing is left to redo.
+        withdraw(at) { if (at !== step || !undo.length) return false; travel(undo, redo, 'before'); redo.pop(); return true; },
         settle(change) {
             const attempt = record => { try { return retainSerial(parse(change(record))); } catch (error) { if (error instanceof EditError) return record; throw error; } };
             const update = entry => entry.record ? {...entry, record: attempt(entry.record)} : entry;
@@ -87,7 +91,7 @@ export function createEditorState(record, {limit = 200} = {}) {
             current = next; undo = nextUndo; redo = nextRedo;
             if (changed) { emit('record'); reconcile(); } return current;
         },
-        replace(record) { const next = parse(record); maxSerial = next.serial; current = next; undo = []; redo = []; selection = null; rangeDraft = null; playhead = 0; emit('record'); emit('selection'); emit('playhead'); return current; },
+        replace(record) { const next = parse(record); maxSerial = next.serial; current = next; step++; undo = []; redo = []; selection = null; rangeDraft = null; playhead = 0; emit('record'); emit('selection'); emit('playhead'); return current; },
         restoreView(value) {
             // View drafts are untrusted and may refer to content changed elsewhere.
             let next = null;

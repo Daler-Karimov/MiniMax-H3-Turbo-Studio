@@ -462,8 +462,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         canGenerate(text) {
             if (!store.generationAvailable || !actions.supportedSelection() || jobActive()) return false;
             const range = selectionRange();
-            const before = state.record.tracks[0].clips.find(clip => clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-            return !!text.trim() || !!before;
+            // Only a part pulled out of a finished one needs no description: it continues that one.
+            const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
+            const before = !!head && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
+                clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
+            return !!text.trim() || before;
         },
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {

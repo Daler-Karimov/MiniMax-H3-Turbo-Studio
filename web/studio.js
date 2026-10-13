@@ -239,7 +239,7 @@ export function openStudio(node) {
     window.addEventListener('freevideo-reference-prompt', promptChanged);
     cleanup.push(() => window.removeEventListener('freevideo-reference-prompt', promptChanged));
     const promptSection = section(t('Describe your scene', '描述画面'));
-    const promptHelp = el('a', t('Guide ↗', '指南 ↗'), 'fv-prompt-help');
+    const promptHelp = el('a', 'Skill ↗', 'fv-prompt-help');
     promptHelp.href = 'https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/SKILL.md';
     promptHelp.target = '_blank'; promptHelp.rel = 'noopener noreferrer';
     promptHelp.title = t('MiniMax H3 prompt guide', 'MiniMax H3 提示词指南');

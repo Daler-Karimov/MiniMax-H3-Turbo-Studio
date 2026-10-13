@@ -34,9 +34,6 @@ export function viewSwitch(view, onStudio, onNodes, onEditor) {
         const button = document.createElement('button'); button.type = 'button';
         const text = document.createElement('span'); text.textContent = label; button.append(text);
         button.dataset.label = label; button.dataset.view = id;
-        button.title = {studio: t('Describe a video and generate it', '写一句描述，生成一段视频'),
-            nodes: t('Build and adjust the workflow as a node graph', '用节点图搭建和调整工作流'),
-            editor: t('Join several video and audio parts into one video', '把多段画面和声音接成一条视频')}[id];
         if (id === 'editor') button.dataset.fvGuide = 'longer';
         button.setAttribute('aria-pressed', String(view === id)); button.onclick = action;
         group.append(button);

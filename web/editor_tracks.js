@@ -239,14 +239,10 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         return {start, frames: end - start, tracks: [...new Set(items.map(item => item.track))]};
     }
     // A range cannot be drawn longer than one video may be; `fromEnd` keeps its end where it is.
-    function capRange(selection, fromEnd = false) {
-        const limits = actions.generationLimits?.();
-        let most = model.maxRangeFrames(state.record, {...limits, start: selection.start});
+    function capRange(selection, fromEnd = false, continues = false) {
+        const most = model.maxRangeFrames(state.record, {...actions.generationLimits?.(), continues});
         if (selection.frames <= most) return selection;
-        if (!fromEnd) return {...selection, frames: most};
-        const stop = selection.start + selection.frames;
-        most = model.maxRangeFrames(state.record, {...limits, start: stop - most});
-        return {...selection, start: stop - most, frames: most};
+        return fromEnd ? {...selection, start: selection.start + selection.frames - most, frames: most} : {...selection, frames: most};
     }
     function rangeParts(selection, record = state.record) {
         return model.rangeParts(record, {...selection, ...actions.generationLimits?.()});
@@ -480,8 +476,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 const visual = model.clipState(clip), key = sourceKey(clip);
                 item.element.dataset.state = visual; item.element.dataset.track = track.id;
                 item.element.dataset.busy = String(busy(clip)); item.element.dataset.extend = String(clip.extend && actions.generationAvailable?.() !== false && !busy(clip));
-                item.element.classList.toggle('fv-ed-joined-left', track.clips[index - 1]?.start + track.clips[index - 1]?.frames === clip.start);
-                item.element.classList.toggle('fv-ed-joined-right', track.clips[index + 1]?.start === clip.start + clip.frames);
+                // A part not generated yet is attached only to the part it continues; drawn on its own it stays a separate block.
+                const attached = (left, right) => !!left && !!right && left.start + left.frames === right.start
+                    && (right.pending === null || model.continuesBefore(state.record, right.id));
+                item.element.classList.toggle('fv-ed-joined-left', attached(track.clips[index - 1], clip));
+                item.element.classList.toggle('fv-ed-joined-right', attached(clip, track.clips[index + 1]));
                 if (visual === 'failed' && track.kind === 'video') item.status.replaceChildren(icon('warning'));
                 else item.status.replaceChildren();
                 const status = {planned: t('Not generated yet', '还没生成'), running: t('Generating', '正在生成'),
@@ -643,11 +642,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         for (const value of [frame, frame + length]) points.push(Math.round(value / grid) * grid);
         return transportSnapPoints(state, points, pointerEvent);
     }
-    function boundaryLimits(start, part = null) {
+    // Only a part that continues another is held to the length of a continued part; a range being drawn never is.
+    function boundaryLimits(clip = null) {
         const limits = actions.generationLimits?.() || {}, maxSeconds = limits.maxSeconds ?? model.RULES.maxSeconds;
         const maxFollowSeconds = limits.maxFollowSeconds ?? maxSeconds;
-        const before = state.record.tracks[0].clips.some(clip => clip.start + clip.frames === start
-            && ((part && clip.part === part && clip.pending) || (clip.source && clip.extend && actions.generationAvailable?.() !== false && clip.in + clip.frames === clip.length)));
+        const before = !!clip && model.continuesBefore(state.record, clip.id);
         return {maxSeconds: before ? maxFollowSeconds : maxSeconds, maxFollowSeconds};
     }
     function updatePointer(event) {
@@ -667,7 +666,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             const parts = isRange ? gesture.parts : [gesture.clip.frames, gesture.neighbor.clip.frames];
             const index = isRange ? gesture.boundary : 0, start = isRange ? gesture.range.start : gesture.clip.start;
             const from = start + parts.slice(0, index).reduce((sum, count) => sum + count, 0);
-            const result = model.adjustPartBoundary(parts, index, frame - from, boundaryLimits(start, gesture.clip?.part));
+            const result = model.adjustPartBoundary(parts, index, frame - from, boundaryLimits(isRange ? null : gesture.clip));
             gesture.result = {...result, frame: from + result.parts[index]};
             if (isRange) {
                 gesture.selection = {...gesture.range, parts: result.parts}; previewSelection = gesture.selection; renderSelection();
@@ -738,7 +737,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             if (error) tooltip.hidden = true;
         } else if (gesture.type === 'edge') {
             let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom, {canExtend: actions.generationAvailable?.() !== false});
-            if (result.kind === 'extend') result.frames = capRange({start: result.frame, frames: result.frames}).frames;
+            if (result.kind === 'extend') result.frames = capRange({start: result.frame, frames: result.frames}, false, true).frames;
             if (result.kind === 'planned') {
                 let preview;
                 try { preview = model.resizePlanned(state.record, gesture.id, gesture.edge, result.frame, actions.generationLimits?.()); }

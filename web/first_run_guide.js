@@ -11,13 +11,14 @@ export const REPLAY_TEXT = {
 
 export const CHAPTERS = [
     {id: 'describe', anchor: '[data-fv-guide="describe"]', added: false,
-        en: 'Describe the picture and sound you want here.', zh: '在这里写下想看到的画面和声音。'},
+        en: 'Type your prompt here. You can have an agent follow the Skill at the top right, or turn on FreeToken enhancement.',
+        zh: '在这里输入提示词。可以让 Agent 参考右⁠上⁠角的 Skill，或开启 FreeToken 提示词增强。'},
     {id: 'range', anchor: '[data-fv-guide="range"]', added: true,
         en: 'See the available sizes and lengths here, and how long each takes.', zh: '在这里查看可生成的尺\u2060寸、时长和预计用时。'},
     {id: 'generate', anchor: '[data-fv-guide="generate"]', added: false,
         en: 'Choose "Generate video". Progress and the time left appear in the preview.', zh: '点“生成视频”，进度和剩\u2060余\u2060时\u2060间会显示在预览区。'},
     {id: 'longer', anchor: '[data-fv-guide="longer"]', added: true,
-        en: 'For a longer video, or to change part of one, choose "Edit".', zh: '要做更长的视频，或者修\u2060改\u2060其\u2060中\u2060一\u2060段，点“剪辑”。'},
+        en: 'For a longer video, or to change part of one, choose "Edit".', zh: '要做更长的视频，或者修\u2060改\u2060其\u2060中\u2060一\u2060段，点“剪辑视图”。'},
     {id: 'agent', anchor: '[data-fv-guide="agent"]', added: true,
         en: 'Connect Claude Code, Codex or another agent in Settings and let it make videos.', zh: '在设置里连接 Claude Code、Codex 等 Agent，让它生成视频。'},
 ];

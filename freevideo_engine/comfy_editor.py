@@ -261,6 +261,11 @@ def validate(record):
                 if source is None:
                     raise ValueError('Splice requires source')
                 clip['splice'] = _splice(raw['splice'])
+            if 'follows' in raw:
+                # The part this one continues; a range drawn on its own has none.
+                if kind != 'video' or not isinstance(raw['follows'], str) or not _CLIP.fullmatch(raw['follows']) or raw['follows'] == identity:
+                    raise ValueError('Invalid clip continuation')
+                clip['follows'] = raw['follows']
             if 'target_frames' in raw:
                 if not _whole(raw['target_frames'], 1, 10**7):
                     raise ValueError('Invalid target frame count')

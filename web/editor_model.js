@@ -160,6 +160,8 @@ export function parse(value) {
             // Who last wrote the description, and an outside reference (a shot id) for callers.
             if (item.text_by !== undefined) { check(TEXT_BY.includes(item.text_by), 'text'); clip.text_by = item.text_by; }
             if (item.ref !== undefined) { check(typeof item.ref === 'string' && REF.test(item.ref), 'ref'); clip.ref = item.ref; }
+            // The part this one was pulled out of, or the part before it in the same range.
+            if (item.follows !== undefined) { check(kind === 'video' && typeof item.follows === 'string' && ID.test(item.follows) && item.follows !== item.id, 'follows'); clip.follows = item.follows; }
             check(source !== null || (item.take === undefined && item.made_text === undefined), 'versions'); madeFields(item, clip);
             Object.assign(clip, audioClipFields(item, kind));
             Object.assign(clip, parseSpeedData(item, kind));
@@ -507,6 +509,10 @@ export function split(record, id, frame, {by = 'user'} = {}) {
         if (!clip.source) { clip.in = right.in = 0; clip.length = clip.frames; right.length = right.frames; }
         right.versions = right.versions.map(version => ({...version, in: version.in + left}));
         for (const item of [clip, right]) item.versions = item.versions.filter(version => version.in < version.length);
+        // The two halves of a part that is not generated yet stay one video.
+        delete right.follows; if (!clip.source && trackOf(next, clip.id).id === 'v1') right.follows = clip.id;
+        // What continued the cut part now continues its second half.
+        for (const later of trackOf(next, clip.id).clips) if (later.follows === clip.id && later.start === end(right)) later.follows = right.id;
         trackOf(next, clip.id).clips.push(right); rights.push(right);
     }
     if (rights.length === 2) { rights[0].link = rights[1].id; rights[1].link = rights[0].id; }
@@ -553,9 +559,9 @@ function segmentLengths(frames, maxSeconds = RULES.maxSeconds, maxFollowSeconds 
     check(typeof maxFollowSeconds === 'number' && Number.isFinite(maxFollowSeconds) && maxFollowSeconds >= RULES.minSeconds, 'range');
     const max = Math.floor(Math.min(RULES.maxSeconds, maxSeconds)) * FPS, follow = Math.floor(Math.min(RULES.maxSeconds, maxFollowSeconds)) * FPS, lengths = [];
     let left = Math.max(RULES.minSeconds, Math.round(frames / FPS)) * FPS;
-    // Up to half a minute is one generation wherever this device makes it in one;
-    // anything longer, or beyond the device, goes in parts of a quarter minute.
-    if (left <= Math.floor(Math.min(RULES.singleSeconds, maxSeconds)) * FPS) return [left];
+    // Under half a minute is one generation wherever this device makes it in one;
+    // half a minute or more, or beyond the device, goes in parts of a quarter minute.
+    if (left < RULES.singleSeconds * FPS && left <= Math.floor(maxSeconds) * FPS) return [left];
     check(left <= RULES.maxClips * max, 'range');
     while (left) { const length = Math.min(left, lengths.length ? follow : max); lengths.push(length); left -= length; }
     const last = lengths.length - 1;
@@ -594,18 +600,32 @@ function remember(clip, source = null) {
         seen.add(identity); return true;
     }).slice(0, 50);
 }
+// A part continues the one before it only when it was pulled out of that part's end, or both were drawn as one range.
+// A range drawn on its own starts a new video, even when it touches the part before it.
+const continuing = (clip, before) => !!clip && !!before && before.id !== clip.id && end(before) === clip.start
+    && (clip.follows === before.id || (clip.part !== null && clip.part === before.part));
+const wholeEnd = clip => !!clip.source && clip.extend && clip.in + clip.frames === clip.length;
+const partBefore = (record, clip) => trackBy(record, 'v1').clips.find(before => continuing(clip, before)) ?? null;
+// Whether the part is drawn attached to the one before it on its track.
+export function continuesBefore(record, id) {
+    const clip = find(record, id); if (!clip) return false;
+    const video = trackOf(record, id).id === 'v1' ? clip : clip.link ? find(record, clip.link) : null;
+    return !!video && trackBy(record, 'v1').clips.includes(video) && !!partBefore(record, video);
+}
 // The lengths one range is generated in, as planRange lays them out on empty tracks.
 export const partLengths = (frames, {maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds} = {}) => segmentLengths(frames, maxSeconds, maxFollowSeconds);
 // One video is generated in at most RULES.maxParts parts: the longest range that still fits.
-export function maxRangeFrames(record, {start, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
-    const before = trackBy(record, 'v1').clips.find(clip => end(clip) === start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
+export function maxRangeFrames(record, {continues = false, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
+    const before = continues;
     const follow = Math.floor(Math.min(RULES.maxSeconds, maxFollowSeconds)) * FPS;
-    return (before ? follow : Math.floor(Math.min(RULES.maxSeconds, maxSeconds)) * FPS) + (RULES.maxParts - 1) * follow;
+    // The part being continued is the first of the five.
+    return before ? (RULES.maxParts - 1) * follow : Math.floor(Math.min(RULES.maxSeconds, maxSeconds)) * FPS + (RULES.maxParts - 1) * follow;
 }
 // Manual boundaries use device limits, not the automatic fifteen-second preference.
-export function rangeParts(record, {start, frames, parts, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
-    const before = trackBy(record, 'v1').clips.find(clip => end(clip) === start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-    const first = before ? maxFollowSeconds : maxSeconds;
+export function rangeParts(record, {start, frames, parts, continues, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
+    // A range that starts on a part pulled out of the one before it keeps that part's shorter limit.
+    const head = trackBy(record, 'v1').clips.find(clip => clip.start === start);
+    const first = continues ?? !!(head && partBefore(record, head)) ? maxFollowSeconds : maxSeconds;
     const valid = Array.isArray(parts) && parts.length > 0 && parts.length <= RULES.maxClips
         && parts.every((count, i) => whole(count, RULES.minSeconds * FPS) && count % FPS === 0
             && count <= Math.floor(i ? maxFollowSeconds : first) * FPS)
@@ -630,8 +650,8 @@ export function resizePlannedBoundary(record, leftId, rightId, frame, limits = {
         && left.part && left.part === right.part, 'range');
     const members = [...pair(record, leftId), ...pair(record, rightId)]; busy(members);
     check(members.every(clip => clip.pending && !clip.source), 'unsupported');
-    const preceding = trackOf(record, leftId).clips.some(clip => end(clip) === left.start
-        && ((clip.part === left.part && clip.pending) || (clip.source && clip.extend && clip.in + clip.frames === clip.length)));
+    const video = trackOf(record, leftId).id === 'v1' ? left : find(record, left.link);
+    const preceding = !!video && !!partBefore(record, video);
     const maxSeconds = limits.maxSeconds ?? RULES.maxSeconds, maxFollowSeconds = limits.maxFollowSeconds ?? maxSeconds;
     const result = adjustPartBoundary([left.frames, right.frames], 0, frame - left.start,
         {maxSeconds: preceding ? maxFollowSeconds : maxSeconds, maxFollowSeconds});
@@ -688,8 +708,7 @@ export function planRange(record, {start, frames, parts, target = 'both', text =
         }
         check(boundary === start + frames, 'unsupported');
     }
-    const continuesAt = position => trackBy(record, 'v1').clips.some(clip => end(clip) === position && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-    const firstMaximum = continuesAt(start) ? maxFollowSeconds : maxSeconds;
+    const firstMaximum = videoHits[0]?.start === start && partBefore(record, videoHits[0]) ? maxFollowSeconds : maxSeconds;
     let next = copy(record);
     const originals = videoHits.length && videoHits.every(c => c.source) ? record.tracks.slice(0, 2).map(t => ({...t, clips: t.clips.filter(c => overlaps(c, start, frames))})) : null;
     // A new attempt replaces an abandoned transaction over the same originals.
@@ -764,6 +783,9 @@ export function planRange(record, {start, frames, parts, target = 'both', text =
             position += count;
         }
     }
+    // The new parts of one range are one video: each continues the part drawn before it.
+    const drawn = trackBy(next, 'v1').clips.filter(clip => clip.part === part).sort((a, b) => a.start - b.start);
+    drawn.forEach((clip, index) => { if (index && !clip.source && end(drawn[index - 1]) === clip.start) clip.follows = drawn[index - 1].id; });
     if (originals) {
         const clips = next.tracks.slice(0, 2).map(t => ({...t, clips: t.clips.filter(c => c.part === part)}));
         next.replacements = [...(next.replacements || []), {part, originals: structuredClone(originals), clips: structuredClone(clips), rolledBack: false}];
@@ -787,10 +809,11 @@ export function extendClip(record, id, frames, {maxSeconds = RULES.maxSeconds, m
     // A continuation adds a new pair; crossing sound on either lane is not a
     // replacement. Plan in an empty record, then put the sound in the free lane.
     const next = copy(restored), sound = sourceAudioTrack(next, start, count);
-    const parts = rangeParts(restored, {start, frames: count, maxSeconds, maxFollowSeconds});
+    const parts = rangeParts(restored, {start, frames: count, continues: true, maxSeconds, maxFollowSeconds});
     const planned = planRange({...emptyProject(restored), serial: next.serial},
         {start, frames: count, parts, target: 'both', text: clip.text, maxSeconds: maxFollowSeconds, maxFollowSeconds});
-    trackBy(next, 'v1').clips.push(...planned.tracks[0].clips);
+    // Pulled out of this part's end: the new parts continue it.
+    trackBy(next, 'v1').clips.push(...planned.tracks[0].clips.map(added => added.start === start ? {...added, follows: clip.id} : added));
     sound.clips.push(...planned.tracks[1].clips);
     next.serial = planned.serial;
     return finish(next);
@@ -808,8 +831,13 @@ function generationClips(record, ids) {
 const netFrames = (frames, continues) => continues ? Math.max(34, Math.ceil(frames / RULES.step) * RULES.step)
     : Math.max(39, RULES.first + Math.ceil((frames - RULES.first) / RULES.step) * RULES.step);
 function generationPlan(record, clips) {
-    const first = clips[0], before = trackBy(record, 'v1').clips.find(clip => end(clip) === first.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-    const replacing = clips.some(clip => clip.source);
+    const replacing = clips.some(clip => clip.source), videos = [];
+    // Each run of parts that continue one another is one video and keeps its own length.
+    for (const clip of clips) { if (videos.length && continuing(clip, videos.at(-1).at(-1))) videos.at(-1).push(clip); else videos.push([clip]); }
+    return videos.flatMap(video => videoPlan(record, video, replacing));
+}
+function videoPlan(record, clips, replacing) {
+    const first = clips[0], before = trackBy(record, 'v1').clips.find(clip => continuing(first, clip) && wholeEnd(clip));
     // Revealing a predecessor's hidden tail reduces the new visible range.
     const credit = clips.every(clip => clip.target_frames !== undefined && !clip.source)
         ? clips.reduce((sum, clip) => sum + clip.target_frames - clip.frames, 0) : 0;
@@ -818,11 +846,12 @@ function generationPlan(record, clips) {
         const target_frames = clip.target_frames ?? clip.frames; ideal += target_frames;
         // Existing playback bounds and fill's visible length are invariant.
         // A replacement may therefore need one more grid step than a draft.
-        const continues = index > 0 || !!before;
+        const previous = index ? (continuing(clip, clips[index - 1]) ? clips[index - 1] : null) : before ?? null;
+        const continues = !!previous;
         const net_frames = netFrames(Math.max(ideal - real, replacing ? clip.frames : 0), continues); real += net_frames;
         const frames = replacing ? clip.frames : index === clips.length - 1 ? ideal - (real - net_frames) : net_frames;
         check(frames >= 1, 'range');
-        return {clip, before: index ? clips[index - 1] : before ?? null, target_frames, net_frames,
+        return {clip, before: previous, target_frames, net_frames,
             request_frames: net_frames + (continues ? RULES.overlap : 0), frames};
     });
 }
@@ -831,7 +860,7 @@ export function prepare(record, ids) {
     const next = copy(record);
     const replacing = clips.some(clip => clip.source);
     if (!replacing && clips.every(clip => clip.target_frames === undefined)) {
-        const before = trackBy(next, 'v1').clips.find(clip => end(clip) === clips[0].start && clip.source && clip.extend);
+        const before = trackBy(next, 'v1').clips.find(clip => continuing(clips[0], clip) && clip.source && clip.extend);
         if (before) {
             const members = pair(next, before.id);
             const spare = Math.min(...members.map(clip => clip.length - clip.in - clip.frames));
@@ -881,9 +910,16 @@ function update(record, ids, change) {
 }
 export function startAttempt(record, ids, text, {by = 'user'} = {}) {
     check(validText(text) && TEXT_BY.includes(by), 'text');
-    const next = copy(record), part = freshId(next), selected = linkedIds(next, ids);
+    const next = copy(record), selected = linkedIds(next, ids), parts = new Map();
     busy(all(next).filter(clip => selected.has(clip.id)));
-    for (const clip of all(next)) if (selected.has(clip.id)) { written(clip, text, by); clip.part = part; clip.pending = 'draft'; clip.reason = clip.job = null; }
+    // Parts that continue one another stay one video; ranges drawn apart stay apart, however many are started together.
+    let part = null, last = null;
+    for (const clip of trackBy(record, 'v1').clips.filter(clip => selected.has(clip.id)).sort((a, b) => a.start - b.start)) {
+        if (!last || !continuing(clip, last)) part = freshId(next);
+        parts.set(clip.id, part); if (clip.link) parts.set(clip.link, part); last = clip;
+    }
+    const other = () => part ??= freshId(next);
+    for (const clip of all(next)) if (selected.has(clip.id)) { written(clip, text, by); clip.part = parts.get(clip.id) ?? other(); clip.pending = 'draft'; clip.reason = clip.job = null; }
     return finish(next);
 }
 export function assignJob(record, ids, job, {prepared = record} = {}) {
