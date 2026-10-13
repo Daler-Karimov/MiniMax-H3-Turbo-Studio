@@ -344,7 +344,29 @@ def _run(args):
     from .geometry import geometry
     from .continuation import (validate_frames, validate_route, prepare as prepare_continuation,
                                summary as continuation_summary, validate_snapshot, persist_snapshot, restore_snapshot,
-                               audio_context)
+                               audio_context, MISSING as CONTINUATION_MISSING)
+    from .continuation_tail import pending as encoded_continuation, freeze as freeze_tail
+    continuation_directory = continuation_first = None
+
+    def freeze_continuation(value):
+        from .paths import base_path
+        return freeze_tail(value, canvas, continuation_first, continuation_directory,
+                           profile['engine'].get('base') or base_path())
+
+    def usable_continuation(value, *check):
+        """The stored context when it fits this run, otherwise the previous video's own ending."""
+        if 'tail' in value:
+            return value
+        try:
+            return validate_snapshot(value, *check)
+        except ValueError as error:
+            if str(error) != CONTINUATION_MISSING:
+                raise
+        # A record of another version, other weights or another first-pass size.
+        value = dict(encoded_continuation(continue_from, canvas),
+                     **{key: value[key] for key in ('audio_context', 'source_video', 'anchor') if key in value})
+        return freeze_continuation(value) if continuation_directory is not None else value
+
     frames = getattr(args, 'frames', None)
     continue_from = getattr(args, 'continue_from', None)
     continue_anchor = getattr(args, 'continue_anchor', None)
@@ -392,12 +414,19 @@ def _run(args):
             continuation = restore_snapshot(args.continuation_snapshot,
                 getattr(args, 'continuation_snapshot_sha256', None), canvas)
         else:
-            continuation = prepare_continuation(continue_from, canvas)
+            try:
+                continuation = prepare_continuation(continue_from, canvas)
+            except ValueError as error:
+                if str(error) != CONTINUATION_MISSING:
+                    raise
+                # Nothing was stored for this file: its own ending is encoded when the run starts.
+                continuation = encoded_continuation(continue_from, canvas)
         continuation = dict(continuation, audio_context=audio_context(), source_video=str(continue_from))
         if first_frame is not None:
             from .continuation import anchor_media, chain_first_frame_picture
             try:
-                kept = chain_first_frame_picture(continuation, continue_from)
+                # A context encoded from the file carries no first frame; whoever planned this run saw none either.
+                kept = None if 'tail' in continuation else chain_first_frame_picture(continuation, continue_from)
             except ValueError:
                 kept = None
                 first_frame['reason'] = 'unreadable'
@@ -464,8 +493,9 @@ def _run(args):
     if continuation is not None:
         from .two_pass import plan as continuation_plan
         validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
-        continuation = validate_snapshot(continuation, canvas, None if active_loras else manifest,
-            continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps))
+        planned = continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps)
+        continuation_first = planned['first']
+        continuation = usable_continuation(continuation, canvas, None if active_loras else manifest, planned)
     if manifest.get('precision') not in ('fp8', 'int8', 'bf16'):  # BF16: the unquantized reference
         raise ValueError('Select the prepared official FP8 or int8 cache')
     destination = args.out.resolve()
@@ -474,7 +504,10 @@ def _run(args):
     destination.parent.mkdir(parents=True, exist_ok=True)
     artifacts = destination.with_suffix('.artifacts')
     artifacts.mkdir(exist_ok=False)
-    if continuation is not None and 'snapshot' not in continuation:
+    continuation_directory = artifacts
+    if continuation is not None and 'tail' in continuation:
+        continuation = freeze_continuation(continuation)
+    elif continuation is not None and 'snapshot' not in continuation:
         continuation = persist_snapshot(continuation, artifacts / 'continuation-source.safetensors')
     if args.prompt_file:
         shutil.copyfile(args.prompt_file, artifacts / 'prompt.txt')
@@ -491,6 +524,8 @@ def _run(args):
               'encoder_mode': 'native H3 encoder library child' if args.prompt_file else 'preencoded shared conditioning'}
     if continuation is not None:
         report['continuation'] = continuation_summary(continuation)
+        if 'tail' in continuation:
+            report['continuation']['context'] = 'encoded'
         report['audio_context'] = continuation['audio_context']
         if continue_anchor is not None:
             report['continue_anchor'] = continuation['anchor']
@@ -523,8 +558,10 @@ def _run(args):
                 args._lora_max_block_bytes = prepared['report'].get('max_block_bytes', 0)
                 args._lora_root_bytes = prepared['report'].get('root_bytes', 0)
                 if continuation is not None:
-                    continuation = validate_snapshot(continuation, canvas,
+                    continuation = usable_continuation(continuation, canvas,
                         json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8')))
+                    if 'tail' in continuation:
+                        report['continuation']['context'] = 'encoded'
                 if args._lora_max_block_bytes or args._lora_root_bytes:
                     profile.setdefault('policy', {})['lora_max_block_bytes'] = args._lora_max_block_bytes
                     profile['policy']['lora_root_bytes'] = args._lora_root_bytes
@@ -691,8 +728,10 @@ def _run(args):
             report['sampling_plan'] = sampling_plan
             if continuation is not None:
                 validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
-                continuation = validate_snapshot(continuation, canvas,
+                continuation = usable_continuation(continuation, canvas,
                     json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8')), sampling_plan)
+                if 'tail' in continuation:
+                    report['continuation']['context'] = 'encoded'
             if preview:
                 report['preview'] = dict(geometry=dict(sampling_plan['first'], fps=canvas['fps']))
             if refine_source:

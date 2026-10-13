@@ -34,7 +34,7 @@ def reference_size(width, height, canvas):
     return max(32, round(width * scale / 32) * 32), max(32, round(height * scale / 32) * 32)
 
 
-def encode_visual(vae, pixels, *, device='cuda'):
+def encode_visual(vae, pixels, *, device='cuda', posterior='sample'):
     """The pinned VAE chunk/padding/posterior recipe with one live pixel chunk.
 
     Posterior sampling still occurs once on the original device with seed 42;
@@ -58,7 +58,9 @@ def encode_visual(vae, pixels, *, device='cuda'):
     moments = torch.cat(moments, dim=2).to(device)
     if len(pixels) > 1 and vae.config.token_drop:
         moments = moments[:, :, :-vae.config.token_drop]
-    latent = DiagonalGaussianDistribution(moments).sample(generator=torch.Generator().manual_seed(42))
+    distribution = DiagonalGaussianDistribution(moments)
+    # References keep the pipeline's seeded sample; a continuation context wants the picture itself.
+    latent = distribution.mode() if posterior == 'mode' else distribution.sample(generator=torch.Generator().manual_seed(42))
     latent = latent.to(torch.float16).float().cpu()
     mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1)
     std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1)

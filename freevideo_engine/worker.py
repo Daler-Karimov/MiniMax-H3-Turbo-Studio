@@ -164,6 +164,13 @@ def generate(request, resident=None):
                 resident.gpu_budget = min(resident.gpu_budget, limit)
         save(request['metrics'], metrics)
         manifest = json.loads((Path(request['cache']) / 'manifest.json').read_text(encoding='utf-8'))
+        if continuation is not None and 'tail' in continuation:
+            # Nothing was stored for the previous video: its ending is encoded here, before any model of
+            # this run is loaded, and every later attempt reads the same record.
+            from .continuation_tail import complete
+            continuation, metrics['continuation_encode'] = complete(
+                continuation, request['geometry'], manifest, request.get('sampling_plan'), resident=resident)
+            request['continuation'] = continuation
         if manifest.get('precision') not in ('fp8', 'int8', 'bf16'):
             raise ValueError('The Engine requires an official FP8 or int8 cache')
         options, decoder = request['engine_options'], request['decoder_options']

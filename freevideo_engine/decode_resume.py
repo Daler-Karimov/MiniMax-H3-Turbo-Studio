@@ -97,7 +97,14 @@ def sampling_provenance(request):
     if request.get('continuation') is not None:
         # A retry's identity binds the accepted bytes, without embedding the
         # snapshot again or making a relocation change computation identity.
-        result['continuation'] = {key: value for key, value in request['continuation'].items()
+        value = request['continuation']
+        tail = value.get('tail')
+        if isinstance(tail, dict) and Path(tail.get('snapshot') or '.').is_file():
+            # The request as it was sent asks for the ending to be encoded; the worker goes on with the
+            # record it wrote. A retry compares the two, so both are named by that record.
+            value = dict({key: item for key, item in value.items() if key != 'tail'},
+                         snapshot_sha256=_digest(tail['snapshot']), source_id=tail['source_id'])
+        result['continuation'] = {key: item for key, item in value.items()
                                   if key not in ('snapshot', 'snapshot_data', 'source_video')}
     return result
 
