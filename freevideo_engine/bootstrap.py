@@ -1541,8 +1541,10 @@ class Installer:
                         'import platform; print(platform.python_version())'], capture_output=True, timeout=30)
                     if check.returncode == 0 and check.stdout.strip() == self.versions['python']:
                         self.env['UV_PYTHON_INSTALL_DIR'] = str(prepared)
-                        self.command('python-bootstrap-reuse', [candidate, '-I', '-B', '-c',
-                                     'import sys; print("Reusing verified bootstrap Python: " + sys.executable)'])
+                        # -I ignores PYTHONIOENCODING: without -X utf8 a path the
+                        # system code page cannot spell fails the print.
+                        self.command('python-bootstrap-reuse', subprocess_output.python_command([candidate, '-I', '-B', '-c',
+                                     'import sys; print("Reusing verified bootstrap Python: " + sys.executable)']))
                         return
         custom = self.env.get('UV_PYTHON_INSTALL_MIRROR') if self.network.get('mode') != 'official' else None
         isolation = ['--no-bin', '--no-registry']
