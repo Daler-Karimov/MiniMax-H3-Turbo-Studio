@@ -13,6 +13,7 @@ class ExportOptions:
     only: str = 'video'
     quality: str = 'high'
     sound_format: str = 'm4a'
+    subtitles: str = 'burn'
 
     @property
     def filename(self):
@@ -39,18 +40,19 @@ class ExportOptions:
         return dict(width=self.width, height=self.height, frames=self.frames,
                     only=self.only, quality=self.quality if self.only == 'video' else None,
                     range=dict(start=self.start, frames=self.frames),
-                    sound_format=self.sound_format if self.only == 'sound' else None)
+                    sound_format=self.sound_format if self.only == 'sound' else None,
+                    **({'subtitles': 'none'} if self.only == 'video' and self.subtitles == 'none' else {}))
 
 
 def validate(options, width, height, frames):
     """Validate wire values once; the queue passes the immutable result to render."""
-    if not isinstance(options, dict) or set(options) - {'short', 'quality', 'range', 'only', 'sound_format'}:
+    if not isinstance(options, dict) or set(options) - {'short', 'quality', 'range', 'only', 'sound_format', 'subtitles'}:
         raise ValueError('Invalid export options')
     if 'short' in options and (type(options['short']) is not int
                               or not 144 <= options['short'] <= 4320 or options['short'] % 2):
         raise ValueError('Invalid export short side')
     for key, allowed in (('quality', ('high', 'standard', 'small')), ('only', ('sound',)),
-                         ('sound_format', ('m4a', 'wav'))):
+                         ('sound_format', ('m4a', 'wav')), ('subtitles', ('burn', 'none'))):
         if key in options and (type(options[key]) is not str or options[key] not in allowed):
             raise ValueError('Invalid export ' + key)
     start, count = 0, frames
@@ -71,7 +73,8 @@ def validate(options, width, height, frames):
         output_width, output_height = (long, short) if width >= height else (short, long)
     if max(output_width, output_height) > 8192:
         raise ValueError('Export picture is too large')
-    return ExportOptions(output_width, output_height, start, count, quality=options.get('quality', 'high'))
+    return ExportOptions(output_width, output_height, start, count, quality=options.get('quality', 'high'),
+                         subtitles=options.get('subtitles', 'burn'))
 
 
 def effective(options, width, height, frames):

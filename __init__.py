@@ -29,6 +29,10 @@ async def comfy_entrypoint():
     editor_export_routes()
     from .freevideo_engine.comfy_capabilities import register as capabilities_routes
     capabilities_routes()
+    from .freevideo_engine.subtitle_ears import register as subtitle_ears_routes
+    subtitle_ears_routes()
+    from .freevideo_engine.subtitle_files import register as subtitle_file_routes
+    subtitle_file_routes()
     from .freevideo_engine.comfy_share import register as share_routes
     share_routes()
     from .freevideo_engine.comfy_metadata import register as workflow_backfill

@@ -80,6 +80,13 @@ def _reason(error):
     return 'failed'
 
 
+def _without_subtitles(project, settings):
+    """`subtitles: none` leaves the subtitle track out of the picture (text clips stay)."""
+    if settings.subtitles != 'none':
+        return project
+    return {**project, 'tracks': [t for t in project['tracks'] if t.get('kind') != 'subtitle']}
+
+
 def _check(cancelled):
     if cancelled and cancelled():
         raise ExportCancelled('cancelled')
@@ -651,11 +658,12 @@ def _render_once(project, resolve, target, *, progress, cancelled, options, repa
     complete = False
     try:
         width, height, total, tracks = _layout(project)
-        check_export_text(project)
         settings = editor_export_options.effective(options, width, height, total)
         width, height, total = settings.width, settings.height, settings.frames
         if settings.only == 'sound':
             tracks = {key: clips for key, clips in tracks.items() if key != 'v1'}
+        else:
+            check_export_text(_without_subtitles(project, settings))
         _check(cancelled)
         _checked_target(target)
         _checked_target(temporary)
@@ -752,7 +760,7 @@ def _render_once(project, resolve, target, *, progress, cancelled, options, repa
                     pixels = (decoders['v1'].pixels(clip['in'] + number - clip['start'])
                               if clip is not None and 'v1' in decoders else black)
                     # Text is placed on the timeline frame; its layout is proportional to the output size.
-                    pixels = paint_project(pixels, project, number, width, height)
+                    pixels = paint_project(pixels, _without_subtitles(project, settings), number, width, height)
                     frame = av.VideoFrame.from_ndarray(pixels, format='rgb24')
                     frame.pts, frame.time_base = number - settings.start, Fraction(1, FPS)
                     for packet in video.encode(frame):
@@ -1000,8 +1008,9 @@ class ExportQueue:
             width, height, frames, _ = _layout(project)
         except ExportError:
             raise ValueError('Project cannot be exported') from None
-        check_export_text(project)
         settings = editor_export_options.validate({} if options is None else options, width, height, frames)
+        if settings.only != 'sound':
+            check_export_text(_without_subtitles(project, settings))
         job = dict(id='x-' + uuid.uuid4().hex, state='running', fraction=0., work=None, reason=None,
                    project=project, options=settings, stop=threading.Event())
         with self.lock:
