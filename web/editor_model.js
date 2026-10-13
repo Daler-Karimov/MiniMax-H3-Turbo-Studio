@@ -90,6 +90,14 @@ export function emptyProject({width = 1344, height = 768, settings = null, name 
     return parse({version: VERSION, id: null, revision: 0, name, fps: FPS, width, height,
         settings, serial: 0, tracks: [{id: 'v1', kind: 'video', clips: []}, {id: 'a1', kind: 'audio', clips: []}]});
 }
+// One project-wide generation setting; a false flag is stored as no key at all.
+export function setFlag(record, key, value) {
+    check(typeof key === 'string' && /^[a-z][a-z0-9_]*$/.test(key) && typeof value === 'boolean', 'settings');
+    const next = serialize(record), settings = {...(next.settings || {})};
+    if (value) settings[key] = true; else delete settings[key];
+    next.settings = Object.keys(settings).length ? settings : null;
+    return parse(next);
+}
 export function addAudioTrack(record) {
     const next = serialize(record);
     check(!next.tracks.some(track => track.id === 'a2'), 'track');

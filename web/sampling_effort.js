@@ -107,7 +107,7 @@ export function createSamplingEffort(t, {onChange, onPreview = () => {}}) {
         custom.textContent = `${t('Custom', '自定义')} · ${currentSteps}${twoPass ? ' + ' + currentRefine : ''} ${unit}`;
         paint(selected);
         if (isCustom) rail.setAttribute('aria-valuetext', custom.textContent);
-        rail.title = disabled ? t('Controlled by connected nodes.', '由连接的节点控制。')
+        rail.title = disabled ? state.reason || t('Controlled by connected nodes.', '由连接的节点控制。')
             : t('Same model. Higher effort uses more sampling steps; results vary by scene.', '使用同一模型，提高档位会增加采样步数；效果因场景而异。');
     }
     return {element, update, setEstimate(text, title = '') { estimate.textContent = text; estimate.title = title; }, dispose: cancel};

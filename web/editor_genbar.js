@@ -1,4 +1,5 @@
 // The editor owns its generation controls; progress can use the optional component.
+import {createFirstFrameSwitch} from './editor_first_frame.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
@@ -9,6 +10,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     const generate = el('button', 'fv-ed-generate'), cancel = el('button', null, t('Cancel', '取消')), resume = el('button', null, t('Continue', '继续'));
     for (const button of [generate, cancel, resume]) button.type = 'button';
     host.append(hint, input, generate, cancel, resume);
+    const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
+    input.after(firstFrame.element);
     let status = null, serial = 0, disposed = false, submitting = false, previewSelection = null, estimateCache = null;
     async function render() {
         if (disposed) return;
@@ -31,6 +34,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             hint.textContent = t(`Part ${number}/${count}`, `第 ${number}/${count} 段`)
                 + (remaining != null ? ' · ' + timeEstimate(remaining, t) : '');
         }
+        firstFrame.update(busy);
         generate.textContent = t('Generate', '生成');
         generate.disabled = busy || !!previewSelection || !selected || !actions.canGenerate?.(input.value);
         generate.title = '';

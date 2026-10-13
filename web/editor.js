@@ -468,6 +468,16 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return !!text.trim() || before;
         },
+        // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
+        firstFrameVisible() {
+            if (!store.generationAvailable || !actions.supportedSelection()) return false;
+            const range = selectionRange(); if (!range) return false;
+            const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
+            const before = !!head && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
+                clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
+            return before || model.rangeParts(state.record, {...range, ...capability}).length > 1;
+        },
+        setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
             const range = selectionRange(selection); if (!range) return null;
@@ -595,7 +605,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         // A sound-only export is not a work: it opens as a file the browser plays and can save.
         if (value.only === 'sound') { if (value.url) window.open(mediaURL(api, value.url), '_blank', 'noopener'); return; }
         const module = await import('./library.js');
-        module.openLibrary(t, {selectedWork: value.work});
+        module.openLibrary(t, {selectedWork: value.work, extend: async record => {
+            if (await handle.close() === false) throw new Error(saveWarning.textContent);
+            await onView('studio');
+            return (await import('./studio.js')).extendVideo(record);
+        }});
     }
     function updateExport(value) {
         if (!value) return false;

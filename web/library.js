@@ -1,6 +1,7 @@
 import { api } from '../../scripts/api.js';
 import { closeDialog } from './motion.js';
 import { resultActions, previewBadge } from './result_actions.js';
+import { extendSourceExists } from './studio_extend.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./library.css', import.meta.url).href; document.head.append(style);
@@ -85,7 +86,7 @@ async function workflowBackfill(collection, t) {
 }
 
 // ``upscale`` queues the second pass of a first-pass preview (the studio's node).
-export function openLibrary(t, {upscale = null, selectedWork = null} = {}) {
+export function openLibrary(t, {upscale = null, selectedWork = null, extend = null} = {}) {
     if (opened?.open) { if (selectedWork) opened.close(); else { opened.focus(); return; } }
     const dialog = el('dialog', null, 'fv-studio fv-library'); opened = dialog;
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
@@ -135,10 +136,11 @@ export function openLibrary(t, {upscale = null, selectedWork = null} = {}) {
         media.append(player);
         if (row.preview) media.append(previewBadge(row, t));
         frame.append(media);
-        player.addEventListener('error', () => {
+        player.addEventListener('error', async () => {
             if (!disposed && selected === row.video) {
                 const note = el('p', t('This video is unavailable. Refresh if it was moved.', '视频暂时无法打开，若文件已移动请刷新。'), 'fv-library-message');
                 frame.replaceChildren(note);
+                if (!await extendSourceExists(api, row) && selected === row.video) links.querySelector('.fv-action-extend')?.remove();
             }
         }, {once: true});
     }
@@ -148,6 +150,12 @@ export function openLibrary(t, {upscale = null, selectedWork = null} = {}) {
             mountPlayer(row);
             date.textContent = timestamp(row); geometry.textContent = dimensions(row);
             links.replaceChildren(resultActions(row, t, {
+                extend: async saved => {
+                    player?.pause();
+                    const run = extend || (async record => (await import('./studio.js')).extendVideo(record));
+                    try { const studio = await run(saved); dialog.close(); studio?.querySelector('.fv-prompt-editor textarea')?.focus({preventScroll: true}); }
+                    catch (error) { notice.textContent = error.message; }
+                },
                 secondPass: row.preview && upscale ? () => secondPass(row) : null,
                 remove: () => remove(row)}));
             notice.textContent = '';

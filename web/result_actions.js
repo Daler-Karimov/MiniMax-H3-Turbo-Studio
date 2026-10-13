@@ -1,6 +1,7 @@
 import { api } from '../../scripts/api.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
+import { canExtend, extendText, extendSourceExists } from './studio_extend.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./result_actions.css', import.meta.url).href; document.head.append(css);
@@ -11,6 +12,9 @@ const ICONS = {
     share: '<path d="M8 10V2.5m0 0L5.2 5.3M8 2.5l2.8 2.8M4.5 7.5H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-.5"/>',
     report: '<path d="M9.5 2H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.5L9.5 2Z"/><path d="M9.5 2v2.5H12M6.5 8h3M6.5 10.5h3"/>',
     chevron: '<path d="m4.5 6.5 3.5 3 3.5-3"/>',
+    extend: '<rect x="1.5" y="4" width="8" height="8" rx="1.5"/><path d="M11.5 8h3m0 0-1.5-1.5M14.5 8 13 9.5"/>',
+    lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+    close: '<path d="m4 4 8 8M12 4l-8 8"/>',
     expand: '<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
     trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.1a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8.1M7 7v4M9 7v4"/>',
 };
@@ -103,13 +107,27 @@ function deleteAction(t, remove) {
 // `diagnostic` downloads the redacted report (and may offer to send it); a
 // result without one shows no report entry, because the full generation
 // record keeps local paths and is not meant to be shared.
-export function resultActions(record, t, {diagnostic = null, secondPass = null, remove = null} = {}) {
+export function resultActions(record, t, {diagnostic = null, secondPass = null, remove = null, extend = null} = {}) {
     const bar = document.createElement('div'); bar.className = 'fv-actions';
     if (secondPass) bar.append(secondPassAction(t, secondPass));
     if (record.video) {
         const download = action('a', t('Download video', '下载视频'), 'download', secondPass ? 'fv-action-secondary' : 'fv-action-primary');
         download.href = outputDownloadURL(api, record.video); download.download = '';
         bar.append(download);
+    }
+    if (extend && canExtend(record)) {
+        const button = action('button', extendText(t, 'action'), 'extend', 'fv-action-secondary fv-action-extend');
+        button.hidden = true;
+        extendSourceExists(api, record).then(exists => { button.hidden = !exists; });
+        button.onclick = async () => {
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                if (!await extendSourceExists(api, record)) { button.hidden = true; return; }
+                await extend(record);
+            } finally { button.disabled = false; }
+        };
+        bar.append(button);
     }
     const share = shareButton(record, t);
     share.className = 'fv-action fv-action-secondary fv-share-trigger';
