@@ -154,7 +154,12 @@ export function openStudio(node) {
     const tools = el('div', null, 'fv-header-actions');
     const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
-    tools.append(button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    const settingsButton = button(t('Settings', '设置'), openSetup, 'fv-quiet');
+    // The Agent connection card lives in Settings, so the guide's last step circles this button when the card is there.
+    // The guide starts after this settles: it fixes its steps from the anchors present at that moment.
+    const agentDiscovery = api.fetchApi('/freevideo/agent', {cache: 'no-store'}).then(reply => reply.ok ? reply.json() : null)
+        .then(found => { if (found?.enabled === true) settingsButton.dataset.fvGuide = 'agent'; }).catch(() => {});
+    tools.append(settingsButton);
     const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
         () => openEditorView(node, {studio: dialog}));
     header.append(brand, navigation, tools);
@@ -892,7 +897,11 @@ export function openStudio(node) {
     rangeMount.append(capabilityView.element); cleanup.push(capabilityView.dispose);
     controls.addEventListener('change', () => capabilityView.update());
     document.body.append(dialog); dialog.showModal(); viewChanged('studio', node); updateCanvas();
-    const guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing}); cleanup.push(guide.dispose);
+    let guide = null, closed = false;
+    cleanup.push(() => { closed = true; guide?.dispose(); });
+    agentDiscovery.then(() => {
+        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing});
+    });
     const recentLoad = recent.refresh();
     if (node.freevideoProgress) showProgress(node.freevideoProgress);
     else if (result) showResult(result);
