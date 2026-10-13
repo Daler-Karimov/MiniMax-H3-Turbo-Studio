@@ -238,6 +238,16 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         const end = Math.max(...items.map(item => item.clip.start + item.clip.frames));
         return {start, frames: end - start, tracks: [...new Set(items.map(item => item.track))]};
     }
+    // A range cannot be drawn longer than one video may be; `fromEnd` keeps its end where it is.
+    function capRange(selection, fromEnd = false) {
+        const limits = actions.generationLimits?.();
+        let most = model.maxRangeFrames(state.record, {...limits, start: selection.start});
+        if (selection.frames <= most) return selection;
+        if (!fromEnd) return {...selection, frames: most};
+        const stop = selection.start + selection.frames;
+        most = model.maxRangeFrames(state.record, {...limits, start: stop - most});
+        return {...selection, start: stop - most, frames: most};
+    }
     function rangeParts(selection, record = state.record) {
         return model.rangeParts(record, {...selection, ...actions.generationLimits?.()});
     }
@@ -685,14 +695,14 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 const end = original.start + original.frames, at = Math.round(aligned.frame / model.FPS) * model.FPS;
                 const start = gesture.edge === 'start' ? Math.min(end - 2 * model.FPS, at) : original.start;
                 const stop = gesture.edge === 'end' ? Math.max(start + 2 * model.FPS, at) : end;
-                gesture.selection = {kind: 'range', start, frames: stop - start, tracks: original.tracks};
+                gesture.selection = capRange({kind: 'range', start, frames: stop - start, tracks: original.tracks}, gesture.edge === 'start');
             }
             previewSelection = gesture.selection; showGuide(aligned.guide); renderSelection();
             hint(gesture.selection, event, false, gesture.type === 'rangeMove');
             if (gesture.type === 'rangeMove' && gesture.rangeBlocked) tooltip.hidden = true;
         } else if (gesture.type === 'range') {
             const aligned = snap(frame, points, state.zoom);
-            gesture.selection = rangeParameters(gesture.anchor, aligned.frame);
+            gesture.selection = capRange(rangeParameters(gesture.anchor, aligned.frame), aligned.frame < gesture.anchor);
             previewSelection = gesture.selection; showGuide(aligned.guide);
             renderSelection(); hint(gesture.selection, event);
         } else if (gesture.type === 'move') {
@@ -728,6 +738,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             if (error) tooltip.hidden = true;
         } else if (gesture.type === 'edge') {
             let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom, {canExtend: actions.generationAvailable?.() !== false});
+            if (result.kind === 'extend') result.frames = capRange({start: result.frame, frames: result.frames}).frames;
             if (result.kind === 'planned') {
                 let preview;
                 try { preview = model.resizePlanned(state.record, gesture.id, gesture.edge, result.frame, actions.generationLimits?.()); }

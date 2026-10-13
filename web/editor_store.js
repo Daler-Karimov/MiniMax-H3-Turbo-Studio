@@ -458,6 +458,11 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 notice('generate', 'Restart FreeVideo to generate.', '请重新启动 FreeVideo 后再生成。');
                 return null;
             }
+            if (response.status === 400) {
+                // The server's own sentence for a video with too many parts is shown as it is.
+                const body = await response.json().catch(() => null);
+                if (body?.code === 'chain_too_long') throw Object.assign(new Error(body.code), {code: body.code, said: [body.error, body.error_zh]});
+            }
             if (!response.ok) throw errorFor(response);
             return (await response.json())?.chain || null;
         },

@@ -185,6 +185,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const code = value?.code || value?.message;
         if (['audio_prepare', 'speed_pending', 'speed_locked', 'speed'].includes(code)) return {ok: false, reason: code};
         if (code === 'unsupported') { genbar?.update(null); return; }
+        if (code === 'chain_too_long') {
+            const [en, zh] = (value.said || []).map(text => typeof text === 'string' && text ? text.slice(0, 200) : null);
+            notify(t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短一些。'));
+            return {ok: false, reason: code};
+        }
         if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
             return {ok: false, reason: code};

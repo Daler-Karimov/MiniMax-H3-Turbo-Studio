@@ -8,7 +8,7 @@ export const VERSION = 1;
 export const FPS = 24;
 export const RULES = Object.freeze({maxSeconds: 15, singleSeconds: 30, minSeconds: 2, tailSeconds: 5,
     step: 17, first: 5, overlap: 22,
-    maxTracks: 3, maxClips: 500, maxText: 8000});
+    maxTracks: 3, maxClips: 500, maxText: 8000, maxParts: 5});
 // Slice and bound user text by Unicode code points, never UTF-16 halves.
 export const truncateText = (text, limit) => Array.from(text).slice(0, limit).join('');
 export const copyName = (name, suffix) => truncateText(name, RULES.maxText - Array.from(suffix).length) + suffix;
@@ -596,6 +596,12 @@ function remember(clip, source = null) {
 }
 // The lengths one range is generated in, as planRange lays them out on empty tracks.
 export const partLengths = (frames, {maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds} = {}) => segmentLengths(frames, maxSeconds, maxFollowSeconds);
+// One video is generated in at most RULES.maxParts parts: the longest range that still fits.
+export function maxRangeFrames(record, {start, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
+    const before = trackBy(record, 'v1').clips.find(clip => end(clip) === start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
+    const follow = Math.floor(Math.min(RULES.maxSeconds, maxFollowSeconds)) * FPS;
+    return (before ? follow : Math.floor(Math.min(RULES.maxSeconds, maxSeconds)) * FPS) + (RULES.maxParts - 1) * follow;
+}
 // Manual boundaries use device limits, not the automatic fifteen-second preference.
 export function rangeParts(record, {start, frames, parts, maxSeconds = RULES.maxSeconds, maxFollowSeconds = maxSeconds}) {
     const before = trackBy(record, 'v1').clips.find(clip => end(clip) === start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
