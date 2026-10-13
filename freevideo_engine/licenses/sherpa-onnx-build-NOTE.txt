@@ -18,3 +18,5 @@ https://github.com/microsoft/onnxruntime/tree/v1.28.2), kaldi-native-fbank,
 kaldi-decoder, kaldifst, OpenFst, simple-sentencepiece (Apache-2.0), KissFFT and
 pybind11 (BSD-3-Clause), nlohmann/json (MIT), hclust-cpp and Darts-clone (BSD-2-Clause),
 ThreadPool (Zlib).
+
+The Windows build also contains msvcp140.dll and msvcp140_1.dll (Microsoft Visual C++ 2022 runtime 14.44.35211, © Microsoft Corporation), unmodified and redistributed as permitted by Microsoft for its redistributable files.

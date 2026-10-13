@@ -52,8 +52,8 @@
     "runtime": [
       {
         "file": "licenses/sherpa-onnx-build-NOTE.txt",
-        "bytes": 1194,
-        "sha256": "27099ee57a0cc3118daa1613532b94ac2c029b05995d212e9000bff5888eb337"
+        "bytes": 1420,
+        "sha256": "3c96795dec0d35ed0372d39c4974427b7c3d033b0e7d1d07135e9c0952f2ed69"
       }
     ]
   },
@@ -73,7 +73,11 @@
       "bytes": 10815895,
       "sha256": "04e65d27130051a88abeb521b8a94878cf2d23d11e9a630ab85792e1057e98ac"
     },
-    "windows-x64": null
+    "windows-x64": {
+      "file": "runtime/windows-x64/sherpa_onnx-1.13.8-cp312-cp312-win_amd64.whl",
+      "bytes": 7807118,
+      "sha256": "36b86ccb86c699c1ba3550e475a0a840e0c60cb9cd3553568b785081a04f10f3"
+    }
   },
   "origin": {
     "speech": "csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-small (NVIDIA NeMo stt_en_conformer_ctc_small, CC-BY-4.0); snakers4/silero-vad v5.0 (MIT)",
