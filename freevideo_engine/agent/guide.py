@@ -351,7 +351,7 @@ def introduction(zh, offers):
     return rows
 
 
-def connection_guide(root, base, lang=None, offers=None):
+def connection_guide(root, base, lang=None, offers=None, resumed=False):
     """Public bootstrap text contains locations and commands, never credential values."""
     import json
     from pathlib import Path
@@ -403,17 +403,27 @@ def connection_guide(root, base, lang=None, offers=None):
                            description=CAPABILITIES_ZH.get((method, suffix), row['summary']) if zh else row['summary'])
                       for (method, suffix), row in contracts().items()
                       if not suffix.startswith('/freevideo/') and not suffix.startswith('/connect')],
-        first_reply='用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话告诉用户你能做“先介绍这几样”里的事，'
-                    '只说这几样，并举两三个用户可以提出的要求。不要报版本号，不要念接口名。'
-                    '不要自行启动任务，等待用户提出要求。' if zh else
-                    'Reply to the user in English; if the user switches languages, follow their language. '
-                    'After connecting, first reply in plain words: tell the user you can do the things under '
-                    '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
-                    'numbers or endpoint names. Do not start any task yourself; wait for the user to ask.',
+        # An agent connecting again while the user's conversation is under way has greeted there once already.
+        first_reply=(('用中文回复用户；如果用户改用其他语言，就跟随用户。用户所在的对话已经开始了：连接后不要自我介绍，'
+                      '也不要说“已连接”，先调一次等待接口，回应里的 before 是这段对话的最后几句；什么都不说，等用户开口再接着做。'
+                      '不要自行启动任务。' if zh else
+                      'Reply to the user in English; if the user switches languages, follow their language. '
+                      'The user is in a conversation that has already begun: after connecting do not introduce yourself '
+                      'and do not say that you are connected. Call the wait once; "before" in its answer holds the last '
+                      'lines of that conversation. Say nothing until the user speaks, then carry on from there. '
+                      'Do not start any task yourself.') if resumed else (
+                        '用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话告诉用户你能做“先介绍这几样”里的事，'
+                        '只说这几样，并举两三个用户可以提出的要求。不要报版本号，不要念接口名。'
+                        '不要自行启动任务，等待用户提出要求。如果第一次等待的回应说这段对话已经在进行，就不再介绍，接着之前的做。' if zh else
+                        'Reply to the user in English; if the user switches languages, follow their language. '
+                        'After connecting, first reply in plain words: tell the user you can do the things under '
+                        '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
+                        'numbers or endpoint names. Do not start any task yourself; wait for the user to ask. If the first wait says '
+                        'the conversation is already under way, do not introduce yourself again; carry on from it.')),
         introduce=introduction(zh, offers or {}),
         conversation='用户会在 FreeVideo 的“AI 全自动”页里直接和你说话，你的话也显示在那里。'
                      '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
-                     '回应里的 session 就是这段对话；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
+                     '回应里的 session 就是用户现在所在的对话（用户新开或换到另一段对话时它会变，话总是发到最近一次等待给的那个 session）；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
                      '{"type":"message","text":"…"}（MCP 用 freevideo_session_post）。在这里先只说一句话，不超过 20 个字，'
                      '不列条目、不举例（页面上已经有例句），例如“连上了。告诉我想做什么视频。”'
                      '你自己窗口里的那段介绍照常说，但它不是这一轮的结尾：说完紧接着去调等待接口。'
@@ -430,7 +440,7 @@ def connection_guide(root, base, lang=None, offers=None):
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
                      'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
                      'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
-                     'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
+                     'without id). Its "session" is the conversation the user is in (it changes when the user opens or returns to another one; always post to the session the latest wait named); POST ' + base + PREFIX + '/sessions/{session}/events '
                      'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
                      'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
                      '"Connected. Tell me what video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '

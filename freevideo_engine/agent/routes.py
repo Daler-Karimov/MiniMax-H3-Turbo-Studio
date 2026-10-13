@@ -32,6 +32,16 @@ PREFIX = '/freevideo/agent/v1'
 # What an empty wait tells the agent: the conversation is open for as long as the user keeps the page.
 KEEP_WAITING = ('Nothing new yet. The user is still in FreeVideo and may speak at any moment: call this wait '
                 'again now. An empty wait never ends the conversation; do not end your turn or write a summary.')
+# The user may open another conversation while the agent waits; its words go where the user now is.
+MOVED = ('The user is now in another conversation, session %s. Post your words to that session from now on; '
+         'the user no longer sees the earlier one.')
+MOVED_NEW = ' It starts afresh: do not carry requests over from the earlier conversation unless the user refers to them.'
+MOVED_BACK = (' It is one the user was in before, and the user means what was said there, not the conversation you just '
+              'left. Its last lines are in "before"; all of it: GET /sessions/%s/events.')
+# An agent that connects again finds the conversation where the user left it, and has greeted there once already.
+RESUMED = ('This conversation is already under way; its last lines are in "before". Do not introduce yourself again: '
+           'say nothing until the user speaks, then carry on from there.')
+BEFORE_LINES, BEFORE_TEXT = 8, 600
 
 
 def local_address(request):
@@ -391,7 +401,7 @@ def register():
     page_sessions = {}
     connection = dict(connected=False, client=None, via=None, last_seen_at=None)
     # The conversation in the Autopilot view: the page and the connected agent talk in the agent's latest session.
-    chat = dict(client=None, waiting=0, folds={})
+    chat = dict(client=None, waiting=0, folds={}, told={})
     server._freevideo_agent_connection = connection
 
     def problem(code, message=None, status=None, **details):
@@ -529,7 +539,11 @@ def register():
             if sid:
                 store.get(sid)  # not_found for an unknown session
             else:
-                sid = store.latest_for(client) or (store.create(client=client)['id'] if write else None)
+                # Work belongs to the conversation the agent last heard from; until its next wait it has
+                # not learned that the user opened another one.
+                told = chat['told'].get(client)
+                sid = told if told is not None and store.has(client, told) else (
+                    store.current_for(client) or (store.create(client=client)['id'] if write else None))
             if sid is None:
                 return None
             request['agent_session'] = sid
@@ -787,18 +801,30 @@ def register():
                         key=lambda r: (r['status'] in ('running', 'cancelling'), r['created_at']))
         return mine, active[-1] if active else None
 
-    def chat_session(store):
-        return store.latest_for(chat['client']) if store is not None and chat['client'] is not None else None
+    def chat_session(store, sid=None):
+        # The conversation the user is in, or an earlier one of the connected agent that the page names.
+        if store is None or chat['client'] is None:
+            return None
+        if sid is None:
+            return store.current_for(chat['client'])
+        if not store.has(chat['client'], sid):
+            raise JobError('not_found', 'No such conversation')
+        return sid
+
+    def chat_moved(store, before):
+        # The agent waits in the conversation the user was in; let that wait look again.
+        if store.current_for(chat['client']) != before:
+            store.wake(chat['client'])
 
     @routes.get('/freevideo/agent/chat')
     @guarded
     async def chat_read(request):
-        after = request[query_key].get('after')
+        after, wanted = request[query_key].get('after'), request[query_key].get('session')
         def read():
             store = work_sessions()
-            sid = chat_session(store)
+            sid = chat_session(store, wanted)
             rows = jobs.rows()
-            value = dict(agent=agent_state(), session=sid, last_seq=0, read_seq=0, items=[], jobs={}, confirms={}, current=None,
+            value = dict(agent=agent_state(), session=sid, here=chat_session(store), last_seq=0, read_seq=0, items=[], jobs={}, confirms={}, current=None,
                          active=sum(1 for r in rows if r['status'] in ACTIVE))
             if sid is None:
                 return value
@@ -854,7 +880,8 @@ def register():
             store, client = work_sessions(), chat['client']
             if store is None or client is None:
                 return None
-            sid = store.latest_for(client) or store.create(client=client, by='user')['id']
+            before = store.current_for(client)
+            sid = chat_session(store, value.get('session')) or store.create(client=client, by='user')['id']
             fold = chat_fold(store, sid)
             if value['id'] in fold['sent']:
                 seq = fold['sent'][value['id']]
@@ -869,6 +896,7 @@ def register():
             fold['ids'][row['seq']] = value['id']
             while len(fold['sent']) > 500:
                 fold['ids'].pop(fold['sent'].pop(next(iter(fold['sent']))), None)
+            chat_moved(store, before)
             return 201, dict(seq=row['seq'], id=value['id'], at=row['at'], session=sid, read=False, agent=agent_state())
         done = await asyncio.to_thread(write)
         if done is None:
@@ -884,13 +912,48 @@ def register():
         value = await body(request)
         def write():
             store = work_sessions()
-            sid = chat_session(store)
+            before = chat_session(store)
+            sid = chat_session(store, value.get('session'))
             if sid is None:
                 raise JobError('not_found', 'No conversation')
             row = store.append(sid, dict(type='confirm', id=value['id'],
                                          state='approved' if value['approve'] else 'declined'), by='user')
+            chat_moved(store, before)
             return dict(id=row['id'], state=row['state'])
         return reply(await asyncio.to_thread(write))
+
+    @routes.get('/freevideo/agent/chat/list')
+    @guarded
+    async def chat_list(request):
+        def read():
+            store = work_sessions()
+            here = chat_session(store)
+            rows = store.history(chat['client']) if here else []
+            active = [r.get('session') for r in jobs.rows() if r['status'] in ACTIVE]
+            return dict(agent=agent_state(), here=here,
+                        conversations=[dict(row, running=active.count(row['id'])) for row in rows])
+        return reply(await asyncio.to_thread(read))
+
+    @routes.post('/freevideo/agent/chat/new')
+    @guarded
+    async def chat_new(request):
+        def write():
+            store, client = work_sessions(), chat['client']
+            if store is None or client is None:
+                return None
+            before = store.current_for(client)
+            # A conversation the user has not spoken in yet is the new one already.
+            if before is not None and not store.spoken(before):
+                return 200, dict(session=before, agent=agent_state())
+            sid = store.create(client=client, by='user')['id']
+            chat_moved(store, before)
+            return 201, dict(session=sid, agent=agent_state())
+        done = await asyncio.to_thread(write)
+        if done is None:
+            return reply({'error': dict(code='not_connected', message='No agent is connected.', retryable=True,
+                                        details=[], next='Connect an agent in the Autopilot view, then try again.',
+                                        request_id=errors.request_id())}, 409)
+        return reply(done[1], done[0])
 
     @routes.get('/freevideo/agent/chat/video')
     @guarded
@@ -975,8 +1038,13 @@ def register():
         root = installation_root()
         prepare_token(root)
         from .editor_runtime import available
+        store = work_sessions()
+        def begun():
+            here = store.current_for(chat['client']) if store is not None and chat['client'] else None
+            return bool(here and store.get(here)['last_seq'])
         value = connection_guide(root, request.scheme + '://' + request.host, request[query_key].get('lang'),
-                                 dict(continuation=await asyncio.to_thread(jobs.continuation_ready), editing=available()))
+                                 dict(continuation=await asyncio.to_thread(jobs.continuation_ready), editing=available()),
+                                 resumed=await asyncio.to_thread(begun))
         if request[query_key].get('format') == 'json':
             return reply(value)
         return web.Response(text=connection_text(value), content_type='text/plain', headers={'Cache-Control': 'no-store'})
@@ -986,6 +1054,7 @@ def register():
     async def hello(request):
         value = await body(request)
         connection.update(connected=True, client=value['client'], via=value['via'], last_seen_at=time.time())
+        chat['told'].pop(request['agent_client'], None)   # a newly connected agent has heard from no conversation yet
         unfinished = await asyncio.to_thread(jobs.productions.list, status='active', limit=5)
         return reply(dict(connection, unfinished=unfinished))
 
@@ -1198,8 +1267,15 @@ def register():
                 return reply(await stop_session(sid), 201)
         if by == 'agent' and value['type'] == 'message' and isinstance(value.get('text'), str):
             value['text'] = chat_text(value['text'])
-        return reply(await asyncio.to_thread(sessions.append, sid, value,
-            by=by, client=session_client(request, by)), 201)
+        client = session_client(request, by)
+        def write():
+            row = sessions.append(sid, value, by=by, client=client)
+            here = sessions.current_for(client) if client and value['type'] == 'message' else None
+            if here not in (None, sid):
+                # Said where the user no longer looks: the answer itself tells the agent where to say it.
+                row['next'] = MOVED % here
+            return row
+        return reply(await asyncio.to_thread(write), 201)
 
     @routes.get(PREFIX + '/confirmations')
     @guarded
@@ -1485,12 +1561,29 @@ def register():
         client = request['agent_client']
         if store is not None and sid is None:
             # An agent that only listens has no session yet: give it one, so the page can speak into it.
-            sid = await asyncio.to_thread(lambda: store.latest_for(client) or store.create(client=client)['id'])
+            sid = await asyncio.to_thread(lambda: store.current_for(client) or store.create(client=client)['id'])
             request['agent_session'] = sid
+        # Without a session of its own choosing, the agent listens wherever its user is.
+        follow = store is not None and not request.headers.get('X-FreeVideo-Session', '').strip()
+        def answer(value):
+            told, chat['told'][client] = chat['told'].get(client), value['session']
+            if follow and told != value['session']:
+                first = value['inbox'][0]['seq'] if value['inbox'] else store.get(value['session'])['last_seq'] + 1
+                if first > 1:
+                    # What the user sees above these words. An agent that has to fetch it answers from the conversation it left.
+                    value['before'] = [dict(e, text=e['text'][:BEFORE_TEXT]) if isinstance(e.get('text'), str) else e
+                                       for e in store.events(value['session'], after=max(0, first - 1 - BEFORE_LINES),
+                                                             limit=BEFORE_LINES) if e['seq'] < first]
+                said = (RESUMED if first > 1 else '') if told is None else (
+                    MOVED % value['session'] + (MOVED_BACK % value['session'] if first > 1 else MOVED_NEW))
+                value['next'] = (said + ' ' + value.get('next', '')).strip()
+            return reply(value)
         deadline = time.monotonic() + min(50., float(request[query_key].get('wait', '0') or 0))
         chat['waiting'] += 1
         try:
             while True:
+                if follow:
+                    sid = request['agent_session'] = await asyncio.to_thread(store.current_for, client) or sid
                 if store is not None and sid is not None:
                     # Mark before reading so words arriving in between wake the wait below.
                     def read():
@@ -1498,16 +1591,17 @@ def register():
                         return mark, store.unread(sid, client)
                     mark, pending = await asyncio.to_thread(read)
                     if pending:
-                        return reply(dict(session=sid, inbox=pending[-20:]))
+                        return answer(dict(session=sid, inbox=pending[-20:]))
                 left = deadline - time.monotonic()
                 if left <= 0:
                     # again: nothing new this time; the caller simply waits once more. An agent decides what to
                     # do next from the last answer it read, so the empty one says it in words as well.
-                    return reply(dict(session=sid, inbox=[], again=True, next=KEEP_WAITING))
+                    return answer(dict(session=sid, inbox=[], again=True, next=KEEP_WAITING))
                 if store is None or sid is None:
                     await asyncio.sleep(min(left, 1.))
                 else:
-                    await store.wait(sid, after=mark, seconds=min(left, 25.), by='user')
+                    await store.wait(sid, after=mark, seconds=min(left, 25.), by='user',
+                                     leave=(lambda here=sid: store.current_for(client) != here) if follow else None)
         finally:
             chat['waiting'] -= 1
             # The agent was here for the whole wait, not only when it began.

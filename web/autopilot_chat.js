@@ -2,6 +2,7 @@
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
 import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
+import {emptyConversations, hasConversations, mergeConversations, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -13,6 +14,7 @@ function glyph(path, width = 2.2) {
     return svg;
 }
 const press = (cls, text, action) => { const b = el('button', cls, text); b.type = 'button'; b.onclick = action; return b; };
+let chatNumber = 0;
 
 const WORKING = ['running', 'queued', 'waiting'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
@@ -136,16 +138,110 @@ function newId() {
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
 export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500} = {}) {
-    const element = el('section', 'fv-chat'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
+    const element = el('section', 'fv-chat'), main = el('div', 'fv-chat-main'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
     log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Conversation', '对话'));
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
     down.append(glyph('M12 5v14M5 12l7 7 7-7')); down.setAttribute('aria-label', t('Latest', '最新')); down.hidden = true;
     const form = el('form', 'fv-chat-input'), input = el('textarea'), sendButton = el('button', 'fv-chat-send');
     input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '对 Agent 说'));
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
-    form.append(input, sendButton); scroller.append(log); element.append(scroller, down, form);
+    form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
 
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
+    let conversations = emptyConversations(), selectedSession, selection = 0, reread = false, focusSession = null, creating = false;
+    // Work under way in another conversation while this one has none: {session, job, ids}. The page's header keeps it in sight.
+    let away = null;
+    let listBusy = false, listAgain = false, listAt = -Infinity;
+    const listInterval = 10000;
+    const sidebar = el('nav', 'fv-chat-conversations'), list = el('div', 'fv-chat-conversation-list'), tools = el('div', 'fv-chat-tools');
+    sidebar.id = `fv-chat-conversations-${++chatNumber}`; sidebar.setAttribute('aria-label', t('Chats', '对话')); sidebar.hidden = true;
+    const newChat = press('fv-chat-new', t('New chat', '新对话'), () => void startChat());
+    newChat.prepend(glyph('M12 5v14M5 12h14')); newChat.title = t('New chat', '新对话');
+    const chats = press('fv-chat-chats', null, () => drawer(chats.getAttribute('aria-expanded') !== 'true'));
+    const chatsDot = el('i', 'fv-chat-running'); chatsDot.setAttribute('aria-hidden', 'true'); chatsDot.hidden = true;
+    chats.append(glyph('M4 5h16v12H9l-5 4V5M8 9h8M8 13h5'), chatsDot);
+    chats.title = t('Chats', '对话'); chats.setAttribute('aria-label', chats.title);
+    chats.setAttribute('aria-controls', sidebar.id); chats.setAttribute('aria-expanded', 'false');
+    tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, list); element.prepend(sidebar);
+    const listNodes = new Map(), narrow = () => window.matchMedia('(max-width: 720px)').matches;
+    function drawer(on, restore = false) {
+        element.dataset.chatsOpen = String(on); chats.setAttribute('aria-expanded', String(on));
+        // Only the overlay needs to keep keyboard focus in its list.
+        main.inert = on && narrow();
+        if (on) (list.querySelector('[aria-current]') || newChat).focus();
+        else if (restore) chats.focus();
+    }
+    function renderConversations() {
+        const visible = hasConversations(conversations);
+        element.dataset.conversations = String(visible); sidebar.hidden = tools.hidden = !visible;
+        if (!visible) drawer(false);
+        newChat.disabled = creating; chatsDot.hidden = !conversations.conversations.some(row => row.running > 0);
+        const keep = new Set(conversations.conversations.map(row => row.id));
+        for (const [id, node] of listNodes) if (!keep.has(id)) { node.button.remove(); listNodes.delete(id); }
+        conversations.conversations.forEach((row, index) => {
+            let node = listNodes.get(row.id);
+            if (!node) {
+                const button = press('fv-chat-conversation', null, () => chooseChat(row.id)), dot = el('i', 'fv-chat-running'), title = el('span');
+                button.dataset.session = row.id; dot.setAttribute('aria-hidden', 'true'); button.append(dot, title);
+                listNodes.set(row.id, node = {button, dot, title});
+            }
+            node.title.textContent = row.title; node.button.title = row.title; node.dot.hidden = row.running <= 0;
+            if (row.id === conversations.current) node.button.setAttribute('aria-current', 'true'); else node.button.removeAttribute('aria-current');
+            if (list.children[index] !== node.button) list.insertBefore(node.button, list.children[index] || null);
+        });
+    }
+    function chooseChat(session, focus = false) {
+        selectedSession = session; selection++; pinned = true; away = null;
+        conversations = selectConversation(conversations, session); renderConversations();
+        input.value = ''; grow(); drawer(false);
+        focusSession = focus ? session : null;
+        if (focus && session === state.session) input.focus(); else if (narrow()) chats.focus();
+        render(); void readConversations(true); void poll();
+    }
+    async function startChat() {
+        if (creating || !active() || conversations.supported !== true) return;
+        creating = true; renderConversations(); render();
+        try {
+            const response = await agentPost(api, '/freevideo/agent/chat/new', {});
+            if (stopped) return;
+            if (response.ok) {
+                const data = await response.json();
+                if (typeof data.session === 'string' && data.session) chooseChat(data.session, true);
+            } else if (response.status === 409) { state = {...state, agent: {connected: false, name: null}}; report(); }
+        } catch { /* Keep the current conversation available for another try. */ }
+        finally { creating = false; if (!stopped) { renderConversations(); render(); } }
+    }
+    async function readConversations(force = false) {
+        if (!active() || conversations.supported === false) return;
+        if (listBusy) { if (force) listAgain = true; return; }
+        if (!force && performance.now() - listAt < listInterval) return;
+        listBusy = true; listAt = performance.now();
+        try {
+            const response = await agentGet(api, '/freevideo/agent/chat/list', {signal: closed.signal});
+            if (stopped) return;
+            conversations = mergeConversations(conversations, response.ok ? await response.json() : null, response.status);
+            renderConversations();
+            if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; selection++; void poll(); }
+        } catch { /* List failures do not interrupt reading or sending. */ }
+        finally { listBusy = false; }
+        if (listAgain) { listAgain = false; void readConversations(true); }
+    }
+    const outside = event => {
+        if (chats.getAttribute('aria-expanded') === 'true' && !sidebar.contains(event.target) && !chats.contains(event.target)) drawer(false, true);
+    };
+    const keys = event => {
+        if (chats.getAttribute('aria-expanded') !== 'true') return;
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); drawer(false, true); }
+        else if (event.key === 'Tab' && narrow()) {
+            const buttons = [...sidebar.querySelectorAll('button')].filter(button => !button.disabled);
+            if (!buttons.length) return;
+            if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
+            else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
+        }
+    };
+    const resize = () => { if (!narrow()) drawer(false); };
+    document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keys, true);
+    window.addEventListener('resize', resize);
     // Whether the reader is at the newest entry. It holds while the conversation is out of sight, which forgets where it was scrolled.
     let pinned = true;
     const closed = new AbortController();
@@ -173,6 +269,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         return row ? row.seconds : null;
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
+    const sendingAllowed = () => !creating && (!selectedSession || selectedSession === state.session) && canSend(state);
 
     // ---- one entry of the conversation each ----
     function message(role) {
@@ -291,7 +388,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 } else { item.replaceChildren(); apply = null; }
             }
             apply?.(job, latest);
-            const again = item.querySelector('.fv-chat-retry'); if (again) again.disabled = !canSend(state);
+            const again = item.querySelector('.fv-chat-retry'); if (again) again.disabled = !sendingAllowed();
         }};
     }
     function confirmCard() {
@@ -329,7 +426,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             t('Make a 1-minute vertical short film: a day in a coffee shop', '做一条 1 分钟的竖屏短片：咖啡店的一天')];
         list.append(...lines.map(line => press(null, line, () => send(line))));
         item.append(el('p', 'fv-chat-meta', t('Try saying:', '可以这样说：')), list);
-        return {element: item, update() { list.querySelectorAll('button').forEach(button => { button.disabled = !canSend(state); }); }};
+        return {element: item, update() { list.querySelectorAll('button').forEach(button => { button.disabled = !sendingAllowed(); }); }};
     }
     function dots() {
         const item = el('li', 'fv-chat-thinking'), mark = el('span', 'fv-chat-dots'); mark.append(el('i'), el('i'), el('i'));
@@ -372,10 +469,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             node.update(value, extra || {});
             if (log.children[index] !== node.element) log.insertBefore(node.element, log.children[index] || null);
         });
-        const sendable = canSend(state);
-        input.disabled = state.agent.connected !== true;
+        const sendable = sendingAllowed();
+        input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
         input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to keep listening', '回到 Agent 那边让它继续') : t('Message the agent…', '对 Agent 说…');
         sendButton.disabled = !sendable || !input.value.trim();
+        if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
         else if (log.children.length > before) down.hidden = false;
     }
@@ -385,18 +483,39 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (pinned) down.hidden = true;
     }, {passive: true});
 
+    async function readAway() {
+        const row = state.current ? null : runningElsewhere(conversations, state.session);
+        if (!row) { away = null; return; }
+        try {
+            // Past the last message: only that conversation's jobs come back.
+            const query = new URLSearchParams({session: row.id, after: String(Number.MAX_SAFE_INTEGER)});
+            const response = await agentGet(api, `/freevideo/agent/chat?${query}`, {signal: closed.signal});
+            if (!response.ok) { away = null; return; }
+            const data = await response.json(), jobs = Object.values(data.jobs || {}).filter(job => WORKING.includes(job?.status));
+            const job = data.jobs?.[data.current] || jobs[0];
+            away = job ? {session: row.id, job, ids: jobs.map(job => job.id)} : null;
+        } catch { /* The last reading stays until the next one. */ }
+    }
     function report() {
-        const current = state.current ? state.jobs[state.current] || null : null;
+        const current = (state.current ? state.jobs[state.current] : away?.job) || null;
         changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, left: current ? leftOf(current) : null, active: state.active,
             any: state.items.size > 0 || pending.length > 0});
     }
     async function send(text) {
         text = String(text).trim();
-        if (!text || !canSend(state)) return false;
+        if (!text || !sendingAllowed()) return false;
+        const sentSelection = selection;
         const entry = {id: newId(), text}; pending.push(entry); render(true); report();
         let response = null;
-        try { response = await agentPost(api, '/freevideo/agent/chat', entry); } catch { /* Handled below as not sent. */ }
-        if (response?.ok) { const value = await response.json().catch(() => ({})); if (value.agent) state.agent = value.agent; poll(); return true; }
+        const body = conversations.supported === true && state.session ? {...entry, session: state.session} : entry;
+        try { response = await agentPost(api, '/freevideo/agent/chat', body); } catch { /* Handled below as not sent. */ }
+        if (stopped) return false;
+        if (response?.ok) {
+            const value = await response.json().catch(() => ({}));
+            if (sentSelection === selection) { if (value.agent) state.agent = value.agent; void poll(); }
+            void readConversations(true); return true;
+        }
+        if (sentSelection !== selection) return false;
         // Not sent: the sentence goes back to the box. An agent that was never connected leads back to the card.
         pending = pending.filter(item => item !== entry);
         if (!input.value) { input.value = text; grow(); }
@@ -409,7 +528,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // At most five lines; the box scrolls after that.
         const line = parseFloat(getComputedStyle(input).lineHeight) || 22;
         input.style.height = `${Math.min(input.scrollHeight, Math.round(line * 5) + 14)}px`;
-        sendButton.disabled = !canSend(state) || !input.value.trim();
+        sendButton.disabled = !sendingAllowed() || !input.value.trim();
     }
     input.addEventListener('input', grow);
     // Enter sends, Shift+Enter starts a new line; Enter that confirms an input-method candidate does neither.
@@ -420,33 +539,53 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     form.addEventListener('submit', event => {
         event.preventDefault();
         const text = input.value;
-        if (!text.trim() || !canSend(state)) return;
+        if (!text.trim() || !sendingAllowed()) return;
         input.value = ''; grow(); void send(text);
     });
 
+    // Both a server-side session change and a list selection reset the same reader. Job clocks stay keyed by job id.
+    function resetChat() {
+        state = emptyChat(); pending = []; answers.clear(); nodes.clear();
+        log.querySelectorAll('video').forEach(video => video.pause()); log.replaceChildren(); pinned = true;
+    }
     async function poll() {
         clearTimeout(timer); timer = null;
-        if (stopped || busy) return;
+        if (stopped) return;
+        if (busy) { reread = true; return; }
         if (!active()) return;
-        busy = true;
+        busy = true; reread = false;
+        void readConversations();
+        const readSelection = selection, requested = selectedSession;
         let again = false;
         try {
-            const after = state.session ? state.last : 0;
-            const response = await agentGet(api, '/freevideo/agent/chat' + (after ? `?after=${after}` : ''), {signal: closed.signal});
+            const after = state.session && (!requested || requested === state.session) ? state.last : 0;
+            const query = new URLSearchParams();
+            if (requested) query.set('session', requested);
+            if (after) query.set('after', String(after));
+            const response = await agentGet(api, '/freevideo/agent/chat' + (query.size ? `?${query}` : ''), {signal: closed.signal});
             if (stopped) return;
-            if (response.ok) {
+            if (readSelection !== selection) again = true;
+            else if (response.ok) {
                 const data = await response.json();
+                if (stopped) return;
+                if (readSelection !== selection) { again = true; }
                 // Another conversation began: forget this one and read the new one whole.
-                if (after && (data.session ?? null) !== state.session) { state = emptyChat(); again = true; }
+                else if (after && (data.session ?? null) !== state.session) { resetChat(); again = true; }
                 else {
-                    if ((data.session ?? null) !== state.session) state = emptyChat();
+                    if ((data.session ?? null) !== state.session) resetChat();
                     state = chatMerge(state, data); failures = 0;
+                    conversations = selectConversation(conversations, state.session); renderConversations();
+                    await readAway();
+                    if (stopped) return;
+                    if (readSelection !== selection) { away = null; again = true; }
                 }
+            } else if (response.status === 404 && requested) {
+                selectedSession = undefined; selection++; resetChat(); again = true; void readConversations(true);
             } else failures++;
         } catch { failures++; }
         finally { busy = false; }
         if (stopped) return;
-        if (again) return poll();
+        if (again || reread) return poll();
         known = true;
         // The next read is booked before the page hears of this one, so the page's sync() does not start another.
         const idle = state.agent.connected !== true && !state.active;
@@ -455,7 +594,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     // Between reads the estimate keeps moving, on the cards and in the page's header alike.
     const moving = setInterval(() => {
-        if (!active() || !Object.values(state.jobs).some(job => job.status === 'running')) return;
+        if (!active() || ![...Object.values(state.jobs), ...(away ? [away.job] : [])].some(job => job.status === 'running')) return;
         for (const item of log.children) item.tick?.();
         report();
     }, 250);
@@ -467,12 +606,19 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     render();
     return {element, input, sync, refresh: poll,
-        scrollToJob(id) { log.querySelector(`[data-job="${CSS.escape(id)}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'}); },
+        scrollToJob(id) {
+            // A job of another conversation: go to that conversation, which opens at its end where the job is.
+            if (away?.job.id === id && !state.jobs[id]) chooseChat(away.session);
+            else log.querySelector(`[data-job="${CSS.escape(id)}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'});
+        },
         async stopAll() {
-            const ids = Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => job.id);
+            const ids = [...new Set([...Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => job.id), ...(away?.ids || [])])];
             ids.forEach(id => stopping.add(id)); render();
             await Promise.allSettled(ids.map(id => agentPost(api, '/freevideo/agent/activity/cancel', {id})));
             poll();
         },
-        stop() { stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null; document.removeEventListener('visibilitychange', visible); log.querySelectorAll('video').forEach(video => video.pause()); }};
+        stop() { stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
+            document.removeEventListener('visibilitychange', visible); document.removeEventListener('pointerdown', outside, true);
+            document.removeEventListener('keydown', keys, true); window.removeEventListener('resize', resize);
+            log.querySelectorAll('video').forEach(video => video.pause()); }};
 }

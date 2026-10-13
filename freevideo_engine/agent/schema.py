@@ -354,12 +354,12 @@ def contracts(*, local=False):
     for suffix, method, body in (('', 'GET', None), ('/session', 'GET', None), ('/activity', 'GET', None),
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
             ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
-            ('/chat/video', 'GET', None),
-            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID}, ('text', 'id'))),
-            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'}},
-                                          ('id', 'approve')))):
+            ('/chat/video', 'GET', None), ('/chat/list', 'GET', None), ('/chat/new', 'POST', EMPTY),
+            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION}, ('text', 'id'))),
+            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
+                                           'session': SESSION}, ('id', 'approve')))):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
-    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True)})
+    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True), 'session': SESSION})
     routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for suffix in ('', '/connect'):
         routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
