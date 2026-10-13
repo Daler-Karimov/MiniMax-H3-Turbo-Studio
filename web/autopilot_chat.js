@@ -1,7 +1,7 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
-import { estimatedFraction, remainingShown } from './generation_progress.js';
+import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -34,6 +34,28 @@ export function jobEstimate(job, age) {
 // again: the rest of the way is drawn shorter, so the level neither waits nor goes back, and is full at the end.
 const DRIFT = .25, RISE = .0005;
 export const newLevel = () => ({value: 0, top: null, since: 0, scale: 1});
+// The time left a running job shows, by the creation panel's rule: once measured never raised, and gone once its last
+// minute has passed. `row` is what the job showed before (none yet: it starts at the engine's number); `seconds` is null
+// from the moment the time has run out.
+export function jobLeft(row, sent, source, time) {
+    if (!row) {
+        if (!(sent > 0)) return null;
+        row = {seconds: sent, at: time, minute: null, last: 0, source: null, above: 0};
+    }
+    if (row.seconds === null) return row;
+    // Before the run is measured the engine's number is an estimate from earlier runs: follow it up as well as down.
+    const named = typeof source === 'string', initial = source === 'similar';
+    // The first number that is not that estimate replaces it once, up or down, and its last minute starts over.
+    if (named && !initial && row.source === 'similar' && sent > 0) { row.seconds = sent; row.minute = null; }
+    if (named) row.source = source;
+    const target = sent > 0 ? sent : null; row.above = remainingAbove(row.above, row.seconds, target, time - row.at);
+    row.seconds = remainingShown(row.seconds, target, time - row.at, initial, row.above); row.at = time;
+    if (row.seconds < 60 && row.minute === null) { row.minute = time; row.last = row.seconds; }
+    // An estimate that rises out of its last minute starts that minute over.
+    else if (row.seconds >= 60 && initial) row.minute = null;
+    if (row.seconds <= 0 || row.minute !== null && time - row.minute >= row.last) row.seconds = null;
+    return row;
+}
 export function jobLevel(row, base, left, time) {
     if (row.top === null || base > row.top + RISE) {
         if (row.top !== null && row.top < 1) row.scale = (1 - row.value) / (1 - row.top);
@@ -140,21 +162,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (job.status === 'running') jobLevel(row.level, jobEstimate(row.job, time - row.at), row.job.progress?.remaining_seconds, time);
         return row.level.value;
     }
-    // The time left each job shows, by the creation panel's rule: never raised, and gone once its last minute has passed.
     const times = new Map();
     function leftOf(job) {
-        const time = performance.now() / 1000, sent = job.progress?.remaining_seconds;
         if (job.status !== 'running') { times.delete(job.id); return null; }
-        let row = times.get(job.id);
-        if (!row) {
-            if (!(sent > 0)) return null;
-            times.set(job.id, row = {seconds: sent, at: time, minute: null, last: 0});
-        }
-        if (row.seconds === null) return null;
-        row.seconds = remainingShown(row.seconds, sent > 0 ? sent : null, time - row.at); row.at = time;
-        if (row.seconds < 60 && row.minute === null) { row.minute = time; row.last = row.seconds; }
-        if (row.seconds <= 0 || row.minute !== null && time - row.minute >= row.last) row.seconds = null;
-        return row.seconds;
+        const row = jobLeft(times.get(job.id), job.progress?.remaining_seconds,
+            job.progress?.estimate?.overall?.remaining_source, performance.now() / 1000);
+        if (row) times.set(job.id, row);
+        return row ? row.seconds : null;
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
 

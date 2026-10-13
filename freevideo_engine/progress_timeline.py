@@ -290,7 +290,7 @@ WARNINGS = frozenset((
 SEGMENT_KEYS = ('phase', 'stage', 'timing_phase', 'label_key')
 ENUMS = dict(phase=PHASES, stage=STAGES, timing_phase=TIMING_PHASES,
              label_key=LABEL_KEYS, unit=UNITS, warning=WARNINGS)
-OVERALL_ENUMS = dict(status=STATUSES)
+OVERALL_ENUMS = dict(status=STATUSES, remaining_source=frozenset(('local', 'similar', 'measured', 'other')))
 RETRY_ENUMS = dict(kind=RETRY_KINDS, failed_phase=PHASES)
 COUNTERS = frozenset(('done', 'total', 'block', 'blocks', 'reference_trimmed'))
 FLAGS = frozenset(('low_memory', 'kernel_cache_note', 'estimated', 'new_request', 'reset', 'result'))
@@ -349,7 +349,7 @@ def _fields(value, *, strict=False, nested=None):
                  (nested is None and (key in COUNTERS or key in FLAGS or key in SECONDS or key in FRACTIONS
                                       or key in ('t', 'bytes_per_second', 'overall', 'retry'))) or
                  (nested == 'overall' and (key in OVERALL_SECONDS or key in OVERALL_FRACTIONS
-                                          or key in ('estimated', 'sampling_time_weighted'))) or
+                                          or key in ('estimated', 'sampling_time_weighted', 'at_ceiling'))) or
                  (nested == 'retry' and key in ('attempt', 'max_attempts', 'reuse_sampling')))
         if not known:
             # Heartbeat and the bridge's extra overall fields are intentionally omitted.
@@ -370,8 +370,9 @@ def _fields(value, *, strict=False, nested=None):
                     raise ValueError('Invalid progress mapping')
                 result[key], count = _fields(raw, strict=strict, nested=key)
                 errors += count
-            elif (nested is None and key in FLAGS) or key in ('estimated', 'reuse_sampling', 'sampling_time_weighted'):
-                if (strict or key == 'sampling_time_weighted') and type(raw) is not bool:
+            elif (nested is None and key in FLAGS) or key in ('estimated', 'reuse_sampling', 'sampling_time_weighted',
+                                                              'at_ceiling'):
+                if (strict or key in ('sampling_time_weighted', 'at_ceiling')) and type(raw) is not bool:
                     raise ValueError('Invalid progress flag')
                 result[key] = bool(raw)
             elif (nested is None and key in COUNTERS) or key in ('attempt', 'max_attempts'):

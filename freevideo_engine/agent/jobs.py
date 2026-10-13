@@ -992,7 +992,7 @@ class Jobs:
                                                'step_elapsed_seconds', 'estimated_step_seconds') if message.get(key) is not None}
         overall = message.get('overall') if isinstance(message.get('overall'), dict) else {}
         overall = {key: overall[key] for key in ('fraction', 'estimated', 'status', 'phase_start_fraction', 'phase_weight',
-                                                 'phase_seconds', 'phase_elapsed_seconds', 'sampling_time_weighted')
+                                                 'phase_seconds', 'phase_elapsed_seconds', 'sampling_time_weighted', 'remaining_source')
                    if overall.get(key) is not None}
         if overall:
             value['overall'] = overall
