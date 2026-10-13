@@ -32,7 +32,13 @@ def install(root=None, *, packages=False):
                        if env.get('FREEVIDEO_UV') else [sys.executable, '-m', 'pip', 'install'])
             # uv is a native program; pip runs in this interpreter's own Python.
             run = subprocess_output.run_external if env.get('FREEVIDEO_UV') else subprocess_output.run_python
-            result = run([*command, '-e', str(diffusers), '--no-deps'],
+            if pth_spellable(diffusers):
+                target = ['-e', str(diffusers)]
+            else:
+                # A regular copy carries no path; replace any copy from an older tree.
+                target = [str(diffusers), *(['--reinstall-package', 'diffusers'] if env.get('FREEVIDEO_UV')
+                                            else ['--force-reinstall'])]
+            result = run([*command, *target, '--no-deps'],
                          env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             print(result.stdout, flush=True)
             if result.returncode:
@@ -44,6 +50,26 @@ def install(root=None, *, packages=False):
     print(json.dumps({'vdn_root': str(root), 'commit': head, 'packages_installed': packages,
                       'diffusers_tree': dependencies['diffusers']['patched_tree'],
                       'models_downloaded': False, 'environment_variable': 'FREEVIDEO_VDN_ROOT'}))
+
+
+def pth_spellable(path, *, windows=None, encoding=None):
+    """Whether an editable install may name this folder in a .pth file.
+
+    setuptools writes a src-layout folder into the .pth in the locale code page,
+    and Python 3.12 reads it the same way; UTF-8 mode changes neither. Where the
+    Windows code page cannot spell the folder, a regular copy is installed
+    instead: add_vdn() puts the pinned source first on sys.path either way.
+    """
+    if not (sys.platform == 'win32' if windows is None else windows):
+        return True
+    if encoding is None:
+        import locale
+        encoding = locale.getencoding() if hasattr(locale, 'getencoding') else locale.getpreferredencoding(False)
+    try:
+        str(path).encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
 
 
 def prepare_diffusers(root, dependencies):
