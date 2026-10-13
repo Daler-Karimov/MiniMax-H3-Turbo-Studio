@@ -566,10 +566,10 @@ def register():
     @guarded
     async def discover(request):
         # Unauthenticated: tells a client where to look, reveals nothing else.
-        connect = request.scheme + '://' + request.host + PREFIX + '/connect'
-        return reply(dict(enabled=True, api_versions=[API_VERSION], base=PREFIX, auth='bearer',
-                          token='agent/token in the FreeVideo installation folder', connect=connect,
-                          instructions='GET ' + connect + ' for plain-text connection instructions and follow them.'))
+        from ..comfy_bridge import installation_root
+        from .guide import connection_discovery
+        return reply(connection_discovery(installation_root(), request.scheme + '://' + request.host,
+                                          request[query_key].get('lang')))
 
     @routes.get('/freevideo/agent/session')
     @guarded
@@ -633,7 +633,9 @@ def register():
     async def connect(request):
         # For Settings: how to connect an agent on this computer. The token itself stays in its file.
         from ..comfy_bridge import installation_root, source_root
+        from .guide import page_language
         from .mcp import client_config
+        page_language(request[query_key].get('lang'))
         try:
             root = installation_root()
             ensure_token(root)
@@ -674,7 +676,7 @@ def register():
         from .guide import connection_guide, connection_text
         root = installation_root()
         ensure_token(root)
-        value = connection_guide(root, request.scheme + '://' + request.host)
+        value = connection_guide(root, request.scheme + '://' + request.host, request[query_key].get('lang'))
         if request[query_key].get('format') == 'json':
             return reply(value)
         return web.Response(text=connection_text(value), content_type='text/plain', headers={'Cache-Control': 'no-store'})

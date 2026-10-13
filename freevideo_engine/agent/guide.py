@@ -161,12 +161,147 @@ RULES = [
 ]
 
 
-def connection_guide(root, base):
+RULES_ZH = [
+    '把任务做完。用户要求生成视频时，持续推进，直到成片生成。如何拆分镜头、拍几条、选哪一条等普通决定，'
+    '由你自己做。最后用一两句话告诉用户你做了哪些决定，不要每做一步都请用户决定。',
+    '先自己解决问题。每个错误都有 next 字段，details 里也常有可选方案；这些是在本机可行的处理步骤。'
+    '显存不足时，从列出的方案中选择较低分辨率或较短时长重试。一条拍得不好就再拍；再拍两条仍不满意，'
+    '换一种描述，不要反复提交同一个要求。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
+    '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
+    '已经完成的内容不要重新生成。',
+    '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
+    '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
+    '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
+    '只在 FreeVideo 内工作，不要改动本机的其他文件，不要撤销用户做的修改。'
+    '用户要求停止时，取消你启动的任务，不再启动新任务。',
+    '先选角，再拍摄。先搜索角色库，使用用户指定的卡片或明确符合要求的卡片；拿不准时询问用户。'
+    '只有找不到合适卡片时才新建：用户提供了照片就用照片，否则通过 POST /cast/{id}/generate 生成参考图。'
+    '开拍前用一句话告诉用户选角结果。后续镜头使用卡片当前的图片。保留你创建的卡片，方便以后拍片复用。',
+]
+
+
+# Connection copy only: keep translations out of the shared contracts and MCP tools/list.
+CAPABILITIES_ZH = {
+    ('GET', ''): '查看可用功能、就绪状态和队列',
+    ('GET', '/guide'): '阅读提示词和接口使用指南',
+    ('GET', '/schema'): '查看任务的数据结构',
+    ('GET', '/openapi.json'): '查看接口契约',
+    ('GET', '/capabilities'): '查看设备能力',
+    ('POST', '/plan'): '校验生成请求并预览生成计划',
+    ('POST', '/jobs'): '提交视频生成、提示词增强、视觉问答或片段拼接任务',
+    ('GET', '/jobs'): '查看任务列表',
+    ('GET', '/jobs/{id}'): '查看任务进度和结果',
+    ('GET', '/jobs/{id}/events'): '持续接收任务进度',
+    ('POST', '/jobs/{id}/cancel'): '取消任务',
+    ('POST', '/jobs/{id}/resume'): '继续生成尚未完成的视频块',
+    ('POST', '/media'): '上传图片、视频或音频内容',
+    ('GET', '/media/{kind}/{file}/file'): '下载上传或处理后的素材',
+    ('POST', '/media/inspect'): '查看素材信息',
+    ('POST', '/media/frame'): '提取视频的一帧',
+    ('POST', '/media/contact-sheet'): '查看带时间标记的视频帧拼图',
+    ('POST', '/media/edit'): '按编辑配方处理图片',
+    ('GET', '/library'): '搜索已保存的视频',
+    ('GET', '/library/{day}/{run}'): '查看已保存的视频信息',
+    ('GET', '/library/{day}/{run}/file'): '下载已保存的视频',
+    ('GET', '/library/{day}/{run}/thumbnail'): '查看已保存的视频缩略图',
+    ('GET', '/queue'): '查看队列顺序及任务属于 Agent 还是用户',
+    ('GET', '/editor/sources/content'): '下载剪辑项目的源素材或缩略图；使用 GET /projects/{id} 返回的素材标识',
+    ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 25 秒',
+    ('POST', '/drama/plan'): '预览多镜头影片的剧本和各镜头拍摄条数，不保存、不提交。'
+        '多镜头影片可以逐镜选片；单条视频无论多长，都用一个 generate 任务',
+    ('POST', '/drama'): '确认计划后开始拍摄，进度会保存；查看各条画面并逐镜选片',
+    ('GET', '/drama'): '查看影片列表；status=active 返回未完成影片的摘要',
+    ('GET', '/drama/{id}'): '读取待办事项 todo 和版本 revision；用 since 和 wait=25 等待变化。'
+        'paused 有值时停止操作，持续等待用户继续',
+    ('GET', '/drama/{id}/shots/{shot}/sheet'): '各条生成完成后，查看带时间标记的画面和前一镜所选片段的末帧',
+    ('POST', '/drama/{id}/shots/{shot}/choose'): '查看画面后选择一条；选定后才能拍摄承接它的下一镜',
+    ('POST', '/drama/{id}/shots/{shot}/reshoot'): '按修改要求重拍，再查看画面并重新选片',
+    ('POST', '/drama/{id}/finish'): '每一镜都选定后提交拼接，继续查询影片直到成片就绪',
+    ('POST', '/drama/{id}/cancel'): '取消尚未完成的拍摄，已完成的各条仍可使用',
+    ('POST', '/drama/{id}/pause'): '只有用户可以暂停影片拍摄；外部 Agent 调用会返回 not_allowed',
+    ('POST', '/drama/{id}/resume'): '只有用户可以继续影片拍摄；外部 Agent 调用会返回 not_allowed',
+    ('POST', '/cast'): '没有合适的现有卡片时，创建角色或场景卡片',
+    ('GET', '/cast'): '选角前搜索角色库，复用符合要求的卡片',
+    ('GET', '/cast/{id}'): '查看卡片的图片、声音和版本',
+    ('PATCH', '/cast/{id}'): '修改卡片时提交读取到的 revision；保留用户修改过的字段',
+    ('DELETE', '/cast/{id}'): '删除你创建且没有未完成影片使用的卡片；其他情况先询问用户',
+    ('POST', '/cast/{id}/generate'): '用户没有提供图片时，按描述生成参考图；任务结束后重新读取卡片',
+    ('GET', '/projects'): '查看与剪辑页面共用的项目列表，再读取具体项目的 revision 和片段标识',
+    ('GET', '/projects/{id}'): '读取时间线和需要鉴权的源素材地址；编辑前先读取 revision 和片段标识',
+    ('POST', '/projects'): '创建剪辑时间线；提交有效的剪辑项目，id 为 null，revision 为 0',
+    ('PUT', '/projects/{id}'): '替换时间线；先读取项目，保留 id 和 revision。'
+        '遇到 project_changed 时，根据 error.project 重新计算修改',
+    ('POST', '/projects/{id}/operations'): '一次应用 1–64 项时间线编辑，全部成功才保存一次。'
+        '先读取 revision 和片段标识；遇到 project_changed 时根据 error.project 重新计算，'
+        '遇到 clip_busy 时等待生成完成',
+    ('POST', '/projects/{id}/generate'): '为指定片段或帧范围生成新的画面和声音，效果与页面的“生成”相同。'
+        '先读取 revision 和片段标识；所选部分会立即预留，返回的任务完成后填入结果',
+    ('POST', '/projects/{id}/export'): '将保存的某个版本导出为 MP4，存入已保存视频。'
+        '先读取 revision，等待返回的任务完成，再读取结果视频',
+    ('POST', '/images'): '像图片编辑页面一样打开图片；提交 source，会话会保留源图片副本和图层文档',
+    ('GET', '/images/{id}'): '读取图片编辑会话的图层文档、选区和 revision；编辑前先读取 revision 和图层标识',
+    ('PUT', '/images/{id}'): '替换整个图片文档；先读取会话并提交其 revision。'
+        '遇到 image_changed 时根据 error.image 重新计算修改',
+    ('POST', '/images/{id}/operations'): '使用页面相同的命令，一次应用 1–64 项图片编辑，全部成功才保存一次。'
+        '先读取 revision 和图层标识；遇到 image_changed 时根据 error.image 重新计算',
+    ('POST', '/images/{id}/render'): '将保存的某个版本渲染为 PNG 输入文件；等待返回的任务完成，'
+        '再使用结果文件作为图片素材',
+    ('POST', '/sessions'): '创建工作会话，与用户共享消息和计划',
+    ('GET', '/sessions'): '查看工作会话列表，最近更新的排在前面',
+    ('GET', '/sessions/{id}'): '读取工作会话信息，查看用户是否已停止该会话',
+    ('GET', '/sessions/{id}/events'): '读取指定序号之后的事件；最多等待 25 秒，也可请求 SSE 事件流',
+    ('POST', '/sessions/{id}/events'): '向用户发送消息或计划；操作步骤由服务端记录',
+    ('POST', '/sessions/{id}/stop'): '只有页面用户可以停止工作会话',
+    ('POST', '/sessions/{id}/resume'): '只有页面用户可以继续工作会话',
+    ('GET', '/confirmations'): '查看哪些 Agent 操作需要等待用户确认',
+    ('PUT', '/confirmations'): '只有页面用户可以修改需要确认的操作',
+}
+
+
+def installation_language(root=None):
+    """Use saved interface preferences, with English when they cannot be read."""
+    from ..launcher_settings import Store
+    from .client import default_root
+    try:
+        language = Store(root if root is not None else default_root()).read().get('language', '')
+        return 'zh' if language.lower().startswith('zh') else 'en'
+    except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+        return 'en'
+
+
+_PAGE_LANGUAGE = []
+
+
+def page_language(lang=None):
+    """The language the connect card last showed its sentence in; None until the page has shown it.
+
+    The sentence carries no parameter, so the instructions an agent then opens follow what the user saw.
+    """
+    if lang in ('zh', 'en'):
+        _PAGE_LANGUAGE[:] = [lang]
+    return _PAGE_LANGUAGE[0] if _PAGE_LANGUAGE else None
+
+
+def connection_discovery(root, base, lang=None):
+    from . import API_VERSION
+    from .schema import PREFIX
+    lang = lang or page_language() or installation_language(root)
+    connect = base + PREFIX + '/connect?lang=' + lang
+    return dict(enabled=True, api_versions=[API_VERSION], base=PREFIX, auth='bearer',
+        token='FreeVideo 安装目录中的 agent/token' if lang == 'zh' else
+              'agent/token in the FreeVideo installation folder',
+        connect=connect, instructions='通过 GET ' + connect + ' 阅读纯文本接入说明，并按说明操作。'
+        if lang == 'zh' else 'GET ' + connect + ' for plain-text connection instructions and follow them.')
+
+
+def connection_guide(root, base, lang=None):
     """Public bootstrap text contains locations and commands, never credential values."""
     import json
     from pathlib import Path
     from .mcp import client_config
     from .schema import PREFIX, contracts
+    lang = lang or page_language() or installation_language(root)
+    zh = lang == 'zh'
     config = client_config(root)
     token_file = str(Path(root).resolve() / 'agent' / 'token')
     # The executable/API/credential locations come from this running installation.
@@ -188,21 +323,32 @@ def connection_guide(root, base):
         '# Poll the same ID until succeeded. Retry a lost submission using the same ref.',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
     ])
-    return dict(api=base + PREFIX, token_file=token_file, claude_code=config['claude_code'],
+    return dict(language=lang, api=base + PREFIX, token_file=token_file, claude_code=config['claude_code'],
         codex=config['codex'], mcp_json=config['mcp_json'], command=config['command'],
-        authentication='Read the token file and put its contents in the Authorization: Bearer header. '
+        authentication='读取令牌文件，将内容放入 Authorization: Bearer 请求头。不要打印令牌、展示给用户，'
+                       '也不要写入其他文件。' if zh else
+                       'Read the token file and put its contents in the Authorization: Bearer header. '
                        'Do not print it, show it to the user, or write it to another file.',
-        session='Newly configured tools are usually unavailable in the current session. Use this local HTTP '
+        session='新配置的工具通常在下一个会话才可用。当前会话请直接使用本机 HTTP 接口；'
+                '下一个会话就可以使用这些工具。' if zh else
+                'Newly configured tools are usually unavailable in the current session. Use this local HTTP '
                 'API in this session; the tools will be available in your next session.',
         hello=dict(method='POST', url=base + PREFIX + '/connect/hello', body=dict(client='Local Agent', via='http')),
-        capabilities=[dict(method=method, endpoint=PREFIX + suffix, description=row['summary'])
+        capabilities=[dict(method=method, endpoint=PREFIX + suffix,
+                           description=CAPABILITIES_ZH.get((method, suffix), row['summary']) if zh else row['summary'])
                       for (method, suffix), row in contracts().items()
                       if not suffix.startswith('/freevideo/') and not suffix.startswith('/connect')],
-        first_reply='After connecting, first reply in the user\'s language. In plain words, explain the available '
+        first_reply='用中文回复用户；如果用户改用其他语言，就跟随用户。连接后先用通俗的话介绍这里列出的可用功能，'
+                    '并举两三个用户可以提出的要求。不要自行启动任务，等待用户提出要求。' if zh else
+                    'Reply to the user in English; if the user switches languages, follow their language. '
+                    'After connecting, first reply in plain words: explain the available '
                     'features listed here and give two or three requests they can say. Do not start any task yourself; '
                     'wait for the user to ask.',
-        rules=RULES,
-        fallback='If you cannot run commands, read local files, or reach this computer, tell the user honestly '
+        rules=RULES_ZH if zh else RULES,
+        fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
+                 '“我无法连接你电脑上的程序；你需要使用安装在这台电脑上的 AI 助手。”'
+                 '用中文说明；如果用户改用其他语言，就跟随用户。不要另装程序来绕过这个限制。' if zh else
+                 'If you cannot run commands, read local files, or reach this computer, tell the user honestly '
                  'in their language: I cannot connect to the program on your computer; you need an AI assistant '
                  'installed on your computer. Do not install a workaround.',
         http_example=example, docs=dict(guide=base + PREFIX + '/guide', openapi=base + PREFIX + '/openapi.json'))
@@ -210,16 +356,21 @@ def connection_guide(root, base):
 
 def connection_text(value):
     import json
+    zh = value.get('language') == 'zh'
     return '\n'.join([
-        'Connect to FreeVideo on this computer', value['api'], '', value['authentication'],
-        'Token file: ' + value['token_file'], '', 'Claude Code:', value['claude_code'], '',
-        'Codex:', value['codex'], '', 'Other MCP clients:', json.dumps(value['mcp_json'], indent=2), '',
-        value['session'], '', 'Local HTTP (Python):', value['http_example'], '',
-        'Available in this version:', *['- ' + row['description'] for row in value['capabilities']], '',
+        '连接这台电脑上的 FreeVideo' if zh else 'Connect to FreeVideo on this computer',
+        value['api'], '', value['authentication'],
+        ('令牌文件：' if zh else 'Token file: ') + value['token_file'], '', 'Claude Code:', value['claude_code'], '',
+        'Codex:', value['codex'], '', '其他 MCP 客户端：' if zh else 'Other MCP clients:',
+        json.dumps(value['mcp_json'], indent=2), '',
+        value['session'], '', '本机 HTTP（Python）：' if zh else 'Local HTTP (Python):', value['http_example'], '',
+        '当前版本可用的功能：' if zh else 'Available in this version:',
+        *['- ' + row['description'] for row in value['capabilities']], '',
         value['first_reply'], value['fallback'], '',
-        'How to work once the user has asked for something:',
+        '用户提出要求后的做事规则：' if zh else 'How to work once the user has asked for something:',
         *['%d. %s' % (number, rule) for number, rule in enumerate(value['rules'], 1)], '',
-        'More detail: ' + value['docs']['guide'], 'API contract: ' + value['docs']['openapi'], '',
+        ('详细使用指南：' if zh else 'More detail: ') + value['docs']['guide'],
+        ('接口契约：' if zh else 'API contract: ') + value['docs']['openapi'], '',
     ])
 
 

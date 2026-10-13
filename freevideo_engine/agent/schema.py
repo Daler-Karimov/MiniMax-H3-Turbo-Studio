@@ -282,7 +282,8 @@ def contracts(*, local=False):
             'Download project source media or a thumbnail. Use a source key from GET /projects/{id}.',
             query=obj(dict(key=EDITOR_SOURCE, file=enum(('preview', 'thumbnail'))), ('key', 'file'))),
         ('GET', '/connect'): route('Read installation-specific connection instructions',
-            query=obj({'format': enum(('text', 'json'), default='text')}), auth=False, local=True),
+            query=obj({'format': enum(('text', 'json'), default='text'), 'lang': enum(('zh', 'en'))}),
+            auth=False, local=True),
         ('POST', '/connect/hello'): route('Report a connected client', body=obj(dict(client=string(80),
             via=enum(('mcp', 'http'))), ('client', 'via'))),
         ('GET', '/connect/status'): route('Read recent connection status', auth=False, local=True),
@@ -330,6 +331,8 @@ def contracts(*, local=False):
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
             ('/connect/reset', 'POST', EMPTY)):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
+    for suffix in ('', '/connect'):
+        routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
     for name, (method, suffix, summary) in SESSION_OPERATIONS.items():
         extra = dict(auth=False, page_or_token=True)
         if '{id}' in suffix:

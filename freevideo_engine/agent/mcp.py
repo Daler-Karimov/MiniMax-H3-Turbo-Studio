@@ -168,6 +168,8 @@ class Server:
     def dispatch(self, identity, method, params):
         from .. import __version__
         if method == 'initialize':
+            from .guide import installation_language
+            language = 'Chinese' if installation_language(getattr(self.client, 'root', None)) == 'zh' else 'English'
             name = (params.get('clientInfo') or {}).get('name')
             if isinstance(name, str) and name.strip():
                 self.client.name = name[:80]
@@ -180,7 +182,8 @@ class Server:
                         capabilities=dict(tools=dict(listChanged=False), prompts=dict(listChanged=False),
                                           resources=dict(listChanged=False)),
                         serverInfo=dict(name='freevideo', title='FreeVideo', version=__version__),
-                        instructions=INSTRUCTIONS)
+                        instructions=INSTRUCTIONS + '\nThis installation\'s interface language is ' + language +
+                        '; reply to the user in ' + language + ', and follow their language if they switch.')
         if method == 'ping':
             return {}
         if method == 'tools/list':

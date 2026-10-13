@@ -12,6 +12,11 @@ export function connectionState(copied, status, previousName, t) {
     return {color: 'gray', text: copied ? t('Waiting for connection…', '等待连接…') : t('Not connected', '未连接'), buttonText: t('Copy', '复制')};
 }
 
+export function connectionSentence(address, t) {
+    const url = address + '/freevideo/agent';
+    return t(`Connect to FreeVideo: open ${url} and follow the instructions.`, `请连接 FreeVideo：打开 ${url} 并按说明操作。`);
+}
+
 // The card alone: who can connect, the sentence, one light and one button. It belongs to whichever surface
 // shows it. shown() says whether the user can see it now; the surface calls sync() whenever that may have changed.
 export function agentConnectCard(t, api, shown = () => true) {
@@ -61,13 +66,13 @@ export function agentConnectCard(t, api, shown = () => true) {
         const request = new AbortController(); controller = request;
         try {
             if (!sentence.textContent) {
-                const response = await api.fetchApi('/freevideo/agent/connect', {cache: 'no-store', signal: request.signal});
+                // The sentence carries no parameter: the server gives the agent the language this card showed.
+                const response = await api.fetchApi('/freevideo/agent/connect?lang=' + t('en', 'zh'), {cache: 'no-store', signal: request.signal});
                 if (!response.ok) return;
                 const connect = await response.json();
                 if (current !== generation || !active()) return;
                 if (!connect.address) return;
-                const url = connect.address + '/freevideo/agent';
-                sentence.textContent = t(`Connect to FreeVideo: open ${url} and follow the instructions.`, `请连接 FreeVideo：打开 ${url} 并按说明操作。`);
+                sentence.textContent = connectionSentence(connect.address, t);
                 button.disabled = false;
             }
             const response = await agentGet(api, '/freevideo/agent/v1/connect/status', {signal: request.signal});
