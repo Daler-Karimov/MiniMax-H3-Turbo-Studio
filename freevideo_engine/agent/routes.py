@@ -186,7 +186,7 @@ def capabilities(port, jobs):
         features=features(continuation, vlm),
         device=dict(backend=machine.get('device_backend', 'cuda') if machine else None,
                     vram_limit_gib=machine.get('vram_gib'), ram_limit_gib=machine.get('ram_gib')),
-        kinds={'generate': 'Video with audio from a prompt and optional keyframes or references',
+        kinds={'generate': 'Video from a prompt and optional keyframes or references',
                'assemble': 'Join finished clips into one video (cut or crossfade)',
                'vlm': 'Ask the local vision-language model about images or sampled video frames',
                'enhance': 'Rewrite a rough idea into a full H3 prompt with the local VLM',
