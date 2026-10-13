@@ -56,7 +56,8 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
         const response = await api.fetchApi(path, options);
         if (response.status === 404) return null;
         const value = await response.json();
-        if (!response.ok) throw Object.assign(new Error(value.error || 'chain_request_failed'), {code: value.code, status: response.status});
+        if (!response.ok) throw Object.assign(new Error(value.error || 'chain_request_failed'), {code: value.code, status: response.status,
+            ...(value.error_zh ? {said: [value.error, value.error_zh]} : {})});
         return value;
     }
     function progress(message = {}, fresh = false) {

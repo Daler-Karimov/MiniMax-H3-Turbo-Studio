@@ -1,7 +1,7 @@
 import { api } from '../../scripts/api.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
-import { canExtend, extendText, extendSourceExists } from './studio_extend.js';
+import { EXTEND_ENTRY_OPEN, canExtend, extendText, extendSourceExists } from './studio_extend.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./result_actions.css', import.meta.url).href; document.head.append(css);
@@ -115,7 +115,7 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
         download.href = outputDownloadURL(api, record.video); download.download = '';
         bar.append(download);
     }
-    if (extend && canExtend(record)) {
+    if (EXTEND_ENTRY_OPEN && extend && canExtend(record)) {
         const button = action('button', extendText(t, 'action'), 'extend', 'fv-action-secondary fv-action-extend');
         button.hidden = true;
         extendSourceExists(api, record).then(exists => { button.hidden = !exists; });

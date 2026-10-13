@@ -813,7 +813,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         loop_stopped: t('The last request did not complete. The loop has stopped.', '上一条任务未完成，循环已停止。'),
         linked_seed: t('Use the seed in this panel for batch or loop generation.', '批量和循环生成需使用面板内的种子，请先断开种子输入的连接。'),
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
-    }[error?.message] || error?.message || String(error));
+    }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || error?.message || String(error));
     let lastQueueError = null;
     function showQueueError(error) {
         if (disposed) return;
