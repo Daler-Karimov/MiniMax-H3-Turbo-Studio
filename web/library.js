@@ -86,12 +86,13 @@ async function workflowBackfill(collection, t) {
 }
 
 // ``upscale`` queues the second pass of a first-pass preview (the studio's node).
-export function openLibrary(t, {upscale = null, selectedWork = null, extend = null} = {}) {
+export function openLibrary(t, {upscale = null, selectedWork = null, extend = null, back: backLabel = null} = {}) {
     if (opened?.open) { if (selectedWork) opened.close(); else { opened.focus(); return; } }
     const dialog = el('dialog', null, 'fv-studio fv-library'); opened = dialog;
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
     const header = el('header', null, 'fv-library-header');
-    const back = button(t('Back to create', '返回创作'), () => closeDialog(dialog), 'fv-quiet');
+    // Closing returns to the view this was opened from; that view names itself on the button.
+    const back = button(backLabel || t('Back to create', '返回创作'), () => closeDialog(dialog), 'fv-quiet');
     const title = el('h2', t('Your creations', '我的作品'));
     const refresh = button(t('Refresh', '刷新'), () => load(false), 'fv-quiet');
     header.append(back, title, refresh);
