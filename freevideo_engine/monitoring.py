@@ -93,18 +93,21 @@ def thermal_slowdown(measured, *, share=.5, clock_ratio=.7, minimum_samples=200)
     busy = measured.get('busy_activity') if isinstance(measured, dict) else None
     if not isinstance(busy, dict):
         return None
-    samples = busy.get('clock_reason_samples') or 0
-    counts = busy.get('clock_reason_counts') or {}
-    clock = busy.get('sm_clock_mhz') or {}
-    mean, peak = clock.get('mean'), clock.get('maximum')
+    samples = _count(busy.get('clock_reason_samples'))
+    counts = busy.get('clock_reason_counts')
+    counts = counts if isinstance(counts, dict) else {}
+    clock = busy.get('sm_clock_mhz')
+    clock = clock if isinstance(clock, dict) else {}
+    mean, peak = _count(clock.get('mean')), _count(clock.get('maximum'))
     if samples < minimum_samples or not mean or not peak:
         return None
-    thermal = min(samples, max(counts.get('sw_thermal') or 0, counts.get('hw_thermal') or 0))
+    thermal = min(samples, max(_count(counts.get('sw_thermal')), _count(counts.get('hw_thermal'))))
     if thermal < share * samples or mean > clock_ratio * peak:
         return None
-    temperature = (busy.get('temperature_c') or {}).get('mean')
+    temperature = busy.get('temperature_c')
+    temperature = temperature.get('mean') if isinstance(temperature, dict) else None
     return dict(share=round(thermal / samples, 3), sm_clock_mean_mhz=round(mean), sm_clock_max_mhz=round(peak),
-                temperature_mean_c=round(temperature, 1) if isinstance(temperature, (int, float)) else None)
+                temperature_mean_c=round(temperature, 1) if type(temperature) in (int, float) and 0 <= temperature <= 1000 else None)
 
 
 class OtherPrograms:
@@ -231,14 +234,33 @@ def shared_gpu(measured, *, share=.5, minimum_checks=30):
     if not isinstance(programs, dict):
         return None
     checks, shared, mean = (programs.get(key) for key in ('checks', 'shared_checks', 'other_mean_percent'))
-    if (any(type(value) not in (int, float) or not value >= 0 for value in (checks, shared, mean))
-            or checks < minimum_checks or shared < share * checks):
+    if (any(type(value) not in (int, float) for value in (checks, shared, mean))
+            or not minimum_checks <= checks <= 1e9 or not 0 <= shared <= checks or not 0 <= mean <= 100
+            or shared < share * checks):
         return None
     return dict(share=round(shared / checks, 3), other_mean_percent=round(mean))
 
 
+# Other programs' mean share of the GPU, in percent, from which the result says so:
+# the run took at least about a quarter longer than with the GPU to itself.
+SHARED_NOTE_PERCENT = 20
+
+
+def shared_gpu_note(measured):
+    """{other_mean_percent} for the note under a result, or None.
+
+    Shown when other programs averaged at least SHARED_NOTE_PERCENT of the
+    GPU, and shared_gpu holds: at least 30 checks, with other programs using
+    at least 20% in at least half of them.
+    """
+    if shared_gpu(measured) is None:
+        return None
+    mean = measured['other_programs']['other_mean_percent']
+    return dict(other_mean_percent=mean) if mean >= SHARED_NOTE_PERCENT else None
+
+
 def _count(value):
-    return value if type(value) in (int, float) and 0 <= value < float('inf') else 0
+    return value if type(value) in (int, float) and 0 <= value <= 1e12 else 0
 
 
 def combined(rows):

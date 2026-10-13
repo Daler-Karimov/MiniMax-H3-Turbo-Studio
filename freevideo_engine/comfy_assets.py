@@ -4,7 +4,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from . import launcher_bridge
-from .monitoring import thermal_slowdown
+from .monitoring import thermal_slowdown, shared_gpu_note, worker_gpu
 from .paths import data_root
 from .support_report import encoder_sizes
 
@@ -155,7 +155,8 @@ def output_summary(report, relative_video):
                 geometry=dict(report.get('geometry', {}), **(report.get('output_size') or {})),
                 sampling_plan=report.get('sampling_plan'),
                 low_memory=bool(report.get('low_memory_mode')),
-                thermal=thermal_slowdown(((report.get('memory') or {}).get('video') or {}).get('gpu')),
+                thermal=thermal_slowdown(worker_gpu(report)),
+                shared_gpu=shared_gpu_note(worker_gpu(report)),
                 reference_trims=report.get('encoding', {}).get('reference_trims') or [],
                 preview=bool(report.get('preview')), upscaled_preview=bool(report.get('upscaled_preview')),
                 video=relative_video.as_posix(), report=relative_video.with_suffix(

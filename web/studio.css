@@ -119,6 +119,8 @@
 .fv-studio .fv-progress{width:100%;height:4px;accent-color:var(--fv-accent);border:0;margin:0 0 10px}.fv-studio .fv-budget,.fv-studio .fv-prewarm{text-align:center;font-size:var(--fv-micro);color:var(--fv-muted)}
 .fv-studio .fv-panel{height:auto;padding:0;border:none;border-radius:0;background:transparent;color:var(--fv-ink);font-size:var(--fv-micro);overflow:visible}
 .fv-studio .fv-panel .fv-toolbar{justify-content:flex-start}.fv-studio .fv-panel .fv-note{font-size:var(--fv-micro);margin:8px 0;text-align:left}
+.fv-studio .fv-preview-column>.fv-note{text-align:center;text-wrap:balance}
+.fv-studio .fv-preview-column>.fv-note:not([hidden])+.fv-note{margin-top:calc(0px - 19px)}
 .fv-studio .fv-panel .fv-empty{display:grid;place-items:center;padding:22px 15px;min-height:92px;margin-top:12px;font-size:var(--fv-micro);white-space:pre-line;border-color:var(--fv-border);background:var(--fv-card)}
 .fv-studio .fv-panel .fv-preview{max-height:170px;margin:10px auto;object-fit:contain}.fv-studio .fv-panel .fv-card{background:var(--fv-card);border-color:var(--fv-border)}
 .fv-studio .fv-panel select{min-height:var(--fv-h-sm);padding:5px 8px;max-width:145px;width:auto}.fv-studio .fv-panel button{font-size:var(--fv-micro);padding:5px 10px;min-height:var(--fv-h-sm)}

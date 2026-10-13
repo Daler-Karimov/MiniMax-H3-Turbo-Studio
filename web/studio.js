@@ -3,7 +3,7 @@ import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
 import { wordmark } from './wordmark.js';
-import { createGenerationProgress, referenceTrimText, thermalText, encoderFileText, encoderFilePath } from './generation_progress.js';
+import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
 import { createUpdateNotice, createVersionInfo, productVersion } from './updates.js';
@@ -647,8 +647,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
     };
     const memoryNote = el('div', t('This video used the low-memory mode for this GPU, so it took longer than usual. A lower resolution or a shorter video runs faster.', '这段视频使用了省显存方式，所以比平时慢。降低分辨率或缩短时长会更快。'), 'fv-note'); memoryNote.hidden = true;
     const thermalNote = el('div', '', 'fv-note'); thermalNote.hidden = true;
+    const sharedGpuNote = el('div', '', 'fv-note'); sharedGpuNote.hidden = true;
     const encoderNote = el('div', '', 'fv-note'); encoderNote.hidden = true;
-    output.append(status, reuseRow, trimNote, memoryNote, thermalNote, encoderNote, links, stats, budget, progress.stall, progress.report, prewarm);
+    output.append(status, reuseRow, trimNote, memoryNote, thermalNote, sharedGpuNote, encoderNote, links, stats, budget, progress.stall, progress.report, prewarm);
     const failure = createErrorPanel(t); output.append(failure.element);
     // With the picture, the result's actions and numbers form one block, centred below the header.
     output.append(el('div', null, 'fv-preview-end'));
@@ -680,6 +681,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         trimNote.textContent = trims.map(row => referenceTrimText(row, t)).join('\n'); trimNote.hidden = !trims.length;
         memoryNote.hidden = !r.low_memory || !!r.result_cache_hit;
         thermalNote.textContent = r.thermal ? thermalText(r.thermal, t) : ''; thermalNote.hidden = !r.thermal || !!r.result_cache_hit;
+        sharedGpuNote.textContent = r.shared_gpu ? sharedGpuText(r.shared_gpu, t) : ''; sharedGpuNote.hidden = !sharedGpuNote.textContent || !!r.result_cache_hit;
         encoderNote.textContent = r.encoder_file ? encoderFileText(r.encoder_file, t) : ''; encoderNote.hidden = !r.encoder_file;
         const encoderPath = encoderFilePath(r.encoder_file);
         if (encoderPath) encoderNote.append(el('pre', encoderPath, 'fv-encoder-path'));

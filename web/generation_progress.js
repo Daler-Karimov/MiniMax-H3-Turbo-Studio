@@ -177,9 +177,19 @@ function trimStatus(rows, t) {
 export function thermalText(thermal, t) {
     const share = thermal.sm_clock_max_mhz ? Math.round(100 * thermal.sm_clock_mean_mhz / thermal.sm_clock_max_mhz) : null;
     const heat = Number.isFinite(thermal.temperature_mean_c) ? Math.round(thermal.temperature_mean_c) : null;
-    const detail = [heat !== null ? `${heat} °C` : '', share !== null ? t(`${share}% of its peak clock`, `频率只有峰值的 ${share}%`) : ''].filter(Boolean).join(t(', ', '，'));
+    const detail = [heat !== null ? `${heat}\u00a0°C` : '', share !== null ? t(`${share}% of its peak clock`, `频率只有峰值的 ${share}%`) : ''].filter(Boolean).join(t(', ', '，'));
     return t(`The GPU spent most of this video in thermal slowdown${detail ? ` (${detail})` : ''}, so it took much longer than usual. Improve cooling; on a laptop, plug in and choose a high-performance power mode.`,
         `生成这段视频时，显卡大部分时间因过热降频${detail ? `（${detail}）` : ''}，所以比平时慢很多。请改善散热；笔记本请接通电源并选择高性能模式。`);
+}
+
+// Other programs held a substantial share of the GPU during this run (summary.shared_gpu).
+// The share is rounded to 5% and written as at most 95%; without a usable number there is no note.
+export function sharedGpuText(shared, t) {
+    const mean = shared?.other_mean_percent;
+    if (typeof mean !== 'number' || !Number.isFinite(mean)) return '';
+    const percent = Math.min(95, Math.round(mean / 5) * 5);
+    return t(`Other programs were using about ${percent}% of the GPU.`,
+        `其他程序占用了约 ${percent}% 的显卡。`);
 }
 
 export function encoderFilePath(file) {
