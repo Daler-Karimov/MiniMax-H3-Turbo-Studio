@@ -216,6 +216,17 @@ export function referenceTrimText(row, t) {
             `${name} 比生成的视频长，已截取前 ${used} 秒${rule}`);
 }
 
+// The time left on show `dt` seconds on, given the engine's newest estimate (null when it sent none). Never raised:
+// an estimate at or above the shown time holds it, so a slower run does not count down to "less than a minute"
+// early. A lower one is eased into.
+export function remainingShown(shown, target, dt) {
+    if (target === null) return Math.max(0, shown - dt);
+    if (target < shown - dt) {
+        const counted = Math.max(0, shown - dt);
+        return counted + (target - counted) * (1 - Math.exp(-dt / 15));
+    }
+    return target < shown ? target : shown;
+}
 // The whole-video fraction the engine's last message stands for now: its estimate moved on by the seconds since the
 // step sample (stateAge) and the whole-video sample (overallAge) arrived. Null when the message carries none.
 export function estimatedFraction(state, overall, stateAge, overallAge) {
@@ -624,15 +635,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         elapsed.textContent = `${t('Elapsed', '已用时')} ${duration(Math.max(0, seconds))}`;
         if (ended) remainingSeconds = null;
         if (remainingSeconds !== null) {
-            // Never raised. An estimate at or above the shown time holds it, so
-            // a slower run does not count down to "less than a minute" early.
-            const dt = Math.max(0, (now() - remainingAt) / 1000);
-            const target = rawRemaining();
-            if (target === null) remainingSeconds = Math.max(0, remainingSeconds - dt);
-            else if (target < remainingSeconds - dt) {
-                const counted = Math.max(0, remainingSeconds - dt);
-                remainingSeconds = counted + (target - counted) * (1 - Math.exp(-dt / 15));
-            } else if (target < remainingSeconds) remainingSeconds = target;
+            remainingSeconds = remainingShown(remainingSeconds, rawRemaining(), Math.max(0, (now() - remainingAt) / 1000));
             if (remainingSeconds < 60 && lastMinuteAt === null) { lastMinuteAt = now(); lastMinute = remainingSeconds; }
             // A run slower than estimated would leave "less than a minute" up for minutes:
             // once that minute has passed, or the time reaches zero, stop showing it.

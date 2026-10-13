@@ -1,7 +1,7 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
-import { estimatedFraction } from './generation_progress.js';
+import { estimatedFraction, remainingShown } from './generation_progress.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -42,6 +42,8 @@ export function jobLine(job, t) {
     if (job.status !== 'running') return t('Queued', '排队中');
     if (p.phase === 'sampling' && p.step?.total && p.step.done >= 1) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
     if (['decode', 'finishing', 'assembling'].includes(p.phase)) return t('Saving', '保存中');
+    if (p.phase === 'encoding') return t('Reading the prompt', '读取提示词');
+    if (['load', 'loading'].includes(p.phase)) return t('Loading the model', '加载模型');
     return t('Preparing', '准备中');
 }
 export function jobMeta(job, t) {
@@ -117,6 +119,22 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (job.status === 'running') row.value = Math.max(row.value, Math.min(.99, jobEstimate(row.job, time - row.at, time - row.since)));
         return row.value;
     }
+    // The time left each job shows, by the creation panel's rule: never raised, and gone once its last minute has passed.
+    const times = new Map();
+    function leftOf(job) {
+        const time = performance.now() / 1000, sent = job.progress?.remaining_seconds;
+        if (job.status !== 'running') { times.delete(job.id); return null; }
+        let row = times.get(job.id);
+        if (!row) {
+            if (!(sent > 0)) return null;
+            times.set(job.id, row = {seconds: sent, at: time, minute: null, last: 0});
+        }
+        if (row.seconds === null) return null;
+        row.seconds = remainingShown(row.seconds, sent > 0 ? sent : null, time - row.at); row.at = time;
+        if (row.seconds < 60 && row.minute === null) { row.minute = time; row.last = row.seconds; }
+        if (row.seconds <= 0 || row.minute !== null && time - row.minute >= row.last) row.seconds = null;
+        return row.seconds;
+    }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
 
     // ---- one entry of the conversation each ----
@@ -149,10 +167,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             percent.textContent = next.status === 'running' && fraction >= .01 ? `${Math.floor(fraction * 100)}%` : '';
             const high = box.clientHeight;
             box.dataset.under = String(high > 0 && high * (1 - fraction) < percent.offsetHeight + 10);
+            const seconds = leftOf(next);
+            left.textContent = seconds === null ? '' : about(seconds, t);
         };
         item.tick = () => level(state.jobs[job.id] || job);
         return next => {
-            const cells = jobParts(next), queued = next.status !== 'running';
+            const cells = jobParts(next);
             level(next);
             name.textContent = jobName(next, t); meta.textContent = jobMeta(next, t); meta.hidden = !meta.textContent;
             while (parts.children.length > cells.length) parts.lastChild.remove();
@@ -162,7 +182,6 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const block = next.progress?.block;
             part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : jobLine(next, t);
             step.textContent = cells.length ? jobLine(next, t) : '';
-            left.textContent = !queued && next.progress?.remaining_seconds > 0 ? about(next.progress.remaining_seconds, t) : '';
             const going = stopping.has(next.id);
             stop.disabled = going; stop.textContent = going ? t('Stopping', '正在停止') : t('Stop', '停止');
             stop.setAttribute('aria-label', t('Stop ', '停止 ') + jobName(next, t));
@@ -329,7 +348,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
 
     function report() {
         const current = state.current ? state.jobs[state.current] || null : null;
-        changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, active: state.active,
+        changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, left: current ? leftOf(current) : null, active: state.active,
             any: state.items.size > 0 || pending.length > 0});
     }
     async function send(text) {

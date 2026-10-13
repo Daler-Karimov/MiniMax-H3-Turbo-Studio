@@ -70,7 +70,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
             const fraction = last.fraction || 0, running = job.status === 'running';
             currentId = job.id; name.textContent = jobName(job, t); more.textContent = last.active > 1 ? `+${last.active - 1}` : '';
             percent.textContent = running && fraction >= .01 ? `${Math.floor(fraction * 100)}%` : '';
-            eta.textContent = running && job.progress?.remaining_seconds > 0 ? about(job.progress.remaining_seconds, t) : '';
+            eta.textContent = running && last.left != null ? about(last.left, t) : '';
             ring.style.setProperty('--p', String(fraction * 100)); line.style.width = `${fraction * 100}%`;
         }
         card.sync();
