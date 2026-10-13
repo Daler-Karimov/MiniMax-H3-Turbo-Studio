@@ -5,8 +5,6 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import ssl
-import threading
-import time
 from urllib import error, request
 
 from .chain_runner import ChainBusy, ChainRunner
@@ -202,138 +200,6 @@ def block_finished(chain, node_id, output, report_id, continuation=None):
         pass
 
 
-class FakeHost(ComfyHost):
-    """Optional CPU-only prompts for development; never touch the host queue."""
-    fake = True
-    repairs_seams = False  # It saves no new sound: its join returns the last block as it is.
-
-    def __init__(self, server, seconds=None):
-        super().__init__(server)
-        self.seconds = float(os.environ.get('FREEVIDEO_CHAIN_FAKE_SECONDS', '12')) if seconds is None else seconds
-        if not math.isfinite(self.seconds) or self.seconds < 0:
-            raise ValueError('Fake duration must be finite and nonnegative')
-        self.lock, self.closed = threading.RLock(), threading.Event()
-        self.jobs, self.runner = {}, None
-
-    def inputs(self, block_inputs):
-        return {key: block_inputs[key] for key in ('text', 'frames', 'seed')}
-
-    def join(self, record, cancelled):
-        return chain_store.leading_blocks(record)[-1]['output']
-
-    def _saved_video(self, frames):
-        from .comfy_library import _report, _video
-        import folder_paths
-        root = Path(folder_paths.get_output_directory()).resolve()
-        videos = []
-        for path in (root / 'FreeVideo').glob('*/*/video.mp4'):
-            identity = path.parent.relative_to(root / 'FreeVideo').as_posix()
-            try:
-                path = _video(root, identity)
-                info = path.stat()
-                if not path.is_file() or not info.st_size:
-                    continue
-                report = _report(path)
-                count = (report.get('geometry') or {}).get('frames')
-                if 'chain_join' in report or type(count) is not int or count < frames:
-                    continue
-                videos.append((info.st_mtime_ns, (Path('FreeVideo') / identity / 'video.mp4').as_posix()))
-            except (OSError, ValueError, TypeError, AttributeError):
-                continue
-        return max(videos)[1] if videos else None
-
-    def submit(self, prompt_id, prompt, extra_data):
-        chain = extra_data['freevideo_chain']
-        node = self.runner.records[chain['id']]['node']
-        job = dict(node=str(node), state='pending', error=None, output=None, cancel=threading.Event())
-        thread = threading.Thread(target=self._run, args=(prompt_id, node, chain, job),
-                                  name='FreeVideo fake chain block', daemon=True)
-        job['thread'] = thread
-        with self.lock:
-            self.jobs[prompt_id] = job
-        thread.start()
-
-    def _run(self, prompt_id, node, chain, job):
-        from .comfy_progress import STATE, publish
-        progress = None
-        try:
-            if self.closed.is_set() or job['cancel'].is_set():
-                return
-            with self.lock:
-                job['state'] = 'running'
-            if self.runner.context(prompt_id, node) is None:
-                return
-            progress = publish(self.server, node, {'label': 'Preparing video', 'new_request': True})
-            started = time.monotonic()
-            total = max(1, math.ceil(self.seconds / .5))
-            for done in range(total + 1):
-                used = time.monotonic() - started
-                progress = publish(self.server, node, dict(label='Sampling', phase='sampling', done=done, total=total,
-                    overall=dict(status='running', estimated=True, fraction=.9 * done / total,
-                                 elapsed_seconds=used, remaining_seconds=max(0., self.seconds - used))))
-                if done < total and job['cancel'].wait(self.seconds / total):
-                    return
-                if self.closed.is_set() or job['cancel'].is_set():
-                    return
-            progress = publish(self.server, node, dict(label='Decoding video', phase='decode',
-                overall=dict(status='running', estimated=True, fraction=.95,
-                             elapsed_seconds=time.monotonic() - started, remaining_seconds=0.)))
-            frames = self.runner.records[chain['id']]['blocks'][chain['index']]['inputs']['frames']
-            needed = frames - 22 if chain['after'] is not None or chain['before'] is not None else frames
-            output = self._saved_video(needed)
-            if self.closed.is_set() or job['cancel'].is_set():
-                return
-            if output is None:
-                with self.lock:
-                    job.update(state='error', error='Fake generation needs a saved video with at least %s frames' % needed)
-                return
-            publish(self.server, node, dict(label='Video saved', phase='complete',
-                overall=dict(status='complete', fraction=1.)))
-            # The shape the engine reports for a continued block.
-            continuation = (dict(overlap_frames=22, new_frames=frames - 22, requested_frames=frames)
-                            if chain['after'] is not None else None)
-            with self.lock:
-                self.runner.finished(prompt_id, node, output, None, continuation)
-                job.update(state='success', output=output)
-        except Exception:
-            logging.exception('[FreeVideo] Fake chain generation failed')
-            with self.lock:
-                job.update(state='error', error='Fake generation failed')
-        finally:
-            with self.lock:
-                if job['state'] in ('pending', 'running'):
-                    if progress is not None and job['cancel'].is_set() and not self.closed.is_set():
-                        with self.runner.lock:
-                            # A late cancellation must not end a newer request on this node.
-                            current = next((row for row in STATE.snapshot() if row['node'] == str(node)), {})
-                            if (current.get('sequence') == progress['sequence']
-                                    and self.runner.context(prompt_id, node) is not None):
-                                publish(self.server, node, dict(label='Generation cancelled', phase='cancelled',
-                                    overall=dict(status='cancelled')))
-                    job['state'] = 'interrupted'
-            self.runner.wake.set()
-
-    def status(self, prompt_id):
-        with self.lock:
-            job = self.jobs.get(prompt_id, {})
-            return dict(state=job.get('state', 'missing'), error=job.get('error'), output=job.get('output'))
-
-    def cancel(self, prompt_id, node):
-        with self.lock:
-            if prompt_id in self.jobs and self.jobs[prompt_id]['node'] == str(node):
-                self.jobs[prompt_id]['cancel'].set()
-
-    def close(self):
-        self.closed.set()
-        with self.lock:
-            jobs = list(self.jobs.values())
-            for job in jobs:
-                job['cancel'].set()
-        for job in jobs:
-            if job['thread'] is not threading.current_thread():
-                job['thread'].join(timeout=2.)
-
-
 def hidden_outputs(root):
     try:
         root = Path(root).resolve()
@@ -345,7 +211,8 @@ def hidden_outputs(root):
         return set()
 
 
-def register():
+def register(host_factory=None):
+    """Routes and runner. The package never passes `host_factory`; only a test harness supplies another host."""
     global RUNNER
     from aiohttp import web
     from server import PromptServer
@@ -353,11 +220,11 @@ def register():
     server = PromptServer.instance
     if server is None or getattr(server, '_freevideo_chain', False):
         return
-    fake = os.environ.get('FREEVIDEO_CHAIN_FAKE') == '1'
+    fake = host_factory is not None
     root = installation_root() if fake else installation()[0]
-    host = FakeHost(server) if fake else ComfyHost(server)
+    host = host_factory(server) if fake else ComfyHost(server)
     if fake:
-        logging.warning('[FreeVideo] Fake background chain generation is enabled')
+        logging.warning('[FreeVideo] Test background chain host is enabled')
     runner = ChainRunner(Path(root) / 'chains', host, estimate=None)
     if fake:
         host.runner = runner
