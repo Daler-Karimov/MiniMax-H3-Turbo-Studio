@@ -822,11 +822,20 @@ def _run(args):
                     request['automatic_pass_cache'] and getattr(args, 'gpu_reserve_gib', None) is None)
                 request['gpu_capacity_bytes'] = min(hardware.vram_total,
                     int(args.vram_gib * 2**30) if args.vram_gib else hardware.vram_total)
-                if request['automatic_pass_cache']:
-                    from .two_pass import first_pass_policy
+                from .two_pass import clamp_first_pass_for_retry, first_pass_policy, keeps_first_pass_on_retry
+                retry_keeps = (not args.profile and not request['automatic_pass_cache'] and keeps_first_pass_on_retry(
+                    report.get('resource_attempts'), getattr(args, 'resource_retries', 2)))
+                if request['automatic_pass_cache'] or retry_keeps:
                     first_policy = first_pass_policy(selected, canvas, sampling_plan)
                     if first_policy is not None:
                         first_policy['profile'], _ = apply_compatibility(first_policy['profile'], compatibility_state)
+                        if retry_keeps:
+                            # A recovery attempt narrows placement, not the first pass's arithmetic
+                            # partitions: keep those and never exceed what the retry frees.
+                            # With the pass cache off only the compute options (chunks, residual
+                            # offload, prefetch, recompute) take effect; the rest is diagnostic.
+                            first_policy, clamped = clamp_first_pass_for_retry(first_policy, selected)
+                            first_policy['retry_clamped'] = clamped
                         request['first_pass_policy'] = first_policy
                         report['first_pass_policy'] = first_policy
                 if resume_decode is not None:

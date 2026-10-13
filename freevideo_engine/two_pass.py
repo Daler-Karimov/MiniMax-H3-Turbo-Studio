@@ -358,3 +358,56 @@ def first_pass_policy(profile, canvas, sampling_plan):
     selected['engine']['steps'] = sampling_plan['base_steps']
     selected['policy']['engine']['steps'] = sampling_plan['base_steps']
     return dict(geometry=first, profile=selected)
+
+
+# Placement options a recovery attempt may have loosened or tightened. A first
+# pass that is kept across a retry never uses more GPU residency, parallel
+# workspaces or pinned host memory than the retry itself allows; its compute
+# partitions (chunk sizes) are not in this list and stay as planned.
+RETRY_MIN_KEYS = ('resident_blocks', 'head_parallelism', 'pin_host_gb')
+RETRY_AND_KEYS = ('prefetch', 'pin_host_weights', 'preload_host')
+RETRY_OR_KEYS = ('residual_offload', 'fp8_ff_recompute', 'stream_weights')
+
+
+def clamp_first_pass_for_retry(first_policy, retry_profile):
+    """The first-pass policy limited to the placement a resource retry selected.
+
+    Returns (policy, clamped) where `clamped` maps each option the retry
+    tightened to its first-pass and retry values. The input is not modified.
+    """
+    import copy
+    policy = copy.deepcopy(first_policy)
+    engine, retry = policy['profile']['engine'], retry_profile['engine']
+    clamped = {}
+    def set_option(name, value):
+        if engine.get(name) != value:
+            clamped[name] = {'first_pass': engine.get(name), 'retry': retry.get(name)}
+            engine[name] = value
+    for name in RETRY_MIN_KEYS:
+        if name in retry and name in engine:
+            set_option(name, min(engine[name], retry[name]))
+    for name in RETRY_AND_KEYS:
+        if name in retry and name in engine:
+            set_option(name, bool(engine[name] and retry[name]) if isinstance(engine[name], bool) else engine[name])
+    for name in RETRY_OR_KEYS:
+        if retry.get(name) and not engine.get(name):
+            set_option(name, retry[name])
+    inner = policy['profile'].get('policy')
+    if isinstance(inner, dict) and isinstance(inner.get('engine'), dict):
+        inner['engine'].update({name: engine[name] for name in clamped})
+    return policy, clamped
+
+
+def keeps_first_pass_on_retry(attempts, max_retries):
+    """Whether the retry now starting may keep the first pass's planned placement.
+
+    Only the first recovery attempt does, and only while every recovery so far
+    kept the arithmetic partitions. The last attempt falls back to the
+    conservative profile exactly as before, so a first pass whose own chunk
+    sizes were the cause cannot fail the request twice.
+    """
+    rows = list(attempts or [])
+    if len(rows) != 2 or len(rows) - 1 >= max_retries:
+        return False
+    decision = rows[-1].get('decision') or {}
+    return decision.get('numerical_class') != 'compute-partition'
