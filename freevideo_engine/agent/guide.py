@@ -193,7 +193,7 @@ CAPABILITIES_ZH = {
     ('GET', '/jobs/{id}'): '查看任务进度和结果',
     ('GET', '/jobs/{id}/events'): '持续接收任务进度',
     ('POST', '/jobs/{id}/cancel'): '取消任务',
-    ('POST', '/jobs/{id}/resume'): '继续生成尚未完成的视频块',
+    ('POST', '/jobs/{id}/resume'): '接着生成一条视频里还没完成的部分',
     ('POST', '/media'): '上传图片、视频或音频内容',
     ('GET', '/media/{kind}/{file}/file'): '下载上传或处理后的素材',
     ('POST', '/media/inspect'): '查看素材信息',
@@ -329,8 +329,7 @@ def connection_guide(root, base, lang=None):
                        '也不要写入其他文件。' if zh else
                        'Read the token file and put its contents in the Authorization: Bearer header. '
                        'Do not print it, show it to the user, or write it to another file.',
-        session='新配置的工具通常在下一个会话才可用。当前会话请直接使用本机 HTTP 接口；'
-                '下一个会话就可以使用这些工具。' if zh else
+        session='新配置的工具通常要到下一个会话才能用；当前会话请直接使用本机 HTTP 接口。' if zh else
                 'Newly configured tools are usually unavailable in the current session. Use this local HTTP '
                 'API in this session; the tools will be available in your next session.',
         hello=dict(method='POST', url=base + PREFIX + '/connect/hello', body=dict(client='Local Agent', via='http')),
@@ -346,11 +345,11 @@ def connection_guide(root, base, lang=None):
                     'wait for the user to ask.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
-                 '“我无法连接你电脑上的程序；你需要使用安装在这台电脑上的 AI 助手。”'
+                 '“我连接不到你电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
                  '用中文说明；如果用户改用其他语言，就跟随用户。不要另装程序来绕过这个限制。' if zh else
                  'If you cannot run commands, read local files, or reach this computer, tell the user honestly '
-                 'in their language: I cannot connect to the program on your computer; you need an AI assistant '
-                 'installed on your computer. Do not install a workaround.',
+                 'in their language: I cannot connect to FreeVideo on your computer; please use an AI assistant '
+                 'installed on this computer. Do not install a workaround.',
         http_example=example, docs=dict(guide=base + PREFIX + '/guide', openapi=base + PREFIX + '/openapi.json'))
 
 
