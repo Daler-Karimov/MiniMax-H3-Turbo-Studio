@@ -111,6 +111,7 @@ def first_pass(engine, conditioning, request):
 def compile_request(request):
     from .runtime import Engine
     from .worker import device_memory_report, prefetch_compiler_keys
+    from .precompile import worker_options
     torch.set_num_threads(8)
     prefetch_compiler_keys()
     receipt = dict(success=False, geometry=request['geometry'], passes=[])
@@ -122,7 +123,7 @@ def compile_request(request):
     # A missing sampling table becomes zeros of its shape: it is installed by
     # the request that uses it, never by setup.
     engine = Engine(request['cache'], gpu_allocation_bytes=int(allocation), fetch_tables=False,
-                    **dict(request['engine_options'], canvas=request['geometry']))
+                    **dict(worker_options(request['engine_options']), canvas=request['geometry']))
     receipt['load_seconds'] = time.perf_counter() - tick
     plan = request['sampling_plan']
     channels, base = engine.transformer.config.in_channels, engine.base

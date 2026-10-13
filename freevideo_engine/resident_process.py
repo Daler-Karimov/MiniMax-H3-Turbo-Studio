@@ -144,9 +144,17 @@ def credit(hardware, environment=None, *, reuse_encoder=False):
         keys = ('effective_available_bytes', 'system_physical_available_bytes',
                 'system_commit_available_bytes', 'reclaimable_mapped_bytes', 'guard_bytes')
         if all(type(memory.get(k)) is int and memory[k] >= 0 for k in keys):
-            available = min(hardware.ram_total, memory['system_commit_available_bytes'],
-                memory['effective_available_bytes'] + min(ram, memory['guard_bytes']),
-                memory['system_physical_available_bytes'] + memory['reclaimable_mapped_bytes'] + min(ram, memory['guard_bytes']))
+            # Pinned private storage of an idle model is memory this worker
+            # already committed: reusing it charges nothing new and evicting it
+            # returns the commit. Commit headroom alone counted it twice, so a
+            # repeat was planned with less RAM than the model it already held.
+            # Pinned read-only checkpoint maps are file-backed and earn none.
+            owned = min(ram, memory['guard_bytes'])
+            committed = state.get('reclaimable_commit_bytes', 0)
+            committed = min(owned, committed) if type(committed) is int and committed > 0 else 0
+            available = min(hardware.ram_total, memory['system_commit_available_bytes'] + committed,
+                memory['effective_available_bytes'] + owned,
+                memory['system_physical_available_bytes'] + memory['reclaimable_mapped_bytes'] + owned)
             if (reuse_encoder and memory.get('guard_metric') == 'tree private working set'
                     and any(model.get('role') == 'encoder' for model in state.get('models', []))):
                 # The encoder is staying in this same worker. Its measured

@@ -221,7 +221,8 @@ def _machine(machine, in_use=None):
 def _request(width, height, frames, steps, two_pass, task='t2va', refine=3,
              references=None, reference_rows=None):
     """Scalar request shared by admission and offline, recorded-row reviews."""
-    canvas = dict(geometry(width, height, frames=frames), task=task, steps=steps)
+    from .two_pass import render_canvas
+    canvas = dict(render_canvas(geometry(width, height, frames=frames))[0], task=task, steps=steps)
     if reference_rows is not None:
         if not valid_reference_rows(reference_rows):
             raise ValueError('Invalid recorded reference rows.')
@@ -233,8 +234,9 @@ def _request(width, height, frames, steps, two_pass, task='t2va', refine=3,
         if duration is not None:
             canvas['reference_seconds'] = duration
     sampling = sampling_plan(canvas, two_pass, task, base_steps=steps, refine_steps=refine)
-    request = dict(canvas, base_steps=steps, refine_steps=refine if two_pass else 0,
-                   two_pass=two_pass, flow='full',
+    # A small canvas runs in one pass even with two-pass on; follow the plan.
+    request = dict(canvas, base_steps=steps, refine_steps=sampling['refine_steps'],
+                   two_pass=sampling['enabled'], flow='full',
                    sampling_geometry={k: sampling[k] for k in ('first', 'second') if sampling[k]})
     return canvas, sampling, request
 

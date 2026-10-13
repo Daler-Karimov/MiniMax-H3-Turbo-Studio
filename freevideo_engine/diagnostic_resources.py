@@ -111,6 +111,10 @@ def encoder_runtime(value):
         'cuda_initialized_at_start', 'native_imported_at_start') if type(value.get(key)) is bool}
 
 
+PREWARM_FAILURE_KINDS = ('cuda_error', 'worker_stop_unconfirmed', 'cancelled', 'timeout', 'gpu_oom',
+                         'ram_pressure', 'unknown_worker_exit', 'code_error')
+
+
 def encoder_prewarm(value):
     value = mapping(value)
     result = numbers(value, ('elapsed_seconds', 'seconds', 'bytes', 'done_bytes', 'total_bytes',
@@ -122,6 +126,14 @@ def encoder_prewarm(value):
             result[key] = value[key]
     if value.get('purpose') in ('encoder', 'upscale'):
         result['purpose'] = value['purpose']
+    # Why idle preparation stopped, as fixed words only: the receipt's reason
+    # is free text and may name a path. A bare "failed" explained nothing.
+    kind = mapping(value.get('failure')).get('kind', value.get('failure_kind'))
+    if kind in PREWARM_FAILURE_KINDS:
+        result['failure_kind'] = kind
+    error = value.get('error_type')
+    if isinstance(error, str) and len(error) <= 64 and error.isidentifier() and error.isascii():
+        result['error_type'] = error
     return result
 
 
@@ -259,7 +271,8 @@ def decoder_read_ahead(value):
     if sampling:
         result['sampling'] = numbers(sampling, ('trigger_step', 'steps_remaining',
                                                 'estimated_remaining_seconds',
-                                                'trigger_elapsed_seconds'))
+                                                'trigger_elapsed_seconds', 'drive_reads_last_step',
+                                                'drive_layers'))
     return result
 
 
@@ -672,7 +685,7 @@ def planning(rows):
             ('capacity_bytes', 'available_bytes', 'reserve_bytes', 'budget_bytes', 'minimum_bytes')))
         idle = mapping(row.get('idle_cache'))
         item['idle_cache'] = dict(present=bool(idle), **numbers(idle, ('reclaimable_gpu_bytes',
-            'reclaimable_ram_bytes', 'retained_pinned_ram_bytes')))
+            'reclaimable_ram_bytes', 'reclaimable_commit_bytes', 'retained_pinned_ram_bytes')))
         item['idle_cache']['memory'] = numbers(idle.get('memory'), RAM_SAMPLE)
         item['idle_cache']['gpu_capacity'] = numbers(idle.get('gpu_capacity'),
             ('allocator_limit_bytes', 'owned_allocator_reserved_bytes', 'live_free_bytes',

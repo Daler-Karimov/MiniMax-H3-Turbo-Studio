@@ -1,5 +1,6 @@
 """Browse completed FreeVideo outputs across ComfyUI/browser restarts."""
 import asyncio
+from contextlib import nullcontext
 import io
 import json
 import logging
@@ -11,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .agent import enabled as agent_enabled
 from .comfy_assets import output_summary
 from .runtime_alias import is_junction, checked_real_path, AliasUnavailable
 from .long_paths import io_path, plain
@@ -41,6 +43,21 @@ def _report(path):
     return report
 
 
+def _agent(folder):
+    """The agent job that made this run, from the small record agent requests leave in workflow.json."""
+    try:
+        with (folder / 'workflow.json').open('rb') as stream:
+            data = stream.read(64 * 1024 + 1)
+        if len(data) > 64 * 1024 or b'"freevideo_agent"' not in data:
+            return None
+        value = json.loads(data).get('freevideo_agent')
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return {key: str(value[key])[:120] for key in ('job', 'label', 'project', 'client') if value.get(key)}
+
+
 def list_videos(output_directory, *, before=None, limit=24):
     """Return a stable newest-first page, with only relative output paths."""
     if not 1 <= limit <= 48:
@@ -52,6 +69,8 @@ def list_videos(output_directory, *, before=None, limit=24):
             raise ValueError('Invalid page cursor')
         cursor = (int(stamp), identity)
     root = Path(output_directory).resolve()
+    from .comfy_chain import hidden_outputs
+    hidden = hidden_outputs(root)
     candidates = []
     for path in (root / 'FreeVideo').glob('*/*/video.mp4'):
         identity = path.parent.relative_to(root / 'FreeVideo').as_posix()
@@ -68,6 +87,8 @@ def list_videos(output_directory, *, before=None, limit=24):
         try:
             report = _report(path)
             relative = Path('FreeVideo') / key[1] / 'video.mp4'
+            if relative.as_posix() in hidden:
+                continue
             summary = output_summary(report, relative)
             # Geometry may gain input metadata in future reports. Keep this API
             # an explicit allowlist, not an export of the retained report.
@@ -80,6 +101,14 @@ def list_videos(output_directory, *, before=None, limit=24):
                 summary['encoder_file'].pop('path', None)
             if not (root / summary['report']).is_file():
                 summary['report'] = None
+            try:
+                agent = _agent(path.parent) if agent_enabled() else None
+            except Exception as error:
+                # Optional attribution must not hide an otherwise valid saved video.
+                logging.getLogger(__name__).warning('[FreeVideo] Agent label unavailable: %s', error)
+                agent = None
+            if agent:
+                summary['agent'] = agent
             rows.append(dict(summary, id=key[1], bytes=info.st_size,
                              created_at=datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(),
                              cursor=str(key[0]) + ':' + key[1]))
@@ -99,10 +128,17 @@ def list_videos(output_directory, *, before=None, limit=24):
 
 def thumbnail(output_directory, identity):
     path = _video(output_directory, identity)
-    _report(path)
     saved = path.with_suffix('.thumbnail.jpg')
+    root = Path(output_directory).resolve() / 'FreeVideo'
+    def check_sidecar(sidecar):
+        if sidecar.is_symlink() or not sidecar.resolve().is_relative_to(root):
+            raise ValueError('Saved thumbnail sidecar is outside the library or is a symbolic link')
+    check_sidecar(path.with_suffix('.request.json'))
+    check_sidecar(saved)
+    _report(path)
     if saved.is_file() and saved.stat().st_mtime_ns >= path.stat().st_mtime_ns:
-        data = saved.read_bytes()
+        with os.fdopen(os.open(saved, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0)), 'rb') as stream:
+            data = stream.read(512 * 1024 + 1)
         if data.startswith(b'\xff\xd8') and len(data) <= 512 * 1024:
             return data
     # CPU decoding only. Grid thumbnails must not take CUDA memory from a
@@ -117,9 +153,13 @@ def thumbnail(output_directory, identity):
     buffer = io.BytesIO()
     image.save(buffer, format='JPEG', quality=80)
     data = buffer.getvalue()
+    check_sidecar(saved)
     try:
-        saved.write_bytes(data)
+        with os.fdopen(os.open(saved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_NOFOLLOW', 0)
+                                | getattr(os, 'O_BINARY', 0), 0o666), 'wb') as stream:
+            stream.write(data)
     except OSError:
+        check_sidecar(saved)
         pass  # A read-only output directory still supports browsing.
     return data
 
@@ -140,6 +180,7 @@ def video_download(output_directory, identity):
 # Windows would not let it replace a JSON record. A creation whose folder
 # holds anything else, or any link, is not deleted at all.
 _OWNED_FILE = re.compile(r'(?:video\.[A-Za-z0-9._-]+|prompt\.txt|workflow\.json|comfy-request\.json|generate\.log'
+                         r'|continuation-source\.safetensors'
                          r'|media\.json|prompt-rewrite\.json|input-conditioning\.pt|(?:first|last)\.png'
                          r'|reference-\d{2}\.(?:png|mp4|wav))(?:\.[a-z0-9_]{8}\.tmp)?')
 _OWNED_FOLDER = 'video.artifacts'
@@ -221,6 +262,10 @@ def _remove(folder):
                 if not _plain(path):
                     left.append(plain(path)); continue
                 size = path.stat().st_size
+                if name == 'continuation-source.safetensors':
+                    # Request snapshots are read-only while used; Windows
+                    # requires clearing that flag when deleting their run.
+                    path.chmod(0o600)
                 path.unlink()
                 freed += size
             except OSError:
@@ -353,7 +398,38 @@ def release_earlier(output_directory):
     return totals
 
 
-def delete_video(output_directory, identity):
+def _queued_continuation_uses(path, output_directory, queue):
+    if queue is None:
+        return False
+    from .comfy_continuation import resolve_continue_from
+    for rows in queue.get_current_queue():
+        for entry in rows:
+            prompt = entry[2] if isinstance(entry, (list, tuple)) and len(entry) > 2 else None
+            if not isinstance(prompt, dict):
+                continue
+            for node in prompt.values():
+                if not isinstance(node, dict) or node.get('class_type') != 'FreeVideoGenerate':
+                    continue
+                inputs = node.get('inputs', {})
+                source = inputs.get('continue_from') if isinstance(inputs, dict) else None
+                if isinstance(source, (list, tuple)):
+                    # A connected path is resolved only by execution. Until
+                    # then the queue can still depend on this creation.
+                    return True
+                if not isinstance(source, str) or not source:
+                    continue
+                try:
+                    # Saved creations live under output; its absolute paths
+                    # and relative history names share the node's resolver.
+                    resolved = resolve_continue_from(source, output_directory, output_directory)
+                except ValueError:
+                    continue
+                if Path(resolved) == path:
+                    return True
+    return False
+
+
+def delete_video(output_directory, identity, *, queue=None):
     """Delete one saved creation: its whole run folder, only when FreeVideo wrote everything in it.
 
     The folder is first renamed into FreeVideo/.deleted, so it leaves the
@@ -370,19 +446,46 @@ def delete_video(output_directory, identity):
     if folder.parent.parent != root or not _plain(folder.parent) or not _plain(folder):
         raise DeleteRefused('not-freevideo')
     # Not while the startup release is deleting files in this folder.
-    with _RELEASING:
+    with _RELEASING, (queue.mutex if queue is not None else nullcontext()):
+        from .comfy_editor import reference_users
+        try:
+            users = reference_users(output_directory, identity)
+        except (OSError, ValueError):
+            raise DeleteRefused('editor-unavailable') from None
+        if users:
+            raise DeleteRefused('editor-in-use', users)
         kept = _foreign(folder)
         if kept:
             raise DeleteRefused('foreign-files', kept)
+        if _queued_continuation_uses(path, output_directory, queue):
+            raise DeleteRefused('continuation-in-use')
         # A second pass of this preview may be reading its first pass right now.
         for state_path in root.glob('*/*/comfy-request.json'):
             try:
                 state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.stat().st_size <= 1024 * 1024 else {}
             except (OSError, ValueError):
                 continue
-            source = state.get('upscaled_preview') if isinstance(state, dict) else None
-            if state.get('status') in ('starting', 'running') and isinstance(source, str) and Path(source).resolve() == path:
+            if not isinstance(state, dict) or state.get('status') not in ('queued', 'starting', 'running'):
+                continue
+            source = state.get('upscaled_preview')
+            if isinstance(source, str) and Path(source).resolve() == path:
                 raise DeleteRefused('in-use')
+            command = state.get('command', [])
+            if isinstance(command, list) and '--continue-from' in command:
+                index = command.index('--continue-from') + 1
+                if index < len(command) and isinstance(command[index], str) and Path(command[index]).resolve() == path:
+                    raise DeleteRefused('continuation-in-use')
+        # Content addressing needs the MP4 while it still exists. Optional
+        # cleanup may fail, including in lightweight CI without PyAV.
+        identifier = None
+        try:
+            from .continuation_store import video_id, delete_id
+            identifier = video_id(path)
+        except ModuleNotFoundError as error:
+            if error.name not in ('av', __package__ + '.continuation_store'):
+                raise
+        except Exception as error:
+            logging.warning('[FreeVideo] Continuation cleanup failed (%s).', type(error).__name__)
         trash = root / '.deleted'
         trash.mkdir(exist_ok=True)
         if not _plain(trash):
@@ -392,6 +495,11 @@ def delete_video(output_directory, identity):
             folder.rename(target)
         except OSError as error:
             raise DeleteRefused('in-use') from error
+        if identifier is not None:
+            try:
+                delete_id(identifier)
+            except Exception as error:
+                logging.warning('[FreeVideo] Continuation cleanup failed (%s).', type(error).__name__)
     freed, left = _remove(target)
     # A result-cache row naming this creation can no longer be reused.
     for index in (root / '.result-cache').glob('*.json'):
@@ -435,12 +543,16 @@ def register():
         try:
             canvas = geometry(int(request.query['width']), int(request.query['height']),
                               seconds=float(request.query['seconds']))
+            from .two_pass import plan, sampling_canvas
+            canvas = sampling_canvas(canvas)[0]
+            task = request.query.get('task', 't2va')
             _, machine = installation()
             device = machine.get('device_identity') if machine.get('device_backend') == 'mps' else machine.get('gpu_uuid')
             rows = await asyncio.to_thread(local_records, folder_paths.get_output_directory(), device)
-            task = request.query.get('task', 't2va')
             adapters = request.query.get('adapters') == '1'
-            result = {name: {str(steps): estimate(rows, canvas, base_steps=steps, two_pass=enabled,
+            # A small canvas runs in one pass whatever the switch says.
+            result = {name: {str(steps): estimate(rows, canvas, base_steps=steps,
+                                                 two_pass=plan(canvas, enabled, task, base_steps=steps)['enabled'],
                                                  task=task, adapters=adapters)
                               for steps in ((8,) if enabled else (8, 12, 16, 20))}
                       for name, enabled in (('single', False), ('two_pass', True))}
@@ -475,7 +587,8 @@ def register():
         try:
             body = await request.json()
             result = await asyncio.to_thread(delete_video, folder_paths.get_output_directory(),
-                                             body.get('id') if isinstance(body, dict) else None)
+                                             body.get('id') if isinstance(body, dict) else None,
+                                             queue=getattr(server, 'prompt_queue', None))
         except DeleteRefused as error:
             return web.json_response(dict(deleted=False, reason=error.reason, kept=error.kept[:20]), status=409)
         except (OSError, ValueError, TypeError):

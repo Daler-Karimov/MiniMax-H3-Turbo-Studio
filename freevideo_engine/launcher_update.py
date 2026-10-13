@@ -4,6 +4,7 @@ Executables live in a versioned user cache. The original EXE stays intact and
 forwards to a newer, explicitly approved download on subsequent starts.
 """
 import hashlib
+from email.utils import parsedate_to_datetime
 import json
 import os
 from pathlib import Path
@@ -17,9 +18,8 @@ import urllib.parse
 import urllib.request
 
 from . import execution_paths
-from .diagnostics import Redactor
 from .monitoring import save
-from .long_paths import io_path, resolved, plain, plain_text, plain_errors
+from .long_paths import io_path, resolved, plain, plain_errors
 from . import disk_space
 
 REPOSITORY = 'FlashML-org/FreeVideo'
@@ -27,7 +27,8 @@ REPOSITORY = 'FlashML-org/FreeVideo'
 # these tags, which the release workflow keeps up to date for them.
 CHANNEL = 'windows-preview'
 API = 'https://api.github.com/repos/' + REPOSITORY
-RELEASE_PAGE = 'https://github.com/' + REPOSITORY + '/releases/latest'
+WEB = 'https://github.com/' + REPOSITORY
+RELEASE_PAGE = WEB + '/releases/latest'
 MAX_EXE_BYTES = 512 * 2**20
 MAC_CHANNEL = 'macos-preview'
 # Linux has no release before combined releases, so no platform tag to fall back on.
@@ -40,6 +41,88 @@ RELEASE_ASSETS = {CHANNEL: ('FreeVideo.exe', 'update-windows.json'),
                   MAC_CHANNEL: ('FreeVideo-Mac-arm64.dmg', 'update-macos.json'),
                   LINUX_CHANNEL: ('FreeVideo-Linux-x86_64.AppImage', 'update-linux.json')}
 CHANNELS = tuple(RELEASE_ASSETS)
+RETRY_SECONDS = 60
+MAX_RETRY_SECONDS = 15 * 60
+MAX_DOWNLOAD_RETRIES = 3
+# No answer may postpone the next attempt beyond the service's own hourly window.
+MAX_SERVER_WAIT_SECONDS = 3600
+# Every released launcher stops reading update metadata at this size.
+MAX_MANIFEST_BYTES = 65536
+_api_retry_at = 0.
+
+
+class UpdateUnavailable(OSError):
+    def __init__(self, kind, retry_after=0):
+        self.kind, self.retry_after = kind, retry_after
+        super().__init__('Update service temporarily unavailable')
+
+
+def retry_after(error):
+    """Respect GitHub's primary/secondary limit and HTTP Retry-After headers."""
+    if isinstance(error, UpdateUnavailable):
+        return error.retry_after
+    headers = {str(k).lower(): v for k, v in (getattr(error, 'headers', None) or {}).items()}
+    delays = [0]
+    value = headers.get('retry-after', '')
+    try:
+        delays.append(float(value))
+    except (ValueError, TypeError):
+        try:
+            delays.append(parsedate_to_datetime(value).timestamp() - time.time())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    if headers.get('x-ratelimit-remaining') == '0':
+        try:
+            delays.append(float(headers.get('x-ratelimit-reset', '')) - time.time() + 1)
+        except (ValueError, TypeError):
+            pass
+    return min(MAX_SERVER_WAIT_SECONDS, max(d for d in delays if d == d))
+
+
+def failure_kind(error):
+    if isinstance(error, UpdateUnavailable):
+        return error.kind
+    if isinstance(error, urllib.error.HTTPError):
+        headers = {str(k).lower(): v for k, v in (error.headers or {}).items()}
+        if error.code == 429 or (error.code == 403 and
+                (headers.get('x-ratelimit-remaining') == '0' or headers.get('retry-after'))):
+            return 'rate_limited'
+        if error.code == 404:
+            return 'missing'
+        if error.code in (401, 403):
+            return 'blocked'
+    return 'connection' if isinstance(error, OSError) else 'invalid'
+
+
+def error_text(row, zh=False):
+    """Product copy stays separate from raw exceptions, URLs and credentials."""
+    messages = {
+        'rate_limited': ('The update service is busy.', '更新服务繁忙。'),
+        'missing': ('The files for the new version are still being published.', '新版本的文件还在发布中。'),
+        'blocked': ('The update service could not be reached.', '无法访问更新服务。'),
+        'connection': ('Could not connect to the download server.', '无法连接下载服务器。'),
+        'invalid': ('The downloaded update files are incomplete or damaged.', '下载的更新文件不完整或已损坏。'),
+        'disk': ('There is not enough disk space to download the update.', '磁盘空间不足，无法下载更新。'),
+    }
+    message = messages.get(row.get('error_code'))
+    if message is None:
+        return row.get('error', '')  # Other frontend errors retain their own copy.
+    text = message[bool(zh)]
+    if row.get('retry_at'):
+        return text + ('稍后会自动重试，当前版本可以照常使用。' if zh else
+                       ' FreeVideo will try again later. You can keep using the current version.')
+    return text + ('请重试，或去发布页手动下载。' if zh else
+                   ' Try again, or download it from the release page.')
+
+
+def asset_url(tag, name):
+    return WEB + '/releases/download/' + urllib.parse.quote(tag, safe='') + '/' + name
+
+
+def _asset_url(candidate):
+    return candidate['asset'].get('url') or (asset_url(NIGHTLY_TAG, RELEASE_ASSETS[candidate['channel']][0])
+            if build_track(candidate) == 'nightly' else
+            RELEASE_PAGE + '/download/' + RELEASE_ASSETS[candidate['channel']][0])
 
 
 def build_target(value):
@@ -52,7 +135,7 @@ def build_track(value):
 
 
 def release_page(current):
-    if build_track(build_identity(current)) == 'nightly':
+    if build_track(current) == 'nightly':
         return 'https://github.com/' + REPOSITORY + '/releases/tag/' + NIGHTLY_TAG
     return RELEASE_PAGE
 
@@ -105,7 +188,24 @@ def manifest(value):
             or not re.fullmatch(r'[0-9a-f]{64}', str(asset.get('sha256', '')))):
         raise ValueError('Invalid launcher update asset')
     result['asset'] = {k: asset[k] for k in ('id', 'bytes', 'sha256')}
+    if download_address(asset.get('url'), result):
+        result['asset']['url'] = asset['url']
     return result
+
+
+def download_address(url, build):
+    """Whether url is this platform's package on a tag of its own track.
+
+    The address is optional. One this build does not recognise is left out
+    rather than failing the update: size and SHA-256 still bind the package."""
+    prefix = WEB + '/releases/download/'
+    if not isinstance(url, str) or not url.startswith(prefix):
+        return False
+    parts = url[len(prefix):].split('/')
+    tags = (NIGHTLY_TAG,) if build_track(build) == 'nightly' else (build['channel'],)
+    return (len(parts) == 2 and parts[1] == RELEASE_ASSETS[build['channel']][0]
+            and (parts[0] in tags or (build_track(build) == 'stable'
+                                      and re.fullmatch(r'v\d+\.\d+\.\d+', parts[0]) is not None)))
 
 
 def newer(candidate, current):
@@ -138,15 +238,28 @@ class UpdateRedirect(urllib.request.HTTPRedirectHandler):
 def open_download(url, token='', *, binary=False):
     # One inherited route, then one direct route. Do not mutate shell, Git or
     # registry proxies. Never retry a slow-but-active binary on another source.
-    if not url.startswith(API + '/'):
-        raise ValueError('Unexpected update API address')
+    global _api_retry_at
+    is_api = url.startswith(API + '/')
+    if not is_api and not (url.startswith(WEB + '/releases/download/')
+                          or url.startswith(RELEASE_PAGE + '/download/')):
+        raise ValueError('Unexpected update download address')
+    _trusted_url(url)
+    if is_api and time.time() < _api_retry_at:
+        raise UpdateUnavailable('rate_limited', _api_retry_at - time.time())
     for direct in (False, True):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({} if direct else None), UpdateRedirect())
         headers = {'User-Agent': 'FreeVideo-launcher', 'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json'}
-        if token:
+        if token and is_api:
             headers['Authorization'] = 'Bearer ' + token
         try:
             return opener.open(urllib.request.Request(url, headers=headers), timeout=5)
+        except urllib.error.HTTPError as error:
+            if failure_kind(error) == 'rate_limited':
+                if is_api:
+                    _api_retry_at = time.time() + max(RETRY_SECONDS, retry_after(error))
+                raise
+            if direct or error.code in (401, 404):
+                raise  # Repeating a missing asset does not help; a blocked proxy may.
         except (OSError, urllib.error.URLError):
             if direct:
                 raise
@@ -181,7 +294,7 @@ def _release(token, channel, track):
     if track == 'nightly':
         release = _json(API + '/releases/tags/' + NIGHTLY_TAG, token)
         if not isinstance(release, dict) or release.get('draft') or release.get('tag_name') != NIGHTLY_TAG:
-            raise ValueError('No nightly build is published yet')
+            raise UpdateUnavailable('missing')
         return release, executable, metadata
     try:
         release = _json(API + '/releases/latest', token)
@@ -193,12 +306,45 @@ def _release(token, channel, track):
     if isinstance(release, dict) and not release.get('draft') and not release.get('prerelease') and metadata in names:
         return release, executable, metadata
     if channel == LINUX_CHANNEL:
-        raise ValueError('No published update is available for this platform')
+        raise UpdateUnavailable('missing')
     # Until the first combined release, updates come from the platform tag.
     release = _json(API + '/releases/tags/' + channel, token)
     if not isinstance(release, dict) or release.get('draft') or release.get('tag_name') != channel:
-        raise ValueError('No published update is available for this platform')
+        raise UpdateUnavailable('missing')
     return release, executable, 'update.json'
+
+
+def _api_latest_release(token, channel, track):
+    """Compatibility fallback for releases without directly readable metadata."""
+    release, executable_name, metadata_name = _release(token, channel, track)
+    assets = {a.get('name'): a for a in release.get('assets', []) if isinstance(a, dict)}
+    metadata, executable = assets.get(metadata_name, {}), assets.get(executable_name, {})
+    if type(metadata.get('id')) is not int:
+        raise UpdateUnavailable('missing')
+    candidate = manifest(_json(API + '/releases/assets/' + str(metadata['id']), token, binary=True, limit=MAX_MANIFEST_BYTES))
+    _selection(candidate, channel, track)
+    if candidate['asset']['id'] != executable.get('id') or candidate['asset']['bytes'] != executable.get('size'):
+        raise UpdateUnavailable('missing')
+    candidate['asset'].setdefault('url', asset_url(release['tag_name'], executable_name))
+    return manifest(candidate)
+
+
+def _fallback(primary, call):
+    """The API route after the direct one failed. The direct route needs no
+    quota, so a limited API does not decide when it is tried again."""
+    try:
+        return call()
+    except OSError as error:
+        if failure_kind(error) == 'rate_limited':
+            raise primary
+        raise
+
+
+def _selection(candidate, channel, track):
+    if candidate['channel'] != channel:
+        raise ValueError('Update metadata belongs to a different platform')
+    if build_track(candidate) != track:
+        raise ValueError('Update metadata belongs to a different release track')
 
 
 def latest_release(token='', *, channel=CHANNEL, track='stable'):
@@ -207,18 +353,25 @@ def latest_release(token='', *, channel=CHANNEL, track='stable'):
         raise ValueError('Unknown launcher update channel')
     if track not in TRACKS:
         raise ValueError('Unknown launcher release track')
-    release, executable_name, metadata_name = _release(token, channel, track)
-    assets = {a.get('name'): a for a in release.get('assets', []) if isinstance(a, dict)}
-    metadata, executable = assets.get(metadata_name, {}), assets.get(executable_name, {})
-    if type(metadata.get('id')) is not int:
-        raise ValueError('Update metadata is not published yet; check the release page')
-    candidate = manifest(_json(API + '/releases/assets/' + str(metadata['id']), token, binary=True, limit=65536))
-    if candidate['channel'] != channel:
-        raise ValueError('Update metadata belongs to a different platform')
-    if build_track(candidate) != track:
-        raise ValueError('Update metadata belongs to a different release track')
-    if candidate['asset']['id'] != executable.get('id') or candidate['asset']['bytes'] != executable.get('size'):
-        raise ValueError('A new release is being published; check again shortly')
+    metadata = RELEASE_ASSETS[channel][1]
+    url = (asset_url(NIGHTLY_TAG, metadata) if track == 'nightly' else
+           RELEASE_PAGE + '/download/' + metadata)
+    try:
+        candidate = manifest(_json(url, '', binary=True, limit=MAX_MANIFEST_BYTES))
+    except urllib.error.HTTPError as error:
+        if error.code == 404 and track == 'stable' and channel != LINUX_CHANNEL:
+            try:
+                candidate = manifest(_json(asset_url(channel, 'update.json'), '', binary=True, limit=MAX_MANIFEST_BYTES))
+            except OSError as legacy:
+                return _fallback(legacy, lambda: _api_latest_release(token, channel, track))
+            _selection(candidate, channel, track)
+            # Older manifests have no URL; keep their package on the same tag.
+            candidate['asset'].setdefault('url', asset_url(channel, RELEASE_ASSETS[channel][0]))
+            return candidate
+        return _fallback(error, lambda: _api_latest_release(token, channel, track))
+    except OSError as error:
+        return _fallback(error, lambda: _api_latest_release(token, channel, track))
+    _selection(candidate, channel, track)
     return candidate
 
 
@@ -263,13 +416,16 @@ def download(candidate, root, token='', *, progress=None, cancel=None):
     # Each attempt owns one stage. Failed stages cannot be resumed, so discard
     # only ours; never touch another attempt, the original launcher or models.
     import tempfile
-    import shutil
     if disk_space.free_bytes(target.parent) < asset['bytes'] + 16*2**20:
-        raise OSError('Not enough disk space to download the launcher update')
+        raise UpdateUnavailable('disk')
     start, done = time.monotonic(), 0
     stage = None
     try:
-        with open_download(API + '/releases/assets/' + str(asset['id']), token, binary=True) as response:
+        try:
+            response = open_download(_asset_url(candidate), '', binary=True)
+        except OSError as error:
+            response = _fallback(error, lambda: open_download(API + '/releases/assets/' + str(asset['id']), token, binary=True))
+        with response:
             with tempfile.NamedTemporaryFile(prefix='download-', suffix='.partial', dir=io_path(target.parent), delete=False) as stream:
                 stage = Path(plain(stream.name))
                 digest = hashlib.sha256()
@@ -404,13 +560,32 @@ class UpdateClient:
                 pass
         self.thread = None
         self.cancelled = threading.Event()
+        self.retry = None
+        self.failures = 0
 
     @property
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
 
-    def run(self, operation, candidate=None, *, background=False):
-        """A background check keeps the shown state and ignores offline failures."""
+    def stop(self):
+        self.cancelled.set()
+        self.retry = None
+        self.state = {k: v for k, v in self.state.items() if k not in ('retry_at', 'retry_operation')}
+        if self.state.get('error_code'):
+            self.state['error'] = error_text(self.state)
+
+    def poll(self, *, allow_download=True):
+        """UI ticks dispatch due retries; no sleeping worker blocks launch or close."""
+        if self.cancelled.is_set():
+            self.retry = None
+        if self.busy or not self.retry:
+            return
+        operation, candidate, at = self.retry
+        if time.time() >= at and (operation != 'download' or allow_download):
+            self.run(operation, candidate, background=operation == 'check', _retry=True)
+
+    def run(self, operation, candidate=None, *, background=False, _retry=False):
+        """Only an explicit download, or its bounded retry, fetches a package."""
         if self.busy:
             return
         if operation not in ('check', 'download'):
@@ -419,29 +594,51 @@ class UpdateClient:
             kind = 'application' if self.current.get('packaging') == 'app' else 'folder'
             raise ValueError('Download and extract the updated %s ZIP from the release page' % kind)
         self.cancelled.clear()
+        self.retry = None
+        if not _retry:
+            self.failures = 0
         quiet = background and operation == 'check'
         if not quiet:
             self.state = dict(status='checking' if operation == 'check' else 'downloading', candidate=candidate)
         def work():
+            selected = candidate
             try:
                 if operation == 'check':
                     found = check(self.current, self.token)
+                    if self.cancelled.is_set():
+                        raise InterruptedError('Update check cancelled')
                     if found and (self.available is None or newer(found, self.available)):
                         self.available = found
                         save(self.root / 'updates/available.json', found)
                     self.state = dict(status='available' if self.available else 'current', candidate=self.available)
                 else:
+                    if _retry and (not candidate['asset'].get('url') or build_track(candidate) == 'nightly'
+                                   or candidate['asset']['url'] == asset_url(candidate['channel'], RELEASE_ASSETS[candidate['channel']][0])):
+                        # A rolling release or a legacy latest URL may have moved.
+                        found = check(self.current, self.token)
+                        if found and newer(found, candidate):
+                            selected = found
                     def progress(value):
-                        self.state = dict(status='downloading', candidate=candidate, progress=value)
-                    download(candidate, self.root, self.token, progress=progress, cancel=self.cancelled)
-                    self.state = dict(status='ready', candidate=candidate)
+                        self.state = dict(status='downloading', candidate=selected, progress=value)
+                    download(selected, self.root, self.token, progress=progress, cancel=self.cancelled)
+                    self.state = dict(status='ready', candidate=selected)
+                self.failures = 0
             except Exception as error:
-                if quiet:
-                    return  # The next periodic check retries without a reminder.
-                message = Redactor([(self.token, '<REDACTED>')] if self.token else []).text(plain_text(error))
-                if isinstance(error, urllib.error.HTTPError) and error.code in (401, 403, 404):
-                    message = 'GitHub update access unavailable. A private repository needs a GitHub token with read access; also check API rate limits.'
-                self.state = dict(status='cancelled' if self.cancelled.is_set() else 'error', error=message,
-                                  candidate=candidate or self.available)
+                self.failures += 1
+                row = dict(status='cancelled' if self.cancelled.is_set() else 'error',
+                           error_code=failure_kind(error), candidate=selected or self.available)
+                if (not self.cancelled.is_set() and row['error_code'] not in ('invalid', 'disk')
+                        and (operation == 'check' or self.failures <= MAX_DOWNLOAD_RETRIES)):
+                    delay = max(min(MAX_RETRY_SECONDS, RETRY_SECONDS * 2**min(self.failures - 1, 4)),
+                                retry_after(error))
+                    row['retry_at'] = time.time() + delay
+                    row['retry_operation'] = operation
+                    self.retry = (operation, selected, row['retry_at'])
+                # A background check nobody asked for leaves what is shown alone
+                # and only retries; the failure of a check that is shown stays current.
+                if quiet and self.state.get('retry_operation') != 'check':
+                    return
+                row['error'] = error_text(row)
+                self.state = row
         self.thread = threading.Thread(target=work, daemon=True)
         self.thread.start()

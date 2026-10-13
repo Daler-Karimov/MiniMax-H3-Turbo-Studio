@@ -65,6 +65,9 @@ def device_memory_report(budget_bytes, allocator_limit_bytes=None, *, reserve_by
 
 
 def generate(request, resident=None):
+    def released(engine):
+        # A parked engine (ModelBank.park) holds no GPU weights either.
+        return engine.closed or type(getattr(engine, 'parked', None)) is list
     torch.set_num_threads(8)
     started = time.perf_counter()
     prefetch_compiler_keys()
@@ -87,10 +90,31 @@ def generate(request, resident=None):
             expected = plan(request['geometry'], request['sampling_plan']['requested'],
                             request['engine_options'].get('task', 't2va'),
                             base_steps=request['engine_options'].get('steps', 8),
-                            refine_steps=request['sampling_plan']['refine_steps'] if request['sampling_plan']['enabled'] else 2)
+                            refine_steps=request['sampling_plan']['refine_steps'] if request['sampling_plan']['enabled'] else 3,
+                            staged=request['sampling_plan'].get('staged', False))
             if request['sampling_plan'] != expected:
                 raise ValueError('Sampling plan does not match the requested canvas and task')
             metrics['sampling_plan'] = expected
+        continuation = request.get('continuation')
+        if continuation is not None:
+            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED,
+                                       validate_audio_context, AUDIO_CONTEXT_DEFAULT)
+            # A plan that fell back to one pass on a small canvas still has
+            # the two-pass flag set and keeps its continuation; an explicit
+            # single-pass request does not.
+            validate_route(task=request['engine_options'].get('task', 't2va'),
+                           anchor=bool(continuation.get('anchor')),
+                           two_pass=bool(request.get('sampling_plan', {}).get('requested')),
+                           preview=request.get('preview', False), refine_from=request.get('resume_first_pass'))
+            if isinstance(getattr(torch.version, 'hip', None), str):
+                raise ValueError(UNSUPPORTED)
+            continuation = dict(continuation,
+                audio_context=validate_audio_context(continuation.get('audio_context', AUDIO_CONTEXT_DEFAULT)))
+            request['continuation'] = continuation
+            request['engine_options'] = dict(request['engine_options'],
+                adaln_task=ANCHOR_ADALN_TASK if continuation.get('anchor') else ADALN_TASK)
+            metrics['continuation'] = summary(continuation)
+            metrics['audio_context'] = continuation['audio_context']
         metrics['device_memory'] = device_memory_report(request['gpu_budget_bytes'], request.get('allocator_limit_bytes'),
             reserve_bytes=request.get('gpu_reserve_bytes', 0), capacity_trial=request.get('capacity_trial', False))
         if request.get('dynamic_gpu_budget') and metrics['device_memory'].get('windows_allocator_limit_enforced'):
@@ -117,6 +141,10 @@ def generate(request, resident=None):
             # The pass cache grows only into memory no other process holds.
             refresh_budget.device_headroom = live_budget.device_headroom
         if resident is not None:
+            # Idle models stay beside sampling only where the device holds both,
+            # with this request's growth reserve left over.
+            resident.device_free = live_budget.device_free if live_budget is not None else None
+            resident.device_reserve = request.get('gpu_reserve_bytes', 0) if live_budget is not None else 0
             limit = metrics['device_memory'].get('effective_allocator_limit_bytes')
             if limit is not None:
                 resident.gpu_budget = min(resident.gpu_budget, limit)
@@ -159,13 +187,49 @@ def generate(request, resident=None):
             metrics['conditioning_info'] = actual
         canvas = request.get('geometry', {})
         artifacts = Path(request['artifacts']) if request.get('artifacts') else None
+        # A two-pass request that runs as one pass (small canvases) continues
+        # too: its first and final canvases are the same one, so one tail
+        # serves both stages. An explicit single-pass request keeps nothing.
+        plan_flags = request.get('sampling_plan') or {}
+        continuable = (bool(plan_flags.get('enabled') or plan_flags.get('requested'))
+                       and (options.get('task', 't2va') == 't2va' or bool(continuation and continuation.get('anchor')))
+                       and not request.get('preview'))
+        first_tail = continuation_data = None
+        def tail_failure(error):
+            from .adaptive import classify_failure
+            if (isinstance(error, torch.cuda.OutOfMemoryError)
+                    or type(error).__name__ in ('InterruptProcessingException', 'CancelledError')
+                    or classify_failure(error)['kind'] in ('gpu_oom', 'cancelled')):
+                raise error
+            metrics['continuation_store'] = dict(saved=False, error=type(error).__name__)
+        def restore_first(value):
+            nonlocal first_tail
+            first_tail = value
+
+        def restore_tail(value):
+            nonlocal continuation_data
+            continuation_data = value
+
+        def capture_first(video):
+            nonlocal first_tail
+            if not continuable:
+                return
+            try:
+                from .continuation import tail
+                first_tail = tail(video)
+            except Exception as error:
+                tail_failure(error)
+                first_tail = None
         if resume:
             from .decode_resume import load_saved_sampling
             metrics.update(phase='decode', decode_phase='latent_load')
             save(request['metrics'], metrics)
             tick = time.perf_counter()
-            latents, audio, sampled, base = load_saved_sampling(request, torch)
+            latents, audio, sampled, base = load_saved_sampling(request, torch,
+                **({'continuation_tail_callback': restore_tail} if continuable else {}))
             metrics.update(sampled, phase='decode', decode_phase='latent_transfer')
+            if continuation is not None:
+                metrics['continuation'] = summary(continuation)
             save(request['metrics'], metrics)
             print(json.dumps(dict(event='decode_resume', sampling_source_attempt=metrics['sampling_source_attempt'])), flush=True)
             fit_decoder()
@@ -173,7 +237,7 @@ def generate(request, resident=None):
                 resident.decoder_room(decoder, canvas)
             latents, audio = latents.to('cuda'), audio.to('cuda')
             metrics['latent_reload_seconds'] = time.perf_counter() - tick
-            metrics['transformer_released_before_decode'] = resident is None or 'engine' not in resident.entries
+            metrics['transformer_released_before_decode'] = resident is None or not resident.engine_on_gpu()
         else:
             tick = time.perf_counter()
             # Windows charges the allocator room still to be reserved to commit;
@@ -203,10 +267,14 @@ def generate(request, resident=None):
                 from .resident_models import gpu_bytes
                 foreign_sample_bytes = max(0, torch.cuda.memory_allocated() - gpu_bytes(engine))
             from .decode_prefetch import DecoderReadAhead
-            decode_read_ahead = DecoderReadAhead(engine.base, ram_budget_bytes=request.get('ram_budget_bytes'))
+            decode_read_ahead = DecoderReadAhead(engine.base, ram_budget_bytes=request.get('ram_budget_bytes'),
+                                                 budget_is_estimate=request.get('ram_budget_is_estimate') is True)
             decoder_cached = resident is not None and 'video_vae' in resident.entries
             if decoder_cached:
                 decode_read_ahead.result.update(state='skipped', reason='Video VAE is already resident on the GPU')
+            def read_decoder_ahead():
+                # Every offloaded layer in memory and none read in the last step.
+                decode_read_ahead.start(drive_idle=getattr(engine, 'drive_idle', False) is True)
             from .sampling_memory import SamplingMemory
             memory_diagnostics = SamplingMemory(torch, Path(request['output']).with_suffix('.sampling-memory.json')).start()
             def sample_finalize_phase(name):
@@ -215,6 +283,7 @@ def generate(request, resident=None):
                 print(json.dumps(dict(event='sample_finalize', phase=name)), flush=True)
 
             def sampling_complete(latents, audio, sampled):
+                nonlocal continuation_data
                 metrics.update(sampled, sampling_checkpoint_complete=False,
                     sample_metrics_scope='Completed sampling before offloader cleanup; finalization is excluded.')
                 metrics['sampling_memory'] = memory_diagnostics.result()
@@ -222,13 +291,24 @@ def generate(request, resident=None):
                 if not bool(torch.isfinite(latents).all() and torch.isfinite(audio).all()):
                     raise RuntimeError('Non-finite video/audio latents; refusing to save a corrupted result')
                 metrics['finite_latents'] = True
+                if continuable and not request['sampling_plan'].get('enabled'):
+                    capture_first(latents)
+                if continuable and first_tail is not None:
+                    try:
+                        from .continuation import tail_data
+                        continuation_data = tail_data(first_tail, latents, audio, canvas,
+                            request['sampling_plan'], manifest, continuation)
+                    except Exception as error:
+                        tail_failure(error)
+                        continuation_data = None
                 if artifacts:
                     from .decode_resume import sampling_provenance, save_sampling
                     tick = time.perf_counter()
                     sample_finalize_phase('latent_save')
                     provenance = sampling_provenance(request)
                     save_sampling({'video': latents.cpu(), 'audio': audio.cpu(), 'seed': request['seed'],
-                                   'geometry': canvas, 'sampling_provenance': provenance}, artifacts, torch)
+                                   'geometry': canvas, 'sampling_provenance': provenance,
+                                   **({'continuation_tail': continuation_data} if continuation_data is not None else {})}, artifacts, torch)
                     metrics.update(sampling_provenance=provenance, sampling_source_attempt=request.get('resource_attempt'),
                                    latent_save_seconds=time.perf_counter() - tick, sampling_checkpoint_complete=True)
                     # The final latents supersede this attempt's retained first pass.
@@ -253,7 +333,8 @@ def generate(request, resident=None):
                         metrics.update(sample_stage='first_pass_load')
                         save(request['metrics'], metrics)
                         tick = time.perf_counter()
-                        latents, audio, first, lifted, reused = load_refine_input(request, torch)
+                        latents, audio, first, lifted, reused = load_refine_input(request, torch,
+                            **({'continuation_tail_callback': restore_first} if continuable else {}))
                         latents, audio = latents.to('cuda'), audio.to('cuda')
                         metrics.update(reused, sampling_passes=[first], latent_upscale=lifted,
                                        first_pass_load_seconds=time.perf_counter() - tick)
@@ -280,7 +361,12 @@ def generate(request, resident=None):
                                 if request.get('automatic_pass_cache', False) else None)
                             first_options = request.get('first_pass_policy', {}).get('profile', {}).get('engine')
                             metrics['first_pass_policy'] = request.get('first_pass_policy')
+                            first_context = None
+                            if continuation is not None:
+                                from .continuation import load
+                                first_context = load(continuation, 'first')
                             latents, audio, first = engine.sample(request['conditioning'], request['seed'],
+                                **({'continuation': first_context} if first_context is not None else {}),
                                 **sampling_plan['first'], allow_smaller_canvas=True,
                                 pass_cache_budget_bytes=pass_budget, gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
                                 compute_options=first_options,
@@ -289,6 +375,7 @@ def generate(request, resident=None):
                                 progress_total=sampling_plan['base_steps'] if preview else sampling_plan['total_steps'],
                                 budget_refresh=refresh_budget if live_budget is not None else None)
                         metrics['sampling_passes'] = [first]
+                        capture_first(latents)
                         if preview:
                             # Keep the first pass before the latent upscale; an
                             # upscale of this preview starts from these latents.
@@ -343,7 +430,7 @@ def generate(request, resident=None):
                                     lift_canvas['width'], lift_canvas['height'], **kwargs)
                             except Exception as error:
                                 from .adaptive import classify_failure
-                                if classify_failure(error)['kind'] != 'gpu_oom' or (engine.closed and memory_saving):
+                                if classify_failure(error)['kind'] != 'gpu_oom' or (released(engine) and memory_saving):
                                     raise
                                 from .diagnostic_resources import error_details
                                 upscale_failures.append(error_details(error))
@@ -352,7 +439,7 @@ def generate(request, resident=None):
                                 # Leave the failed call's traceback before retrying so
                                 # its tensors no longer occupy the allocator. Do not
                                 # sample again or change the temporal normalization.
-                                if not engine.closed:
+                                if not released(engine):
                                     if resident is not None:
                                         resident.drop('engine', 'Latent upscale allocation needs additional workspace')
                                     else:
@@ -378,9 +465,10 @@ def generate(request, resident=None):
                                 allocation_failures=upscale_failures,
                                 torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                                 torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),
-                                transformer_reloaded=engine.closed)
+                                transformer_reloaded=released(engine))
                             metrics['latent_upscale'] = lifted
-                            if engine.closed:
+                            # A parked engine is reacquired too: its GPU weights come back.
+                            if released(engine):
                                 tick = time.perf_counter()
                                 engine, _ = resident.engine(request, factory) if resident is not None else (factory(), False)
                                 reload_seconds = time.perf_counter() - tick
@@ -393,7 +481,8 @@ def generate(request, resident=None):
                                     from .decode_resume import refine_provenance, save_refine_input
                                     provenance = refine_provenance(request)
                                     save_refine_input({'video': latents.cpu(), 'audio': audio.cpu(), 'seed': request['seed'],
-                                                       'geometry': canvas, 'refine_provenance': provenance}, artifacts, torch)
+                                                       'geometry': canvas, 'refine_provenance': provenance,
+                                                       **({'continuation_first': first_tail} if first_tail is not None else {})}, artifacts, torch)
                                     metrics.update(refine_checkpoint_complete=True, refine_provenance=provenance,
                                                    refine_source_attempt=request.get('resource_attempt'))
                                 except (OSError, RuntimeError, ValueError) as error:
@@ -402,7 +491,7 @@ def generate(request, resident=None):
                         sampled = dict(first, sampling_plan=sampling_plan, sampling_passes=[dict(first)],
                                        step_seconds=list(first['step_seconds']), sample_seconds=first['sample_seconds'])
                         if not decoder_cached:
-                            decode_read_ahead.start()
+                            read_decoder_ahead()
                     else:
                         metrics['sample_stage'] = 'refine'
                         save(request['metrics'], metrics)
@@ -417,10 +506,15 @@ def generate(request, resident=None):
                         def refined_complete(video, sound, receipt):
                             sampling_complete(video, sound, refined(receipt))
                         restart_seed = (request['seed'] + sampling_plan['restart_seed_offset']) % (1 << 64)
+                        final_context = None
+                        if continuation is not None:
+                            from .continuation import load
+                            final_context = load(continuation, 'final')
                         latents, audio, second = engine.sample(request['conditioning'], restart_seed,
+                            **({'continuation': final_context} if final_context is not None else {}),
                             **sampling_plan['second'], initial_latents=(latents, audio), refine_steps=sampling_plan['refine_steps'],
                             refine_schedule=sampling_plan.get('refine_schedule'),
-                            final_step_callback=None if decoder_cached else decode_read_ahead.start,
+                            final_step_callback=None if decoder_cached else read_decoder_ahead,
                             step_callback=memory_diagnostics.complete, sampling_complete_callback=refined_complete,
                             progress_offset=sampling_plan['base_steps'], progress_total=sampling_plan['total_steps'],
                             gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
@@ -428,9 +522,14 @@ def generate(request, resident=None):
                         sampled = refined(second)
                         metrics.pop('sample_stage', None)
                 else:
+                    single_context = None
+                    if continuation is not None:
+                        from .continuation import load
+                        single_context = load(continuation, 'final')
                     latents, audio, sampled = engine.sample(request['conditioning'], request['seed'],
+                        **({'continuation': single_context} if single_context is not None else {}),
                         frames=canvas.get('frames', 243), width=canvas.get('width', 1344), height=canvas.get('height', 768),
-                        final_step_callback=None if decoder_cached else decode_read_ahead.start,
+                        final_step_callback=None if decoder_cached else read_decoder_ahead,
                         step_callback=memory_diagnostics.complete, sampling_complete_callback=sampling_complete,
                         gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
                         budget_refresh=refresh_budget if live_budget is not None else None)
@@ -447,7 +546,7 @@ def generate(request, resident=None):
                 resident.decoder_room(decoder, canvas)
             else:
                 engine.close()
-            metrics['transformer_released_before_decode'] = engine.closed
+            metrics['transformer_released_before_decode'] = released(engine)
             # Keep the bounded file reader alive through transformer teardown.
             # Releasing DiT mappings is independent of the decoder checkpoint,
             # so both operations can run concurrently and give slow storage
@@ -464,7 +563,7 @@ def generate(request, resident=None):
         if live_budget is not None:
             refresh_budget('decode')
             if engine is not None:
-                metrics['transformer_released_before_decode'] = engine.closed
+                metrics['transformer_released_before_decode'] = released(engine)
         if resident is not None:
             metrics['resident_admission'] = list(resident.decisions)
         save(request['metrics'], metrics)
@@ -480,8 +579,44 @@ def generate(request, resident=None):
                 metrics['resident_admission'] = list(resident.decisions)
             save(request['metrics'], metrics)
         fit_decoder()
+        output_size = request.get('output_size')
+        if output_size is not None:
+            output_size = (output_size['width'], output_size['height'])
+            metrics['output_size'] = dict(width=output_size[0], height=output_size[1])
+        def keep_audio_lead_in(value):
+            if value is not None:
+                continuation_data['audio_lead_in'] = value
+                # Older retained sampling tails predate the predecessor binding.
+                continuation_data['metadata']['source_id'] = continuation['source_id']
         metrics.update(decode_to_file(latents, audio, request['output'], base=base, artifacts_dir=artifacts,
-                                     model_cache=resident, phase_callback=decode_phase, **decoder))
+                                     **({'continuation': continuation} if continuation is not None else {}),
+                                     **({'audio_lead_in_callback': keep_audio_lead_in}
+                                        if continuation is not None and continuation_data is not None else {}),
+                                     model_cache=resident, phase_callback=decode_phase, output_size=output_size, **decoder))
+        if continuable and continuation_data is not None:
+            if continuation is not None:
+                # Every continuation of a film carries its first frame on, used or not: a later
+                # part may ask for it. Without one this part is saved as before.
+                try:
+                    from .continuation import chain_first_frame
+                    frame = chain_first_frame(continuation, continuation.get('source_video'))
+                    if frame is not None:
+                        continuation_data['metadata']['first_frame'] = frame
+                except Exception as error:
+                    if isinstance(error, MemoryError) or type(error).__name__ in (
+                            'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
+                        raise
+                    metrics['first_frame_kept'] = dict(saved=False, error=type(error).__name__)
+            try:
+                from .continuation_store import save as save_continuation
+                metrics['continuation_store'] = dict(save_continuation(request['output'], continuation_data), saved=True)
+                if continuation is not None and 'audio_lead_in' in continuation_data:
+                    from .continuation import LEAD_IN_SAMPLES
+                    metrics['continuation']['audio_lead_in_samples'] = LEAD_IN_SAMPLES
+            except Exception as error:
+                tail_failure(error)
+        elif continuable:
+            metrics.setdefault('continuation_store', dict(saved=False, reason='checkpoint_missing'))
         if resume and artifacts:
             from .decode_resume import retain_latents
             retain_latents(request['resume_decode']['latents'], artifacts)
@@ -490,8 +625,9 @@ def generate(request, resident=None):
             from .resident_models import key
             if not resume:
                 from .two_pass_metrics import sampling_workspace_peak
-                resident.observe_peak('engine', resident.engine_key(request),
-                    sampling_workspace_peak(sampled) - foreign_sample_bytes)
+                # A preview's first pass is kept apart from the complete request's peak.
+                resident.observe_peak('engine_preview' if request.get('preview') is True else 'engine',
+                    resident.engine_key(request), sampling_workspace_peak(sampled) - foreign_sample_bytes)
             resident.observe_peak('decode', key(dict(options=decoder, canvas=canvas)), torch.cuda.max_memory_allocated() - foreign_decode_bytes)
             metrics['resident_models'] = resident.snapshot()
     except BaseException as error:
@@ -516,6 +652,8 @@ def generate(request, resident=None):
         save(request['metrics'], metrics)
         raise
     finally:
+        if resident is not None:
+            resident.device_free, resident.device_reserve = None, 0
         if live_budget is not None:
             live_budget.close()
         if resident is not None:

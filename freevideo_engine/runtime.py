@@ -57,7 +57,7 @@ class Engine:
                  fp8_gemm='auto', window_varlen=False, varlen_smooth_k=True,
                  task='t2va', stream_weights=False, canvas=None, head_parallelism=1,
                  residual_offload=False, device_backend=None, gpu_allocation_bytes=None,
-                 fetch_tables=True):
+                 fetch_tables=True, adaln_task=None):
         self.device_backend = device_backend if device_backend is not None else get_backend()
         if gpu_allocation_bytes is not None and (type(gpu_allocation_bytes) is not int or gpu_allocation_bytes < 0):
             raise ValueError('GPU allocation limit must be a nonnegative byte count')
@@ -72,6 +72,9 @@ class Engine:
         if task not in TASKS:
             raise ValueError('Unsupported Engine task: ' + str(task))
         self.task = task
+        if adaln_task not in (None, task, 'ref2va_audio') and not (task == 'ref2va' and adaln_task == 'ref2va_av'):
+            raise ValueError('Unsupported continuation modulation schedule')
+        self.adaln_task = adaln_task or task
         if type(residual_offload) is not bool:
             raise ValueError('Residual offload must be boolean')
         if residual_offload and (not projection_chunk or not inference_kernels):
@@ -117,6 +120,8 @@ class Engine:
         self.cache = Path(cache)
         self.input_cache_dir = input_cache_dir
         self.closed = False
+        # (module, '_parameters' or '_buffers', name) moved to host by park().
+        self.parked = None
         self.offloader = None
         self.stream_weight_source = None
         self.stream_refiner_count = 0
@@ -270,8 +275,8 @@ class Engine:
         self.schedule_hook = None
         embeddings = None
         if adaln_cache:
-            self.cursor = ScheduleCursor(schedule_timesteps(steps, task=task))
-        table_cache = (TableCache(self.cache, manifest['source_id'], steps, task=task, manifest=manifest,
+            self.cursor = ScheduleCursor(schedule_timesteps(steps, task=self.adaln_task))
+        table_cache = (TableCache(self.cache, manifest['source_id'], steps, task=self.adaln_task, manifest=manifest,
                                  timesteps=self.cursor.timesteps, channels=model.config.hidden_size, device='cpu',
                                  fetch=fetch_tables)
                        if adaln_cache and (adaln_disk_cache or portable_adaln) else None)
@@ -305,7 +310,7 @@ class Engine:
                          _load_safetensors(self.cache / f'adaln/{index:02d}.safetensors').items()}
             if adaln_cache and not cache_hit:
                 if embeddings is None:
-                    _, embeddings = schedule_embeddings(model, steps, task=task)
+                    _, embeddings = schedule_embeddings(model, steps, task=self.adaln_task)
                 block.load_state_dict({name: value.to(self.device_backend.device) for name, value in adaln.items()}, strict=False, assign=True)
                 table = [block.adaln_proj(embedding) for embedding in embeddings]
                 block.adaln_proj = CachedModulation(table, self.cursor)
@@ -511,6 +516,8 @@ class Engine:
                        'window_varlen': window_varlen,
                        'varlen_smooth_k': varlen_smooth_k if window_varlen else None,
                        'steps': steps, 'source_id': manifest['source_id']}
+        if self.adaln_task != self.task:
+            self.config['adaln_task'] = self.adaln_task
 
     def gpu_commit_reserve(self):
         """Allocator room this request may still reserve, which WDDM will charge to commit."""
@@ -534,10 +541,16 @@ class Engine:
                step_callback=None, sampling_complete_callback=None, initial_latents=None, refine_steps=None, refine_schedule=None,
                allow_smaller_canvas=False, progress_offset=0, progress_total=None,
                pass_cache_budget_bytes=None, gpu_reserve_bytes=0, pass_resident_blocks=None,
-               budget_refresh=None):
+               budget_refresh=None, continuation=None):
         from src.inference.render import load_prompt, generate_latents
         from .geometry import geometry, sampler_for_canvas
         refining = initial_latents is not None
+        if continuation is not None:
+            from .continuation import validate_route
+            validate_route(task=self.task, anchor=bool(continuation.get('anchor')))
+            if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
+                from .continuation import SIZE_MISMATCH
+                raise ValueError(SIZE_MISMATCH)
         if refining != (refine_steps is not None):
             raise ValueError('Refinement requires both initial latents and a tail step count')
         if refining:
@@ -568,6 +581,7 @@ class Engine:
         progress = SamplingProgress(active_steps, len(self.transformer.transformer_blocks),
                                     offset=progress_offset, total=progress_total)
         progress.start()
+        continuation_offset = 0
         if self.task.startswith('ref2va'):
             from .media_conditioning import describe
             value = torch.load(conditioning, map_location='cpu', weights_only=True)
@@ -575,9 +589,19 @@ class Engine:
             if info['task'] != self.task:
                 raise ValueError('Reference modalities changed the precomputed schedule')
             conditions = value['references']
+            if continuation is not None:
+                if len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None:
+                    raise ValueError('Continuation anchor requires exactly one image reference without audio')
+                # Ref2VA packs independent-size references before generated
+                # video rows in both passes. Their latents do not need the
+                # keyframe resize used by first/last-frame conditioning.
+                continuation_offset = info['reference_video_tokens']
             prompt, tags = value['prompt_embeds'].to(self.device_backend.device, torch.bfloat16), value['text_token_tags']
         else:
             prompt, tags, conditions = load_prompt(str(conditioning), self.device_backend.device)
+            if continuation is not None and conditions:
+                from .continuation import UNSUPPORTED
+                raise ValueError(UNSUPPORTED)
             from .keyframes import validate_conditioning
             source_canvas = self.canvas if allow_smaller_canvas and self.canvas is not None else canvas
             validate_conditioning(prompt, tags, conditions, self.task,
@@ -602,7 +626,16 @@ class Engine:
         prefetch_step = max(1, active_steps - 2)
         prefetch_timing = dict(trigger_step=None, steps_remaining=None,
                                estimated_remaining_seconds=None,
-                               trigger_elapsed_seconds=None)
+                               trigger_elapsed_seconds=None,
+                               drive_reads_last_step=None, drive_layers=None)
+        # Layers the step just completed read from the weight files, and
+        # offloaded layers that still depend on those files; both unknown
+        # until this pass completes a step. Sampling leaves the drive to the
+        # reader only when both are zero: a layer served by a cached device
+        # copy goes back to its file once that copy is released.
+        self.step_drive_reads = self.drive_layers = None
+        self.drive_idle = False
+        drive_reads = [0]
 
         def trigger_prefetch():
             if final_step_callback is None or prefetch_timing['trigger_step'] is not None:
@@ -616,12 +649,21 @@ class Engine:
                 steps_remaining=remaining,
                 estimated_remaining_seconds=(average * remaining
                                              if average is not None else None),
-                trigger_elapsed_seconds=time.perf_counter() - started)
+                trigger_elapsed_seconds=time.perf_counter() - started,
+                drive_reads_last_step=self.step_drive_reads, drive_layers=self.drive_layers)
             final_step_callback()
 
         class StepTimes(list):
             def append(self, value):
+                if prefix is not None:
+                    prefix.restore_video()
                 super().append(value)
+                count = getattr(offloader, 'drive_reads', None)
+                total = count() if count is not None else None
+                if total is None:
+                    owner.step_drive_reads = None
+                else:
+                    owner.step_drive_reads, drive_reads[0] = total - drive_reads[0], total
                 cached = offloader.cached_bytes() if budget_refresh is not None else 0
                 peak = owner.device_backend.max_memory_reserved()
                 if budget_refresh is not None:
@@ -678,6 +720,10 @@ class Engine:
                         allow_growth=len(self) + 1 < active_steps)
                 if owner.config.get('residual_offload'):
                     residual_steps.append(dict(owner.transformer._freevideo_residual_stats))
+                # After the cache changes above: what the remaining steps need.
+                waiting = getattr(offloader, 'drive_layers', None)
+                owner.drive_layers = waiting() if waiting is not None else None
+                owner.drive_idle = owner.step_drive_reads == 0 and owner.drive_layers == 0
                 progress.complete(value)
                 if step_callback is not None:
                     step_callback(value)
@@ -705,12 +751,17 @@ class Engine:
         if active_steps == 1:
             trigger_prefetch()
         checkpoint_seconds = 0.
+        from .continuation import sampling
         try:
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
-                    self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader:
+                    self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
+                    self.transformer, continuation, seed, self.device_backend.device,
+                    **({'video_offset': continuation_offset} if continuation_offset else {})) as prefix:
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
                                                 conditions=conditions)
+                if prefix is not None:
+                    latents, audio = prefix.finish(latents, audio)
                 stats = offloader.stats()
                 # StepTimes.append closes over the live offloader. Retaining
                 # that list subclass in a receipt also retains its pinned
@@ -849,9 +900,71 @@ class Engine:
         return {'seconds': time.perf_counter() - started, 'shape': list(text.shape),
                 'refiner_weights_released': True, 'offload': stats, 'cache_hit': False, 'cache_saved': saved, 'cache_note': note}
 
+    def device_tensors(self):
+        """The registered tensors this engine keeps on the GPU, or None.
+
+        None when two of them share storage or one is a view of a larger
+        storage: a per-tensor copy would duplicate that storage on its way back.
+        """
+        found, storages = [], set()
+        device = torch.device(self.device_backend.device).type
+        for module in self.transformer.modules():
+            for kind in ('_parameters', '_buffers'):
+                for name, tensor in getattr(module, kind).items():
+                    if tensor is None or tensor.device.type != device:
+                        continue
+                    storage = tensor.untyped_storage()
+                    if storage.data_ptr() in storages or storage.nbytes() != tensor.numel() * tensor.element_size():
+                        return None
+                    storages.add(storage.data_ptr())
+                    found.append((module, kind, name))
+        return found
+
+    @torch.no_grad()
+    def park(self):
+        """Move the weights this engine keeps on the GPU to ordinary host memory.
+
+        Streamed, pinned and mapped weights stay where they are, so the next
+        request with the same plan copies only these back instead of reading,
+        binding and pinning every block again. Copies are exact, so the output
+        is unchanged. Returns the bytes moved, or None when this engine cannot
+        be parked; the caller then releases it as before.
+        """
+        if self.closed or self.parked is not None:
+            return None
+        found = self.device_tensors()
+        if found is None:
+            return None
+        moved = 0
+        for module, kind, name in found:
+            tensor = getattr(module, kind)[name]
+            moved += tensor.numel() * tensor.element_size()
+            # .data keeps every reference to this tensor object valid, as
+            # Module.to does for parameters.
+            tensor.data = tensor.data.to('cpu')
+        self.parked = found
+        gc.collect()
+        self.device_backend.empty_cache()
+        return moved
+
+    @torch.no_grad()
+    def unpark(self):
+        """Copy parked weights back to the GPU; returns the bytes moved."""
+        if self.parked is None:
+            return 0
+        moved = 0
+        for module, kind, name in self.parked:
+            tensor = getattr(module, kind)[name]
+            moved += tensor.numel() * tensor.element_size()
+            tensor.data = tensor.data.to(self.device_backend.device)
+        self.parked = None
+        self.device_backend.synchronize()
+        return moved
+
     def close(self):
         if self.closed:
             return
+        self.parked = None
         if self.schedule_hook is not None:
             self.schedule_hook.remove()
         self.transformer = None

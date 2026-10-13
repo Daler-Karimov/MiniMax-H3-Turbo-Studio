@@ -3,6 +3,7 @@ const titles = {image: 'Picture', video: 'Video', audio: 'Audio'};
 const widget = (node, name) => node?.widgets?.find(w => w.name === name);
 const linkFor = (node, name) => node?.graph?.links?.[node.inputs?.find(i => i.name === name)?.link];
 const sourceFor = (node, name) => node?.graph?.getNodeById(linkFor(node, name)?.origin_id);
+export const referenceInputs = ['reference', ...Array.from({length: 7}, (_, i) => `reference_${i + 2}`)];
 export function referenceKind(file) {
     const ext = String(file).split('.').pop().toLowerCase();
     return ['png','jpg','jpeg','webp','bmp','tif','tiff'].includes(ext) ? 'image'
@@ -41,7 +42,7 @@ export function referenceItems(node) {
             if (item && anchors[name]) throw new Error('invalid_media');
             if (item) anchors[name] = item;
         }
-        for (const [name, kind] of [['reference','image'],['reference_audio','audio']]) {
+        for (const [name, kind] of [...referenceInputs.map(name => [name, 'image']), ['reference_audio','audio']]) {
             const item = connected(media, name, kind); if (item) refs.push(item);
         }
     } else {

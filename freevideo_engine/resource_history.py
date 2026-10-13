@@ -86,6 +86,11 @@ def _canonical_config(config, purpose):
     for name in ('task', 'steps'):
         if name not in engine:
             resolved_engine.pop(name, None)
+    # The ordinary task's schedule has the same historical computation identity.
+    if resolved_engine.get('adaln_task') in (None, engine.get('task', 't2va')):
+        resolved_engine.pop('adaln_task', None)
+    if resolved_decoder.get('continuation') is None:
+        resolved_decoder.pop('continuation', None)
     normalized_engine = _computation(resolved_engine)
     normalized_engine.pop('allocator_config', None)
     return {'engine': normalized_engine, 'decoder': _computation(resolved_decoder),

@@ -1,0 +1,12 @@
+/* Connect an agent: one sentence, one action, one status. The card carries its own layout wherever it is placed. */
+.fv-agent-connect-body{display:grid;gap:12px;min-width:0}
+.fv-agent-connect-body>p{margin:0}
+.fv-agent-connect-body .fv-agent-sentence{padding:10px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-bg);color:var(--fv-ink);font-size:var(--fv-body);overflow-wrap:anywhere;user-select:all}
+.fv-agent-connect-body .fv-agent-sentence:empty{display:none}
+.fv-agent-connect-body .fv-agent-note{font-size:var(--fv-micro);line-height:1.5;color:var(--fv-muted)}
+.fv-agent-connect-body .fv-agent-note[hidden]{display:none}
+.fv-agent-connect-body .fv-agent-connect-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fv-agent-connect-body .fv-agent-connect-status{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fv-body);color:var(--fv-muted)}
+.fv-agent-connect-body .fv-agent-connect-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--fv-disabled)}
+.fv-agent-connect-body .fv-agent-connect-dot[data-color=green]{background:var(--fv-success)}
+.fv-setup .fv-agent-connect[hidden]{display:none}

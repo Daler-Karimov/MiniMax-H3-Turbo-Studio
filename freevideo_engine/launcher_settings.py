@@ -29,7 +29,7 @@ def default_language():
 def sanitize(value):
     value = plain_data(value) if isinstance(value, dict) else {}
     result = {k: value[k] for k in TEXT if isinstance(value.get(k), str)}
-    for key in ('separate', 'new_comfy', 'sampling_caches'):
+    for key in ('separate', 'new_comfy', 'sampling_caches', 'lan_access'):
         if type(value.get(key)) is bool:
             result[key] = value[key]
     if value.get('model_method') in ('auto', 'manual', 'reuse'):
@@ -102,6 +102,11 @@ class Store:
         candidates = [read(p) for path in self.paths for p in (path, path.with_suffix('.previous.json'))]
         candidates = [value for value in candidates if value]
         return max(candidates, key=lambda v: v.get('saved_at_ns', 0)) if candidates else {}
+
+    def currently_allows(self, key):
+        """Permissions require explicit current copies; recovery preferences cannot grant access."""
+        values = [read(path) for path in self.paths]
+        return bool(values) and all(value.get(key) is True for value in values)
 
     def write(self, values, language, selection=None, setup=None):
         payload = sanitize(dict(values, language=language, installation=selection,

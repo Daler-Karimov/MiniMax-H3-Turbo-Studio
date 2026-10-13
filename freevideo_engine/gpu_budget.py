@@ -268,6 +268,16 @@ class LiveGPUBudget:
             return None
         return max(0, total - used)
 
+    def device_free(self):
+        """Physical device memory no process holds right now, or None if unread."""
+        self.device_memory = None
+        if self.device is not None:
+            try:
+                self.device_memory = self.device.sample()
+            except (OSError, RuntimeError, AttributeError, ValueError) as error:
+                self._error(error)
+        return self.device_headroom()
+
     def _settle(self, workspace):
         """Wait for a driver budget that again covers `workspace` twice in a row."""
         deadline = self.clock() + self.settle_seconds

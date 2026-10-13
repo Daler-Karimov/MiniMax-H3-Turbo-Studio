@@ -432,6 +432,8 @@ class LayerOffloader:
         self.prefetch_wait_seconds = 0.
         self.direct_read_layers = 0
         self.direct_read_bytes = 0
+        self.source_layers = 0
+        self.reader_layers = 0
         # The weight source outlives this pass; report only this pass's view hits.
         self.host_view_hits_start = getattr(weight_source, 'host_view_hits', 0)
         self.host_view_hit_bytes_start = getattr(weight_source, 'host_view_hit_bytes', 0)
@@ -577,6 +579,7 @@ class LayerOffloader:
             direct = self.weight_source.stage_into(index, self.layout[index], slot.host)
             counts = {}
             if not direct:
+                self.reader_layers += 1
                 with self.weight_source.layer(index, self.layout[index]) as weights:
                     for _, name, dtype, offset, count, _ in self.layout[index]:
                         slot.host[dtype][offset:offset + count].copy_(weights[name].reshape(-1))
@@ -700,6 +703,8 @@ class LayerOffloader:
                 return cached, cached.copy_done
             # A previous H2D transfer must finish before the CPU writes this slot.
             pinned = self.pinned_layers[index]
+            if not pinned and self.weight_source is not None:
+                self.source_layers += 1
             host_slot = slot
             staged = self.host_prefetch and not pinned
             if slot.copy_done is not None and not pinned and not staged:
@@ -732,6 +737,8 @@ class LayerOffloader:
                     counts[dtype] = offset + count
                     self.direct_read_bytes += count * slot.host[dtype].element_size()
             else:
+                if self.weight_source is not None and not pinned:
+                    self.reader_layers += 1
                 source = (self.weight_source.layer(index, self.layout[index]) if self.weight_source is not None and not pinned
                           else nullcontext(self.cpu[index]))
                 with source as weights:
@@ -802,6 +809,35 @@ class LayerOffloader:
         for parameter, name, *_ in self.layout[index]:
             parameter.data = self.cpu[index][name]
         self.expected = (index + 1) % len(self.layers)
+
+    def drive_reads(self):
+        """Layers this pass has read from the weight files so far; None if unknown.
+
+        Pinned groups, cached device copies and adopted views are in memory.
+        A direct-read source counts each layer it reads from its files; a
+        layer staged through its tensor reader is one more. A source that
+        keeps no such count has every staged layer taken as a read. Pageable
+        tensors without a source may be mapped file pages, which the system
+        reads again unseen.
+        """
+        if self.weight_source is None:
+            return 0 if self.pinned_sources else None
+        counted = getattr(self.weight_source, 'read_stats', None)
+        if counted is None:
+            return self.source_layers
+        return self.reader_layers + sum(counted[name] - self.direct_reads_start.get(name, 0)
+                                        for name in ('kept_layers', 'passed_layers'))
+
+    def drive_layers(self):
+        """Offloaded layers neither pinned nor held as a RAM view; None if unknown.
+
+        Each use of such a layer reads its file unless a device copy is
+        cached, and a cached copy can be released between steps.
+        """
+        if self.weight_source is None:
+            return 0 if self.pinned_sources else None
+        views = getattr(self.weight_source, 'host_views', None) or {}
+        return sum(not pinned and index not in views for index, pinned in enumerate(self.pinned_layers))
 
     def stats(self):
         self.copy_stream.synchronize()

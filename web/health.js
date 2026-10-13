@@ -13,12 +13,30 @@ const t = (en, zh) => cn ? zh : en;
 // launcher.js removes this flag during setup; read it before that.
 const launchVisit = query.get('freevideo') === 'launch';
 // Every script this folder ships; a test keeps the list in step with web/*.js.
-export const MODULES = ['browser_extension.js', 'capability_view.js', 'compatibility.js', 'error_panel.js', 'fonts.js', 'freevideo.js', 'generation_progress.js',
-    'health.js', 'image_editor.js', 'image_editor_engine.js', 'launcher.js', 'library.js', 'motion.js', 'output_download.js', 'port_notice.js', 'preview_scene.js',
+export const MODULES = ['agent_activity.js', 'agent_connect.js', 'agent_session.js', 'browser_extension.js', 'chain_support.js', 'capability_view.js', 'compatibility.js', 'error_panel.js', 'first_run_guide.js', 'fonts.js', 'freevideo.js', 'generation_progress.js',
+    'editor.js', 'editor_actions.js', 'editor_adjust.js', 'editor_adjust_picture.js', 'editor_picture_fields.js', 'editor_picture_session.js', 'editor_preview_picture.js', 'editor_entry.js', 'editor_export_dialog.js', 'editor_first_frame.js', 'editor_genbar.js', 'editor_geometry.js', 'editor_library.js', 'editor_menu.js', 'editor_model.js', 'editor_frame.js', 'editor_player.js', 'editor_room.js', 'editor_select.js', 'editor_state.js', 'editor_store.js', 'editor_tracks.js', 'editor_generation.js', 'editor_transport.js', 'editor_transport_model.js', 'editor_audio.js', 'editor_audio_model.js', 'editor_audio_notes.js', 'editor_audio_replace.js', 'editor_audio_rules.js', 'editor_speed.js', 'editor_speed_model.js',
+    'editor_loader.js', 'editor_text_coverage.js', 'editor_text.js', 'editor_text_model.js', 'editor_text_layout.js', 'editor_notes.js', 'editor_icons.js', 'dialog_keys.js', 'frame_sizes.js', 'health.js', 'image_commands.js', 'image_editor.js', 'image_editor_engine.js', 'launcher.js', 'length_plan.js', 'library.js', 'motion.js', 'output_download.js', 'port_notice.js', 'preview_scene.js',
     'progress_connection.js', 'prompt_draft.js', 'prompt_enhance.js', 'prompt_references.js', 'report_issue.js', 'studio_recent.js',
-    'result_actions.js', 'sampling_effort.js', 'setup.js', 'share.js', 'studio.js', 'studio_queue.js', 'studio_size.js',
+    'result_actions.js', 'sampling_effort.js', 'setup.js', 'share.js', 'share_layout.js', 'studio.js', 'studio_chain.js', 'studio_extend.js', 'studio_length.js', 'first_frame_row.js', 'studio_queue.js', 'studio_size.js',
     'toolbar_position.js', 'updates.js', 'view_navigation.js', 'wordmark.js'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+let visibleAt = 0;
+async function waitForVisible() {
+    for (;;) {
+        if (document.hidden) await new Promise(resolve => {
+            const visible = () => {
+                if (document.hidden) return;
+                document.removeEventListener('visibilitychange', visible);
+                resolve();
+            };
+            document.addEventListener('visibilitychange', visible);
+        });
+        // Let the animation frame that opens the workspace run first.
+        const remaining = 1500 - (Date.now() - visibleAt);
+        if (remaining > 0) { await sleep(remaining); continue; }
+        if (!document.hidden) return;
+    }
+}
 // A file the browser failed to load stays failed for the page's lifetime even
 // once the server sends it again, and a plain reload can take the same broken
 // copy from the HTTP cache. So when every script is reachable but some would
@@ -350,7 +368,8 @@ function sheetLoaded(name) {
 function workspaceProblem(app) {
     // Scripts that never started are already named by the load check.
     if (!window.FreeVideoUI?.ready || !hasGenerate(app.graph)) return null;
-    const studio = document.querySelector('dialog.fv-studio[open]');
+    // The editor shares the studio shell; either view replaces the floating toolbar.
+    const studio = document.querySelector('dialog.fv-editor[open]') || document.querySelector('dialog.fv-studio[open]');
     if (studio) return onScreen(studio) ? null
         : {text: t('The creative workspace is open but cannot be seen on the page.', '创作面板已经打开，但页面上看不到。'), advice: 'reload'};
     const bar = document.querySelector('.fv-view-navigation');
@@ -544,6 +563,7 @@ function send(state, problems) {
     // Kept with diagnostic reports, so a report from this computer names the cause.
     // 'loading' tells ComfyUI this page runs FreeVideo's scripts before the check ends.
     latest = {state, problems};
+    if (state === 'error' && document.hidden) return;
     const body = JSON.stringify({state, problems: problems.map(p => p.text), errors: seen.map(row => `[${row.kind}] ${row.text}`),
         ready: !!window.FreeVideoUI?.ready, launch: launchVisit, view: preferredView() || '',
         agent: navigator.userAgent, frontend: String(window.__COMFYUI_FRONTEND_VERSION__ || ''), page: location.pathname,
@@ -553,6 +573,13 @@ function send(state, problems) {
     fetch(new URL('../../api/freevideo/launcher/ui', base), {method: 'POST', headers: {'Content-Type': 'application/json'}, body, keepalive: true})
         .catch(() => { /* An older or stopped server; the card on the page still shows the problem. */ });
 }
+document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    visibleAt = Date.now();
+    if (latest?.state !== 'error') return;
+    await waitForVisible();
+    if (!document.hidden && latest?.state === 'error') send(latest.state, latest.problems);
+});
 
 async function check() {
     [extensionUI, errorUI] = await Promise.all([import('./browser_extension.js').catch(() => null),
@@ -579,13 +606,12 @@ async function check() {
     }
     if (!ui.ready && !problems.length) problems.push({text: t('FreeVideo’s scripts loaded, but ComfyUI did not start them.', 'FreeVideo 的脚本已下载，但 ComfyUI 没有启动它们。'), advice: 'reload'});
     if (!problems.length) problems.push(...await diagnoseStyles());
+    let checkStudio = false;
     if (launchVisit && !problems.length) {
         if (!launched) problems.push({text: t('The FreeVideo workflow did not open: launcher.js did not report back.', 'FreeVideo 工作流没有打开：launcher.js 没有响应。'), advice: 'reload'});
         else if (launched.error) problems.push(reportText(launched));
         else if (!studioWorkflow(app.graph)) problems.push({text: t('ComfyUI shows another workflow; the FreeVideo workflow is in another tab.', 'ComfyUI 显示的是另一个工作流，FreeVideo 工作流在别的标签页里。'), advice: 'relaunch'});
-        else if (preferredView() !== 'nodes' && !document.querySelector('dialog.fv-studio[open]')
-            && !reports.some(item => item.type === 'error' && item.where === 'studio'))
-            problems.push({text: t('The creative workspace did not open.', '创作面板没有打开。'), advice: 'reload'});
+        else checkStudio = true;
     }
     for (const item of reports) if (item.type === 'error') problems.push(reportText(item));
     const copies = await freevideoFolders();
@@ -594,18 +620,29 @@ async function check() {
         problems.push({text: copies.length > 1 ? t(`ComfyUI loaded FreeVideo more than once: ${named}.`, `ComfyUI 加载了多份 FreeVideo：${named}。`)
             : t('ComfyUI loaded FreeVideo more than once.', 'ComfyUI 加载了多份 FreeVideo。'), advice: 'duplicate'});
     }
-    if (problems.length) {
-        problems.push(...pluginErrors());
-        show(distinct(problems)); send('error', distinct(problems));
-    } else {
-        send('ready', []);
-    }
     // Later failures, such as the workspace failing to open from a node.
     listener = item => {
         if (item.type !== 'error') return;
         const problems = distinct([...lastProblems, reportText(item)]);
         show(problems); send('error', problems);
     };
+    if (document.hidden && problems.length) {
+        // File and extension diagnostics still run at startup. Only their
+        // launcher error status waits for the page to become visible.
+        const found = distinct([...problems, ...pluginErrors()]);
+        show(found); send('error', found);
+    }
+    await waitForVisible();
+    if (checkStudio && studioWorkflow(app.graph) && preferredView() !== 'nodes' && !document.querySelector('dialog.fv-studio[open]')
+        && !reports.some(item => item.type === 'error' && item.where === 'studio'))
+        problems.unshift({text: t('The creative workspace did not open.', '创作面板没有打开。'), advice: 'reload'});
+    problems.push(...lastProblems);
+    if (problems.length) {
+        problems.push(...pluginErrors());
+        show(distinct(problems)); send('error', distinct(problems));
+    } else {
+        send('ready', []);
+    }
     watchWorkspace(app).catch(error => consoleError.call(console, '[FreeVideo] Workspace check failed:', error));
 }
 

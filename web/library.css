@@ -43,3 +43,4 @@
 .fv-library .fv-library-picture .fv-preview-badge{top:6px;left:6px;padding:1px 8px;font-size:10px}
 .fv-library .fv-library-notice{min-height:0;margin:6px 0 0;text-align:center}
 .fv-library .fv-library-notice:empty{display:none}
+.fv-library .fv-library-picture .fv-agent-badge{position:absolute;top:6px;right:6px;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:var(--fv-medium);color:var(--fv-ink);background:color-mix(in srgb,var(--fv-bg) 72%,transparent);border:1px solid color-mix(in srgb,var(--fv-accent) 55%,transparent);backdrop-filter:blur(4px)}

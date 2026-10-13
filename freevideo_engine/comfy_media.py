@@ -1,5 +1,6 @@
 """Native Comfy sockets -> retained local files, without model duplication."""
 from pathlib import Path
+from .comfy_assets import REFERENCE_INPUTS
 
 
 def _image(value, path):
@@ -50,9 +51,16 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
         connected = assets.get('_connected', {})
         media.update({key: value for key, value in assets.items() if key != '_connected'})
         first, last = connected.get('first'), connected.get('last')
-        references = [{'kind': kind, 'value': connected[name]}
-                      for name, kind in (('reference', 'image'), ('reference_audio', 'audio'))
-                      if connected.get(name) is not None]
+        references = []
+        for name in REFERENCE_INPUTS:
+            value = connected.get(name)
+            if value is None:
+                continue
+            shape = getattr(value, 'shape', ())
+            frames = (value[index:index + 1] for index in range(shape[0])) if len(shape) == 4 and shape[0] > 1 else [value]
+            references.extend({'kind': 'image', 'value': frame} for frame in frames)
+        if connected.get('reference_audio') is not None:
+            references.append({'kind': 'audio', 'value': connected['reference_audio']})
     if conditioning is not None and (first is not None or last is not None or references):
         raise ValueError('Preencoded conditioning already includes media; do not connect a second set')
     if references and (first is not None or last is not None):

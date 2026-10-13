@@ -71,7 +71,7 @@ class ProgressState:
                 'sampling_plan', 'bytes_per_second', 'block', 'blocks', 'elapsed_seconds', 'step_elapsed_seconds',
                 'estimated_step_seconds', 'remaining_seconds', 'display_fraction',
                 'estimated', 'uniform_remaining_steps', 'overall', 'retry', 'warning', 'kernel_cache_note',
-                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references')
+                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain')
         value = deepcopy({key: message[key] for key in keys if key in message})
         if isinstance(message.get('prediction'), dict):
             # The UI only needs a history marker, not the resource forecast.
@@ -193,6 +193,13 @@ def progress_timeline(output):
 
 
 def publish(server, node, message):
+    try:
+        from .comfy_chain import RUNNER
+        chain = RUNNER.progress(node, message) if RUNNER is not None else None
+        if chain is not None:
+            message = dict(message, chain=chain)
+    except Exception:
+        pass  # Background scheduling must never interrupt ordinary progress.
     value = STATE.publish(node, message)
     if server is not None:
         # Progress belongs to the running node, not to the tab that queued it.

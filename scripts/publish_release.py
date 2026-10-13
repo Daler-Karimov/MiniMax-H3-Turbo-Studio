@@ -20,9 +20,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from freevideo_engine.launcher_update import (CHANNEL, LINUX_CHANNEL, MAC_CHANNEL, NIGHTLY_TAG,  # noqa: E402
-                                              RELEASE_ASSETS, build_identity, build_track)
-from freevideo_engine.release_notes import notes  # noqa: E402
+from freevideo_engine.launcher_update import (CHANNEL, LINUX_CHANNEL, MAC_CHANNEL, MAX_MANIFEST_BYTES,  # noqa: E402
+                                              NIGHTLY_TAG, RELEASE_ASSETS, asset_url, build_identity, build_track,
+                                              manifest)
+from freevideo_engine.release_notes import notes, version_key  # noqa: E402
 
 PLATFORMS = (CHANNEL, MAC_CHANNEL, LINUX_CHANNEL)
 LEGACY_PLATFORMS = (CHANNEL, MAC_CHANNEL)
@@ -191,11 +192,38 @@ class Releases:
         return {a['name']: a for a in self.api('Read %s assets' % tag, 'releases/%d' % release['id'])['assets']}
 
 
-def metadata(build, asset, path):
+def fitted(value, name):
+    """The update metadata as uploaded, within what every released launcher reads.
+
+    A launcher stops reading at MAX_MANIFEST_BYTES and then cannot update at
+    all. While the file would be larger, the notes of the oldest earlier
+    version are left out, and the log names each one."""
+    value = dict(value)
+    data, left_out = json.dumps(value, indent=2).encode('utf-8'), []
+    while len(data) > MAX_MANIFEST_BYTES:
+        earlier = sorted(value.get('release_history') or [], key=lambda row: version_key(row['product_version']))
+        if not earlier:
+            raise SystemExit('::error::%s is %d bytes, more than the %d that released launchers read. '
+                             'Shorten the release notes of this version.' % (name, len(data), MAX_MANIFEST_BYTES))
+        left_out.append(earlier[0]['product_version'])
+        value['release_history'] = earlier[:0:-1]
+        if not value['release_history']:
+            del value['release_history']
+        data = json.dumps(value, indent=2).encode('utf-8')
+    if left_out:
+        print('%s: left out the notes of %s to stay within %d bytes (now %d)'
+              % (name, ', '.join(left_out), MAX_MANIFEST_BYTES, len(data)))
+    if manifest(json.loads(data))['asset'].get('url') != value['asset']['url']:
+        raise SystemExit('::error::%s names a download address that launchers do not accept' % name)
+    return data
+
+
+def metadata(build, asset, path, tag):
     if asset['size'] != build['path'].stat().st_size:
         raise SystemExit('Uploaded %s differs in size from the built file' % asset['name'])
-    value = dict(build['raw'], asset=dict(id=asset['id'], bytes=asset['size'], sha256=build['sha256']))
-    Path(path).write_text(json.dumps(value, indent=2), encoding='utf-8')
+    value = dict(build['raw'], asset=dict(id=asset['id'], bytes=asset['size'], sha256=build['sha256'],
+                                         url=asset_url(tag, build['path'].name)))
+    Path(path).write_bytes(fitted(value, Path(path).name))
     return path
 
 
@@ -208,7 +236,7 @@ def write(folder, name, text):
 def bind_metadata(releases, tag, builds, channels, folder, names):
     """Upload update metadata for each platform, bound to the assets now on the release."""
     uploaded = releases.assets(tag)
-    files = [metadata(builds[c], uploaded[builds[c]['path'].name], Path(folder) / names[c]) for c in channels]
+    files = [metadata(builds[c], uploaded[builds[c]['path'].name], Path(folder) / names[c], tag) for c in channels]
     gh('Upload update metadata to %s' % tag, 'release', 'upload', tag, *map(str, files), '--clobber')
 
 

@@ -1,13 +1,14 @@
 import { createErrorPanel, errorText } from './error_panel.js';
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { openEditorView } from './editor_loader.js';
 import { openStudio, loraPanel, loraWarning, promptGuide } from "./studio.js";
 import { createGenerationProgress, referenceTrimText, thermalText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
@@ -65,6 +66,37 @@ function mediaKind(name) {
     throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
 }
 
+const referenceHelp = () => text('When one input receives several images, each counts as one reference.', '一个接口接入多张图片时，每张各算一个参考素材。');
+// Input names stay English like every other node's; the panel's chips are translated.
+const referenceSocket = index => `Reference image ${index + 1}`;
+const referenceLabel = index => text(`Reference image ${index + 1}`, `参考图片 ${index + 1}`);
+
+function syncReferenceSockets(node) {
+    if (!node.inputs || !node.addInput) return;
+    const last = referenceInputs.reduce((at, name, index) => node.inputs.find(i => i.name === name)?.link != null ? index : at, -1);
+    const count = Math.min(8, last + 2);
+    for (let index = node.inputs.length - 1; index >= 0; index--) {
+        const position = referenceInputs.indexOf(node.inputs[index].name);
+        if (position >= count && node.inputs[index].link == null) node.removeInput(index);
+    }
+    for (let index = 0; index < count; index++) {
+        const name = referenceInputs[index];
+        if (!node.inputs.some(i => i.name === name)) node.addInput(name, 'IMAGE', {shape: node.inputs.find(i => i.name === 'reference')?.shape});
+        const input = node.inputs.find(i => i.name === name);
+        input.label = referenceSocket(index); input.tooltip = referenceHelp();
+    }
+    const images = referenceInputs.map(name => node.inputs.find(i => i.name === name)).filter(Boolean);
+    const others = node.inputs.filter(i => !referenceInputs.includes(i.name));
+    const audio = others.findIndex(i => i.name === 'reference_audio');
+    const at = audio < 0 ? others.length : audio;
+    node.inputs.splice(0, node.inputs.length, ...others.slice(0, at), ...images, ...others.slice(at));
+    node.inputs.forEach((input, index) => {
+        const link = node.graph?.links?.get?.(input.link) ?? node.graph?.links?.[input.link];
+        if (link) link.target_slot = index;
+    });
+    node.setDirtyCanvas?.(true, true);
+}
+
 function mediaPanel(node, mount = null) {
     const serialized = node.widgets.find(w => w.name === "assets");
     serialized.type = "hidden";
@@ -117,17 +149,28 @@ function mediaPanel(node, mount = null) {
         const result = await response.json(); if (!response.ok) throw new Error(result.error || response.statusText);
         return result;
     }
+    // An agent's edit leaves its editor document beside the picture: open that, so people continue its layers.
+    async function agentEdit(file) {
+        if (!file.startsWith('freevideo/agent/') || mediaKind(file) !== 'image') return null;
+        try {
+            const response = await fetch(viewURL(file.replace(/\.[^./]+$/, '.edit.json')), {cache: 'no-store'});
+            if (!response.ok) return null;
+            const doc = await response.json(), base = doc?.version === 2 && doc.layers?.find(l => l.id === 'base');
+            return base?.src ? {edit: doc, source: base.src} : null;
+        } catch { return null; }
+    }
     async function editImage(file, tool = null) {
         if (node.isUploading) return;
         const original = read().find(row => row.file === file);
         if (!original) return;
-        const source = original.source || original.file;
+        const agent = original.edit ? null : await agentEdit(original.file);
+        const source = original.source || agent?.source || original.file;
         // Other pictures in this panel can be placed on the image as layers.
         const library = read().filter(row => row.file !== file && mediaKind(row.file) === 'image')
             .map(row => ({file: row.file, label: (row.source || row.file).split('/').pop()}));
         let outcome;
         try {
-            outcome = await openImageEditor({source, name: source, target: videoSize(), edit: original.edit || null, role: original.role,
+            outcome = await openImageEditor({source, name: source, target: videoSize(), edit: original.edit || agent?.edit || null, role: original.role,
                 t: text, resolve: viewURL, upload: uploadOne, library, tool});
         } catch (error) { message(text('The image could not be opened for editing.', '这张图片无法打开编辑。'), true); return; }
         if (!outcome) return;
@@ -170,12 +213,12 @@ function mediaPanel(node, mount = null) {
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
         const audioRefs = active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'audio').length + Number(linked('reference_audio'));
-        const refs = active.filter(row => row.role === "reference").length + Number(linked('reference')) + Number(linked('reference_audio'));
+        const refs = active.filter(row => row.role === "reference").length + referenceInputs.filter(linked).length + Number(linked('reference_audio'));
         audioHelp.hidden = !audioRefs;
         audioHelp.textContent = text('Use <Audio 1>, <Audio 2>, … in your prompt to guide the generated voice, music or rhythm. A clip is cut to the generated length, up to 15 seconds. Set accompanying images to Reference.',
             '在提示词中用 <Audio 1>、<Audio 2> 等标签引导生成的音色、音乐或节奏。片段只取与生成视频等长的部分，最长 15 秒；搭配的图片请选择“参考”用途。');
         connections.replaceChildren();
-        for (const [name, label] of [['first', text('First frame', '首帧')], ['last', text('Last frame', '尾帧')], ['reference', text('Reference image', '参考图像')], ['reference_audio', text('Reference audio', '参考音频')]]) {
+        for (const [name, label] of [['first', text('First frame', '首帧')], ['last', text('Last frame', '尾帧')], ...referenceInputs.map((name, index) => [name, referenceLabel(index)]), ['reference_audio', text('Reference audio', '参考音频')]]) {
             if (!linked(name)) continue;
             const link = node.graph?.links[node.inputs.find(i => i.name === name).link];
             const source = link && node.graph?.getNodeById(link.origin_id);
@@ -183,8 +226,8 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs && (first || last) || first > 1 || last > 1));
-        if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Connect an image / audio node or upload files.\nLeave empty for text to video.", "连接图像／音频节点或上传文件。\n留空即可文生视频。"), "fv-empty"));
+        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) || first > 1 || last > 1));
+        if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
         if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media will come from the connected nodes.\nNo upload is needed.', '素材由已连接的节点提供。\n无需上传文件。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
             const card = el("div", undefined, "fv-card"); card.dataset.enabled = String(row.enabled !== false);
@@ -282,10 +325,10 @@ function mediaPanel(node, mount = null) {
     const removed = node.onRemoved;
     node.onRemoved = function (...args) { dispose(); return removed?.apply(this, args); };
     const configure = node.onConfigure;
-    node.onConfigure = function (...args) { const result = configure?.apply(this, args); render(); return result; };
+    node.onConfigure = function (...args) { const result = configure?.apply(this, args); queueMicrotask(() => { syncReferenceSockets(node); render(); }); return result; };
     const connectionChanged = node.onConnectionsChange;
-    node.onConnectionsChange = function (...args) { const result = connectionChanged?.apply(this, args); update(read()); return result; };
-    node.setSize([460, 460]); render();
+    node.onConnectionsChange = function (...args) { const result = connectionChanged?.apply(this, args); queueMicrotask(() => { syncReferenceSockets(node); update(read()); }); return result; };
+    syncReferenceSockets(node); node.setSize([460, 460]); render();
 }
 
 function resultPanel(node) {
@@ -503,7 +546,7 @@ window.addEventListener('freevideo-media', () => syncPrompts());
 // health.js names what failed; files loaded before it queue their reports.
 const health = item => (window.__freevideoHealth ||= []).push(item);
 function showStudio(node) {
-    try { openStudio(node); } catch (error) { console.error('FreeVideo workspace:', error); health({type: 'error', where: 'studio', error}); }
+    try { return openStudio(node); } catch (error) { console.error('FreeVideo workspace:', error); health({type: 'error', where: 'studio', error}); }
 }
 
 const progressConnection = createProgressConnection(api, message => {
@@ -530,6 +573,14 @@ app.registerExtension({
         await notifyCompatibility();
     },
     async beforeRegisterNodeDef(nodeType, nodeData) {
+        if (nodeData.name === 'FreeVideoMedia') {
+            nodeData.description = text(nodeData.description,
+                '连接图片、音频或上传文件。可以连接多张参考图片，上传的素材排在前面，连接的图片按从上到下的顺序排在后面。选择首尾帧或实验性参考生成，留空则为文生视频。');
+            for (const name of referenceInputs) {
+                const input = nodeData.input?.optional?.[name];
+                if (input) { input[1].tooltip = referenceHelp(); input[1].display_name = referenceSocket(referenceInputs.indexOf(name)); }
+            }
+        }
         if (nodeData.name === 'FreeVideoReference') {
             const connected = nodeType.prototype.onConnectionsChange;
             nodeType.prototype.onConnectionsChange = function (...args) { const result = connected?.apply(this, args); queueMicrotask(syncPrompts); return result; };
@@ -593,9 +644,15 @@ app.registerExtension({
         progressConnection.reset();
         progressConnection.refresh();
         refreshNavigation();
-        if (app.graph?.extra?.freevideo_studio && preferredView() !== 'nodes') {
+        const rememberedView = preferredView();
+        if ((app.graph?.extra?.freevideo_studio || rememberedView === 'editor') && rememberedView !== 'nodes') {
             const node = app.graph._nodes.find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
-            if (node) requestAnimationFrame(() => showStudio(node));
+            if (node) requestAnimationFrame(() => {
+                const studio = showStudio(node);
+                if (studio && rememberedView === 'editor') {
+                    void openEditorView(node, {studio, onFailure: error => health({type: 'error', where: 'editor', error})});
+                }
+            });
         }
     },
     onNodeOutputsUpdated(outputs) {

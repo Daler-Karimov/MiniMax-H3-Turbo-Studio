@@ -159,6 +159,7 @@ class MPSBackend(DeviceBackend):
                              'mps_int8.py')},
             runtime_source_sha256={name: hashlib.sha256((Path(__file__).parent.parent / name).read_bytes()).hexdigest()
                 for name in ('macos_runtime.py', 'macos_vdn.py', 'macos_decode.py', 'macos_encoder.py',
+                             'macos_encoder_attention.py', 'macos_encoder_linear.py',
                              'macos_compute.py', 'macos_stages.py', 'macos_decode_tiles.py',
                              'latent_upscale.py')})
 

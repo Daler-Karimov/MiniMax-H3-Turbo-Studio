@@ -146,8 +146,9 @@ export function scaleSelection(selection, sx, sy) {
 // stay sharp and editable. A layer's own edits are fractions of it and follow by themselves.
 // keep (proportions locked): the same scale both ways, just enough to fill width × height, and
 // the fraction of a pixel left over is cut from the right and bottom. Otherwise each way scales
-// on its own: pictures and shapes stretch, text keeps its shape. The text fonts must be loaded.
-export function resizeDocument(doc, width, height, keep = true) {
+// on its own: pictures and shapes stretch, text keeps its shape. The text fonts must be loaded
+// for the default measure callback; DOM-free callers supply their own text metrics.
+export function resizeDocument(doc, width, height, keep = true, measure = measureText) {
     const c = doc.crop;
     let kx = width / c.w, ky = height / c.h;
     if (keep) kx = ky = Math.max(kx, ky);
@@ -168,7 +169,7 @@ export function resizeDocument(doc, width, height, keep = true) {
         if (l.mask) next.mask = {...l.mask, ops: scaleOps(l.mask.ops)};
         if (l.copyOf?.selection) next.copyOf = {...l.copyOf, selection: scaleSelection(l.copyOf.selection, sx, sy)};
         if (l.kind === 'text') {
-            const text = {...l.text, size: Math.max(1, Math.round(l.text.size * k * 10) / 10)}, size = measureText(text);
+            const text = {...l.text, size: Math.max(1, Math.round(l.text.size * k * 10) / 10)}, size = measure(text);
             return {...next, text, ...size, w: size.nw * l.w / l.nw, h: size.nh * l.h / l.nh};
         }
         if (l.kind === 'shape') {

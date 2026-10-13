@@ -2,6 +2,7 @@ import {api} from '../../scripts/api.js';
 import {closeDialog} from './motion.js';
 import {effortFor, effortName} from './sampling_effort.js';
 import {fontCSS, loadFont} from './fonts.js';
+import {shareLayout} from './share_layout.js';
 
 const css=document.createElement('link'); css.rel='stylesheet'; css.href=new URL('./share.css',import.meta.url).href; document.head.append(css);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e;};
@@ -30,11 +31,6 @@ let opened;
 // font of the computer; no external resources or user prompt are included. The image window
 // preserves every pixel.
 export const shareFonts=()=>Promise.all([loadFont('sans',400),loadFont('sans',700)]);
-export function shareLayout(width,height) {
-    const w=width>=height?1200:900, scale=w/width, footer=w>=1000?148:200;
-    const h=Math.round(Math.min(1800,height*scale)/2)*2, artWidth=Math.round(h*width/height/2)*2;
-    return {width:w,height:h+footer,rect:[Math.floor((w-artWidth)/2),0,artWidth,h],footer};
-}
 
 export function drawShareCard(canvas,frame,logo,record,t) {
     const g=record.geometry||{}, shape=shareLayout(g.width||frame?.naturalWidth||1344,g.height||frame?.naturalHeight||768);

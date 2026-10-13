@@ -1,31 +1,68 @@
 {
   "schema": 1,
-  "product_version": "0.3.25",
+  "product_version": "0.4.0",
   "en": {
-    "summary": "Offline packages now work on Windows PCs where long-path support is off, and a generation interrupted once no longer slows down later ones.",
+    "summary": "Adds an editing view, long videos generated one part after another, and AI agent connections, and makes generation faster.",
     "changes": [
-      "On Windows PCs where long-path support is off, which is the Windows default, offline packages now import, start and generate normally with no change to system settings, including in deeply nested folders with very long paths. A folder left half imported by the previous version needs no cleanup: import the package again after updating.",
-      "The Total pixels list in the creation panel no longer offers 1.00 MP, which gave the same size as 0.98 MP · Native. Workflows saved at 1.00 MP open at their original size.",
-      "On Windows PCs whose RAM cannot hold the whole video model, the part of the model that comes from the drive is now read ahead while the rest is computing, so a slow drive holds up each sampling step much less.",
-      "On Windows, the first video at the Max quality level, or at some custom step counts, no longer downloads about 26 GB of extra model files.",
-      "A generation interrupted once no longer slows down later generations. The compatibility level is raised automatically only after two interruptions in a row or a graphics card error, and goes back down after three generations complete normally.",
-      "Closing FreeVideo during a generation now cancels it instead of counting as an interruption. While the compatibility level is raised automatically, the progress says so and shows how many more completed generations are needed before it speeds up.",
-      "The creation panel has a new Available sizes and lengths row under Frame & duration. It opens a map of the picture sizes and lengths that can be generated; hovering shows the estimated time, and clicking fills in the size and length. Not shown on Mac."
+      "New editing view: arrange generated clips on a timeline, add text and subtitles, change speed or reverse a clip, and choose the size and quality when exporting.",
+      "Long videos can be generated one part after another: select a range on the timeline in the editing view and press Generate, and each part continues from the one before.",
+      "Clips can be extended in the editing view: drag a new part out of the end of a clip and press Generate, and it continues from the clip.",
+      "A \"First-frame reference\" switch reduces drift when a clip is extended.",
+      "The editing view can create subtitles automatically: it recognizes Chinese, English, Japanese, Korean and Cantonese speech and gives each line its text and timing.",
+      "A step-by-step guide appears the first time FreeVideo opens, and can be viewed again from Settings.",
+      "Connect an AI agent and let it generate, edit and export videos.",
+      "LoRAs can be added directly in the creation panel.",
+      "A 30-second video is generated in two parts.",
+      "The FreeVideo · Media node accepts several reference images.",
+      "Faster generation: the wait before decoding is shorter; when generating several videos in a row, the models load faster for the later ones. On computers with less memory, background compiling after an update uses less memory.",
+      "Fixes: generating with several large reference images no longer runs out of memory; 16:9 videos can be saved as share videos; making the full video from a preview no longer stalls on a single step now and then; when setup cannot find a graphics driver, the error says so; when security software removes one of FreeVideo's files, the error says why and how to restore it."
     ]
   },
   "zh": {
-    "summary": "离线包在没有开启长路径支持的 Windows 电脑上也能使用；生成被打断一次后，之后的生成不再变慢。",
+    "summary": "新增剪辑视图、一段接一段的长视频生成，并可以连接 AI Agent；生成也更快。",
     "changes": [
-      "在没有开启长路径支持的 Windows 电脑上（Windows 的默认设置），离线包现在可以正常导入、启动和生成，不需要更改系统设置；层级很深、路径很长的文件夹也可以。上一版没有导完的文件夹不需要清理，更新后可以直接重新导入。",
-      "创作面板“总像素”的选项里去掉了“1.00 MP”，它和“0.98 MP · 原生”是同一个尺寸；以前用 1.00 MP 保存的工作流打开后尺寸不变。",
-      "内存不足以容纳整个视频模型的 Windows 电脑上，需要从硬盘读取的那部分模型现在会在其余部分计算的同时提前读好，硬盘较慢时每个采样步等待的时间明显缩短。",
-      "在 Windows 上第一次用“极致”档（以及部分自定义步数）生成时，不再额外下载约 26 GB 的模型文件。",
-      "生成被意外中断一次后，之后的生成不再因此变慢：只有连续两次中断或显卡报错，才会自动提高兼容档位；之后连续三次正常完成，档位会自动调回。",
-      "生成过程中关掉 FreeVideo，现在会取消这次生成，不算作中断；兼容档位被自动提高时，生成进度上会说明这一点，并显示再完成几次后会加快。",
-      "创作面板“画幅与时长”下面新增“可生成范围”：展开是一张图，显示可以生成的画面大小和时长；鼠标移到图上会显示预计用时，点击图中的位置会填入对应的大小和时长。Mac 上不显示。"
+      "新增剪辑视图：把生成的片段排在时间线上剪辑，可以加文字和字幕、变速和倒放；导出时可以选画面大小和画质。",
+      "长视频可以一段接一段生成：在剪辑视图的时间线上选好范围再点生成，每一段都接着前一段往下生成。",
+      "剪辑视图里可以延长片段：从片段尾巴拖出一段再点生成，接在原片段后面往下生成。",
+      "延长片段时可以打开“首帧参考”，减小画面漂移。",
+      "剪辑视图可以自动生成字幕：识别中文、英文、日文、韩文和粤语语音，得到每句的文字和时间。",
+      "第一次打开时有分步指引，设置里可以再看一遍。",
+      "可以连接 AI Agent，让它生成、剪辑和导出视频。",
+      "创作面板里可以直接添加 LoRA。",
+      "30 秒的视频分两段生成。",
+      "FreeVideo · Media 节点可以接多张参考图。",
+      "生成更快：解码前的等待更短；连续生成时，后面的视频加载模型更快。内存较小的电脑上，更新后的后台编译占用的内存更少。",
+      "修复：用多张较大的参考图生成时不再内存不足；16:9 的视频可以保存分享视频；先出预览再生成正式视频时，不再偶尔在某一步停留很久；安装时没有找到显卡驱动，会直接说明；FreeVideo 的文件被安全软件移走时，会说明原因和恢复的办法。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.3.25",
+      "en": {
+        "summary": "Offline packages now work on Windows PCs where long-path support is off, and a generation interrupted once no longer slows down later ones.",
+        "changes": [
+          "On Windows PCs where long-path support is off, which is the Windows default, offline packages now import, start and generate normally with no change to system settings, including in deeply nested folders with very long paths. A folder left half imported by the previous version needs no cleanup: import the package again after updating.",
+          "The Total pixels list in the creation panel no longer offers 1.00 MP, which gave the same size as 0.98 MP · Native. Workflows saved at 1.00 MP open at their original size.",
+          "On Windows PCs whose RAM cannot hold the whole video model, the part of the model that comes from the drive is now read ahead while the rest is computing, so a slow drive holds up each sampling step much less.",
+          "On Windows, the first video at the Max quality level, or at some custom step counts, no longer downloads about 26 GB of extra model files.",
+          "A generation interrupted once no longer slows down later generations. The compatibility level is raised automatically only after two interruptions in a row or a graphics card error, and goes back down after three generations complete normally.",
+          "Closing FreeVideo during a generation now cancels it instead of counting as an interruption. While the compatibility level is raised automatically, the progress says so and shows how many more completed generations are needed before it speeds up.",
+          "The creation panel has a new Available sizes and lengths row under Frame & duration. It opens a map of the picture sizes and lengths that can be generated; hovering shows the estimated time, and clicking fills in the size and length."
+        ]
+      },
+      "zh": {
+        "summary": "离线包在没有开启长路径支持的 Windows 电脑上也能使用；生成被打断一次后，之后的生成不再变慢。",
+        "changes": [
+          "在没有开启长路径支持的 Windows 电脑上（Windows 的默认设置），离线包现在可以正常导入、启动和生成，不需要更改系统设置；层级很深、路径很长的文件夹也可以。上一版没有导完的文件夹不需要清理，更新后可以直接重新导入。",
+          "创作面板“总像素”的选项里去掉了“1.00 MP”，它和“0.98 MP · 原生”是同一个尺寸；以前用 1.00 MP 保存的工作流打开后尺寸不变。",
+          "内存不足以容纳整个视频模型的 Windows 电脑上，需要从硬盘读取的那部分模型现在会在其余部分计算的同时提前读好，硬盘较慢时每个采样步等待的时间明显缩短。",
+          "在 Windows 上第一次用“极致”档（以及部分自定义步数）生成时，不再额外下载约 26 GB 的模型文件。",
+          "生成被意外中断一次后，之后的生成不再因此变慢：只有连续两次中断或显卡报错，才会自动提高兼容档位；之后连续三次正常完成，档位会自动调回。",
+          "生成过程中关掉 FreeVideo，现在会取消这次生成，不算作中断；兼容档位被自动提高时，生成进度上会说明这一点，并显示再完成几次后会加快。",
+          "创作面板“画幅与时长”下面新增“可生成范围”：展开是一张图，显示可以生成的画面大小和时长；鼠标移到图上会显示预计用时，点击图中的位置会填入对应的大小和时长。"
+        ]
+      }
+    },
     {
       "product_version": "0.3.24",
       "en": {
@@ -230,21 +267,6 @@
           "在 Windows 上，启动器每次打开时都会检查桌面快捷方式并就地修复，开始菜单里现在也会有 FreeVideo。以前安装留下的、或被 Windows 改写过的快捷方式会直接更新，不会再在旁边多出一个“FreeVideo (2)”；改过名字的快捷方式保留原名，换过图标的保持不变。如果 Windows 不允许写入桌面（例如开启了“Windows 安全中心”的“受控文件夹访问”），启动器会说明原因和放行办法，开始菜单里仍然可以找到 FreeVideo。",
           "以管理员身份运行过一次之后，桌面快捷方式仍能打开 FreeVideo：快捷方式指向的启动器副本不需要管理员权限也能读取；之前版本留下的读不了的副本，会在下次打开启动器时换掉。",
           "以管理员身份运行过一次之后，离线安装也能正常启动；如果 Windows 不允许当前账户读取程序文件，启动器会说明原因和处理办法，不再只报缺少模块。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.15",
-      "en": {
-        "summary": "On Windows computers with a small page file, generation keeps its weight read-ahead on and no longer runs out of virtual memory midway.",
-        "changes": [
-          "When FreeVideo keeps model weights in system memory on Windows, it now leaves room in virtual memory (commit) for the GPU memory the request will still allocate. Before, a computer with a small page file could run out midway: the weight read-ahead switched off for the rest of the request, or the request stopped and started again with less kept in memory. In a test with a fixed page file and a 7 GB GPU limit, a request that stopped and restarted midway (851 s) now completes without the restart (622 s)."
-        ]
-      },
-      "zh": {
-        "summary": "页面文件较小的 Windows 电脑上，生成过程中不再耗尽虚拟内存，权重预读也会一直开着。",
-        "changes": [
-          "在 Windows 上把模型权重放进内存时，FreeVideo 现在会为本次请求之后还要分配的显存预留虚拟内存（提交内存）。之前页面文件较小的电脑可能在生成中途耗尽虚拟内存：剩下的步骤会关闭权重预读，或者请求中止后减少内存占用再重新开始。在固定页面文件、显存限制为 7 GB 的测试中，原来中途中止重来的请求（851 秒）现在一次完成（622 秒）。"
         ]
       }
     }

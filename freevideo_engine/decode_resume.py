@@ -24,7 +24,7 @@ SAMPLE_FIELDS = ('config', 'sample_seconds', 'step_seconds', 'finite_latents', '
     'attention_backend_calls', 'head_execution', 'text_refinement', 'sampling_memory',
     'load_seconds', 'load_breakdown', 'load_peak_allocated_bytes', 'load_peak_reserved_bytes',
     'torch_peak_allocated_bytes', 'torch_peak_reserved_bytes', 'latent_save_seconds', 'sample_metrics_scope',
-    'sampling_plan', 'sampling_passes', 'latent_upscale', 'refinement', 'fp8_kernel_calls')
+    'sampling_plan', 'sampling_passes', 'latent_upscale', 'refinement', 'fp8_kernel_calls', 'continuation', 'audio_context')
 
 
 def completed_sampling(metrics):
@@ -94,10 +94,15 @@ def sampling_provenance(request):
             result['upscaler_sha256'] = _digest(request['upscaler_checkpoint'])
             if result['upscaler_sha256'] != request['sampling_plan']['upscaler_sha256']:
                 raise ValueError('Latent upscaler differs from the planned checkpoint')
+    if request.get('continuation') is not None:
+        # A retry's identity binds the accepted bytes, without embedding the
+        # snapshot again or making a relocation change computation identity.
+        result['continuation'] = {key: value for key, value in request['continuation'].items()
+                                  if key not in ('snapshot', 'snapshot_data', 'source_video')}
     return result
 
 
-def load_saved_sampling(request, torch):
+def load_saved_sampling(request, torch, *, continuation_tail_callback=None):
     """Load verified CPU tensors; caller controls CUDA admission and transfer."""
     resume = request['resume_decode']
     if not isinstance(resume, dict) or any(not isinstance(resume.get(key), str) or not resume[key]
@@ -146,6 +151,8 @@ def load_saved_sampling(request, torch):
         sampling_source_metrics=copy.deepcopy(source), load_seconds=0.,
         sampling_metrics_scope='Reused completed sampling; sampling times and peaks belong to the source attempt.',
         work_seconds_scope='Current decoder retry, including retained latent validation and transfer only.')
+    if continuation_tail_callback is not None:
+        continuation_tail_callback(value.get('continuation_tail'))
     return value['video'], value['audio'], metrics, Path(provenance['base'])
 
 
@@ -279,7 +286,7 @@ def refine_checkpoint_complete(metrics):
             and all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in seconds))
 
 
-def load_refine_input(request, torch):
+def load_refine_input(request, torch, *, continuation_tail_callback=None):
     """Load a verified retained first pass on the CPU; the caller moves it to the GPU."""
     resume = request['resume_refine']
     if not isinstance(resume, dict) or any(not isinstance(resume.get(key), str) or not resume[key]
@@ -320,4 +327,6 @@ def load_refine_input(request, torch):
                    first_pass_source_attempt=previous.get('refine_source_attempt', prior.get('resource_attempt')),
                    first_pass_scope='Reused the retained first pass, latent upscale and crop; their times and '
                                     'peaks belong to the source attempt.')
+    if continuation_tail_callback is not None:
+        continuation_tail_callback(value.get('continuation_first'))
     return value['video'], value['audio'], first, lifted, receipt

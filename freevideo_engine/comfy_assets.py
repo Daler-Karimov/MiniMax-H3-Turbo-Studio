@@ -25,6 +25,7 @@ EXTENSIONS = {
     'video': {'.mp4', '.mov', '.webm', '.mkv', '.m4v'},
     'audio': {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.opus'},
 }
+REFERENCE_INPUTS = ('reference', *(f'reference_{i}' for i in range(2, 9)))
 
 
 def resolve_loras(serialized, names, resolve, previous=None):
@@ -105,18 +106,26 @@ def resolve_assets(serialized, input_directory):
     return result
 
 
-def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None):
+def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None, **images):
     """Keep connected IMAGE/AUDIO values native until request input export."""
     result = dict(assets)
+    if set(images) - set(REFERENCE_INPUTS[1:]):
+        raise TypeError('Unknown reference image input')
+    images = dict(reference=reference, **images)
     connected = {name: value for name, value in (('first', first), ('last', last),
-                 ('reference', reference), ('reference_audio', reference_audio))
+                 *((name, images.get(name)) for name in REFERENCE_INPUTS), ('reference_audio', reference_audio))
                  if value is not None}
     for name in ('first', 'last'):
         if name in result and name in connected:
             raise ValueError('Choose the connected ' + name + ' frame or the uploaded one; disable the duplicate')
-    count = len(result.get('references', [])) + int(reference is not None) + int(reference_audio is not None)
+    count = len(result.get('references', [])) + int(reference_audio is not None)
+    for value in images.values():
+        if value is not None:
+            shape = getattr(value, 'shape', ())
+            count += int(shape[0]) if len(shape) == 4 else 1
     if count > 32:
-        raise ValueError('Use at most 32 references, including connected inputs')
+        raise ValueError(f'There are {count} references and the limit is 32. '
+                         'For a long image batch, connect a clip to the Reference node\'s video input; a clip counts as one reference.')
     if count and any(
             name in result or name in connected for name in ('first', 'last')):
         raise ValueError('Choose keyframes or references; disable the unused inputs')
@@ -142,7 +151,8 @@ def output_summary(report, relative_video):
                 conditioning_cache_hit=report.get('encoding', {}).get('cache_hit', False),
                 gpu_budget_bytes=report.get('profile', {}).get('policy', {}).get('gpu_budget_bytes'),
                 gpu_total_bytes=report.get('profile', {}).get('policy', {}).get('hardware', {}).get('vram_total'),
-                geometry=report.get('geometry', {}),
+                # A small size is sampled larger and scaled back; people see the size they asked for.
+                geometry=dict(report.get('geometry', {}), **(report.get('output_size') or {})),
                 sampling_plan=report.get('sampling_plan'),
                 low_memory=bool(report.get('low_memory_mode')),
                 thermal=thermal_slowdown(((report.get('memory') or {}).get('video') or {}).get('gpu')),
@@ -177,4 +187,14 @@ def output_summary(report, relative_video):
             unified_total_bytes=hardware.get('ram_total'),
             unified_reserve_bytes=policy.get('reserve_bytes'),
             vram_peak_bytes=None, gpu_budget_bytes=None, gpu_total_bytes=None)
+    continuation = report.get('continuation')
+    if isinstance(continuation, dict):
+        # Only chain counters, never retained source paths or conditioning.
+        counters = {key: continuation[key] for key in
+                    ('overlap_frames', 'new_frames', 'frame_origin', 'audio_origin', 'segment', 'audio_lead_in_samples')
+                    if type(continuation.get(key)) is int}
+        if counters:
+            if 'overlap_frames' in counters and 'new_frames' in counters:
+                counters['requested_frames'] = counters['overlap_frames'] + counters['new_frames']
+            result['continuation'] = counters
     return result

@@ -1,4 +1,4 @@
-"""One rewrite job per process: model, CUDA context and private commit die together."""
+"""One rewrite or ask job per process: model, CUDA context and private commit die together."""
 import json
 import os
 from pathlib import Path
@@ -127,7 +127,8 @@ def failure(error, mode='rewrite'):
     """
     allowed = {'ram_space', 'image_size', 'context_length', 'invalid_output'}
     message = str(error)
-    code = message if message in allowed else 'out_of_memory' if 'out of memory' in message.lower() else 'rewrite_failed'
+    fallback = 'ask_failed' if mode == 'ask' else 'rewrite_failed'
+    code = message if message in allowed else 'out_of_memory' if 'out of memory' in message.lower() else fallback
     frames = [dict(module=Path(f.filename).name, function=f.name, line=f.lineno)
               for f in traceback.extract_tb(error.__traceback__)]
     return dict(error=code, exception=type(error).__name__, error_details=frames)
@@ -195,6 +196,14 @@ def kv_positions(input_tokens):
     return input_tokens + 2 * OUTPUT_TOKENS + 256
 
 
+def reserved_tokens(stats):
+    """Prompt length to reserve KV space for; a batch of questions runs one at a time."""
+    tokens = stats.get('input_tokens', 6500)
+    if isinstance(tokens, list):
+        tokens = max((t for t in tokens if t <= 6500), default=6500)
+    return tokens
+
+
 def kv_bytes(stored, input_tokens):
     keys = [row for name, row in stored.items() if name.endswith('self_attn.k_proj.weight')]
     per_token = 2 * len(keys) * (keys[0]['shape'][0] if keys else 0) * 2  # K and V, bf16
@@ -240,7 +249,7 @@ def load_model(folder, torch, stats, checkpoint):
         # When the layers do not all fit, keep activation/KV space and the
         # desktop outside the budget for the layers that stay on the GPU.
         weight_budget = min(9 * 2**30, max(0, free - 2 * 2**30))
-        kv = kv_bytes(shapes, stats.get('input_tokens', 6500))
+        kv = kv_bytes(shapes, reserved_tokens(stats))
         stats.update(gpu_allocator_budget_bytes=free, gpu_weight_budget_bytes=weight_budget, gpu_kv_reserve_bytes=kv)
         resident = placement(weights, int8.saved_bytes(shapes), kv, free)
     stats['ram_required_bytes'] = RESIDENT_RAM if resident else MAPPED_RAM
@@ -253,7 +262,7 @@ def load_model(folder, torch, stats, checkpoint):
         from .load import resident as load_resident
         model = load_resident(folder, torch, 'cuda:0', resident)
         mapping, device = {'': 0}, 'cuda:0'
-        stats.update(weights=resident, kv_positions=kv_positions(stats.get('input_tokens', 6500)))
+        stats.update(weights=resident, kv_positions=kv_positions(reserved_tokens(stats)))
     else:
         import psutil
         from transformers import Qwen3VLForConditionalGeneration
@@ -307,6 +316,8 @@ def generate(torch, model, inputs, max_new_tokens, started, on_token):
 
 def run(folder, value, *, stats=None):
     stats = {} if stats is None else stats
+    if value.get('mode') == 'ask':
+        return ask(folder, value, stats)
     return rewrite(folder, value, stats)
 
 
@@ -371,6 +382,97 @@ def rewrite(folder, value, stats):
     rewritten = validate_output(text, value)
     stats['stage'] = 'complete'
     emit(phase='complete', text=rewritten, diagnostics=dict(stats))
+
+
+def ask(folder, value, stats):
+    """Answer each question with one loaded model; answers leave only via stdout."""
+    from .rules import ask_instruction, image_tokens, parse_json, ASK_JSON_RETRY
+    questions = value['questions']
+    stats.update(stage='imports', pid=os.getpid(), mode='ask', question_count=len(questions),
+                 image_count=sum(len(q['images']) for q in questions), format=value['format'],
+                 max_tokens=value['max_tokens'], custom_system=bool(value.get('system')),
+                 dtype='bfloat16', attention='sdpa', kv_cache='dynamic', backend='transformers',
+                 accelerations=[], persistent_model=False)
+    torch, checkpoint = begin(stats)
+    from transformers import AutoProcessor
+    checkpoint('preprocess')
+    preparing = time.monotonic()
+    processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
+    system = ask_instruction(value)
+    images = {}
+    prepared = []
+    for question in questions:
+        content = []
+        for index, row in enumerate(question['images'], 1):
+            if row['path'] not in images:
+                images[row['path']] = open_image(row['path'])
+            label = f' ({row["label"]})' if row.get('label') else ''
+            content.extend([{'type': 'text', 'text': f'<Image {index}>{label}'},
+                            {'type': 'image', 'image': images[row['path']]}])
+        content.append({'type': 'text', 'text': question['text']})
+        messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': content}]
+        pixels = image_tokens(len(question['images'])) * 32 * 32
+        inputs = tokenize(processor, messages, pixels)
+        prepared.append((messages, pixels, inputs if inputs.input_ids.shape[-1] <= 6500 else None,
+                         int(inputs.input_ids.shape[-1])))
+    stats.update(input_tokens=[row[3] for row in prepared], preprocess_seconds=time.monotonic() - preparing)
+    answers = [None] * len(questions)
+    timings = [dict(input_tokens=row[3]) for row in prepared]
+    for index, row in enumerate(prepared):
+        if row[2] is None:
+            answers[index] = dict(error='context_length', text='', tokens=0, seconds=0.)
+            timings[index].update(error='context_length')
+    if all(answer is not None for answer in answers):
+        raise ValueError('context_length')
+    model, device = load_model(folder, torch, stats, checkpoint)
+    loaded = time.monotonic()
+    stats['answer_timings'] = timings
+    checkpoint('prefill', 'answering', answered=0, questions=len(questions))
+    for index, (messages, pixels, inputs, _) in enumerate(prepared):
+        if inputs is None:
+            continue
+        started = time.monotonic()
+        shown = [0.]
+        def on_token(timing):
+            timings[index].update(timing)
+            if time.monotonic() - shown[0] > .5:
+                checkpoint('decode', 'answering', answered=index, questions=len(questions))
+                shown[0] = time.monotonic()
+        ids, _ = generate(torch, model, inputs.to(device), value['max_tokens'], started, on_token)
+        text = processor.decode(ids, skip_special_tokens=True).strip()
+        answer = dict(text=text, tokens=len(ids))
+        if len(ids) >= value['max_tokens']:
+            answer['truncated'] = True
+        if value['format'] == 'json':
+            try:
+                answer['text'], answer['json'] = parse_json(text)
+            except ValueError:
+                # One correction turn with the same images; the model sees its reply.
+                retry = messages + [{'role': 'assistant', 'content': text},
+                                    {'role': 'user', 'content': ASK_JSON_RETRY}]
+                answer['retried'] = True
+                retry_inputs = tokenize(processor, retry, pixels)
+                if retry_inputs.input_ids.shape[-1] > 6500:
+                    answer['error'] = 'invalid_json'
+                else:
+                    ids, _ = generate(torch, model, retry_inputs.to(device), value['max_tokens'],
+                                      time.monotonic(), lambda timing: None)
+                    text = processor.decode(ids, skip_special_tokens=True).strip()
+                    answer.update(text=text, tokens=answer['tokens'] + len(ids))
+                    if len(ids) >= value['max_tokens']:
+                        answer['truncated'] = True
+                    try:
+                        answer['text'], answer['json'] = parse_json(text)
+                    except ValueError:
+                        answer['error'] = 'invalid_json'
+        answer['seconds'] = time.monotonic() - started
+        answers[index] = answer
+        timings[index].update(seconds=answer['seconds'], output_tokens=answer['tokens'],
+                              truncated=bool(answer.get('truncated')), retried=bool(answer.get('retried')),
+                              **({'error': answer['error']} if 'error' in answer else {}))
+        checkpoint('decode', 'answering', answered=index + 1, questions=len(questions))
+    stats.update(answer_seconds=time.monotonic() - loaded, stage='complete')
+    emit(phase='complete', answers=answers, diagnostics=dict(stats))
 
 
 def main():

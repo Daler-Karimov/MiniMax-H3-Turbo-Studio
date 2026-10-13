@@ -37,6 +37,8 @@ UNIT = 'freevideo.service'
 WRAPPER_MARK = '# FreeVideo command, written by FreeVideo setup.'
 DESKTOP_ID = 'freevideo.desktop'
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
+NODE_PACKAGES_NOTE = ('The Agent editing tools could not be added now; everything else works. '
+                      'FreeVideo will try again later.')
 COMMANDS = ('open', 'stop', 'status', 'restart', 'server')
 
 
@@ -98,6 +100,37 @@ def loopback(address):
         return False
 
 
+def host_setup(root, source, machine, comfy, *, download=False):
+    """Run the ComfyUI environment setup; its exit code."""
+    # The engine's Python reads the CUDA packages the ComfyUI environment must match.
+    code = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
+            "runpy.run_module('freevideo_engine.comfy_host',run_name='__main__')")
+    command = [machine['python'], '-B', '-c', code, str(source), '--root', str(root), '--comfy', str(comfy)]
+    if download:
+        command.append('--download-comfy')
+    env = dict(os.environ, FREEVIDEO_HOME=str(root), PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
+    for name in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV', 'FREEVIDEO_UI_EVENTS'):
+        env.pop(name, None)
+    return execution_paths.run(command, cwd=str(root), env=env, stdin=subprocess.DEVNULL).returncode
+
+
+def add_node_packages(root, source, machine, comfy, out=say):
+    """An update gave our nodes a package: add it to the environment ComfyUI already uses.
+
+    ComfyUI and generation run without it, so a failure (offline, say) never stops FreeVideo:
+    only what needs the package is not offered, and it is tried again later.
+    """
+    from .comfy_launcher_runtime import node_packages_failed, node_packages_pending
+    try:
+        if not node_packages_pending(Path(root), Path(comfy)):
+            return
+        if host_setup(root, source, machine, comfy):
+            raise RuntimeError('setup failed')
+    except Exception:
+        node_packages_failed(Path(root))
+        out(NODE_PACKAGES_NOTE)
+
+
 def install(root, source, machine, port, out=say):
     """The pinned ComfyUI in <root>/ComfyUI with its own environment, and our node in it."""
     from .comfy_launcher_runtime import deploy, managed_python
@@ -116,21 +149,14 @@ def install(root, source, machine, port, out=say):
     python = managed_python(Path(root), comfy) if (comfy / 'main.py').is_file() else None
     if python is None:
         out('Installing ComfyUI for FreeVideo. This happens once; the next start takes seconds.')
-        # The engine's Python reads the CUDA packages the ComfyUI environment must match.
-        code = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
-                "runpy.run_module('freevideo_engine.comfy_host',run_name='__main__')")
-        command = [machine['python'], '-B', '-c', code, str(source), '--root', str(root), '--comfy', str(comfy)]
-        if not (comfy / 'main.py').is_file():
-            command.append('--download-comfy')
-        env = dict(os.environ, FREEVIDEO_HOME=str(root), PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
-        for name in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV', 'FREEVIDEO_UI_EVENTS'):
-            env.pop(name, None)
-        if execution_paths.run(command, cwd=str(root), env=env, stdin=subprocess.DEVNULL).returncode:
+        if host_setup(root, source, machine, comfy, download=not (comfy / 'main.py').is_file()):
             raise RuntimeError('ComfyUI could not be installed. Run the same command again to continue; '
                                'downloaded files are kept.')
         python = managed_python(Path(root), comfy)
         if python is None:
             raise RuntimeError('ComfyUI was installed, but its environment is incomplete. Run the same command again.')
+    else:
+        add_node_packages(root, source, machine, comfy, out)
     if switching:
         engine_binding.rebind(root, machine, source)
     deploy(comfy, source, root)
@@ -251,7 +277,7 @@ def request(url, *, headers=None, timeout=3):
         return error.code
 
 
-def start_proxy(record, *, listen, port, upstream, token_file, tls):
+def start_proxy(record, *, listen, port, upstream, token_file, tls, hop_secret=None):
     """Run the access proxy with ComfyUI's Python, which brings aiohttp."""
     from . import processes
     code = ("import runpy,sys;sys.path.insert(0,sys.argv.pop(1));"
@@ -261,6 +287,10 @@ def start_proxy(record, *, listen, port, upstream, token_file, tls):
     if tls:
         command += ['--tls-cert', str(tls[0]), '--tls-key', str(tls[1])]
     env = dict(os.environ, PYTHONUTF8='1', PYTHONNOUSERSITE='1')
+    from .proxy_identity import ENV
+    env.pop(ENV, None)
+    if hop_secret:
+        env[ENV] = hop_secret
     for name in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
         env.pop(name, None)
     log = folder(record['engine']) / 'access-proxy.log'
@@ -312,6 +342,12 @@ def serve(root, *, port=DEFAULT_PORT, listen='127.0.0.1', tls=None):
             proxied = not loopback(listen)
             internal = free_port() if proxied else port
             controller = Controller(Path(record['source']))
+            hop_secret = secrets.token_urlsafe(32) if proxied else None
+            if proxied:
+                from .proxy_identity import ENV
+                from .comfy_launcher_runtime import isolated_environment
+                controller.child_environment = lambda: dict(
+                    isolated_environment(record['engine'], record['source']), **{ENV: hop_secret})
             controller.move_when_taken = False  # Serve the port that was asked for, or say it is taken.
             for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                 previous[name] = signal.signal(name, lambda *_: (stopping.set(), controller.cancelled.set()))
@@ -341,7 +377,7 @@ def serve(root, *, port=DEFAULT_PORT, listen='127.0.0.1', tls=None):
                 secret = token(root)
                 scheme = 'https' if tls else 'http'
                 proxy = start_proxy(record, listen=listen, port=port, upstream=local,
-                                    token_file=folder(root) / TOKEN, tls=tls)
+                                    token_file=folder(root) / TOKEN, tls=tls, hop_secret=hop_secret)
                 check_proxy(proxy, scheme=scheme, port=port, secret=secret)
                 state.update(access=dict(scheme=scheme, port=port))
             save(state_file, dict(state, status='open'))
@@ -608,6 +644,7 @@ def ensure_installed(root, port, out=say):
         record = install(root, source, machine, port or (port_of(record['url']) if record else first_free_port()), out=out)
     else:
         from .comfy_launcher_runtime import deploy
+        add_node_packages(root, source, machine, record['root'], out)
         deploy(record['root'], source, root)
         if port and port_of(record['url']) != port:
             record = dict(record, url='http://127.0.0.1:%d' % port)

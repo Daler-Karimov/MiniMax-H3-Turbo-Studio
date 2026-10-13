@@ -116,6 +116,10 @@ def preload(clip, request, resident):
     except (PreloadCancelled, MemoryError, torch.OutOfMemoryError) as error:
         resident.drop('encoder', 'Speculative preload interrupted; foreground work wins')
         result.update(state='cancelled' if isinstance(error, PreloadCancelled) else 'released', reason=str(error))
+    except Exception:
+        # An unfinished placement left its weights where they were; never keep it.
+        resident.drop('encoder', 'Speculative preload failed; partial placement discarded')
+        raise
     result.update(gpu_bytes_after=gpu_bytes(clip), elapsed_seconds=time.perf_counter()-started,
                   torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                   torch_peak_reserved_bytes=torch.cuda.max_memory_reserved())
@@ -183,6 +187,33 @@ def stop_read_ahead(trace):
         trace.data['encoder_read_ahead'] = reader.close()
 
 
+def start_model_read_ahead(trace, request):
+    """On a slow drive, read the video model's files while the encoder computes.
+
+    Speculative and bounded like the checkpoint reader: any failure leaves the
+    model load exactly as before. Once per request."""
+    cache = request.get('model_cache')
+    if not cache or getattr(trace, 'model_read_ahead', None) is not None or 'model_read_ahead' in trace.data:
+        return
+    try:
+        from .model_read_ahead import ModelReadAhead
+        # Recorded before the thread starts: an interrupt during start() still finds it to close.
+        reader = trace.model_read_ahead = ModelReadAhead(
+            cache=cache, resident_blocks=request.get('model_resident_blocks'), headroom_bytes=request.get('model_headroom_bytes'),
+            ram_budget_bytes=request.get('ram_budget_bytes'),
+            budget_is_estimate=bool(request.get('ram_budget_is_estimate')))
+        reader.start()
+    except Exception as error:
+        trace.data['model_read_ahead'] = dict(state='failed', reason=type(error).__name__ + ': ' + str(error))
+
+
+def stop_model_read_ahead(trace):
+    """Stop the model read-ahead, once, and keep what it read in the metrics."""
+    reader = getattr(trace, 'model_read_ahead', None)
+    if reader is not None and 'model_read_ahead' not in trace.data:
+        trace.data['model_read_ahead'] = reader.close()
+
+
 def encode(args, request, resident=None, diagnostics=None):
     from .encoder_diagnostics import EncoderTrace
     trace = diagnostics or EncoderTrace(request, resident=resident is not None)
@@ -190,9 +221,11 @@ def encode(args, request, resident=None, diagnostics=None):
         metrics = _encode(args, request, resident, trace)
     except BaseException:
         stop_read_ahead(trace)
+        stop_model_read_ahead(trace)
         trace.finish(False)
         raise
     stop_read_ahead(trace)
+    stop_model_read_ahead(trace)
     result = trace.finish(True, metrics)
     if not args.check_library and not request.get('idle_preload'):
         print(json.dumps({'event': 'encoder_complete', **result}), flush=True)
@@ -379,6 +412,9 @@ def _encode(args, request, resident, trace):
     checkpoint_paths = [path]
     def timed_load(*values, **kwargs):
         phase('encoder_device_load', load_seconds=load_seconds)
+        # A retry copies the encoder again: the model's reader, started after
+        # the first copy, ends first and is not started a second time.
+        stop_model_read_ahead(trace)
         if not encoder_cache_hit:
             # Only for the copy: reads that overlapped the library import or
             # the model's construction slowed them (see encoder_read_ahead).
@@ -392,6 +428,8 @@ def _encode(args, request, resident, trace):
         result = native_load(*values, **kwargs)
         torch.cuda.synchronize()
         stop_read_ahead(trace)
+        if not encoder_cache_hit:
+            start_model_read_ahead(trace, request)
         transfer_seconds[0] += time.perf_counter() - tick
         phase('encoder_page_release', device_load_seconds=transfer_seconds[0])
         # The checkpoint's pages are dead weight once its weights are on the
@@ -488,6 +526,8 @@ def _encode(args, request, resident, trace):
     value['task'] = task
     torch.cuda.synchronize()
     prompt_encode_seconds = time.perf_counter() - encode_started
+    # Keyframe and reference-media encoding read the drive themselves.
+    stop_model_read_ahead(trace)
     keyframe_metrics = {}
     if images is not None:
         phase('keyframe_vae')

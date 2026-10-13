@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
 import {regenerateResult, upscaleResult} from '../web/studio_queue.js';
+import {referenceInputs} from '../web/prompt_references.js';
 
 class Element {
     constructor(tag) {
@@ -24,7 +25,7 @@ class Element {
 
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
-    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0;
+    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, rememberedView = null;
     let progressView, progressOptions, realProgressFactory;
     const app = {
         registerExtension(extension) { extensions.push(extension); },
@@ -33,7 +34,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     const api = Object.assign(events, {apiURL: value => value});
     const document = {head: new Element('head'), createElement: tag => new Element(tag)};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs,
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
@@ -58,7 +59,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         notifyCompatibility: async () => { compatibilityChecks++; },
         startUpdateChecks: () => { updateChecks++; },
         installNavigation: callback => installed.push(callback),
-        refreshNavigation: () => refreshed++, preferredView: () => null,
+        refreshNavigation: () => refreshed++, preferredView: () => rememberedView,
         attachReferencePicker() {}, referenceItems: () => [], syncReferencePrompt() {},
         shareButton: () => new Element('button'), reportFileName: () => 'FreeVideo-report-20261008-101530.json',
         rememberPromptDraft() {}, savePromptDraft: async () => false, openImageEditor: async () => null, icon: () => '',
@@ -75,6 +76,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     }
     try {
         let source = await readFile(new URL('../web/freevideo.js', import.meta.url), 'utf8');
+        source = source.replace("import { openEditorView } from './editor_loader.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
         source = source
             .replace("import { createErrorPanel, errorText } from './error_panel.js';", 'const {createErrorPanel,errorText} = globalThis.__freevideoEntryTest;')
             .replace('import { app } from "../../scripts/app.js";', 'const {app} = globalThis.__freevideoEntryTest;')
@@ -84,7 +86,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { createProgressConnection } from './progress_connection.js';", 'const {createProgressConnection} = globalThis.__freevideoEntryTest;')
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
-            .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt} = globalThis.__freevideoEntryTest;')
+            .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs} = globalThis.__freevideoEntryTest;')
             .replace("import { outputDownloadURL } from './output_download.js';", 'const {outputDownloadURL} = globalThis.__freevideoEntryTest;')
             .replace("import { shareButton } from './share.js';", 'const {shareButton} = globalThis.__freevideoEntryTest;')
             .replace("import { reportFileName } from './report_issue.js';", 'const {reportFileName} = globalThis.__freevideoEntryTest;')
@@ -137,6 +139,21 @@ test('main browser entry registers both views and preserves node hooks', async t
         node.buttons[0].callback();
         extension.afterConfigureGraph();
         assert.deepEqual(opened, [node, node]);
+        rememberedView = 'editor';
+        const restored = [];
+        dependencies.openEditorView = (value, options) => restored.push({node:value, studio:options.studio});
+        extension.afterConfigureGraph();
+        assert.equal(restored[0].node, node);
+        assert.ok(restored[0].studio, 'restore opens the studio before the editor');
+        // The lazy loader owns failed imports: it notifies, reports through onFailure and resolves null.
+        dependencies.openEditorView = async (node, options) => { options.onFailure(new Error('editor unavailable')); return null; };
+        extension.afterConfigureGraph(); await Promise.resolve();
+        assert.ok(window.__freevideoHealth.some(row => row.where === 'editor'));
+        assert.equal(opened.at(-1), node, 'editor failure leaves the restored studio available');
+        rememberedView = 'nodes';
+        const count = opened.length; extension.afterConfigureGraph();
+        assert.equal(opened.length, count, 'remembered Nodes does not open either dialog');
+        rememberedView = null;
         assert.ok(refreshed >= 2);
         node.freevideoShowProgress({phase: 'load'});
         // A node already tall enough lays its widgets out again, so the panel grows.
@@ -279,9 +296,9 @@ test('main browser entry registers both views and preserves node hooks', async t
         await audioPicker.onchange();
         assert.deepEqual(JSON.parse(media.widgets[0].value), [{file: 'voice.wav', role: 'reference', enabled: true}]);
         assert.equal(media.isUploading, false);
-        media.inputs = [{name: 'first', link: 1}]; media.onConnectionsChange();
+        media.inputs = [{name: 'first', link: 1}]; media.onConnectionsChange(); await Promise.resolve();
         assert.match(note.textContent, /Choose keyframes or references/);
-        media.widgets[0].value = '[]'; media.inputs = []; media.onConnectionsChange();
+        media.widgets[0].value = '[]'; media.inputs = []; media.onConnectionsChange(); await Promise.resolve();
         assert.equal(audioHelp.hidden, true);
         assert.match(mode.textContent, /Text to video/);
         const imageRole = toolbar.children.find(e => e.tag === 'select');

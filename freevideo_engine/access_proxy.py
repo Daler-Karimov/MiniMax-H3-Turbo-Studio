@@ -9,12 +9,14 @@ proxy is not running. Runs with ComfyUI's Python, which brings aiohttp.
 import argparse
 import asyncio
 import hmac
+import os
 from pathlib import Path
 import ssl
 from urllib.parse import urlencode
 
 from aiohttp import ClientSession, ClientTimeout, DummyCookieJar, TCPConnector, WSMsgType, client_exceptions, web
 from yarl import URL
+from . import proxy_identity
 
 COOKIE = 'freevideo_access'
 DAYS = 30
@@ -54,7 +56,8 @@ def forwarded(request):
     headers = []
     for name, value in request.headers.items():
         lower = name.lower()
-        if lower in HOP_BY_HOP or lower == 'authorization':
+        if lower in HOP_BY_HOP or lower in ('authorization', proxy_identity.HEADER.lower(),
+                                           proxy_identity.PEER.lower(), proxy_identity.ORIGIN.lower()):
             continue
         if lower == 'cookie':
             value = '; '.join(part for part in value.split(';') if part.strip() and
@@ -69,6 +72,10 @@ def create(upstream, token):
     upstream = upstream.rstrip('/')
     sockets = 'ws' + upstream[len('http'):]
     client = []
+    hop_secret = os.environ.pop(proxy_identity.ENV, '')
+
+    def forwarding_headers(request):
+        return forwarded(request) + proxy_identity.headers(request, hop_secret)
 
     async def startup(app):
         # No total timeout: downloads and the progress socket last as long as they need.
@@ -82,7 +89,7 @@ def create(upstream, token):
         body = request.content if request.body_exists else None
         try:
             async with client[0].request(request.method, URL(upstream + request.raw_path, encoded=True),
-                                                     headers=forwarded(request), data=body, allow_redirects=False) as reply:
+                                                     headers=forwarding_headers(request), data=body, allow_redirects=False) as reply:
                 response = web.StreamResponse(status=reply.status, reason=reply.reason)
                 for name, value in reply.headers.items():
                     if name.lower() not in HOP_BY_HOP:
@@ -100,7 +107,7 @@ def create(upstream, token):
     async def websocket(request):
         browser = web.WebSocketResponse(max_msg_size=0)
         await browser.prepare(request)
-        headers = [(k, v) for k, v in forwarded(request) if k.lower() not in (
+        headers = [(k, v) for k, v in forwarding_headers(request) if k.lower() not in (
             'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-extensions', 'sec-websocket-protocol')]
         try:
             async with client[0].ws_connect(URL(sockets + request.raw_path, encoded=True), headers=headers,

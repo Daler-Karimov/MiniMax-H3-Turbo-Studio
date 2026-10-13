@@ -45,6 +45,7 @@ def code_identity():
                  'backends/mps_delta.py', 'backends/mps_features.py', 'backends/mps_qk.py',
                  'backends/mps_mlx_attention.py', 'backends/mps_vae_encode.py', 'backends/mps_modulation.py',
                  'macos_compute.py', 'macos_decode_tiles.py',
+                 'macos_encoder_attention.py', 'macos_encoder_linear.py',
                  'macos_memory.py', 'macos_conditions.py', 'macos_process_memory.py',
                  'attention.py', 'refine.py', 'reference_sampler.py', 'adaln.py', 'latent_upscale.py',
                  'media_encoding.py', 'media_conditioning.py', 'encoder_checkpoint.py', 'system.py')
@@ -193,6 +194,7 @@ def summarize(report, engine, encoding):
         largest_category=ranked[0]['stage'] if ranked else None,
         step_seconds=steps, completed_nfe=len(steps),
         sampling_plan=engine.get('sampling_plan') or report.get('sampling_plan'),
+        continuation=engine.get('continuation') or report.get('continuation'),
         sampling_passes=engine.get('sampling_passes'), latent_upscale=engine.get('latent_upscale'),
         sampling_reused=sampling_reused,
         sampling_memory=sampling_memory or None,
@@ -247,7 +249,7 @@ def summarize(report, engine, encoding):
 REQUEST_FIELDS = ('seed', 'encoder_mode', 'profile', 'resource_planning', 'compatibility',
     'reclaimable_resident_models', 'idle_resources', 'tuning', 'input_cache', 'resource_attempts',
     'resource_prediction', 'resource_prediction_error', 'error', 'error_message', 'error_type',
-    'resource_error', 'exception', 'encoding_failure', 'phase')
+    'resource_error', 'exception', 'encoding_failure', 'phase', 'continuation')
 
 
 def preview_receipts(output, read_json):

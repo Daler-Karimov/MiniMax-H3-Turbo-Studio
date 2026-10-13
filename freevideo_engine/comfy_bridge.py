@@ -287,14 +287,23 @@ def installation(source=None, environ=None):
     return root, plain_data(machine)
 
 
-def validate_request(prompt, width, height, seconds, seed):
+def validate_request(prompt, width, height, seconds, seed, *, continue_from=None, frames=None,
+                     two_pass=True, preview=False, refine_from=None, media=None):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError('Enter a prompt describing the video and its audio.')
     if type(seed) is not int or not 0 <= seed <= 2**53 - 1:
         raise ValueError('Seed must be an integer between 0 and 9007199254740991.')
-    if isinstance(seconds, bool) or not isinstance(seconds, (float, int)) or not math.isfinite(seconds):
+    if frames is not None:
+        from .continuation import validate_frames
+        validate_frames(frames)
+    elif isinstance(seconds, bool) or not isinstance(seconds, (float, int)) or not math.isfinite(seconds):
         raise ValueError('Duration must be a positive number of seconds.')
-    return geometry(width, height, seconds=seconds)
+    canvas = geometry(width, height, frames=frames, seconds=None if frames is not None else seconds)
+    if continue_from is not None:
+        from .continuation import validate_path, validate_route
+        validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from, media=media)
+        validate_path(continue_from)
+    return canvas
 
 
 class EventTail:
@@ -581,7 +590,13 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              source=None, environ=None, metadata=None, progress=None, interrupted=None,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
-             prompt_rewrite_report=None, preview=False, refine_from=None):
+             prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
+             continue_from=None, frames=None, first_frame_reference=False):
+    if type(first_frame_reference) is not bool:
+        raise ValueError('First-frame reference must be a boolean')
+    if continue_from is not None:
+        from .continuation import validate_route
+        validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from)
     if type(two_pass) is not bool:
         raise ValueError('Two-pass generation must be a boolean')
     if type(force_regenerate) is not bool:
@@ -606,9 +621,24 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     validate_flags(preview, upscale, two_pass)
     from .two_pass import validate_steps
     validate_steps(base_steps, refine_steps, two_pass)
-    canvas = validate_request(prompt, width, height, seconds, seed)
+    canvas = validate_request(prompt, width, height, seconds, seed, continue_from=continue_from, frames=frames)
     source = Path(source or source_root()).resolve()
     root, machine = installation(source, environ)
+    if continue_from is not None:
+        validate_route(backend=machine.get('device_backend', 'cuda'))
+        from .continuation import prepare, summary
+        from .two_pass import sampling_canvas
+        # A continuation takes no media or preview, so its sampled size is known here; the snapshot
+        # of the previous segment was written for that canvas, not for the requested size.
+        continuation = prepare(continue_from, sampling_canvas(canvas)[0], directory=root / 'continuations')
+    # The engine decides the same way from the same record: whether the film's first frame is there to use.
+    anchored = False
+    if continue_from is not None and first_frame_reference:
+        from .continuation import chain_first_frame_picture
+        try:
+            anchored = chain_first_frame_picture(continuation, continue_from) is not None
+        except ValueError:
+            pass
     environment = engine_environment(root, source, environ)
     environment.update(FREEVIDEO_HOME=str(root), PYTHONPATH=str(source), PYTHONUNBUFFERED='1',
                        PYTHONUTF8='1', PYTHONIOENCODING='utf-8', NO_COLOR='1', FREEVIDEO_UI_EVENTS='1')
@@ -632,6 +662,17 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                '--width', str(width), '--height', str(height), '--seconds', str(seconds), '--seed', str(seed),
                '--two-pass' if two_pass else '--no-two-pass',
                '--base-steps', str(base_steps), '--refine-steps', str(refine_steps)]
+    if frames is not None:
+        position = command.index('--seconds')
+        command[position:position + 2] = ['--frames', str(frames)]
+    if continue_from is not None:
+        command += ['--continue-from', str(continue_from)]
+        if first_frame_reference:
+            command.append('--first-frame-reference')
+        from .continuation import persist_snapshot
+        continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')
+        command += ['--continuation-snapshot', continuation['snapshot'],
+                    '--continuation-snapshot-sha256', continuation['snapshot_sha256']]
     if upscale:
         command = command[:command.index('generate') + 1] + upscale_command(upscale[1], output, upscale[0], resources)
     else:
@@ -701,15 +742,25 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             send_progress({'label': 'Retaining and checking input media', 'timing_phase': 'encoding',
                            'references': any(media.get(key) for key in ('first', 'last', 'references'))})
         from .media_request import task_for
-        from .two_pass import plan
-        planned = plan(canvas, two_pass, task_for(extra.get('media', {})), base_steps=base_steps, refine_steps=refine_steps)
+        from .two_pass import plan, sampling_canvas
+        # The engine samples this canvas; results, cache keys and labels keep the requested size.
+        sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale), media=extra.get('media'),
+                                               conditioned=bool(extra.get('conditioning')))
+        planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
+                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+        if continue_from is not None:
+            from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, validate_snapshot, summary
+            validate_route(task='ref2va' if anchored else task_for(extra.get('media', {})), anchor=anchored,
+                           media=extra.get('media'))
+            continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
+            state['continuation'] = summary(continuation)
         # A preview is its own result; an upscale is always run from its preview.
         keyed = dict(planned, preview=True) if preview else planned
         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
                                              resources, source, environment, inspection=check)
         state['result_cache'] = dict(enabled=False, hit=False, forced=force_regenerate)
         reused = None
-        if not force_regenerate and not upscale:
+        if not force_regenerate and not upscale and continue_from is None:
             send_progress({'label': 'Checking saved video', 'timing_phase': 'encoding'})
             def inspect_saved(check):
                 key = identify(check)
@@ -735,7 +786,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         preparation_started = time.monotonic()
         try:
             # Reference audio selects its own tables; match the encoder's choice.
-            preparation = prepare_sampling_assets(root, machine, planned, engine_task(extra.get('media', {}), media_base),
+            asset_task = ((ANCHOR_ADALN_TASK if anchored else ADALN_TASK) if continue_from is not None
+                          else engine_task(extra.get('media', {}), media_base))
+            preparation = prepare_sampling_assets(root, machine, planned, asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)
         except BaseException:
             elapsed = time.monotonic() - preparation_started
@@ -748,7 +801,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             whole_progress = WholeVideoProgress()
             send_progress({'reset': True, 'label': 'Preparing video'})
         whole_progress.sampling_plan = planned
-        whole_progress.forecast(progress_history_forecast(root, machine, dict(canvas, sampling_plan=planned)))
+        whole_progress.forecast(progress_history_forecast(root, machine, dict(sampled, sampling_plan=planned)))
         send_progress({'label': 'Preparing %.3f s video + audio · %d × %d' %
                        (canvas['seconds'], width, height)})
         if release_models:
@@ -787,9 +840,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         engine = json.loads(output.with_suffix('.engine.json').read_text(encoding='utf-8'))
         from .two_pass import steps, plan
         completed_steps = steps(report.get('sampling_plan'))
-        expected_plan = plan(canvas, two_pass, report.get('profile', {}).get('engine', {}).get('task', 't2va'),
-                             base_steps=base_steps, refine_steps=refine_steps)
-        shown = canvas
+        expected_plan = plan(sampled, two_pass, report.get('profile', {}).get('engine', {}).get('task', 't2va'),
+                             base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+        shown = sampled
         if preview:
             # A preview decodes its first pass at the planned smaller canvas.
             completed_steps = expected_plan['base_steps']
@@ -800,10 +853,19 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 or engine.get('sampling_plan') != report.get('sampling_plan')
                 or report.get('sampling_plan') != expected_plan
                 or bool(report.get('preview')) != preview or bool(report.get('upscaled_preview')) != bool(upscale)
-                or any(engine.get('geometry', {}).get(k) != shown[k] for k in ('width', 'height', 'frames'))):
+                or any(engine.get('geometry', {}).get(k) != shown[k] for k in ('width', 'height', 'frames'))
+                or (report.get('output_size') or None) != output_size):
             from .comfy_launcher_api import repair_hint
             from .failure_details import generation_failure
             raise RuntimeError('FreeVideo did not complete the requested video.\n' + generation_failure(run, repair=repair_hint()))
+        if report_extra:
+            # Only the newly generated, verified result is annotated. Cache hits
+            # return earlier and retain their historical report byte for byte.
+            report.update(report_extra)
+            save(output.with_suffix('.request.json'), report)
+        if continue_from is not None:
+            state['continuation']['audio_lead_in_samples'] = engine.get('continuation', {}).get(
+                'audio_lead_in_samples', 0)
         if comfy_metadata:
             # Dropping the video on the canvas restores this graph, as with ComfyUI's own video nodes.
             # Written before the result cache records the file's size and hash.

@@ -1,8 +1,8 @@
 """Whether the user's other programs leave room for a background compile.
 
-The compile loads the model as a request would, so it needs the host memory a
-request needs and the whole GPU. It starts only when the system has a recent
-request's host peak plus RAM_MARGIN available, the GPU has been nearly idle
+The compile covers only the first sampling block and one decode clip. It
+starts only with its own measured host peak plus RAM_MARGIN available, using
+a measured baseline until a matching compile has completed. The GPU must be nearly idle
 and other programs hold little of its memory. While it runs it gives way when
 availability falls under RAM_FLOOR, or when another program starts using the
 GPU, grows its memory there or keeps its cores busy. Measured on the machine,
@@ -24,11 +24,13 @@ import sys
 import time
 
 GiB = 2**30
-RAM_MARGIN = 4 * GiB
+RAM_MARGIN = 2 * GiB
 RAM_FLOOR = 2 * GiB
-# A request's host peak when this machine has measured none: the private
-# working set of a 1344x768 request on a 12 GB Windows laptop was 4.0 GiB.
-DEFAULT_RAM_NEED = 8 * GiB
+# Cold 1344x768/243-frame, two-pass precompile: 5.22 GiB working PSS for
+# supervisor + workers on Linux, under a 12 GiB/no-swap cgroup, with no host
+# weight retention and one compiler. Round up; Windows needs physical checks.
+# RAM_MARGIN keeps the existing running floor available beyond this peak.
+DEFAULT_RAM_NEED = 6 * GiB
 GPU_IDLE_PERCENT = 10
 GPU_SAMPLES = 5
 GPU_OTHER_SHARE = .2
@@ -178,14 +180,24 @@ def available_memory(sample=None):
     return min(available, group) if group is not None else available
 
 
-def recent_need(history):
-    """The largest host peak of this machine's recent requests, or DEFAULT_RAM_NEED."""
-    try:
-        peaks = [row['observation'].get('ram_peak_bytes') for row in history.observations(limit=16, include_details=False)]
-    except Exception:
-        peaks = []
-    peaks = [peak for peak in peaks if type(peak) is int and peak > 0]
-    return max(peaks) if peaks else DEFAULT_RAM_NEED
+def compile_need(previous, *, identity, requested, inputs):
+    """Own completed compile peak for the same workload, never a generation peak.
+
+    Changed code, packages, device, placement inputs or shapes use the baseline;
+    an incomplete sample cannot establish a smaller memory requirement.
+    """
+    if (not isinstance(previous, dict) or identity is None or previous.get('success') is not True
+            or previous.get('identity') != identity or previous.get('requested') != requested
+            or previous.get('inputs') != inputs):
+        return DEFAULT_RAM_NEED
+    memory = previous.get('host_memory')
+    if not isinstance(memory, dict) or memory.get('complete') is not True:
+        return DEFAULT_RAM_NEED
+    metric = 'tree private working set' if sys.platform == 'win32' else 'inference working PSS'
+    peak = memory.get('peak_bytes')
+    if memory.get('metric') != metric or type(peak) is not int or peak <= 0:
+        return DEFAULT_RAM_NEED
+    return max(DEFAULT_RAM_NEED, peak)
 
 
 class Room:
@@ -208,6 +220,9 @@ class Room:
         self.sampled = int(time.time() * 1e6)
         self.started = self.sampled / 1e6
         self.trace = collections.deque(maxlen=TRACE_SAMPLES)
+        self.host_peak = 0
+        self.host_samples = 0
+        self.host_complete = True
 
     def refresh(self):
         """Our processes now: this one, its descendants and the owner.
@@ -258,6 +273,14 @@ class Room:
 
     def run_reason(self, sample=None):
         """Why a running compile should give way now, or None. Call it often; the GPU is read once a second."""
+        if sample is not None:
+            from .system import inference_memory_sample
+            peak = inference_memory_sample(sample)
+            self.host_samples += 1
+            if type(peak) is int and peak >= 0:
+                self.host_peak = max(self.host_peak, peak)
+            else:
+                self.host_complete = False
         available = available_memory(sample)
         if available < RAM_FLOOR:
             return 'memory: %.1f GiB available' % (available / GiB)
@@ -297,6 +320,12 @@ class Room:
             if any(count >= NEW_PROCESS_CHECKS for count, _ in self.busy.values()):
                 return 'gpu: another program keeps it busy'
         return None
+
+    def memory_result(self):
+        """The supervisor and every worker/compiler, excluding reclaimable mapped pages."""
+        return dict(peak_bytes=self.host_peak, samples=self.host_samples,
+                    complete=self.host_complete and self.host_samples > 0,
+                    metric='tree private working set' if sys.platform == 'win32' else 'inference working PSS')
 
     def samples(self):
         """Other programs' samples for the log: [seconds since this room started,

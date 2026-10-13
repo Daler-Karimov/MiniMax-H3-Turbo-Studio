@@ -14,7 +14,7 @@ from .vae_tiles import TileDecoder, compile_blocks
 def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, prefetch=True, tile_group=False,
                    preload=False, pin_weights=False, artifacts_dir=None, phase_callback=None,
                    stream_output=False, stream_weights=False, resident_blocks=0, model_cache=None,
-                   linear_compute_cache=False):
+                   linear_compute_cache=False, continuation=None, audio_lead_in_callback=None, output_size=None):
     from diffusers import AutoencoderKLMiniMaxH3
     from diffusers.utils.export_utils import encode_video
     from src.inference.render import PIXEL_MEAN, PIXEL_STD, FPS
@@ -161,6 +161,9 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
                 chunk = (video[:, :, start:start + 8].float() * pixel_std + pixel_mean).clamp_(0, 1)
                 frames[start:start + chunk.shape[2]] = (chunk[0].permute(1, 2, 3, 0) * 255).round().to(torch.uint8)
             del video
+        if continuation is not None:
+            from .continuation import OVERLAP_FRAMES
+            frames = frames[OVERLAP_FRAMES:]
         artifact_seconds = streamed_timings.get('decoded_artifact_save_seconds', 0.)
         if artifacts_dir:
             import numpy as np
@@ -168,8 +171,11 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             tick = time.perf_counter()
             artifacts_dir = Path(artifacts_dir)
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-            if not stream_output:
-                np.save(artifacts_dir / 'rgb.npy', frames.numpy(), allow_pickle=False)
+            if not stream_output or continuation is not None:
+                # A streamed mapping still contains the overlap. Replace its
+                # retained artifact after the mapping closes, below.
+                rgb_path = artifacts_dir / ('rgb-new.npy' if stream_output else 'rgb.npy')
+                np.save(rgb_path, frames.numpy() if hasattr(frames, 'numpy') else frames, allow_pickle=False)
             artifact_seconds += time.perf_counter() - tick
         audio_start = time.perf_counter()
         phase('audio_load_decode')
@@ -192,6 +198,11 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         audio = audio_vae.decode(audio_latents * audio_std + audio_mean, return_dict=False)[0]
         audio = audio.float().permute(1, 0, 2)[0].cpu()
         rate = audio_vae.config.sampling_rate
+        if continuation is not None:
+            if audio_lead_in_callback is not None:
+                from .continuation import capture_audio_lead_in
+                audio_lead_in_callback(capture_audio_lead_in(audio, continuation, rate))
+            audio = audio[:, continuation['audio_latents'] * 800:]
         del audio_vae, audio_mean, audio_std
         gc.collect()
         torch.cuda.empty_cache()
@@ -215,13 +226,21 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         encode_started = time.perf_counter()
         phase('mp4_save')
         print(json.dumps({'event': 'decode_phase', 'phase': 'Saving MP4 and audio'}), flush=True)
-        encode_video(frames, fps=FPS, output_path=str(temporary), audio=audio, audio_sample_rate=rate)
+        if output_size is not None:
+            # The model rendered a larger size; only the picture is scaled.
+            from .output_fit import fit_frames
+            encode_video(fit_frames(frames, *output_size), fps=FPS, output_path=str(temporary), audio=audio,
+                         audio_sample_rate=rate)
+        else:
+            encode_video(frames, fps=FPS, output_path=str(temporary), audio=audio, audio_sample_rate=rate)
         temporary.replace(destination)
         frame_count = len(frames)
     finally:
         if rgb_mapping is not None:
             del frames
             rgb_mapping._mmap.close()
+            if continuation is not None and artifacts_dir and (artifacts_dir / 'rgb-new.npy').is_file():
+                (artifacts_dir / 'rgb-new.npy').replace(artifacts_dir / 'rgb.npy')
     return {'vae_load_seconds': load_seconds, 'video_decode_seconds': video_decode_seconds,
             'vae_linear_compute_cache': linear_compute_cache, 'vae_compute_cache_preparation': compute_cache_metrics,
             'resident_vae_cache_hit': vae_cache_hit, 'resident_audio_vae_cache_hit': audio_cache_hit,
