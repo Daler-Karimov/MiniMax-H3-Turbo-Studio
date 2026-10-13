@@ -72,7 +72,7 @@ class Engine:
         if task not in TASKS:
             raise ValueError('Unsupported Engine task: ' + str(task))
         self.task = task
-        if adaln_task not in (None, task, 'ref2va_audio'):
+        if adaln_task not in (None, task, 'ref2va_audio') and not (task == 'ref2va' and adaln_task == 'ref2va_av'):
             raise ValueError('Unsupported continuation modulation schedule')
         self.adaln_task = adaln_task or task
         if type(residual_offload) is not bool:
@@ -547,7 +547,7 @@ class Engine:
         refining = initial_latents is not None
         if continuation is not None:
             from .continuation import validate_route
-            validate_route(task=self.task)
+            validate_route(task=self.task, anchor=bool(continuation.get('anchor')))
             if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
                 from .continuation import SIZE_MISMATCH
                 raise ValueError(SIZE_MISMATCH)
@@ -581,6 +581,7 @@ class Engine:
         progress = SamplingProgress(active_steps, len(self.transformer.transformer_blocks),
                                     offset=progress_offset, total=progress_total)
         progress.start()
+        continuation_offset = 0
         if self.task.startswith('ref2va'):
             from .media_conditioning import describe
             value = torch.load(conditioning, map_location='cpu', weights_only=True)
@@ -588,6 +589,13 @@ class Engine:
             if info['task'] != self.task:
                 raise ValueError('Reference modalities changed the precomputed schedule')
             conditions = value['references']
+            if continuation is not None:
+                if len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None:
+                    raise ValueError('Continuation anchor requires exactly one image reference without audio')
+                # Ref2VA packs independent-size references before generated
+                # video rows in both passes. Their latents do not need the
+                # keyframe resize used by first/last-frame conditioning.
+                continuation_offset = info['reference_video_tokens']
             prompt, tags = value['prompt_embeds'].to(self.device_backend.device, torch.bfloat16), value['text_token_tags']
         else:
             prompt, tags, conditions = load_prompt(str(conditioning), self.device_backend.device)
@@ -747,7 +755,8 @@ class Engine:
         try:
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
                     self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
-                    self.transformer, continuation, seed, self.device_backend.device) as prefix:
+                    self.transformer, continuation, seed, self.device_backend.device,
+                    **({'video_offset': continuation_offset} if continuation_offset else {})) as prefix:
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
                                                 conditions=conditions)

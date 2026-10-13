@@ -16,6 +16,12 @@ LEAD_IN_RATE = 32000
 CLEAN_T = 1.
 AUDIO_CONTEXT_DEFAULT = 'clean'
 ADALN_TASK = 'ref2va_audio'
+ANCHOR_ADALN_TASK = 'ref2va_av'  # visual reference clock + CLEAN_T (no reference audio)
+# Told to the model when the first frame of the whole film is its reference picture.
+FIRST_FRAME_NOTE = ('The reference image is the very first frame of this whole film: keep the same person, clothing, '
+                    'location, framing and colour tone as in that image throughout.')
+FIRST_FRAME_MAX_BYTES = 8 * 1024 * 1024
+FIRST_FRAME_MAX_SIDE = 4096
 VERSION = 1
 
 MISSING = 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.'
@@ -58,12 +64,97 @@ def validate_frames(frames):
 
 
 def validate_route(*, task='t2va', two_pass=True, preview=False, refine_from=None,
-                   media=None, backend=None):
+                   media=None, backend=None, anchor=False):
     media = media or {}
-    if (not supported()[0] or backend not in (None, 'cuda') or task != 't2va'
+    references = media.get('references')
+    valid_reference = (anchor and isinstance(references, list) and len(references) == 1
+                       and isinstance(references[0], dict)
+                       and references[0].get('kind') == 'image')
+    if (not supported()[0] or backend not in (None, 'cuda') or task != ('ref2va' if anchor else 't2va')
             or not two_pass or preview or refine_from
-            or any(media.get(key) for key in ('first', 'last', 'references', 'conditioning_info'))):
+            or any(media.get(key) for key in ('first', 'last', 'conditioning_info'))
+            or (references and not valid_reference)):
         raise ValueError(UNSUPPORTED)
+
+
+def anchor_media(media, path):
+    """Add exactly one explicit global first-frame reference through the media encoder."""
+    if any(media.get(key) for key in ('first', 'last', 'references', 'conditioning_info')):
+        raise ValueError('--continue-anchor cannot be combined with other media conditioning')
+    from .media_request import digest
+    source = Path(path).expanduser().resolve(strict=True)
+    if not source.is_file() or not source.stat().st_size:
+        raise ValueError('--continue-anchor requires a nonempty image file')
+    return dict(media, version=1, references=[dict(kind='image', path=str(source),
+                                                 sha256=digest(source), bytes=source.stat().st_size)])
+
+
+def first_frame_prompt(text):
+    """The prompt with the note about the reference picture, inside the picture's own field when it has fields."""
+    import re
+    field = re.search(r'(?m)^[ \t]*integrated_multimodal_description[ \t]*:[ \t]*', text)
+    position = field.end() if field else 0
+    return text[:position] + FIRST_FRAME_NOTE + ' ' + text[position:]
+
+
+def first_frame_png(video_path):
+    """The first picture of a finished video."""
+    import io
+    import av
+    with av.open(str(video_path)) as container:
+        image = next(container.decode(video=0)).to_image()
+    target = io.BytesIO()
+    image.convert('RGB').save(target, format='PNG')
+    return target.getvalue()
+
+
+def pack_first_frame(raw):
+    """A PNG as continuation record metadata; every continuation of the film carries the same value."""
+    import io
+    from PIL import Image
+    if not isinstance(raw, bytes) or not raw.startswith(b'\x89PNG\r\n\x1a\n') or len(raw) > FIRST_FRAME_MAX_BYTES:
+        raise ValueError('Invalid first frame')
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            width, height = image.size
+            if not (32 <= width <= FIRST_FRAME_MAX_SIDE and 32 <= height <= FIRST_FRAME_MAX_SIDE):
+                raise ValueError('Invalid first frame size')
+            image.load()  # A cut-off file opens; it does not decode.
+    except (OSError, SyntaxError, Image.DecompressionBombError):
+        raise ValueError('Invalid first frame') from None
+    return dict(format='png', width=width, height=height, data=base64.b64encode(raw).decode('ascii'))
+
+
+def unpack_first_frame(value):
+    """The PNG a record carries, checked again: a record is a file anyone can replace."""
+    try:
+        if value['format'] != 'png' or len(value['data']) > (FIRST_FRAME_MAX_BYTES + 2) // 3 * 4:
+            raise ValueError('Invalid first frame')
+        raw = base64.b64decode(value['data'], validate=True)
+        if pack_first_frame(raw) != value:
+            raise ValueError('Invalid first frame')
+        return raw
+    except (KeyError, TypeError, ValueError, OSError):
+        raise ValueError('Invalid first frame') from None
+
+
+def chain_first_frame(request, video_path=None):
+    """The first frame of the whole film `request` continues, as record metadata; None when nothing has it.
+
+    A continued video's record carries it from its own source. The first part of a film never
+    stored one: its saved video starts with that frame. A continued part made before records
+    carried the frame has no way back to it.
+    """
+    metadata = _snapshot_value(request)['metadata']
+    if metadata.get('first_frame') is not None:
+        unpack_first_frame(metadata['first_frame'])
+        return metadata['first_frame']
+    if metadata['chain']['segment'] != 1 or video_path is None:
+        return None
+    from .continuation_store import video_id
+    if video_id(video_path) != request.get('source_id'):
+        raise ValueError(MISSING)
+    return pack_first_frame(first_frame_png(video_path))
 
 
 def validate_path(video_path):
@@ -192,6 +283,7 @@ def load(request, stage):
     # Each pass receives writable tensors of its own; sampling cannot mutate
     # the immutable snapshot used by the next pass or retry.
     return dict(audio_context=validate_audio_context(request.get('audio_context', AUDIO_CONTEXT_DEFAULT)),
+                **({'anchor': request['anchor']} if request.get('anchor') else {}),
                 video=torch.from_numpy(value['video_lo' if stage == 'first' else 'video_hi'].copy()),
                 audio=torch.from_numpy(value['audio'].copy()))
 
@@ -242,10 +334,13 @@ class Prefix:
     update. Audio is either kept clean or re-noised at each call, and restored
     on return. Only re-noising owns an independent RNG.
     """
-    def __init__(self, transformer, data, seed, device):
+    def __init__(self, transformer, data, seed, device, *, video_offset=0):
         import torch
         from diffusers.modular_pipelines.minimax_h3.before_denoise import patchify_video_latents
         self.audio_context = validate_audio_context(data.get('audio_context', AUDIO_CONTEXT_DEFAULT))
+        if type(video_offset) is not int or video_offset < 0:
+            raise ValueError('Invalid continuation reference row offset')
+        self.video_offset = video_offset
         self.video = data['video'].to(device=device, dtype=torch.float32)
         self.audio = data['audio'].to(device=device, dtype=torch.float32)
         if (self.video.ndim != 5 or self.video.shape[:3] != (1, transformer.config.in_channels, LATENT_FRAMES)
@@ -264,7 +359,7 @@ class Prefix:
         import torch
         video, audio = kwargs['hidden_states'][0], kwargs['audio_hidden_states'][0]
         count, ticks = self.video_rows.shape[0], self.audio.shape[2]
-        if video.shape[0] <= count or audio.shape[0] // 2 < ticks:
+        if video.shape[0] <= self.video_offset + count or audio.shape[0] // 2 < ticks:
             raise ValueError(MISSING)
         self.current_video = video
         self.restore_video()
@@ -278,13 +373,13 @@ class Prefix:
             audio_t = row_times[kwargs['audio_indices'][0]]
             # scale_noise uses H3's clean-at-one convention, not a standard DDPM clock.
             audio[audio_rows] = self.scheduler.scale_noise(self.audio_rows, audio_t, self.noise)
-        row_times[kwargs['video_indices'][:count]] = CLEAN_T
+        row_times[kwargs['video_indices'][self.video_offset:self.video_offset + count]] = CLEAN_T
         kwargs['timestep'], kwargs['timestep_indices'] = torch.unique(row_times, sorted=True, return_inverse=True)
         return args, kwargs
 
     def restore_video(self):
         if self.current_video is not None:
-            self.current_video[:self.video_rows.shape[0]] = self.video_rows
+            self.current_video[self.video_offset:self.video_offset + self.video_rows.shape[0]] = self.video_rows
 
     def finish(self, video, audio):
         video[:, :, :LATENT_FRAMES] = self.video
@@ -293,11 +388,12 @@ class Prefix:
 
 
 @contextmanager
-def sampling(transformer, data, seed, device):
+def sampling(transformer, data, seed, device, *, video_offset=0):
     if data is None:
         yield None
         return
-    prefix = Prefix(transformer, data, seed, device)
+    # Keep the legacy constructor call identical for existing continuations.
+    prefix = Prefix(transformer, data, seed, device, **({'video_offset': video_offset} if video_offset else {}))
     handle = transformer.register_forward_pre_hook(prefix.before, with_kwargs=True, prepend=True)
     try:
         yield prefix

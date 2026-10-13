@@ -98,7 +98,7 @@ def sampling_provenance(request):
         # A retry's identity binds the accepted bytes, without embedding the
         # snapshot again or making a relocation change computation identity.
         result['continuation'] = {key: value for key, value in request['continuation'].items()
-                                  if key not in ('snapshot', 'snapshot_data')}
+                                  if key not in ('snapshot', 'snapshot_data', 'source_video')}
     return result
 
 

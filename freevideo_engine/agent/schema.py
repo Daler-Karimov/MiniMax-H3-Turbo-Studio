@@ -154,10 +154,14 @@ def generate(*, local=False):
         preview={'type': 'boolean', 'default': False},
         refine_from=nullable({'oneOf': [JOB, SAVED]}), force_regenerate={'type': 'boolean', 'default': False},
         continue_from={'oneOf': [obj({'from_job': JOB}, ('from_job',)), obj({'library': SAVED}, ('library',))]},
+        first_frame_reference={'type': 'boolean', 'default': False, 'description':
+            'Reduces drift over a continued video: every continuing part also sees the first frame of the whole '
+            'video. It holds framing and motion close to that frame.'},
         takes=number(1, 8, integer=True, default=1), **common()),
         allOf=[{'if': {'required': ['refine_from'], 'properties': {'refine_from': {'type': 'string'}}},
                 'then': {'properties': {k: False for k in ('prompt', 'width', 'height', 'aspect', 'megapixels',
-                    'seconds', 'seed', 'quality', 'sampling', 'media', 'loras', 'preview', 'continue_from')}},
+                    'seconds', 'seed', 'quality', 'sampling', 'media', 'loras', 'preview', 'continue_from',
+                    'first_frame_reference')}},
                 'else': {'required': ['prompt']}},
                {'if': {'anyOf': [{'required': [k]} for k in ('aspect', 'megapixels')]},
                 'then': {'not': {'anyOf': [{'required': [k]} for k in ('width', 'height')]}}},

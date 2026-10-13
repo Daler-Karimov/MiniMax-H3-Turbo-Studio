@@ -65,6 +65,11 @@ GUIDE = {
         'Continuing (longer than 15 s, or continue_from) needs two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan.',
+        'first_frame_reference (default false) reduces drift in a continued video: each continuing part also '
+        'sees the first frame of the whole video. Set it when one scene with the same people runs over several '
+        'parts and framing, colour or the person may wander. Leave it off for camera moves, big action or a '
+        'scene that should change: it holds framing and motion close to the first frame. Continuing parts take '
+        'somewhat longer with it; a single-part video is unaffected.',
         'Keep the described timeline inside the duration. 4-15 s is the tested range; longer is experimental.',
         'Width and height are multiples of 32. For a size the user names that is not, use the nearest multiple '
         'on each side (1000x560 -> 992x544 or 992x576); a rejected request names them.',

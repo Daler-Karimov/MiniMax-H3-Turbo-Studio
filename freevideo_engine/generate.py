@@ -347,6 +347,15 @@ def _run(args):
                                audio_context)
     frames = getattr(args, 'frames', None)
     continue_from = getattr(args, 'continue_from', None)
+    continue_anchor = getattr(args, 'continue_anchor', None)
+    if continue_anchor is not None and continue_from is None:
+        raise ValueError('--continue-anchor requires --continue-from')
+    # Every part of a long video is asked alike; only a part that continues another can use it.
+    first_frame = None
+    if getattr(args, 'first_frame_reference', False) and continue_from is not None:
+        if continue_anchor is not None:
+            raise ValueError('Choose --first-frame-reference or --continue-anchor, not both')
+        first_frame = dict(requested=True, used=False)
     if continue_from is not None and frames is not None:
         validate_frames(frames)
     canvas = geometry(getattr(args, 'width', 1344), getattr(args, 'height', 768),
@@ -366,13 +375,17 @@ def _run(args):
             canvas['steps'] = requested_steps
     from .media_request import read as read_media, task_for, cache_key
     media = read_media(getattr(args, 'media', None))
+    if continue_anchor is not None:
+        from .continuation import anchor_media
+        media = anchor_media(media, continue_anchor)
     # Too small to sample cleanly: render larger, scale the picture down. Decided before anything
     # compares or stores the canvas, so every later check sees the size that is sampled.
     from .two_pass import sampling_canvas
     canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
                                           conditioned=bool(args.conditioning))
     if continue_from is not None:
-        validate_route(task=getattr(args, 'task', None) or 't2va', two_pass=two_pass,
+        validate_route(task=getattr(args, 'task', None) or ('ref2va' if continue_anchor else 't2va'),
+                       anchor=continue_anchor is not None, two_pass=two_pass,
                        preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
         # Reject absent/mismatched context before text encoding or model loading.
         if getattr(args, 'continuation_snapshot', None):
@@ -380,7 +393,29 @@ def _run(args):
                 getattr(args, 'continuation_snapshot_sha256', None), canvas)
         else:
             continuation = prepare_continuation(continue_from, canvas)
-        continuation = dict(continuation, audio_context=audio_context())
+        continuation = dict(continuation, audio_context=audio_context(), source_video=str(continue_from))
+        if first_frame is not None:
+            from .continuation import anchor_media, chain_first_frame, unpack_first_frame
+            try:
+                kept = chain_first_frame(continuation, continue_from)
+            except ValueError:
+                kept = None
+                first_frame['reason'] = 'unreadable'
+            if kept is None:
+                # Optional help: the part is made as an ordinary continuation and the report says why.
+                first_frame.setdefault('reason', 'source_predates')
+            else:
+                if args.out.resolve().exists():
+                    raise FileExistsError(args.out.resolve())
+                args.out.resolve().parent.mkdir(parents=True, exist_ok=True)
+                continue_anchor = args.out.resolve().with_suffix('.first-frame.png')
+                continue_anchor.write_bytes(unpack_first_frame(kept))
+                media = anchor_media(media, continue_anchor)
+                validate_route(task=getattr(args, 'task', None) or 'ref2va', anchor=True, two_pass=two_pass,
+                               preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
+                first_frame.update(used=True, width=kept['width'], height=kept['height'])
+        if continue_anchor is not None:
+            continuation['anchor'] = media['references'][0]
     active_loras = [row for row in media.get('loras', []) if row['strength'] != 0]
     if media:
         inferred_task = task_for(media)
@@ -427,7 +462,7 @@ def _run(args):
     manifest = json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8'))
     if continuation is not None:
         from .two_pass import plan as continuation_plan
-        validate_route(task=profile['engine'].get('task', 't2va'))
+        validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
         continuation = validate_snapshot(continuation, canvas, None if active_loras else manifest,
             continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps))
     if manifest.get('precision') not in ('fp8', 'int8', 'bf16'):  # BF16: the unquantized reference
@@ -456,6 +491,10 @@ def _run(args):
     if continuation is not None:
         report['continuation'] = continuation_summary(continuation)
         report['audio_context'] = continuation['audio_context']
+        if continue_anchor is not None:
+            report['continue_anchor'] = continuation['anchor']
+    if first_frame is not None:
+        report['first_frame_reference'] = first_frame
     from .support_report import code_identity, write as write_debug
     report['runtime_hardware'] = hardware.to_dict()
     report['runtime_code'] = code_identity()
@@ -542,7 +581,12 @@ def _run(args):
             elif args.conditioning:
                 shutil.copyfile(args.conditioning, condition)
             if args.prompt_file and not refine_source:
-                encoding = {'prompt': args.prompt_file.read_text(encoding='utf-8'), 'encoder': args.encoder,
+                prompt_text = args.prompt_file.read_text(encoding='utf-8')
+                if first_frame is not None and first_frame['used']:
+                    # The saved prompt stays the user's own; the model is also told what the picture is.
+                    from .continuation import first_frame_prompt
+                    prompt_text = first_frame_prompt(prompt_text)
+                encoding = {'prompt': prompt_text, 'encoder': args.encoder,
                             'comfy_root': str(args.comfy_root or comfy_root()),
                             'model_paths': str(args.model_paths.resolve()) if args.model_paths else None,
                             'output': str(condition), 'gpu_budget_gb': profile['gpu_budget_gb'],
@@ -640,7 +684,7 @@ def _run(args):
                                           staged=bool(preview or refine_source))
             report['sampling_plan'] = sampling_plan
             if continuation is not None:
-                validate_route(task=profile['engine'].get('task', 't2va'))
+                validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
                 continuation = validate_snapshot(continuation, canvas,
                     json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8')), sampling_plan)
             if preview:
@@ -759,8 +803,9 @@ def _run(args):
                 nonlocal preview_pass
                 selected_env = inference_environment(engine_env, selected['inference_ram_budget_gb'] * 1e9)
                 if continuation is not None:
-                    from .continuation import ADALN_TASK
-                    selected['engine'] = dict(selected['engine'], adaln_task=ADALN_TASK)
+                    from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK
+                    selected['engine'] = dict(selected['engine'],
+                        adaln_task=ANCHOR_ADALN_TASK if continue_anchor is not None else ADALN_TASK)
                 request.update(engine_options=selected['engine'], decoder_options=selected['decoder'],
                                ram_budget_bytes=round(selected['inference_ram_budget_gb'] * 1e9),
                                ram_budget_is_estimate=ram_budget_is_estimate(args),

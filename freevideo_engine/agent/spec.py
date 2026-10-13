@@ -188,6 +188,8 @@ def normalize(value):
             result['task'] = task(result['media'])
             if value.get('continue_from'):
                 result['continue_from'] = dict(value['continue_from'])
+            if value['first_frame_reference']:
+                result['first_frame_reference'] = True
             result['loras'] = [dict(name=row, strength=1.) if isinstance(row, str) else {'strength': 1., **row}
                                for row in value['loras']]
     elif kind == 'assemble':
@@ -225,6 +227,9 @@ def comfy_prompt(spec, node, *, prompt, assets, refine_from=''):
                   seed=spec['seed'], two_pass=spec['two_pass'], base_steps=spec['base_steps'],
                   refine_steps=spec['refine_steps'], force_regenerate=spec['force_regenerate'],
                   preview=spec['preview'], refine_from=refine_from)
+    if spec.get('first_frame_reference'):
+        # Every part of the video carries it; the part that continues nothing ignores it.
+        inputs['first_frame_reference'] = True
     graph = {node: {'class_type': 'FreeVideoGenerate', 'inputs': inputs,
                     '_meta': {'title': 'FreeVideo · ' + (spec.get('label') or 'Agent job')}}}
     if assets:

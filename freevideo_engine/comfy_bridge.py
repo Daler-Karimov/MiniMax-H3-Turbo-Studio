@@ -591,7 +591,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
-             continue_from=None, frames=None):
+             continue_from=None, frames=None, first_frame_reference=False):
+    if type(first_frame_reference) is not bool:
+        raise ValueError('First-frame reference must be a boolean')
     if continue_from is not None:
         from .continuation import validate_route
         validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from)
@@ -629,6 +631,14 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         # A continuation takes no media or preview, so its sampled size is known here; the snapshot
         # of the previous segment was written for that canvas, not for the requested size.
         continuation = prepare(continue_from, sampling_canvas(canvas)[0], directory=root / 'continuations')
+    # The engine decides the same way from the same record: whether the film's first frame is there to use.
+    anchored = False
+    if continue_from is not None and first_frame_reference:
+        from .continuation import chain_first_frame
+        try:
+            anchored = chain_first_frame(continuation, continue_from) is not None
+        except ValueError:
+            pass
     environment = engine_environment(root, source, environ)
     environment.update(FREEVIDEO_HOME=str(root), PYTHONPATH=str(source), PYTHONUNBUFFERED='1',
                        PYTHONUTF8='1', PYTHONIOENCODING='utf-8', NO_COLOR='1', FREEVIDEO_UI_EVENTS='1')
@@ -657,6 +667,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         command[position:position + 2] = ['--frames', str(frames)]
     if continue_from is not None:
         command += ['--continue-from', str(continue_from)]
+        if first_frame_reference:
+            command.append('--first-frame-reference')
         from .continuation import persist_snapshot
         continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')
         command += ['--continuation-snapshot', continuation['snapshot'],
@@ -734,11 +746,12 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         # The engine samples this canvas; results, cache keys and labels keep the requested size.
         sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale), media=extra.get('media'),
                                                conditioned=bool(extra.get('conditioning')))
-        planned = plan(sampled, two_pass, task_for(extra.get('media', {})), base_steps=base_steps, refine_steps=refine_steps,
-                       staged=bool(preview or upscale))
+        planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
+                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
         if continue_from is not None:
-            from .continuation import ADALN_TASK, validate_snapshot, summary
-            validate_route(task=task_for(extra.get('media', {})), media=extra.get('media'))
+            from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, validate_snapshot, summary
+            validate_route(task='ref2va' if anchored else task_for(extra.get('media', {})), anchor=anchored,
+                           media=extra.get('media'))
             continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
             state['continuation'] = summary(continuation)
         # A preview is its own result; an upscale is always run from its preview.
@@ -773,7 +786,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         preparation_started = time.monotonic()
         try:
             # Reference audio selects its own tables; match the encoder's choice.
-            asset_task = ADALN_TASK if continue_from is not None else engine_task(extra.get('media', {}), media_base)
+            asset_task = ((ANCHOR_ADALN_TASK if anchored else ADALN_TASK) if continue_from is not None
+                          else engine_task(extra.get('media', {}), media_base))
             preparation = prepare_sampling_assets(root, machine, planned, asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)
         except BaseException:

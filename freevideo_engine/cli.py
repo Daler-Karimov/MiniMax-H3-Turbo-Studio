@@ -93,6 +93,12 @@ def main():
     generate.add_argument('--task', choices=TASKS, help='Input task; inferred when --media is provided')
     generate.add_argument('--media', type=Path, help='Versioned keyframe/reference/LoRA request JSON; local files only')
     generate.add_argument('--continue-from', type=Path, help='Continue an existing MP4 using its absolute path')
+    generate.add_argument('--first-frame-reference', action='store_true',
+                          help='With --continue-from: also give the model the first frame of the whole film as a '
+                               'reference picture. Reduces drift over many parts; holds framing and motion close to '
+                               'the opening, so leave it off when later parts should move away from it')
+    generate.add_argument('--continue-anchor', type=Path, metavar='IMAGE',
+                          help='Experimental: a reference picture of your own for a continuation, with no prompt note')
     generate.add_argument('--allocator-limit-gib', type=float,
                           help='Explicit benchmark cap on PyTorch CUDA allocations; not a whole-device memory limit')
     generate.add_argument('--no-history-placement', action='store_true', help='Keep the starting placement for a matched baseline; still record measurements')
@@ -136,10 +142,13 @@ def main():
     args = parser.parse_args()
     if args.command == 'generate':
         from .continuation import validate_frames, validate_route
+        if args.continue_anchor is not None and args.continue_from is None:
+            raise ValueError('--continue-anchor requires --continue-from')
         if args.continue_from is not None:
             if args.frames is not None:
                 validate_frames(args.frames)
-            validate_route(task=args.task or 't2va', two_pass=args.two_pass, preview=args.preview,
+            validate_route(task=args.task or ('ref2va' if args.continue_anchor else 't2va'),
+                           anchor=args.continue_anchor is not None, two_pass=args.two_pass, preview=args.preview,
                            refine_from=args.refine_from)
     if sys.platform == 'darwin' and args.command in ('plan', 'generate', 'encode', 'doctor'):
         from .macos_generate import dispatch

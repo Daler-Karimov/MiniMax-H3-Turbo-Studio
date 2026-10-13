@@ -97,12 +97,13 @@ def generate(request, resident=None):
             metrics['sampling_plan'] = expected
         continuation = request.get('continuation')
         if continuation is not None:
-            from .continuation import (validate_route, summary, ADALN_TASK, UNSUPPORTED,
+            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED,
                                        validate_audio_context, AUDIO_CONTEXT_DEFAULT)
             # A plan that fell back to one pass on a small canvas still has
             # the two-pass flag set and keeps its continuation; an explicit
             # single-pass request does not.
             validate_route(task=request['engine_options'].get('task', 't2va'),
+                           anchor=bool(continuation.get('anchor')),
                            two_pass=bool(request.get('sampling_plan', {}).get('requested')),
                            preview=request.get('preview', False), refine_from=request.get('resume_first_pass'))
             if isinstance(getattr(torch.version, 'hip', None), str):
@@ -110,7 +111,8 @@ def generate(request, resident=None):
             continuation = dict(continuation,
                 audio_context=validate_audio_context(continuation.get('audio_context', AUDIO_CONTEXT_DEFAULT)))
             request['continuation'] = continuation
-            request['engine_options'] = dict(request['engine_options'], adaln_task=ADALN_TASK)
+            request['engine_options'] = dict(request['engine_options'],
+                adaln_task=ANCHOR_ADALN_TASK if continuation.get('anchor') else ADALN_TASK)
             metrics['continuation'] = summary(continuation)
             metrics['audio_context'] = continuation['audio_context']
         metrics['device_memory'] = device_memory_report(request['gpu_budget_bytes'], request.get('allocator_limit_bytes'),
@@ -190,7 +192,8 @@ def generate(request, resident=None):
         # serves both stages. An explicit single-pass request keeps nothing.
         plan_flags = request.get('sampling_plan') or {}
         continuable = (bool(plan_flags.get('enabled') or plan_flags.get('requested'))
-                       and options.get('task', 't2va') == 't2va' and not request.get('preview'))
+                       and (options.get('task', 't2va') == 't2va' or bool(continuation and continuation.get('anchor')))
+                       and not request.get('preview'))
         first_tail = continuation_data = None
         def tail_failure(error):
             from .adaptive import classify_failure
@@ -591,6 +594,19 @@ def generate(request, resident=None):
                                         if continuation is not None and continuation_data is not None else {}),
                                      model_cache=resident, phase_callback=decode_phase, output_size=output_size, **decoder))
         if continuable and continuation_data is not None:
+            if continuation is not None:
+                # Every continuation of a film carries its first frame on, used or not: a later
+                # part may ask for it. Without one this part is saved as before.
+                try:
+                    from .continuation import chain_first_frame
+                    frame = chain_first_frame(continuation, continuation.get('source_video'))
+                    if frame is not None:
+                        continuation_data['metadata']['first_frame'] = frame
+                except Exception as error:
+                    if isinstance(error, MemoryError) or type(error).__name__ in (
+                            'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
+                        raise
+                    metrics['first_frame_kept'] = dict(saved=False, error=type(error).__name__)
             try:
                 from .continuation_store import save as save_continuation
                 metrics['continuation_store'] = dict(save_continuation(request['output'], continuation_data), saved=True)
