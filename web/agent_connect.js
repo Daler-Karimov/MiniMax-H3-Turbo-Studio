@@ -17,6 +17,19 @@ export function connectionSentence(address, t) {
     return t(`Connect to FreeVideo: open ${url} and follow the instructions.`, `请连接 FreeVideo：打开 ${url} 并按说明操作。`);
 }
 
+// Shown under the status line, only when the service says editing cannot run here; connecting still works.
+export function editingNote(status, t) {
+    return status?.editing === false ? t('The agent cannot edit videos or images for now.', 'Agent 暂时不能剪辑和修图。') : '';
+}
+
+// Whether this FreeVideo has the Agent interface on. Any failure counts as off: the surface shows nothing.
+export async function agentInterfaceEnabled(api) {
+    try {
+        const response = await api.fetchApi('/freevideo/agent', {cache: 'no-store'});
+        return response.ok && (await response.json()).enabled === true;
+    } catch { return false; }
+}
+
 // The card alone: who can connect, the sentence, one light and one button. It belongs to whichever surface
 // shows it. shown() says whether the user can see it now; the surface calls sync() whenever that may have changed.
 export function agentConnectCard(t, api, shown = () => true) {
@@ -24,12 +37,13 @@ export function agentConnectCard(t, api, shown = () => true) {
     const body = el('div', 'fv-agent-connect-body');
     const subtitle = el('p', 'fv-muted', t('Claude Code, Codex, FreeToken and others', 'Claude Code、Codex、FreeToken 等'));
     const sentence = el('p', 'fv-agent-sentence');
+    const note = el('p', 'fv-agent-note'); note.hidden = true;
     const actions = el('div', 'fv-agent-connect-actions');
     const status = el('div', 'fv-agent-connect-status'); status.setAttribute('role', 'status');
     const dot = el('span', 'fv-agent-connect-dot'); dot.setAttribute('aria-hidden', 'true');
     const label = el('span'); status.append(dot, label);
     const button = el('button', 'fv-primary'); button.type = 'button'; button.disabled = true;
-    actions.append(status, button); body.append(subtitle, sentence, actions);
+    actions.append(status, button); body.append(subtitle, sentence, actions, note);
 
     let copied = false, feedback = false, previousName = null, value = null;
     let timer, feedbackTimer, controller, generation = 0;
@@ -38,6 +52,7 @@ export function agentConnectCard(t, api, shown = () => true) {
         const state = connectionState(copied, value, previousName, t);
         dot.dataset.color = state.color; label.textContent = state.text;
         button.textContent = feedback ? t('Copied', '已复制') : state.buttonText;
+        note.textContent = editingNote(value, t); note.hidden = !note.textContent;
     }
     render();
 
@@ -95,12 +110,7 @@ export function agentConnectCard(t, api, shown = () => true) {
         if (!controller && !timer) poll();
     }
     // Resolves to whether this FreeVideo has the Agent interface on; a surface shows nothing when it is off.
-    const enabled = (async () => {
-        try {
-            const response = await api.fetchApi('/freevideo/agent', {cache: 'no-store'});
-            return response.ok && (await response.json()).enabled === true;
-        } catch { return false; /* Discovery unavailable: the card stays absent. */ }
-    })();
+    const enabled = agentInterfaceEnabled(api);
     return {element: body, title: t('Connect an agent', '连接 Agent'), enabled, sync, stop};
 }
 

@@ -693,9 +693,11 @@ def register():
     @guarded
     async def connect_status(request):
         from .jobs import iso
+        from .editor_runtime import available
         seen = connection['last_seen_at']
+        # editing: whether this installation can run project and image edits; the card says so when it cannot.
         return reply(dict(connection, connected=seen is not None and 0 <= time.time() - seen < 600,
-                          last_seen_at=iso(seen)))
+                          last_seen_at=iso(seen), editing=available()))
 
     @routes.get(PREFIX)
     @guarded
