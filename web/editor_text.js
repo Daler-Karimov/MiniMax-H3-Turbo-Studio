@@ -109,7 +109,10 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
                 if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}};host.append(importButton,file);
         }
         content.oninput=()=>{const c=selectedText();if(c)updateContent(c,content.value,true);};content.onchange=finishContent;
-        content.onfocus=()=>{typing=selectedText()?.id??null;};content.onblur=finishContent;
+        content.onfocus=()=>{typing=selectedText()?.id??null;};
+        // A press on one of its own controls is not leaving the text: it ends when another part is selected.
+        let within=false;host.addEventListener('pointerdown',e=>{if(e.target===content)return;within=true;setTimeout(()=>{within=false;},0);},true);
+        content.onblur=()=>{if(within&&typing)commitDraft();else finishContent();};
         content.onkeydown=e=>{
             e.stopPropagation();
             if(e.key==='Escape'){e.preventDefault();finishContent();content.blur();}
@@ -265,7 +268,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     }
     tracksHost.addEventListener('contextmenu',contextMenu);
     const outside=e=>{if(!menu.contains(e.target))menu.hidden=true;};element.addEventListener('pointerdown',outside);
-    const unsubscribe=state.subscribe(event=>{if(['record','selection','playhead'].includes(event.type)){if(editing&&selectedText()?.id!==editing.id)finishInline();if(event.type==='record'&&draft){try{draft={...draft,record:draft.change(state.record)};}catch{draft=null;}}render();updateWarnings();}});
+    const unsubscribe=state.subscribe(event=>{if(['record','selection','playhead'].includes(event.type)){if(editing&&selectedText()?.id!==editing.id)finishInline();if(typing&&document.activeElement?.classList?.contains('fv-ed-text-content')!==true&&selectedText()?.id!==typing){const id=typing;typing=null;endEditing(id);}if(event.type==='record'&&draft){try{draft={...draft,record:draft.change(state.record)};}catch{draft=null;}}render();updateWarnings();}});
     player.setTextRenderer?.(render);
     const resize=typeof ResizeObserver==='function'?new ResizeObserver(()=>render()):null;resize?.observe(frame);
     const seeked=()=>render();frame.addEventListener('seeked',seeked,true);frame.addEventListener('loadeddata',seeked,true);
