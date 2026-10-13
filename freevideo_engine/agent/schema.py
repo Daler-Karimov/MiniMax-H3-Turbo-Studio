@@ -1176,7 +1176,7 @@ def openapi():
         elif suffix == '/jobs' and method == 'GET':
             response_schema = obj({'jobs': {'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}}})
         elif suffix in ('/jobs/{id}', '/jobs/{id}/cancel', '/jobs/{id}/resume'):
-            response_schema = {'$ref': '#/components/schemas/Job'}
+            response_schema = {'$ref': '#/components/schemas/JobAnswer'}
         elif '/drama/{id}' in suffix and not suffix.endswith('/sheet') or suffix == '/drama' and method == 'POST':
             response_schema = production_response()
         elif suffix == '/confirmations':
@@ -1206,16 +1206,18 @@ def openapi():
         if suffix == '/connect' and method == 'GET':
             success['content']['text/plain'] = {'schema': {'type': 'string'}}
         paths.setdefault(path, {})[method.lower()] = operation
+    job_view = {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
+        status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
+        chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
+        spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
+        error={'$ref': '#/components/schemas/Error'})}
     return dict(openapi='3.1.0', info=dict(title='FreeVideo Agent API', version=str(API_VERSION)), paths=paths,
         components=dict(securitySchemes={'bearer': {'type': 'http', 'scheme': 'bearer'},
             'page': {'type': 'apiKey', 'in': 'cookie', 'name': 'freevideo_agent_page'}}, schemas={
             'Session': session_view(), 'SessionEvent': session_event(stored=True),
-            'JobSpec': schemas()['job'], 'Batch': batch_schema(),
-            'Job': {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
-                status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
-                chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
-                spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
-                error={'$ref': '#/components/schemas/Error'})},
+            'JobSpec': schemas()['job'], 'Batch': batch_schema(), 'Job': job_view,
+            # One job answers the way a submission does: the same job is also under 'job'.
+            'JobAnswer': dict(job_view, properties=dict(job_view['properties'], job={'$ref': '#/components/schemas/Job'})),
             'Submitted': obj(dict(job={'$ref': '#/components/schemas/Job'},
                 jobs={'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}})),
             'Error': obj(dict(code=enum(ERRORS),

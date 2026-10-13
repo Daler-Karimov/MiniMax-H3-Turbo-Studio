@@ -245,6 +245,11 @@ def plan(port, value, jobs=None):
     return result
 
 
+def job_answer(view):
+    """One job answers the way a submission does: the job is also under 'job'."""
+    return dict(view, job=view)
+
+
 async def wait_for_job(jobs, row, seconds, *, clock=time.monotonic, sleep=asyncio.sleep):
     if not math.isfinite(seconds) or seconds < 0:
         raise chain_error('invalid_wait', 'wait must be a finite nonnegative number of seconds.',
@@ -1054,14 +1059,14 @@ def register():
     @guarded
     async def get_job(request):
         row = await asyncio.to_thread(jobs.get, request.match_info['id'])
-        return reply(await wait_for_job(jobs, row, float(request[query_key].get('wait', '0') or 0)))
+        return reply(job_answer(await wait_for_job(jobs, row, float(request[query_key].get('wait', '0') or 0))))
 
     @routes.post(PREFIX + '/jobs/{id}/cancel')
     @guarded
     async def cancel(request):
         def work():
             return jobs.view(jobs.cancel(request.match_info['id']))
-        return reply(await asyncio.to_thread(work))
+        return reply(job_answer(await asyncio.to_thread(work)))
 
     @routes.post(PREFIX + '/jobs/{id}/resume')
     @guarded
@@ -1070,7 +1075,7 @@ def register():
             key=request.headers.get('Idempotency-Key'), value=await body(request), replay_result=True,
             client=request.headers.get('X-FreeVideo-Client', '')[:80] or None)
         await jobs.tick()
-        return reply(await asyncio.to_thread(jobs.view, row))
+        return reply(job_answer(await asyncio.to_thread(jobs.view, row)))
 
     @routes.get(PREFIX + '/jobs/{id}/events')
     @guarded

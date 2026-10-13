@@ -79,8 +79,9 @@ GUIDE = {
     'agent_jobs': [
         'GET /capabilities reads the studio cache with the same size/task/material query parameters. '
         'status=computing includes retry_after_seconds; unknown plan estimates have seconds=null.',
-        'GET /jobs/{id}?wait=25 waits at most 25 seconds and returns poll_after_ms. Poll the same ID; '
-        'disconnecting a wait or SSE does not cancel generation.',
+        'GET /jobs/{id}?wait=25 waits at most 25 seconds and returns poll_after_ms. Like POST /jobs, the answer '
+        'has the job under job (its fields are also at the top level). Poll the same ID until job.status is '
+        'succeeded, failed, cancelled or interrupted; disconnecting a wait or SSE does not cancel generation.',
         'Jobs wait behind an active studio chain. GET /queue gives Agent/UI ownership and counts ahead, '
         'without studio prompts. POST /jobs/{id}/cancel cancels only this job.',
         'POST /jobs/{id}/resume continues failed, interrupted or cancelled generation; successful blocks stay. '
@@ -360,8 +361,8 @@ def connection_guide(root, base, lang=None, offers=None):
         '# ref is a new name for every new request; the same ref again only repeats a submission whose answer was lost.',
         '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "seconds": 5, "aspect": "16:9", "label": "SHORT NAME",',
         '#                               "ref": "A-NEW-NAME-FOR-THIS-REQUEST"})["job"]',
-        '# job = call("GET", "/jobs/" + job["id"] + "?wait=25")',
-        '# Poll the same ID until succeeded.',
+        '# while job["status"] not in ("succeeded", "failed", "cancelled", "interrupted"):',
+        '#     job = call("GET", "/jobs/" + job["id"] + "?wait=25")["job"]',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
         '# The conversation inside FreeVideo (see below): each wait is its own command; when it returns, run the next one.',
         '# box = call("GET", "/inbox?wait=50")   # {"session": ..., "inbox": [what the user said], "again": true if nothing yet}',
