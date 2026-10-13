@@ -4,7 +4,7 @@
 .fv-editor .fv-ed-notes-again{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 8px;font-size:12px}
 .fv-ed-notes-again .fv-ed-glyph{width:12px;height:12px}
 .fv-editor .fv-ed-notes-again:disabled{opacity:.4}
-.fv-editor .fv-ed-notes-text{display:block;height:auto;box-sizing:border-box;width:100%;min-height:34px;max-height:94px;padding:6px 10px;resize:none;overflow-y:auto;font:13px/20px var(--fv-font);color:var(--fv-ink);background:var(--fv-bg);border:1px solid var(--fv-border);border-radius:8px}
+.fv-editor .fv-ed-notes-text{display:block;height:auto;box-sizing:border-box;width:100%;min-height:34px;max-height:98px;padding:6px 10px;resize:none;overflow-y:auto;font:13px/20px var(--fv-font);color:var(--fv-ink);background:var(--fv-bg);border:1px solid var(--fv-border);border-radius:8px}
 .fv-editor .fv-ed-notes-text:focus-visible{outline:1px solid var(--fv-accent);outline-offset:-1px;border-color:var(--fv-accent)}
 .fv-editor .fv-ed-notes-text:disabled{opacity:.4}
 .fv-ed-notes-versions{display:flex;flex-direction:column;gap:6px;margin-top:6px}

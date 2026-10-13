@@ -435,7 +435,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             }
             const metadata = store.sources.get(sourceKey(value.source));
             try { state.apply(t('Insert source', '放入素材'), record => model.insertSource(record, {
-                ...value, width: metadata?.width ?? value.width, height: metadata?.height ?? value.height,
+                ...value, width: metadata?.width ?? value.width, height: metadata?.height ?? value.height, text: value.text ?? metadata?.text,
                 at: value.at ?? model.duration(record)}), {clearRange: state.selection !== initialSelection});
                 return {ok: true};
             } catch (valueError) {
@@ -856,7 +856,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     record = model.emptyProject({width: even(metadata?.width || g.width || panel.width || 1344), height: even(metadata?.height || g.height || panel.height || 768),
                         settings: panel.settings || null, name: t('Untitled edit', '未命名剪辑')});
                     record = model.insertSource(record, {source: {kind: 'work', id}, frames: metadata?.frames || g.frames || Math.round((g.seconds || 15) * 24),
-                        hasVideo: true, hasAudio: metadata?.has_audio ?? work.has_audio !== false, at: 0});
+                        hasVideo: true, hasAudio: metadata?.has_audio ?? work.has_audio !== false, text: metadata?.text, at: 0});
                     if (!metadata) store.cache({[key]: {video: mediaURL(api, work.video), audio: mediaURL(api, work.video), frames: g.frames,
                         has_video: true, has_audio: true, path: work.video, missing: false, thumbnail: '/freevideo/library/thumbnail?' + new URLSearchParams({id})}});
                 }

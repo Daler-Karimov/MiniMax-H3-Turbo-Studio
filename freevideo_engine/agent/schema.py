@@ -753,7 +753,7 @@ def project_schema(name):
     if name != 'operations':
         return EMPTY
     fields = {
-        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end. Then write the new picture clip\'s note.'),
+        'insert': (dict(source=EDITOR_SOURCE, at=EDITOR_FRAME), ('source',), 'Insert picture and sound from a source. Omit at to append at the timeline end. A work brings the description it was generated from. Then write the new picture clip\'s note.'),
         'split': (dict(clip_ids=ids, frame=EDITOR_FRAME), ('clip_ids', 'frame'), 'Cut selected clips and their linked partners. The frame must be inside a selected segment.'),
         'trim': (dict(clip_ids=ids, frame=EDITOR_FRAME, edge=enum(('start', 'end'))), ('clip_ids', 'frame', 'edge'), 'Trim a selected edge at the frame. The frame must be inside a selected segment.'),
         'remove': (dict(clip_ids=ids), ('clip_ids',), 'Remove selected clips and linked partners. Use clip IDs from this revision.'),

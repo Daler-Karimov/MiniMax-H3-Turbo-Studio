@@ -433,9 +433,19 @@ function sourceAudioTrack(record, start, frames, allowRoom = false) {
     }
     throw new EditError('audio_full');
 }
-export function insertSource(record, {source, frames, hasVideo, hasAudio, width, height, at: position = 0}) {
-    source = sourceData(source); check(whole(frames, 1) && whole(position), 'range');
+// A saved project file holds 8 MiB; every character outside plain ASCII is written there as six.
+const STORED_ROOM = 8 * 1024 * 1024 - 64 * 1024;
+function storedSize(record) {
+    const written = JSON.stringify(record); let size = written.length;
+    for (let i = 0; i < written.length; i++) { const code = written.charCodeAt(i); size += code > 126 ? 5 : code === 44 || code === 58 ? 1 : 0; }
+    return size;
+}
+// A saved video brings the description it was generated from; one that cannot be kept is left out.
+export function insertSource(record, {source, frames, hasVideo, hasAudio, width, height, at: position = 0, text = '', by = 'user'}) {
+    const given = source; source = sourceData(source); check(whole(frames, 1) && whole(position), 'range');
     check(typeof hasVideo === 'boolean' && typeof hasAudio === 'boolean' && (hasVideo || hasAudio), 'source');
+    check(TEXT_BY.includes(by), 'text');
+    const words = hasVideo && typeof text === 'string' && validText(text.trim()) ? text.trim() : '';
     const next = copy(record);
     if (hasVideo) followFirstSize(next, width, height);
     let track = trackBy(next, hasVideo ? 'v1' : 'a1');
@@ -445,11 +455,16 @@ export function insertSource(record, {source, frames, hasVideo, hasAudio, width,
     const sound = available ? audioTrack(next, sourceAudioTrack(available, start, frames, true).id) : null;
     applyRoom(next, start, frames, {tracks: [track.id, ...(sound ? [sound.id] : [])]});
     const primary = newClip(next, track, {source, frames, start});
+    if (words) written(primary, words, by);
     if (hasVideo && hasAudio) {
         const mate = newClip(next, sound, {source, frames, start});
         primary.link = mate.id; mate.link = primary.id;
+        if (words) written(mate, words, by);
     }
-    return finish(next);
+    const result = finish(next);
+    // The description is a convenience: a project it would make too large to save takes the video without it.
+    if (words && storedSize(result) > STORED_ROOM) return insertSource(record, {source: given, frames, hasVideo, hasAudio, width, height, at: position});
+    return result;
 }
 export function move(record, id, start) {
     if (isText(find(record, id))) return changeText(record, id, {start});
