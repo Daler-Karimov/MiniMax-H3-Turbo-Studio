@@ -53,7 +53,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     function speechLabel(fraction){speech.shown=fraction;const p=Math.round(Math.min(1,Math.max(0,Number(fraction)||0))*100),size=Math.max(1,Math.round(speech.need/1e6)),text=fraction==null?(speech.need?t(`Auto subtitles · Download ${size} MB`,`自动字幕 · 下载 ${size} MB`):t('Auto subtitles','自动字幕')):speech.loading?t(`Cancel · Downloading ${p}%`,`取消 · 下载 ${p}%`):t(`Cancel · ${p}%`,`取消 · ${p}%`);for(const b of speech.buttons){b.textContent=text;b.hidden=!(speech.available||speech.need);}}
     function speechEnd(text){speech.stop?.();speech.stop=null;speech.job=null;speech.busy=false;speech.loading=false;speechLabel(null);if(text)actions.notify?.(text);}
     const speechFailed=()=>t('Could not create subtitles','没能生成字幕'),speechSilent=()=>t('No speech found','没有听到说话声');
-    const speechReason=reason=>reason==='no_sound'?speechSilent():reason==='language'?t('English only for now','暂时只能识别英语'):speechFailed();
+    const speechReason=reason=>reason==='no_sound'?speechSilent():reason==='language'?t('Language not supported yet','暂不支持这种语言'):speechFailed();
     function speechResult(job){
         if(job.state==='running'){speechLabel(job.fraction);return true;}
         if(job.state!=='done'){speechEnd(job.state==='cancelled'?null:speechReason(job.reason));return false;}

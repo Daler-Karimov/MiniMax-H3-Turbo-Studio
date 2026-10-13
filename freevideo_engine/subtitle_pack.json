@@ -2,7 +2,7 @@
   "format": 1,
   "repo": "OpenVDN/vdn-minimax-h3-edge",
   "prefix": "subtitles-v1",
-  "revision": null,
+  "revision": "94f5ccc7bb78917e1eed47de4fc04a61465b8673",
   "python": "cp312",
   "groups": {
     "speech": [
@@ -47,6 +47,26 @@
         "file": "licenses/Whisper-MIT.txt",
         "bytes": 1063,
         "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"
+      },
+      {
+        "file": "sensevoice/model.int8.onnx",
+        "bytes": 239233841,
+        "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+      },
+      {
+        "file": "sensevoice/tokens.txt",
+        "bytes": 315894,
+        "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+      },
+      {
+        "file": "licenses/FunASR-MODEL_LICENSE-v1.1.txt",
+        "bytes": 5306,
+        "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8"
+      },
+      {
+        "file": "licenses/SenseVoice-NOTICE.txt",
+        "bytes": 739,
+        "sha256": "3b699b8c5d3c40d0d2d3995048dc938cd9ef928d50b9550ba265c221ba8be20a"
       }
     ],
     "runtime": [
@@ -81,7 +101,7 @@
   },
   "origin": {
     "speech": "csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-small (NVIDIA NeMo stt_en_conformer_ctc_small, CC-BY-4.0); snakers4/silero-vad v5.0 (MIT)",
-    "language": "csukuangfj/sherpa-onnx-whisper-tiny (OpenAI Whisper tiny, MIT)",
+    "language": "csukuangfj/sherpa-onnx-whisper-tiny (OpenAI Whisper tiny, MIT); csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 (SenseVoiceSmall by FunASR/FunAudioLLM, FunASR Model Open Source License Agreement v1.1)",
     "runtime": "k2-fsa/sherpa-onnx 1.13.8 built by FreeVideo without text-to-speech (source 11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf)"
   }
 }

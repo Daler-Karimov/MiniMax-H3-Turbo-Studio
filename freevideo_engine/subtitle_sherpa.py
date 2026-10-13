@@ -18,7 +18,9 @@ identification, `subtitles/lid/`, size and SHA-256 pinned). A speech language
 without an installed model is refused with the `language` reason; without the
 verified identification files `auto` is refused as `no_engine`, so a sound in
 another language never becomes a track of wrong words. An explicit language
-needs its own model, never another one.
+needs its own model, never another one. The multilingual model
+(`subtitles/sensevoice/`, SenseVoice-Small) reads Chinese, Japanese, Korean and
+Cantonese; English keeps its own model.
 """
 import hashlib
 import logging
@@ -35,8 +37,11 @@ CORE = 24.0            # seconds each window owns
 OVERLAP = 2.0          # heard on both sides of a seam, owned by one side
 THRESHOLD = .72        # share of a line's words that must be heard in order
 PAUSE = .7             # silence that ends a recognised line (seconds)
-LINE_UNITS = {'zh': 24, 'en': 14}
+LINE_UNITS = {'zh': 24, 'en': 14, 'yue': 24, 'ja': 20, 'ko': 10}
 MODELS = {'zh': 'zh', 'en': 'en'}
+# SenseVoice-Small (one multilingual model) reads these languages; English keeps its own model.
+MULTILINGUAL = 'sensevoice'
+MULTILINGUAL_LANGUAGES = ('zh', 'ja', 'ko', 'yue')
 VAD_MODEL = 'silero_vad_v5.onnx'
 # Official Silero v5.0 export. The native VAD loader exits the process for some
 # incompatible exports (including faster-whisper's v6); verify before loading.
@@ -54,8 +59,19 @@ LID_MIN_SECONDS = .5   # less speech than this is "nobody said anything"
 VAD_PAD = .4           # include soft onsets and the delay of CTC token peaks
 _LOG = logging.getLogger(__name__)
 
-_WORD = re.compile(r"[㐀-鿿]|[^\W_㐀-鿿]+(?:['’][^\W_㐀-鿿]+)*", re.UNICODE)
+_WORD = re.compile(r"[㐀-鿿぀-ヿ]|[^\W_㐀-鿿぀-ヿ]+(?:['’][^\W_㐀-鿿぀-ヿ]+)*", re.UNICODE)
 _CJK = re.compile(r'[㐀-鿿]')
+_KANA = re.compile(r'[぀-ヿ]')
+_HANGUL = re.compile(r'[가-힯]')
+
+
+def written_language(text):
+    """The language a given line is written in, from its script alone."""
+    if _KANA.search(text):
+        return 'ja'
+    if _HANGUL.search(text):
+        return 'ko'
+    return 'zh' if _CJK.search(text) else 'en'
 
 
 def units(text):
@@ -264,7 +280,7 @@ def heard_words(tokens, timestamps, duration, offset=0.0):
         if raw.startswith(('▁', 'Ġ')) or raw in (' ', '|'):
             flush()
         for ch in raw.replace('▁', ' ').replace('Ġ', ' ').replace('|', ' '):
-            if '㐀' <= ch <= '鿿':
+            if '㐀' <= ch <= '鿿' or '぀' <= ch <= 'ヿ':
                 flush()
                 result.append({'text': ch, 'start': piece['start'], 'end': piece['end']})
             elif ch.isalnum() or ch in "'’":
@@ -355,7 +371,7 @@ class Engine:
         if language in self._directories:
             return language
         if language == 'auto' and text.strip():
-            wanted = 'zh' if _CJK.search(text) else 'en'
+            wanted = written_language(text)
             if wanted in self._directories:
                 return wanted
         raise EarsError('no_engine')
@@ -437,6 +453,14 @@ class Engine:
             if language not in self._recognizers:
                 import sherpa_onnx
                 folder = self._directories[language]
+                if folder.name == MULTILINGUAL:
+                    # One recogniser for all its languages; it names the language of each stretch itself.
+                    key = MULTILINGUAL
+                    if key not in self._recognizers:
+                        self._recognizers[key] = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                            model=str(folder / 'model.int8.onnx'), tokens=str(folder / 'tokens.txt'),
+                            num_threads=self._threads, use_itn=True, language='auto', provider='cpu')
+                    return self._recognizers[key]
                 make = (sherpa_onnx.OfflineRecognizer.from_zipformer_ctc if language == 'zh'
                         else sherpa_onnx.OfflineRecognizer.from_nemo_ctc)
                 self._recognizers[language] = make(
@@ -549,6 +573,10 @@ def folders(root=None):
         folder = base / name
         if (folder / 'model.int8.onnx').is_file() and (folder / 'tokens.txt').is_file():
             found[language] = folder
+    folder = base / MULTILINGUAL
+    if (folder / 'model.int8.onnx').is_file() and (folder / 'tokens.txt').is_file():
+        for language in MULTILINGUAL_LANGUAGES:
+            found.setdefault(language, folder)
     return found
 
 
