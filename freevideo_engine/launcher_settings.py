@@ -52,6 +52,9 @@ def sanitize(value):
     if isinstance(record, dict) and all(isinstance(record.get(k), str) and record[k] for k in SELECTION):
         result['installation'] = {k: record[k] for k in SELECTION}
         result['installation']['separate'] = record.get('separate') is True
+        result['installation']['lan_access'] = record.get('lan_access') is True
+        if type(record.get('lan_port')) is int and 1 <= record['lan_port'] <= 65535:
+            result['installation']['lan_port'] = record['lan_port']
     if type(value.get('saved_at_ns')) is int:
         result['saved_at_ns'] = value['saved_at_ns']
     resume = value.get('setup')

@@ -463,8 +463,9 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
     detail = causes[-1] if causes else next((line for line in reversed(lines)
         if not line.startswith(('File ', 'Traceback', '^', 'All files retained.', 'Rerun the same setup command'))), '')
     detail = re.sub(r'^(?:ValueError|RuntimeError|OSError):\s*', '', detail)
+    from .launcher_copy import lan_error
     return dict(title='暂时未能完成' if zh else 'Couldn’t complete this step',
-                detail=detail, action='', kind='unknown')
+                detail=lan_error(detail, zh), action='', kind='unknown')
 
 
 def _read(path, limit, *, tail=False):

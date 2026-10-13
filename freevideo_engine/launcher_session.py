@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import __version__
 from . import disk_space
-from .comfy_launcher_runtime import Controller, layout, local_url, managed_frontend, new_layout
+from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text
 from .launcher_settings import Store, default_language
@@ -70,6 +70,7 @@ class Session:
                          url='http://127.0.0.1:8188', models='', model_dirs=[], model_method='auto', environment_method='auto',
                          separate=False, repair=False, new_comfy=True, offline_runtime='', offline_models=[],
                          imported_archives=[], sampling_caches=not saved.get('installation'))
+        self.form['lan_access'] = False
         self.form.update({k: v for k, v in saved.items() if k in self.form})
         if 'environment_method' not in saved and self.form['offline_runtime']:
             self.form['environment_method'] = 'manual'
@@ -165,6 +166,13 @@ class Session:
         return engine
 
     def persist(self):
+        if self.selected and self.form['comfy'] == self.selected.get('root') and self.form['engine'] == self.selected.get('engine'):
+            try:
+                self.selected['url'] = local_url(self.form['url'])
+                if 'lan_access' in self.selected or self.form.get('lan_access') is True:
+                    self.selected['lan_access'] = self.form.get('lan_access') is True
+            except ValueError:
+                pass  # Save the editable draft while retaining a valid installation.
         self.store.write(self.form, self.language, self.selected, self.saved_setup)
 
     def remember(self, selection, persist=True):
@@ -172,6 +180,7 @@ class Session:
         self.form.update(comfy=selection['root'], engine=selection['engine'],
                          python=selection.get('python') or '', url=selection['url'],
                          separate=selection.get('separate', False), new_comfy=False, repair=False)
+        self.form['lan_access'] = selection.get('lan_access') is True
         if persist:
             self.persist()
 
@@ -185,8 +194,10 @@ class Session:
             self.token = validate(str(value)); return
         if key not in self.form or self.controller.busy or self.importer.busy or self.cleaner.busy:
             return
-        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches'):
+        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access'):
             value = bool(value)
+        if key == 'url':
+            value = local_url(str(value))
         if key == 'environment_method' and value not in ('auto', 'manual'):
             raise ValueError('Unknown environment installation method')
         if key == 'environment_method' and value == 'manual' and not runtime_packages_supported():
@@ -199,6 +210,23 @@ class Session:
             return
         self.repair_request = None
         self.form[key] = value
+        if (key in ('url', 'lan_access') and self.selected and not self.form['new_comfy']
+                and self.form['comfy'] == self.selected.get('root') and self.form['engine'] == self.selected.get('engine')):
+            selected = dict(self.controller.selection or self.selected, url=local_url(self.form['url']),
+                            lan_access=self.form.get('lan_access') is True)
+            previous_status = self.controller.state.get('status')
+            self.selected = selected
+            if key == 'url':
+                self.browser_attempted = False
+            self.browser_error = self.error = ''
+            self.persist()
+            if previous_status == 'open':
+                self.controller.run('configure_access', dict(url=selected['url'], lan_access=selected['lan_access']))
+            else:
+                self.controller.selection = dict(selected)
+                self.controller.state = dict(status='ready', selection=dict(selected), engine_update_available=bool(
+                    self.controller.state.get('engine_update_available')))
+            return
         if key in ('new_comfy', 'destination', 'comfy'):
             # A remembered installation's engine belongs to that installation;
             # another location installs into its own FreeVideo-engine.
@@ -400,7 +428,7 @@ class Session:
                     raise ValueError(self.t('Accept the installation plan and licenses.', '请先同意安装计划及许可证。'))
                 from .monitoring import save
                 save(consent, dict(accepted_at=time.time()))
-            self.controller.run('launch', {'url': self.form['url']})
+            self.controller.run('launch', {'url': self.form['url'], 'lan_access': self.form.get('lan_access') is True})
         elif self.page == 'launcher':
             self.controller.run('launch', {'installation': self.selected})
         elif self.page == 'progress' and state == 'review':
@@ -1094,6 +1122,8 @@ class Session:
             self._closed = True
 
     def tick(self):
+        if isinstance(self.controller, Controller) and not self.controller.busy:
+            self.controller.poll_access_proxy()
         imported = self.importer.state
         if not self.importer.busy and imported is not self.imported_batch:
             self.imported_batch = imported
@@ -1151,7 +1181,7 @@ class Session:
         if groups:
             self.model_groups = groups
         selection = row.get('selection')
-        if not busy and selection and selection.get('ready') and (row.get('deployed') or row.get('status') in ('open', 'restart-required')):
+        if not busy and selection and selection.get('ready') and (row.get('deployed') or row.get('lan_status') == 'stopped' or row.get('status') in ('open', 'restart-required')):
             self.repair_request = None
             if selection != self.selected:
                 self.remember(selection)
@@ -1312,7 +1342,7 @@ class Session:
         row = self.controller.state
         task = row.get('task', {})
         port_from = int(row['moved_from']) if row.get('status') == 'open' and 'moved_from' in row else 0
-        port_to = (urlsplit(row['url']).port or 80) if port_from else 0
+        port_to = (urlsplit(row.get('selection', {}).get('url') or row['url']).port or 80) if port_from else 0
         progress = progress_view(task.get('progress') or {}, zh)
         overall = progress_view(row.get('overall') or task.get('phase_progress') or {}, zh)
         if self.importer.busy:
@@ -1480,6 +1510,12 @@ class Session:
             probe=probe, speeds=speeds, token_set=bool(self.token),
             log=self.tail.text, logs=[dict(label=display(n, zh), path=str(p)) for n, p in self.controller.terminal_sources()],
             url=(self._browser_url(row.get('url', '')) if row.get('status') == 'open' else ''), shortcut=shortcut,
+            access_links=(list(self.controller.access_links) if row.get('status') == 'open'
+                          and isinstance(self.controller.access_links, list) else []),
+            lan_message=(self.t('LAN access has stopped. Turn it on again.', '局域网访问已停止，请重新开启。')
+                         if row.get('lan_status') == 'stopped' else
+                         self.t('No LAN address found. Connect to Wi-Fi or a wired network first.', '未找到局域网地址，请先连接 Wi-Fi 或有线网络。')
+                         if row.get('lan_status') == 'no-address' else ''),
             port_from=port_from, port_to=port_to,
             old_versions=self.old_versions_text(), copied_models=self.copied_models_text(),
             archives=self.archives_text(), archives_confirm=self.archives_confirm_text(),

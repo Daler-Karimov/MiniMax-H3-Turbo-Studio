@@ -331,6 +331,11 @@ def create_ui(session, *, show=True):
     return app, engine, window, bridge
 
 
+def save_screenshot(window, bridge, path):
+    if not bridge.value.get('access_links'):
+        window.grabWindow().save(str(path))
+
+
 def smoke_test(app, engine, window, bridge, destination):
     """Exercise the packaged QML, manifests and managed-Python entry point."""
     import queue
@@ -355,7 +360,7 @@ def smoke_test(app, engine, window, bridge, destination):
                 raise RuntimeError('Packaged launcher action is not visible: ' + page)
             if page == 'progress':
                 # The last setup step shows the finished ones with a check mark; keep it for the font check.
-                window.grabWindow().save(str(destination / 'launcher-steps.png'))
+                save_screenshot(window, bridge, destination / 'launcher-steps.png')
         window.setProperty('settingsOpen', True)
         app.processEvents()
         window.setProperty('settingsOpen', False)
@@ -401,7 +406,7 @@ def smoke_test(app, engine, window, bridge, destination):
         save(destination / 'smoke.json', dict(success=bool(result and result['status'] == 'complete' and not imported),
             task=result, interface='Qt Quick launcher', build=build, source=str(session.source),
             payload=payload, model_modules_imported=imported))
-        window.grabWindow().save(str(destination / 'launcher.png'))
+        save_screenshot(window, bridge, destination / 'launcher.png')
         if runner.busy:
             runner.cancel()
         timer.stop()
@@ -440,7 +445,7 @@ def smoke_connect(app, engine, window, bridge, destination, values):
             info = server_info(state['url'].split('/?')[0]) if status == 'open' else {}
             save(destination / 'connect.json', dict(success=status == 'open' and info.get('status') == 'freevideo',
                                                     status=status, error=state.get('error'), url=state.get('url'), server=info))
-            window.grabWindow().save(str(destination / 'connected.png'))
+            save_screenshot(window, bridge, destination / 'connected.png')
             timer.stop()
             app.quit()
     timer.timeout.connect(step)

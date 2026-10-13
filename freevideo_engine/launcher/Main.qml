@@ -836,6 +836,19 @@ ApplicationWindow {
                             FButton { text: t("Copy address", "复制地址"); onClicked: backend.copy(s.url) }
                             FButton { text: t("Show terminal", "查看终端"); flat: true; onClicked: terminalOpen = true }
                         }
+                        Repeater {
+                            model: (s.access_links || []).slice(0, 1)
+                            delegate: ColumnLayout {
+                                required property string modelData
+                                Layout.fillWidth: true; spacing: 6
+                                FText { objectName: "lanAccessLinkLabel"; text: t("LAN access", "局域网访问"); color: theme.muted; font.pixelSize: theme.micro }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    FField { objectName: "lanAccessLink"; Layout.fillWidth: true; readOnly: true; text: modelData; onTextChanged: cursorPosition = 0; Component.onCompleted: cursorPosition = 0 }
+                                    FButton { objectName: "copyLanAccessLink"; text: t("Copy link", "复制链接"); onClicked: backend.copy(modelData) }
+                                }
+                            }
+                        }
                     }
                     FCard {
                         Layout.fillWidth: true; padding: 22; spacing: 12
@@ -954,6 +967,8 @@ ApplicationWindow {
             ScrollView {
                 id: settingsScroll
                 Layout.fillWidth: true; Layout.fillHeight: true; contentWidth: availableWidth; clip: true
+                // The list never scrolls sideways; its hidden bar would take the clicks along the bottom edge.
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ColumnLayout {
                     width: settingsScroll.availableWidth; spacing: 18
                     ColumnLayout {
@@ -1035,6 +1050,22 @@ ApplicationWindow {
                             FButton { text: t("Version & release notes", "版本与更新说明") + " · " + releaseVersion(currentRelease); flat: true; Layout.fillWidth: true; onClicked: releaseNotesOpen = true }
                         }
                         FGroup {
+                            Layout.fillWidth: true; title: t("Local network", "局域网")
+                            FSwitch { objectName: "lanAccessSwitch"; Layout.fillWidth: true; text: t("LAN access", "局域网访问"); checked: !!s.form.lan_access; enabled: !s.busy; onToggled: backend.edit("lan_access", checked) }
+                            FText { objectName: "lanAccessMessage"; text: s.lan_message || ""; visible: !!text; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "lanAccessHint"; text: t("When on, other devices on the same network can open FreeVideo with the link below. Anyone with the link can use it, so keep it private.", "开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。拿到链接的人都能使用，请勿公开。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "lanFirewallHint"; visible: Qt.platform.os === "windows"; text: t("If Windows asks about the firewall the first time, choose Allow.", "Windows 首次询问防火墙权限时，请选择“允许”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            Repeater {
+                                model: s.access_links || []
+                                delegate: RowLayout {
+                                    required property string modelData
+                                    Layout.fillWidth: true; spacing: 8
+                                    FField { Layout.fillWidth: true; readOnly: true; text: modelData; onTextChanged: cursorPosition = 0; Component.onCompleted: cursorPosition = 0 }
+                                    FButton { text: t("Copy link", "复制链接"); onClicked: backend.copy(modelData) }
+                                }
+                            }
+                        }
+                        FGroup {
                             Layout.fillWidth: true; title: t("Storage", "存储")
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
@@ -1107,20 +1138,22 @@ ApplicationWindow {
                         FButton { text: t("Qt notices & licenses ↗", "Qt 组件与许可证 ↗"); flat: true; implicitHeight: theme.heightSm; leftPadding: 4; font.pixelSize: theme.micro; onClicked: backend.link("https://doc.qt.io/qt-6/licenses-used-in-qt.html") }
                     }
                     ColumnLayout {
-                        Layout.fillWidth: true; visible: settingsTab === "advanced"; spacing: 20; enabled: !s.busy && !s.portable
+                        Layout.fillWidth: true; visible: settingsTab === "advanced"; spacing: 20; enabled: !s.busy
                         FGroup {
                             Layout.fillWidth: true; title: t("ComfyUI address", "ComfyUI 地址")
-                            FField { Layout.fillWidth: true; text: s.form.url; onEditingFinished: backend.edit("url", text) }
+                            FField { objectName: "listenAddress"; Layout.fillWidth: true; text: s.form.url; enabled: !s.form.lan_access; onEditingFinished: backend.edit("url", text) }
+                            FText { objectName: "listenAddressHint"; text: t("With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.", "填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { visible: Qt.platform.os === "windows"; text: t("If Windows asks about the firewall the first time, choose Allow.", "Windows 首次询问防火墙权限时，请选择“允许”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         }
                         FGroup {
-                            Layout.fillWidth: true; title: t("Folders · optional", "目录 · 可选")
+                            Layout.fillWidth: true; title: t("Folders · optional", "目录 · 可选"); enabled: !s.portable
                             FText { text: t("Engine folder", "引擎目录"); font.pixelSize: theme.micro; color: theme.muted }
                             RowLayout { Layout.fillWidth: true; spacing: 8; FField { Layout.fillWidth: true; text: s.form.engine; placeholderText: t("Automatic", "自动选择"); onEditingFinished: backend.edit("engine", text) } FButton { text: t("Browse…", "浏览…"); implicitHeight: theme.height + 4; onClicked: backend.browse("engine") } }
                             FText { text: t("ComfyUI Python", "ComfyUI Python"); font.pixelSize: theme.micro; color: theme.muted; Layout.topMargin: 4 }
                             FField { Layout.fillWidth: true; text: s.form.python; placeholderText: t("Path to python.exe", "python.exe 的路径"); onEditingFinished: backend.edit("python", text) }
                         }
                         FGroup {
-                            Layout.fillWidth: true; title: t("Maintenance", "维护")
+                            Layout.fillWidth: true; title: t("Maintenance", "维护"); enabled: !s.portable
                             FSwitch { Layout.fillWidth: true; text: t("Create a separate ComfyUI environment", "创建独立的 ComfyUI 环境"); checked: s.form.separate; onToggled: backend.edit("separate", checked) }
                             FDivider {}
                             RowLayout {

@@ -293,7 +293,10 @@ def start_proxy(record, *, listen, port, upstream, token_file, tls, hop_secret=N
         env[ENV] = hop_secret
     for name in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
         env.pop(name, None)
+    from .proxy import bypass_local
+    env = bypass_local(env, listen)
     log = folder(record['engine']) / 'access-proxy.log'
+    log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('ab') as output:
         return processes.popen(command, cwd=record['engine'], env=env, stdin=subprocess.DEVNULL,
                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True, supervise=True)

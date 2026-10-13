@@ -6,6 +6,7 @@ An existing server is never stopped by this launcher.
 """
 import errno
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -304,18 +305,55 @@ def probe_host(descriptor, python=None):
 def local_url(value):
     value = value.strip() or 'http://127.0.0.1:8188'
     parsed = urlsplit(value if '://' in value else 'http://' + value)
-    if (parsed.scheme != 'http' or parsed.hostname not in ('localhost', '127.0.0.1', '::1')
+    host = parsed.hostname
+    try:
+        ip = ipaddress.ip_address(host) if host != 'localhost' else None
+    except ValueError:
+        raise ValueError('Enter localhost or an IP address of this computer, for example http://127.0.0.1:8188.') from None
+    if (parsed.scheme != 'http' or not host or (ip is not None and ip.is_multicast)
             or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/')):
-        raise ValueError('Use a local ComfyUI address, for example http://127.0.0.1:8188.')
-    port = parsed.port or 80
+        raise ValueError('Enter localhost or an IP address of this computer, for example http://127.0.0.1:8188.')
+    port = parsed.port if parsed.port is not None else 80
     if not 1 <= port <= 65535:
         raise ValueError('Invalid ComfyUI port')
     return urlunsplit(('http', parsed.netloc, '', '', ''))
 
 
+def loopback_url(value):
+    """The launcher's browser and control requests always use IPv4 loopback."""
+    parsed = urlsplit(value)
+    return urlunsplit(('http', '127.0.0.1:%d' % (parsed.port or 80), parsed.path, parsed.query, parsed.fragment))
+
+
+def loopback_host(hostname):
+    try:
+        return hostname == 'localhost' or ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def listen_hosts(hostname):
+    # A specific interface (including IPv6 loopback) does not accept IPv4
+    # loopback. ComfyUI supports a comma-separated list of listening addresses.
+    if hostname in ('localhost', '127.0.0.1', '0.0.0.0'):
+        return (hostname,)
+    return ('127.0.0.1', hostname)
+
+
+def matches_listener(info, url):
+    """An external server must already listen on the requested interfaces."""
+    wanted = urlsplit(url).hostname
+    hosts = set((info.get('listen') or '').split(','))
+    if hosts == {''}:
+        return wanted in ('localhost', '127.0.0.1', '::1')
+    hosts = {'127.0.0.1' if host == 'localhost' else host for host in hosts}
+    wanted = '127.0.0.1' if wanted == 'localhost' else wanted
+    return wanted in hosts or ('::' if ':' in wanted else '0.0.0.0') in hosts
+
+
 def get_json(url, timeout=2):
     # Proxy settings must never send loopback requests to an external proxy.
-    with build_opener(ProxyHandler({})).open(Request(url, headers={'Accept': 'application/json'}), timeout=timeout) as reply:
+    with build_opener(ProxyHandler({})).open(Request(loopback_url(url), headers={'Accept': 'application/json'}), timeout=timeout) as reply:
         value = reply.read(2 * 1024 * 1024 + 1)
         if len(value) > 2 * 1024 * 1024:
             raise ValueError('ComfyUI response is too large')
@@ -323,6 +361,7 @@ def get_json(url, timeout=2):
 
 
 def server_info(url):
+    url = loopback_url(url)
     try:
         value = get_json(url + '/freevideo/launcher')
         if (isinstance(value, dict) and value.get('protocol') == PROTOCOL
@@ -343,10 +382,12 @@ def server_info(url):
 
 def bind_check(hostname, port):
     """Raise OSError unless a new server could listen on this local address now."""
-    hosts = ('127.0.0.1', '::1') if hostname == 'localhost' else (hostname,)
+    hosts = ('127.0.0.1', '::1') if hostname == 'localhost' else listen_hosts(hostname)
+    if hostname in ('0.0.0.0', '::'):
+        hosts = (*hosts, '127.0.0.1' if hostname == '0.0.0.0' else '::1')
     for host in hosts:
         try:
-            with socket.socket(socket.AF_INET6 if host == '::1' else socket.AF_INET, socket.SOCK_STREAM) as check:
+            with socket.socket(socket.AF_INET6 if ':' in host else socket.AF_INET, socket.SOCK_STREAM) as check:
                 if sys.platform != 'win32':
                     # Tolerate TIME_WAIT, as ComfyUI does. On Windows this
                     # option would let two servers share the port.
@@ -371,7 +412,7 @@ def next_free_address(url, count=12):
         except OSError:
             continue
         candidate = address(parsed.hostname, port)
-        if server_info(candidate)['status'] == 'offline':
+        if server_info(loopback_url(candidate))['status'] == 'offline':
             return candidate
     return None
 
@@ -406,7 +447,7 @@ def launcher_comfy(selected, info):
 def queue_busy(url):
     """Whether ComfyUI is running or holding jobs. An unreadable queue counts as idle."""
     try:
-        value = get_json(url + '/queue', timeout=3)
+        value = get_json(loopback_url(url) + '/queue', timeout=3)
         return bool(value.get('queue_running') or value.get('queue_pending'))
     except (OSError, ValueError, AttributeError):
         return False
@@ -533,9 +574,15 @@ class Controller:
         self.state = dict(status='idle')
         self.selection = self.setup = None
         self.thread = None
+        self._access_poll_thread = None
         self.cancelled = threading.Event()
         self.server = None
         self.server_url = None
+        self.server_address = None
+        self.access_proxy = None
+        self.access_configuration = None
+        self.access_links = []
+        self.access_polled = 0
         self._server_lock = threading.RLock()
         self._closed = False
         self.server_log = None
@@ -609,6 +656,7 @@ class Controller:
 
     def stop_owned_server(self, *, grace=5):
         with self._server_lock:
+            self.stop_access_proxy()
             if self.server is not None:
                 if self.server.poll() is None and self.server_url:
                     try:
@@ -619,6 +667,75 @@ class Controller:
                         pass
                 processes.stop(self.server, grace=grace)
                 self.server = None
+                self.server_address = None
+
+    def stop_access_proxy(self):
+        with self._server_lock:
+            if self.access_proxy is not None:
+                processes.stop(self.access_proxy, grace=3)
+                self.access_proxy = None
+            self.access_configuration = None
+            self.access_links = []
+            self.state = dict(self.state, lan_status='')
+
+    def _access_stopped(self):
+        self.stop_access_proxy()
+        self.selection = dict(self.selection, lan_access=False)
+        self.state = dict(self.state, selection=dict(self.selection), lan_status='stopped')
+
+    def refresh_access_links(self):
+        from .comfy_service import token
+        from .proxy import local_addresses
+        self.access_polled = time.monotonic()
+        secret = token(self.selection['engine'])
+        self.access_links = [address(host, self.selection['lan_port']) + '/?freevideo=launch&token=' + secret
+                             for host in local_addresses()]
+        self.state = dict(self.state, lan_status='' if self.access_links else 'no-address')
+
+    def check_access_proxy(self):
+        """Poll child lifetimes and refresh network links without moving ComfyUI."""
+        if self.access_proxy is None:
+            return
+        if self.server is not None and self.server.poll() is not None:
+            self._access_stopped()
+            self.state = dict(self.state, status='ready')
+        elif self.access_proxy.poll() is not None:
+            self._access_stopped()
+        elif time.monotonic() - self.access_polled >= 5:
+            if self.server is None and server_info(self.selection['url'])['status'] == 'offline':
+                self._access_stopped()
+                self.state = dict(self.state, status='ready')
+            else:
+                self.refresh_access_links()
+
+    def poll_access_proxy(self):
+        """Keep network/file probes and bounded process cleanup off the UI thread.
+
+        The check is not a launcher task: the window stays as it is while it
+        runs. A task started meanwhile waits for it in run().
+        """
+        poll = self._access_poll_thread
+        if self._closed or self.busy or (poll is not None and poll.is_alive()):
+            return
+        child = getattr(self, 'comfy_controller', None) or self
+        proxy = child.access_proxy
+        if proxy is None:
+            return
+        exited = ((child.server is not None and child.server.poll() is not None)
+                  or proxy.poll() is not None)
+        if not exited and time.monotonic() - child.access_polled < 5:
+            return
+        def work():
+            try:
+                self.check_access_proxy()
+            except Exception:
+                # A failed token/interface read withdraws the unusable link, keeps
+                # the local page and lets the user turn access on again.
+                child._access_stopped()
+                if child is not self:
+                    self._sync_access(False)
+        self._access_poll_thread = threading.Thread(target=work, name='freevideo-access-poll', daemon=True)
+        self._access_poll_thread.start()
 
     def terminal_sources(self):
         sources = []
@@ -693,6 +810,8 @@ class Controller:
                 return False
             self.selection = dict(descriptor, source=str(source), engine=str(engine), python=plain(python),
                 url=local_url(record.get('url') or values.get('url', '')), ready=True,
+                lan_access=record.get('lan_access', values.get('lan_access', False)) is True,
+                lan_port=record.get('lan_port'),
                 separate=record.get('separate', values.get('separate', False)))
             from .desktop_runtime import matching_source
             self.state = dict(status='ready', engine_update_available=not matching_source(self.source, source),
@@ -734,21 +853,31 @@ class Controller:
             raise RuntimeError('The launcher is closing')
         if self.busy:
             raise ValueError('A launcher task is already running')
-        if operation not in ('inspect', 'install', 'connect', 'launch', 'shortcut'):
+        if operation not in ('inspect', 'install', 'connect', 'launch', 'shortcut', 'configure_access'):
             raise ValueError('Unknown launcher action')
         if operation == 'install' and (self.state.get('status') != 'review' or self.state.get('errors')):
             raise ValueError('Inspect and review a valid installation plan first')
+        poll = self._access_poll_thread
+        if poll is not None:
+            # A link check in flight finishes first, so it cannot overwrite this task's state.
+            poll.join()
         self.cancelled.clear()
         self.state = dict(self.state, status='running', action=operation, error=None, exception=None, task={}, overall={},
                           model_groups=[] if operation == 'inspect' else self.state.get('model_groups', []))
-        if operation in ('connect', 'launch'):
+        if operation in ('connect', 'launch', 'configure_access'):
             self.sections = [('open', 1)]
         def work():
             try:
                 getattr(self, '_' + operation)(*args)
             except Exception as error:
                 from .diagnostic_resources import exception_details
-                self.state = dict(self.state, status='cancelled' if self.cancelled.is_set() else 'failed',
+                opened = self.state.get('status') == 'open'
+                if operation == 'configure_access':
+                    # The address change may already have stopped the old server.
+                    # A remembered URL alone cannot prove the local page is usable.
+                    opened = bool(self.state.get('url')) and server_info(self.state['url'].split('/?')[0])['status'] == 'freevideo'
+                status = 'open' if opened else 'failed'
+                self.state = dict(self.state, status='cancelled' if self.cancelled.is_set() else status,
                                   error=str(error), exception=exception_details(error))
         self.thread = threading.Thread(target=work, daemon=True)
         self.thread.start()
@@ -826,7 +955,8 @@ class Controller:
                 ready = not values.get('sampling_caches') or sampling_installed(machine)
             except (OSError, ValueError, KeyError):
                 pass
-        self.selection = dict(descriptor, engine=str(engine), source=str(source), url=url, ready=ready, repair_comfy=repair_comfy)
+        self.selection = dict(descriptor, engine=str(engine), source=str(source), url=url, ready=ready,
+                              repair_comfy=repair_comfy, lan_access=values.get('lan_access') is True)
         self.state = dict(self.state, selection=dict(self.selection), host=host)
         if not ready:
             extra = values.get('model_dirs', [])
@@ -879,7 +1009,7 @@ class Controller:
         if engine_binding.pending(machine, selected['source']):
             # Whoever started it (another launcher, the freevideo command), a ComfyUI of this installation
             # that is generating keeps its packages: the switch waits for the job.
-            if queue_busy(selected['url']):
+            if queue_busy(loopback_url(self.server_address or self.selection['url'])):
                 raise RuntimeError('ComfyUI is running a job, so the engine update waits. Try again after it finishes; '
                                    'the job is left running.')
             self._stop_server_for_setup(selected['url'])
@@ -900,7 +1030,7 @@ class Controller:
             self.port_move = urlsplit(selected['url']).port or 80
         selected = self.selection = dict(selected, url=url)
         self.state = dict(self.state, selection=dict(selected))
-        return url, selected
+        return loopback_url(url), selected
 
     def _stop_server_for_setup(self, url):
         """Setup or source rebinding replaces packages that our ComfyUI's resident worker
@@ -910,7 +1040,7 @@ class Controller:
         again. A running job is never stopped."""
         if not self.owns_server():
             return
-        if queue_busy(url):
+        if queue_busy(loopback_url(self.server_address or url)):
             raise RuntimeError('ComfyUI is running a job. Try again after it finishes; the job is left running.')
         self.stop_owned_server()
 
@@ -925,8 +1055,75 @@ class Controller:
         self.ensure_shortcut()
         self.state = dict(self.state, status='open' if previous_status == 'open' else 'ready')
 
+    def _configure_access(self, values, *, connect=False):
+        if not self.selection or not self.selection.get('ready'):
+            raise ValueError('Choose a completed installation first')
+        enabled = values.get('lan_access') is True
+        url = local_url(values.get('url') or self.selection['url'])
+        if enabled and not loopback_host(urlsplit(url).hostname):
+            url = loopback_url(url)
+        changed = url != self.selection['url'] or (self.owns_server() and self.server_address != url)
+        self.selection = dict(self.selection, url=url, lan_access=False)
+        self.state = dict(self.state, selection=dict(self.selection))
+        if changed:
+            self.stop_access_proxy()
+        if changed or connect:
+            self._connect_comfy()
+        if self.state.get('status') not in ('open', 'running'):
+            return
+        if enabled:
+            self._start_access_proxy()
+        else:
+            self.stop_access_proxy()
+        self.state = dict(self.state, status='open', selection=dict(self.selection))
+
     @plain_errors
     def _connect(self):
+        self._configure_access(dict(lan_access=(self.selection or {}).get('lan_access')), connect=True)
+
+    def _start_access_proxy(self):
+        from .comfy_service import TOKEN, check_proxy, folder, start_proxy, token
+        self.selection = selected = dict(self.selection, lan_access=False)
+        self.state = dict(self.state, selection=dict(selected))
+        if not self.owns_server():
+            info = server_info(selected['url'])
+            hosts = (info.get('listen') or '').split(',')
+            if not hosts or not all(loopback_host(host) for host in hosts):
+                raise ValueError('The ComfyUI already running is open to the network directly. After its jobs finish, restart it on 127.0.0.1, then turn on LAN access.')
+        configuration = tuple(selected[k] for k in ('root', 'engine', 'source', 'python', 'url'))
+        if (self.access_configuration != configuration or
+                self.access_proxy is not None and self.access_proxy.poll() is not None):
+            self.stop_access_proxy()
+        if self.access_proxy is None:
+            port = selected.get('lan_port')
+            if type(port) is not int or not 1 <= port <= 65535:
+                port = (urlsplit(selected['url']).port or 80) + 1
+            candidate = next_free_address(address('0.0.0.0', port - 1)) if port <= 65535 else None
+            if candidate is None:
+                raise ValueError('The ports for LAN access are in use. Choose another ComfyUI port.')
+            port = urlsplit(candidate).port
+            self.selection = selected = dict(selected, lan_port=port)
+            self.state = dict(self.state, selection=dict(selected))
+            secret = token(selected['engine'])
+            from .windows_ux import external_python
+            with self._server_lock, external_python():
+                if self._closed or self.cancelled.is_set():
+                    raise RuntimeError('LAN access startup cancelled')
+                self.access_proxy = start_proxy(selected, listen='0.0.0.0', port=port,
+                    upstream=loopback_url(selected['url']), token_file=folder(selected['engine']) / TOKEN, tls=None)
+            try:
+                check_proxy(self.access_proxy, scheme='http', port=port, secret=secret)
+                if self._closed or self.cancelled.is_set():
+                    raise RuntimeError('LAN access startup cancelled')
+            except Exception:
+                self._access_stopped()
+                raise
+            self.access_configuration = configuration
+        self.selection = dict(selected, lan_access=True)
+        self.state = dict(self.state, selection=dict(self.selection))
+        self.refresh_access_links()
+
+    def _connect_comfy(self):
         self.state = {key: value for key, value in self.state.items() if key != 'moved_from'}
         if not self.selection or not self.selection['ready']:
             raise ValueError('Choose and inspect ComfyUI first')
@@ -937,7 +1134,7 @@ class Controller:
         # existing server, as well as the first installation.
         self.ensure_shortcut()
         shield_engine(selected['engine'])
-        url = selected['url']
+        url = loopback_url(selected['url'])
         frontend_error = None
         managed = bool(selected.get('python') and managed_frontend(selected))
         if managed and (managed_python(Path(selected['engine']), Path(selected['root'])) is None
@@ -967,7 +1164,19 @@ class Controller:
                 node_packages_failed(Path(selected['engine']))
         self.stage('open', label='Open ComfyUI')
         info = server_info(url)
-        if matches_server(info, selected['root'], selected['engine'], selected['source']):
+        matched = matches_server(info, selected['root'], selected['engine'], selected['source'])
+        if matched and not self.owns_server() and not matches_listener(info, selected['url']):
+            self.state = dict(self.state, status='restart-required', url=url,
+                error='The ComfyUI already running does not use this address. After its jobs finish, restart it with this address and connect again.')
+            return
+        if (self.owns_server() and self.server_address is not None
+                and self.server_address != selected['url']):
+            if queue_busy(loopback_url(self.server_address or self.selection['url'])):
+                raise RuntimeError('A generation is running. Change the address after it finishes.')
+            self.stop_owned_server()
+            info = dict(status='offline')
+            matched = False
+        if matched:
             self.attach_console(info)
             self.stage('open', done=1, label='Ready')
             self.state = dict(self.state, status='open', url=url + '/?freevideo=launch')
@@ -986,14 +1195,14 @@ class Controller:
                 self.state = dict(self.state, status='restart-required', url=url,
                     error='ComfyUI is already running. Restart it once to load the installed FreeVideo nodes, then click Connect. Existing jobs are left running.')
                 return
-            if queue_busy(url):
+            if queue_busy(loopback_url(self.server_address or self.selection['url'])):
                 self.state = dict(self.state, status='restart-required', url=url,
                     error='ComfyUI is still running a job. Click Connect after it finishes to restart with the update; the job is left running.')
                 return
             # Our own idle server still runs the previous source: restart it.
             self.stage('open', label='Restart ComfyUI')
             self.stop_owned_server()
-        parsed = urlsplit(url)
+        parsed = urlsplit(selected['url'])
         deadline = time.monotonic() + 10
         while True:
             try:
@@ -1008,8 +1217,10 @@ class Controller:
                     # A program that is not ComfyUI holds the address.
                     url, selected = self._move_address(selected)
                     moves += 1
-                    parsed = urlsplit(url)
+                    parsed = urlsplit(selected['url'])
                     continue
+                if error.errno == errno.EADDRNOTAVAIL:
+                    raise ValueError('This address does not belong to this computer. Enter one of its IP addresses or 0.0.0.0.') from error
                 raise ValueError('This port is in use by another application. Set a different local ComfyUI address.') from error
         if not selected.get('python') or not io_path(selected['python']).is_file():
             raise ValueError('ComfyUI Python is missing. Inspect again to prepare a separate environment.')
@@ -1023,12 +1234,15 @@ class Controller:
         env.pop('PYTHONPATH', None)
         env['PYTHONDONTWRITEBYTECODE'] = '1'
         env.update(PYTHONUNBUFFERED='1', PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
+        from .proxy import bypass_local
+        if not loopback_host(parsed.hostname):
+            env = bypass_local(env, parsed.hostname)
         env['FREEVIDEO_COMFY_LOG'] = str(self.server_log)
         from .launcher_bridge import ENV as BRIDGE
         env.pop(BRIDGE, None)
         if self.update_bridge:
             env[BRIDGE] = str(self.update_bridge)
-        command = [selected['python'], '-u', '-B', str(Path(selected['root']) / 'main.py'), '--listen', parsed.hostname,
+        command = [selected['python'], '-u', '-B', str(Path(selected['root']) / 'main.py'), '--listen', ','.join(listen_hosts(parsed.hostname)),
                    '--port', str(parsed.port or 80), '--disable-auto-launch']
         managed = managed_frontend(selected)
         if managed:
@@ -1066,6 +1280,7 @@ class Controller:
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True, supervise=True)
             self.server = server
             self.server_url = url
+            self.server_address = selected['url']
         save(directory / 'launch.json', dict(command=command, pid=server.pid, root=selected['root'], url=url, **context))
         self.state = dict(self.state, task=dict(progress=dict(label='Starting ComfyUI', detail='Loading nodes and the web interface'), log=plain(directory)))
         waiting_since = time.monotonic()

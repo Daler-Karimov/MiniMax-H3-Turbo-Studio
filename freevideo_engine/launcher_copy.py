@@ -137,6 +137,25 @@ def source_name(value, zh=False):
     return SOURCES.get(value, (value, value))[bool(zh)]
 
 
+LAN_ERRORS = {
+    'Enter localhost or an IP address of this computer, for example http://127.0.0.1:8188.': '请填写 localhost 或本机的 IP 地址，例如 http://127.0.0.1:8188。',
+    'This address does not belong to this computer. Enter one of its IP addresses or 0.0.0.0.': '这个地址不属于本机。请填写本机的 IP 地址或 0.0.0.0。',
+    'The ports for LAN access are in use. Choose another ComfyUI port.': '局域网访问要用的端口已被占用，请换一个 ComfyUI 端口。',
+    'A generation is running. Change the address after it finishes.': '正在生成，暂时不能修改地址。请在生成完成后再改。',
+    'The ComfyUI already running does not use this address. After its jobs finish, restart it with this address and connect again.': '已在运行的 ComfyUI 没有使用这个地址。请在任务完成后用这个地址重新启动 ComfyUI，再重新连接。',
+    'The ComfyUI already running is open to the network directly. After its jobs finish, restart it on 127.0.0.1, then turn on LAN access.': '已在运行的 ComfyUI 正在直接对局域网开放。请在任务完成后改用 127.0.0.1 重新启动它，再开启局域网访问。',
+    'LAN access startup cancelled': '已取消开启局域网访问。',
+}
+
+
+def lan_error(value, zh=False):
+    value = str(value)
+    if zh:
+        for english, chinese in LAN_ERRORS.items():
+            value = value.replace(english, chinese)
+    return value
+
+
 def display(value, zh=False):
     value = clean(value)
     if not zh:

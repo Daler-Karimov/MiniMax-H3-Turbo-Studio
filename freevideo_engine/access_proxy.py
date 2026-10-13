@@ -1,6 +1,6 @@
 """Token-protected access to a ComfyUI that listens on this computer only.
 
-`freevideo server --listen ADDRESS` runs this in front of ComfyUI. The access
+The launcher's LAN switch or `freevideo server --listen ADDRESS` runs this in front of ComfyUI. The access
 link carries the token once; the page then keeps it in a cookie, and API
 clients send it as a bearer token. Everything else gets 401, so ComfyUI is
 never reachable from other computers without it, and not at all when this
@@ -27,9 +27,9 @@ DENIED = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewpor
 <title>FreeVideo</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#10151e;
 color:#e7edf7;font:15px/1.6 'Segoe UI','Noto Sans CJK SC','Noto Sans SC',system-ui,sans-serif"><main style="max-width:520px;
 padding:28px 32px;border:1px solid #2a3443;border-radius:12px;background:#1a222e"><h1 style="margin:0 0 10px;font-size:19px">
-This FreeVideo server opens from its access link</h1><p style="margin:0 0 18px;color:#a5b3c6">To show the link, run
-<code>freevideo status</code> on the server.</p><h1 style="margin:0 0 10px;font-size:19px">请使用访问链接打开这台 FreeVideo 服务器</h1>
-<p style="margin:0;color:#a5b3c6">在服务器上运行 <code>freevideo status</code> 即可查看链接。</p></main></body></html>"""
+This FreeVideo server opens from its access link</h1><p style="margin:0 0 18px;color:#a5b3c6">Copy the link in the launcher under Settings → Preferences → Local network. On a Linux server, run
+<code>freevideo status</code> to see it.</p><h1 style="margin:0 0 10px;font-size:19px">请使用访问链接打开这台 FreeVideo 服务器</h1>
+<p style="margin:0;color:#a5b3c6">请在启动器的“设置 → 偏好 → 局域网”中复制链接。Linux 服务器上运行 <code>freevideo status</code> 可以看到链接。</p></main></body></html>"""
 
 
 def matches(value, token):
