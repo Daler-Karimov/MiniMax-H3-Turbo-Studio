@@ -141,7 +141,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     tracksHost.inert = genHost.inert = true; title.disabled = true;
     // CSS delays the pending indication; fast opens stay at full opacity.
     tracksHost.classList.add('fv-ed-pending'); genHost.classList.add('fv-ed-pending');
-    let discardOnSwitch = false, initialSelection = null;
+    let discardOnSwitch = false, initialSelection = null, offerInitial = null;
     let viewKey = null, viewReady = false;
     let library = null, closing = false, closePromise = null, exportSnapshot = null, lastSeed = null, projectEpoch = 0;
     let disposed = false, suppressSave = false, savedContent = '', initializing = true, tracks = null, genbar = null, adjustPanel = null, exportStatus = null, pointerEditing = false, deferredStamp = null;
@@ -193,10 +193,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
-        genHost.hidden = !ready; element.dataset.generationReady = String(ready);
+        generationAsked = true; genHost.hidden = !ready; element.dataset.generationReady = String(ready);
+        settleGenbar(); if (ready) offerInitial?.();
         tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
         updateTransport(); adjustPanel?.update();
     }});
+    // Until the server has answered, the bar keeps its place but cannot be used.
+    let generationAsked = store.generationAvailable, loaded = false;
+    const settleGenbar = () => {
+        const waiting = !loaded || !generationAsked;
+        genHost.inert = waiting || !store.generationAvailable; genHost.classList.toggle('fv-ed-pending', waiting);
+    };
     store.generationReady();
     const queue = store.createSaveQueue({get record() { return state.record; },
         adopt(value) {
@@ -320,7 +327,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         viewKey = record.id || key || 'draft:' + (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
         let remembered = editorViews.get(viewKey);
         if (!remembered) try { remembered = JSON.parse(localStorage.getItem(viewPrefix + viewKey)); } catch {}
-        initialSelection = null;
+        initialSelection = offerInitial = null;
         projectEpoch++;
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); progressConnection?.reset();
         mostRecentJob = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
@@ -358,7 +365,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         // A restored edit remains usable offline with its existing placeholders.
         await completeSources().catch(error); if (disposed) return; recoverJobs();
         state.restoreView(remembered);
-        if (!state.selection && state.record.tracks.every(track => !track.clips.length)) selectInitial();
+        // Also when generating is confirmed only after the edit has opened.
+        offerInitial = () => { if (epoch === projectEpoch && !state.selection && state.record.tracks.every(track => !track.clips.length)) selectInitial(); };
+        offerInitial();
         genbar?.setText(typeof remembered?.text === 'string' ? remembered.text : '');
         tracks?.setScrollLeft(remembered?.scrollLeft);
         viewReady = true; updateTransport();
@@ -810,7 +819,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         } catch (value) { error(value); }
         if (closing || disposed) return;
         initializing = false; savedContent = content(state.record); player.refresh();
-        genHost.inert = false; genHost.classList.remove('fv-ed-pending');
+        loaded = true; settleGenbar();
         updateTop(); updateTransport();
         const [trackResult, componentResult] = await componentsReady; if (closing || disposed) return;
         // Optional progress components may fail without taking the tracks with them.
@@ -849,9 +858,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         // Every exit (including close and partial failure) settles readiness.
         // After a completed start the saved baseline is already set; edits made since must stay unsaved.
         if (initializing) { initializing = false; savedContent = content(state.record); }
-        title.disabled = false; genHost.inert = toolbar.inert = false;
+        title.disabled = false; toolbar.inert = false; loaded = true; settleGenbar();
         tracksHost.inert = !tracks;
-        for (const host of [tracksHost, genHost, toolbar]) host.classList.remove('fv-ed-pending');
+        for (const host of [tracksHost, toolbar]) host.classList.remove('fv-ed-pending');
         if (!closing && !disposed) { player.refresh(); updateTop(); updateTransport(); }
     });
     updateTop(); return handle;

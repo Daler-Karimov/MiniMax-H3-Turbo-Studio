@@ -3,6 +3,7 @@ import { openSetup } from './setup.js';
 import { wordmark } from './wordmark.js';
 import { createUpdateNotice, createVersionInfo } from './updates.js';
 import { makeMovable } from './toolbar_position.js';
+import { openEditorView } from './editor_loader.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -78,7 +79,7 @@ export function installNavigation(openStudio) {
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
     row.append(grip, brand, viewSwitch('nodes', openCreativeWorkspace, () => {}, () => choose(node =>
-        import('./editor_entry.js').then(({openEditorView}) => openEditorView(node)))), createVersionInfo(cn).element, settings); toolbar.append(row);
+        openEditorView(node))), createVersionInfo(cn).element, settings); toolbar.append(row);
     let shown = false;
     try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }
     if (!shown) {

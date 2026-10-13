@@ -1,7 +1,7 @@
 import { createErrorPanel, errorText } from './error_panel.js';
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { openEditorView } from './editor_entry.js';
+import { openEditorView } from './editor_loader.js';
 import { openStudio, loraPanel, loraWarning, promptGuide } from "./studio.js";
 import { createGenerationProgress, referenceTrimText, thermalText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { createProgressConnection } from './progress_connection.js';
@@ -650,8 +650,7 @@ app.registerExtension({
             if (node) requestAnimationFrame(() => {
                 const studio = showStudio(node);
                 if (studio && rememberedView === 'editor') {
-                    try { openEditorView(node, {studio}); }
-                    catch (error) { console.error('FreeVideo edit view:', error); health({type: 'error', where: 'editor', error}); }
+                    void openEditorView(node, {studio, onFailure: error => health({type: 'error', where: 'editor', error})});
                 }
             });
         }

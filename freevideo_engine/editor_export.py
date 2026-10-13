@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .editor_frames import display_frame, frame_not_after, last_frame_end
 from .comfy_continuation import audio_lead_in, apply_audio_lead_in
+from .editor_limits import PROJECT_BYTES
 from .editor_text import is_text_track, has_text_data, validate_text_project, paint_project, check_export_text, MissingGlyphs
 from . import editor_export_options
 from .editor_speed import validate_clip, changed as speed_changed, audio_changed, independent_join, VideoReader, AudioReader
@@ -802,10 +803,10 @@ def _output_root():
     return Path(folder_paths.get_output_directory()).resolve()
 
 
-def _read_json(path):
+def _read_json(path, limit=_RECORD_BYTES):
     with path.open('rb') as stream:
-        value = stream.read(_RECORD_BYTES + 1)
-    if len(value) > _RECORD_BYTES:
+        value = stream.read(limit + 1)
+    if len(value) > limit:
         raise ValueError('Record too large')
     return json.loads(value)
 
@@ -841,7 +842,7 @@ def load_project(identity, revision=None):
                 raise ExportConflict(record['revision'])
             return copy.deepcopy(record)
     root = output / 'FreeVideo' / '.editor' / 'projects'
-    record = _read_json(_contained(root, root / identity / 'project.json'))
+    record = _read_json(_contained(root, root / identity / 'project.json'), PROJECT_BYTES)
     if revision is not None and record['revision'] != revision:
         raise ExportConflict(record['revision'])
     return record

@@ -76,7 +76,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     }
     try {
         let source = await readFile(new URL('../web/freevideo.js', import.meta.url), 'utf8');
-        source = source.replace("import { openEditorView } from './editor_entry.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
+        source = source.replace("import { openEditorView } from './editor_loader.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
         source = source
             .replace("import { createErrorPanel, errorText } from './error_panel.js';", 'const {createErrorPanel,errorText} = globalThis.__freevideoEntryTest;')
             .replace('import { app } from "../../scripts/app.js";', 'const {app} = globalThis.__freevideoEntryTest;')
@@ -145,11 +145,11 @@ test('main browser entry registers both views and preserves node hooks', async t
         extension.afterConfigureGraph();
         assert.equal(restored[0].node, node);
         assert.ok(restored[0].studio, 'restore opens the studio before the editor');
-        dependencies.openEditorView = () => { throw new Error('editor unavailable'); };
-        const oldError = console.error; console.error = () => {};
-        try { extension.afterConfigureGraph(); } finally { console.error = oldError; }
-        assert.equal(opened.at(-1), node, 'editor failure leaves the restored studio available');
+        // The lazy loader owns failed imports: it notifies, reports through onFailure and resolves null.
+        dependencies.openEditorView = async (node, options) => { options.onFailure(new Error('editor unavailable')); return null; };
+        extension.afterConfigureGraph(); await Promise.resolve();
         assert.ok(window.__freevideoHealth.some(row => row.where === 'editor'));
+        assert.equal(opened.at(-1), node, 'editor failure leaves the restored studio available');
         rememberedView = 'nodes';
         const count = opened.length; extension.afterConfigureGraph();
         assert.equal(opened.length, count, 'remembered Nodes does not open either dialog');

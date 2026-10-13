@@ -21,7 +21,7 @@ import { createPromptEnhancer } from './prompt_enhance.js';
 import { rememberPromptDraft } from './prompt_draft.js';
 import { canvasDimensions, imageSizeSelection } from './studio_size.js';
 import { createCapabilityView } from './capability_view.js';
-import { openEditorView } from './editor_entry.js';
+import { openEditorView } from './editor_loader.js';
 import { frameShapes, frameSize } from './frame_sizes.js';
 import { createFirstRunGuide } from './first_run_guide.js';
 

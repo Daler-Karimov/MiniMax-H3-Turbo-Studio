@@ -25,6 +25,7 @@ from urllib.parse import unquote, urlencode, urlsplit
 from .comfy_library import _ID, _plain, _video
 from .system import windows
 from .editor_frames import frame_not_after, last_frame_end
+from .editor_limits import PROJECT_BYTES
 from .editor_speed import validate_clip, register_reverse
 from .editor_transport import marker_fields
 from .editor_audio import clip_fields, track_fields
@@ -322,8 +323,6 @@ def validate(record):
                 raise ValueError('Invalid replacement bounds')
             transactions.append(dict(part=raw['part'], originals=originals, clips=clips, rolledBack=raw['rolledBack']))
         result['replacements'] = transactions
-    if len(json.dumps(result, ensure_ascii=True).encode()) > BODY_BYTES:
-        raise ValueError('Project is too large')
     return result
 
 
@@ -373,19 +372,22 @@ def _read_json(path, limit=BODY_BYTES):
 
 
 def _read_project(root, identity):
-    record = validate(_read_json(_project_path(root, identity), BODY_BYTES + 256))
+    record = validate(_read_json(_project_path(root, identity), PROJECT_BYTES))
     if record['id'] != identity:
         raise ValueError('Project id does not match its folder')
     return record
 
 
-def _write(path, record):
+def _write(path, record, *, limit=None):
+    data = (json.dumps(record, ensure_ascii=True, allow_nan=False) + '\n').encode('utf-8')
+    if limit is not None and len(data) > limit:
+        raise ValueError('Project is too large')
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', errors='backslashreplace', newline='\n',
+        with tempfile.NamedTemporaryFile(mode='wb',
                 prefix=path.name + '.', suffix='.tmp', dir=path.parent, delete=False) as stream:
             temporary = Path(stream.name)
-            stream.write(json.dumps(record, ensure_ascii=True, allow_nan=False) + '\n')
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
         for attempt in range(8):
@@ -440,7 +442,7 @@ def save(output_directory, record, create=None, operation=None):
                 stored = _read_project(output_directory, record['id'])
             except FileNotFoundError as error:
                 raise MissingProject('Saved project unavailable') from error
-            receipt = _read_json(path, BODY_BYTES + 256).get('_save', {})
+            receipt = _read_json(path, PROJECT_BYTES).get('_save', {})
             if operation is not None and receipt.get('operation') == operation:
                 if receipt.get('digest') != digest:
                     raise ValueError('Save operation reused with different content')
@@ -456,13 +458,13 @@ def save(output_directory, record, create=None, operation=None):
             retained['_save'] = dict(operation=operation, digest=digest)
         try:
             if fresh:
-                _write(staging / 'project.json', retained)
+                _write(staging / 'project.json', retained, limit=PROJECT_BYTES)
                 if create is not None:
                     _write(staging / 'create.json', dict(create=create))
                 _project_path(output_directory, record['id'])
                 os.rename(staging, path.parent)
             else:
-                _write(path, retained)
+                _write(path, retained, limit=PROJECT_BYTES)
         finally:
             if fresh and staging.exists():
                 shutil.rmtree(staging)

@@ -227,7 +227,7 @@ export function mediaURL(api, value) {
 export function createEditorStore(api, {t = en => en, notify = () => {}, onGenerationReady = () => {}, clock = clockDefault, pollMs = 2000, standIn: injected = null} = {}) {
     const sources = new Map(), sourceReads = new Map(), watchers = new Set(), pollers = new Set(), once = new Set();
     let recovered = null, capabilityPoll = null;
-    let generationAvailable = true, generationProbe = null;
+    let generationAvailable = false, generationGone = false, generationProbe = null, generationRetry = null, generationAttempts = 0;
     let disposed = false; const uploads = new Set();
     const session = holdSession();
     const notice = (key, en, zh) => { if (!once.has(key)) { once.add(key); notify(t(en, zh)); } };
@@ -255,9 +255,16 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         return () => { poller.dispose(); pollers.delete(poller); };
     }
     function generationAbsent() {
-        if (!generationAvailable) return;
+        generationGone = true; generationRetry?.dispose();
         generationAvailable = false;
         if (!disposed) onGenerationReady(false);
+    }
+    function askGenerationAgain() {
+        const delay = [2000, 5000, 15000, 30000][generationAttempts++];
+        if (delay === undefined) return;
+        const timer = clock.setTimeout(() => { retry.dispose(); store.generationReady(); }, delay);
+        const retry = generationRetry = {dispose() { clock.clearTimeout(timer); pollers.delete(retry); if (generationRetry === retry) generationRetry = null; }};
+        pollers.add(retry);
     }
     // Optional adapter (or factory): startChain, owns, chain, chainAction, and
     // optional restoreSources. Production callers provide none.
@@ -268,23 +275,31 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         get generationAvailable() { return !!standIn || generationAvailable; },
         generationReady() {
             if (standIn) return Promise.resolve(true);
-            if (!generationAvailable) return Promise.resolve(false);
-            // One bounded request per store, shared by concurrent callers. Only
-            // an explicit 404 hides generation; outages leave the editor usable.
+            if (generationAvailable || generationGone || disposed) return Promise.resolve(generationAvailable);
+            // Generating stays off until the list of long videos answers in its
+            // expected shape. One bounded request at a time, shared by concurrent
+            // callers; a missing route is final, an error or timeout is asked again.
+            // Every answer is reported, so the page can stop waiting for the first.
             return generationProbe ||= (async () => {
                 const controller = new AbortController();
-                let timer, finish;
+                let timer, finish, answer = null;
                 const timeout = new Promise(resolve => { finish = resolve; timer = clock.setTimeout(() => {
-                    controller.abort(); resolve(true);
+                    controller.abort(); resolve(null);
                 }, 5000); });
-                const probe = {dispose() { clock.clearTimeout(timer); controller.abort(); finish(true); pollers.delete(probe); }};
+                const probe = {dispose() { clock.clearTimeout(timer); controller.abort(); finish(null); pollers.delete(probe); }};
                 pollers.add(probe);
                 try {
-                    const ready = await Promise.race([Promise.resolve().then(() => request('/freevideo/chains', {signal: controller.signal}))
-                        .then(response => response.status !== 404, () => true), timeout]);
-                    if (!ready && !disposed) generationAbsent();
-                    return generationAvailable;
-                } finally { probe.dispose(); }
+                    // true: present; false: no such route; null: no usable answer.
+                    answer = await Promise.race([Promise.resolve().then(() => request('/freevideo/chains', {signal: controller.signal}))
+                        .then(async response => response.status === 404 ? false
+                            : response.ok && Array.isArray((await response.json())?.chains) ? true : null)
+                        .catch(() => null), timeout]);
+                } finally { probe.dispose(); generationProbe = null; }
+                if (disposed || generationGone) return false;
+                if (answer === false) generationAbsent();
+                else if (answer) { generationAvailable = true; onGenerationReady(true); }
+                else { askGenerationAgain(); onGenerationReady(false); }
+                return generationAvailable;
             })();
         },
         async recoverOutbox() {
