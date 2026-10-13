@@ -39,7 +39,7 @@ import time
 
 from . import adaln_assets as assets
 from .long_paths import io_path
-from .variant_cleanup import inside, redirected
+from .variant_cleanup import SIDECAR, SIDECAR_LIMIT, inside, redirected
 
 RECEIPT = 'adaln-reclaim.json'
 OFFER = 'adaln-reclaim-offer.json'
@@ -286,6 +286,18 @@ def verify_sources(cache, manifest, should_stop=lambda: False):
     return None
 
 
+def _remove_sidecars(cache, listed):
+    """The small records an earlier download left beside a source (<file>.partial.source.json), so the folder can go."""
+    for _, path in listed:
+        sidecar = path.with_name(path.name + SIDECAR)
+        info = _regular(sidecar)
+        if info is not None and info.st_size <= SIDECAR_LIMIT and _contained(cache, sidecar):
+            try:
+                io_path(sidecar).unlink()
+            except OSError:
+                pass
+
+
 def _remove_tables(cache, folders):
     removed = 0
     for folder, _ in folders:
@@ -373,6 +385,7 @@ def reclaim(cache, *, should_stop=lambda: False, schedules=None, lock=None, ask=
                         return kept('redirected')
                     freed += info.st_size
                     io_path(path).unlink()
+                _remove_sidecars(cache, listed)
                 try:
                     (io_path(cache) / SOURCES).rmdir()
                 except OSError:
@@ -423,11 +436,25 @@ def apply(machine, *, should_stop=lambda: False, schedules=None):
     return result
 
 
+def _installed_engine_schedules(machine):
+    """engine_schedules for a process that has not put the engine's dependencies on its path (the background check)."""
+    ready = []
+    def answer(steps):
+        if not ready:
+            from . import paths
+            vdn = Path(machine['root']) / 'vendor' / 'vdn' if machine.get('root') else None
+            paths.add_vdn(vdn if vdn is not None and (vdn / 'src/models/hybrid_attention.py').is_file() else None)
+            ready.append(True)
+        return engine_schedules(steps)
+    return answer
+
+
 def run(machine, *, should_stop=lambda: False):
     """Entry point of the background precompile: check and leave the offer, report one event, never raise."""
     started = time.time()
     try:
-        result = reclaim(machine['cache'], should_stop=should_stop, ask=True, release=installed_release())
+        result = reclaim(machine['cache'], should_stop=should_stop, ask=True, release=installed_release(),
+                         schedules=_installed_engine_schedules(machine))
     except Exception as error:  # Best effort: the installation works either way.
         result = dict(action='kept', reason='error:' + type(error).__name__, bytes=0, tables_bytes=0)
     if result['action'] == 'kept' and result['reason'] not in ('declined', 'stopped', 'busy') \
