@@ -131,7 +131,7 @@ class WholeVideoProgress:
                  cold_flags=None, records=(), rate=.005, smoothing='track',
                  silence='stage', ceiling='stretch', tau=10., max_rise=.019, final=.98, slow_start=True, started=None):
         from . import stage_estimate
-        from .effort_forecast import stage_forecast
+        from .progress_history import stage_forecast
         if not math.isfinite(rate) or rate < 0:
             raise ValueError('Progress smoothing rate must be finite and nonnegative')
         for name, value, choices in (('smoothing', smoothing, ('countdown', 'hold', 'track')),
@@ -194,7 +194,7 @@ class WholeVideoProgress:
                     refine_steps=3, two_pass=True, preview=False, upscale=False,
                     encoder_prewarm=None, options=None):
         import platform
-        from .effort_forecast import start_context
+        from .progress_history import start_context
         started, opened = time.perf_counter(), time.monotonic()
         observed, records = start_context(output_directory, machine)
         hardware = cls._hardware(observed, machine)
@@ -230,7 +230,7 @@ class WholeVideoProgress:
 
     def _late_history(self):
         """Use history the background read finished after this request began."""
-        from .effort_forecast import start_context, history_read_at
+        from .progress_history import start_context, history_read_at
         if self.history is None or self.remaining_source == 'measured':
             return
         output_directory, machine, opened = self.history
@@ -291,7 +291,7 @@ class WholeVideoProgress:
 
     def _reforecast(self, *, reset_source=False):
         from .stage_estimate import predict_prior, STAGES
-        from .effort_forecast import stage_forecast
+        from .progress_history import stage_forecast
         self.prior = predict_prior(self.hardware, self.request, self.cold_flags, self.params)
         weights = {k: self.prior['stages'][k]['seconds'] for k in STAGES}
         local = stage_forecast(self.records, self.request, self.cold_flags, weights, version=_engine_version())
