@@ -635,7 +635,7 @@ def image_schema(name):
 PROJECT_OPERATIONS = {
     'list': ('GET', '/projects', 'List editing projects shared with the editor page. Then get one to read its revision and clip IDs.'),
     'get': ('GET', '/projects/{id}', 'Read a timeline and authenticated source URLs. Read its revision and clip IDs before editing.'),
-    'create': ('POST', '/projects', 'Create an editor timeline. Send a valid editor project with id null and revision 0.'),
+    'create': ('POST', '/projects', 'Create an editor timeline. Send {"project": {"name": "..."}}; the rest of an empty timeline is filled in.'),
     'write': ('PUT', '/projects/{id}', 'Replace a timeline. First get the project and preserve its id and revision; recompute from error.project on project_changed.'),
     'operations': ('POST', '/projects/{id}/operations', 'Apply 1-64 timeline edits atomically and save once. First get revision and clip IDs; on project_changed recompute from error.project, and on clip_busy wait for generation to finish.'),
     'generate': ('POST', '/projects/{id}/generate', 'Make new picture and sound for selected clips or a frame range, as the page Generate does. First get revision and clip IDs; the parts are reserved at once and fill in as the returned job finishes.'),
@@ -730,7 +730,9 @@ def session_schema(name):
 
 def project_schema(name):
     if name in ('create', 'write'):
-        return obj(dict(project={'type': 'object', 'description': 'The editor page project record; validated by the shared editor save.'}, ref=REF), ('project',))
+        text = ('A new timeline: {"name": "..."} is enough (width and height if not 1344x768); the rest is filled in. Add clips with insert operations afterwards.'
+                if name == 'create' else 'The whole project record as you read it, with your changes; validated by the shared editor save.')
+        return obj(dict(project={'type': 'object', 'description': text}, ref=REF), ('project',))
     ids = array(CLIP, 1, 500)
     revision = number(1, integer=True, description='The saved revision you read; a later save returns project_changed.')
     if name == 'generate':

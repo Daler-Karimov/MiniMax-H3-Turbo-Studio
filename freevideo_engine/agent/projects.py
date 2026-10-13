@@ -35,6 +35,12 @@ RULE_EXPECTED = {
 }
 
 
+def new_project(given):
+    """The page's empty timeline with what the caller sent on top; a name alone is enough to start one."""
+    return dict(dict(version=1, id=None, revision=0, name='', fps=comfy_editor.FPS, width=1344, height=768, settings=None, serial=0,
+                     tracks=[dict(id='v1', kind='video', clips=[]), dict(id='a1', kind='audio', clips=[])]), **given)
+
+
 class ProjectError(JobError):
     """A project error; a conflict carries the current project so the caller can retry from it."""
 
@@ -64,7 +70,7 @@ def _refused(project, error):
     reason = str(error) if type(error) is ValueError and re.fullmatch(r'[A-Z][A-Za-z ]{2,60}', str(error)) else ''
     row = schema.diagnostic('/project', 'a valid editor project' + (' (%s)' % (reason[:1].lower() + reason[1:]) if reason else ''),
                             project)
-    row['next'] = ('Correct that part of /project. To place clips, create the project with empty tracks, '
+    row['next'] = ('Correct that part of /project. For a new timeline send only {"project": {"name": "..."}}; '
                    'then add each clip with an insert operation.')
     return spec.SpecError([row])
 
@@ -196,8 +202,9 @@ class Projects:
         if replay is not None:
             return replay
         project = value.get('project') if isinstance(value, dict) else None
-        if not isinstance(project, dict) or project.get('id') is not None or project.get('revision') != 0:
-            raise _invalid('/project', 'a new project with id null and revision 0')
+        project = new_project(project) if isinstance(project, dict) else None
+        if project is None or project.get('id') is not None or project.get('revision') != 0:
+            raise _invalid('/project', 'a new project: its name is enough, with no id and no revision')
         # The page's receipt makes a repeated create return the first project.
         create = _operation_key(ref, client) if ref is not None else None
         self._lengths(project)

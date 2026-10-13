@@ -103,6 +103,7 @@ GUIDE = {
     ],
     'editing_projects': [
         'GET /projects lists timelines shared with the editor page. First GET /projects/{id} to read revision and clip IDs.',
+        'For a new timeline POST /projects with {"project": {"name": "..."}} (width and height too if not 1344x768); it comes back empty at revision 1. Then add each clip with an insert operation.',
         'POST /projects/{id}/operations sends revision and 1-64 operations, using whole frames at 24 fps. The batch saves once or changes nothing.',
         'On 409 project_changed, recompute edits from error.project and its current_revision, then send a new request. On clip_busy wait for generation to finish.',
         'POST /projects/{id}/generate reserves pending parts for clip_ids or a start/frames range and fills them as the returned job finishes. POST /projects/{id}/export renders the revision you read; wait for its job.',
