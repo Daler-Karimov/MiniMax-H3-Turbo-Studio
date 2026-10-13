@@ -79,8 +79,9 @@ GUIDE = {
     'agent_jobs': [
         'GET /capabilities reads the studio cache with the same size/task/material query parameters. '
         'status=computing includes retry_after_seconds; unknown plan estimates have seconds=null.',
-        'GET /jobs/{id}?wait=25 waits at most 25 seconds and returns poll_after_ms. Poll the same ID; '
-        'disconnecting a wait or SSE does not cancel generation.',
+        'GET /jobs/{id}?wait=25 waits at most 25 seconds and returns poll_after_ms. Like POST /jobs, the answer '
+        'has the job under job (its fields are also at the top level). Poll the same ID until job.status is '
+        'succeeded, failed, cancelled or interrupted; disconnecting a wait or SSE does not cancel generation.',
         'Jobs wait behind an active studio chain. GET /queue gives Agent/UI ownership and counts ahead, '
         'without studio prompts. POST /jobs/{id}/cancel cancels only this job.',
         'POST /jobs/{id}/resume continues failed, interrupted or cancelled generation; successful blocks stay. '
@@ -93,6 +94,7 @@ GUIDE = {
         'POST /projects/{id}/operations sends revision and 1-64 operations, using whole frames at 24 fps. The batch saves once or changes nothing.',
         'On 409 project_changed, recompute edits from error.project and its current_revision, then send a new request. On clip_busy wait for generation to finish.',
         'POST /projects/{id}/generate reserves pending parts for clip_ids or a start/frames range and fills them as the returned job finishes. POST /projects/{id}/export renders the revision you read; wait for its job.',
+        'Subtitles: POST /projects/{id}/listen with mode transcribe (writes down what is said) or align (times the lines you give) and the revision you read; wait for the job and read result.lines, each with start and end frames. Then add them with a subtitles operation of cues {start, frames, text}; replace true swaps the whole track. With no speech model the job fails with no_speech_model: write the lines yourself.',
         'Reuse ref or Idempotency-Key only for the identical request. Source video/audio/thumbnail URLs require the same Agent token.',
     ],
     'project_routes': [dict(operation=name, method=method, path=path, description=summary)
@@ -149,7 +151,8 @@ GUIDE = {
 RULES = [
     'Finish the job. When the user asks for a video, keep going until the finished video exists. Decide ordinary '
     'things yourself: how to split shots, how many takes, which take to keep. Tell the user what you decided in '
-    'one or two sentences at the end, not along the way.',
+    'one or two sentences at the end, not along the way. Name every video you submit: label is a short name of what '
+    'it shows, in the user\'s language (2 to 8 Chinese characters, or 1 to 4 words), for example "Seaside at dawn".',
     'Solve problems yourself first. Every error has a next field, and often details with alternatives; these are '
     'steps that work on this computer. Not enough graphics memory: use a listed alternative (a lower resolution '
     'or a shorter video) and try again. A take is not good: make another; if it is still not good after two more, '
@@ -157,7 +160,7 @@ RULES = [
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
-    'When a video is done, tell the user it is in "Creations" in FreeVideo, in plain words. Do not read out job, library '
+    'When a video is done, tell the user it is in "Your creations" in FreeVideo, in plain words. Do not read out job, library '
     'or project ids; give a file path only when the user asks for one. If the length differs from what was asked, '
     'say the real length in seconds and do not explain frame counts.',
     'Ask the user only when you would have to change the content or style they asked for, when the work will '
@@ -182,14 +185,15 @@ RULES = [
 
 RULES_ZH = [
     '把任务做完。用户要求生成视频时，持续推进，直到成片生成。如何拆分镜头、拍几条、选哪一条等普通决定，'
-    '由你自己做。最后用一两句话告诉用户你做了哪些决定，不要每做一步都请用户决定。',
+    '由你自己做。最后用一两句话告诉用户你做了哪些决定，不要每做一步都请用户决定。'
+    '提交的每条视频都起个名字：label 写拍的是什么，用用户的语言，2 到 8 个字，例如“清晨海边”。',
     '先自己解决问题。每个错误都有 next 字段，details 里也常有可选方案；这些是在本机可行的处理步骤。'
     '显存不足时，从列出的方案中选择较低分辨率或较短时长重试。一条拍得不好就再拍；再拍两条仍不满意，'
     '换一种描述，不要反复提交同一个要求。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
-    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“作品”里。不要念任务、作品或剪辑的编号；'
+    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“我的作品”里。不要念任务、作品或剪辑的编号；'
     '文件路径在用户问起时再给。实际长度和要求的不一样时，只说实际约几秒，不解释帧数。',
     '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
     '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
@@ -230,7 +234,7 @@ CAPABILITIES_ZH = {
     ('GET', '/library/{day}/{run}/thumbnail'): '查看已保存的视频缩略图',
     ('GET', '/queue'): '查看队列顺序及任务属于 Agent 还是用户',
     ('GET', '/editor/sources/content'): '下载剪辑项目的源素材或缩略图；使用 GET /projects/{id} 返回的素材标识',
-    ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 25 秒',
+    ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 50 秒；again=true 表示暂时没有，再调一次',
     ('POST', '/drama/plan'): '预览多镜头影片的剧本和各镜头拍摄条数，不保存、不提交。'
         '多镜头影片可以逐镜选片；单条视频（最长 60 秒）用一个 generate 任务',
     ('POST', '/drama'): '确认计划后开始拍摄，进度会保存；查看各条画面并逐镜选片',
@@ -262,6 +266,9 @@ CAPABILITIES_ZH = {
         '先读取 revision 和片段标识；所选部分会立即预留，返回的任务完成后填入结果',
     ('POST', '/projects/{id}/export'): '将保存的某个版本导出为 MP4，存入已保存视频。'
         '先读取 revision，等待返回的任务完成，再读取结果视频',
+    ('POST', '/projects/{id}/listen'): '听剪辑工程的声音，得到字幕行及其时间：对给定字幕行定时，或直接转写。'
+        '先读取 revision，等待返回的任务完成，再用 subtitles 编辑把字幕行加入时间线；'
+        '没有安装语音模型时返回 no_speech_model，改为自己写字幕行',
     ('POST', '/images'): '像图片编辑页面一样打开图片；提交 source，会话会保留源图片副本和图层文档',
     ('GET', '/images/{id}'): '读取图片编辑会话的图层文档、选区和 revision；编辑前先读取 revision 和图层标识',
     ('PUT', '/images/{id}'): '替换整个图片文档；先读取会话并提交其 revision。'
@@ -353,10 +360,18 @@ def connection_guide(root, base, lang=None, offers=None):
         'call("POST", "/connect/hello", {"client": "Local Agent", "via": "http"})',
         'print(call("GET", ""))',
         '# Only after the user asks for a video:',
-        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "ref": "shot-1"})["job"]',
-        '# job = call("GET", "/jobs/" + job["id"] + "?wait=25")',
-        '# Poll the same ID until succeeded. Retry a lost submission using the same ref.',
+        '# label is the short name the user sees on the job, in their language: what the video shows, 2 to 8 characters.',
+        '# seconds and aspect are what the user asked for (10 seconds and 16:9 when they said nothing): send them the first time.',
+        '# ref is a new name for every new request, with the date and time in it; the same ref again only repeats a submission whose answer was lost.',
+        '# job = call("POST", "/jobs", {"prompt": "USER_REQUEST", "seconds": 5, "aspect": "16:9", "label": "SHORT NAME",',
+        '#                               "ref": "A-NEW-NAME-FOR-THIS-REQUEST"})["job"]',
+        '# while job["status"] not in ("succeeded", "failed", "cancelled", "interrupted"):',
+        '#     job = call("GET", "/jobs/" + job["id"] + "?wait=25")["job"]',
         '# Download base origin + job["result"]["video"]["url"] with the same Authorization header.',
+        '# The conversation inside FreeVideo (see below): each wait is its own command; when it returns, run the next one.',
+        '# box = call("GET", "/inbox?wait=50")   # {"session": ..., "inbox": [what the user said], "again": true if nothing yet}',
+        '# call("POST", "/sessions/" + box["session"] + "/events", {"type": "message", "text": "YOUR WORDS"})',
+        '# Post what you say first, then wait: never one command that waits and then posts, your words would be up to 50 s late.',
     ])
     return dict(language=lang, api=base + PREFIX, token_file=token_file, claude_code=config['claude_code'],
         codex=config['codex'], mcp_json=config['mcp_json'], command=config['command'],
@@ -380,6 +395,43 @@ def connection_guide(root, base, lang=None, offers=None):
                     '"Introduce these", only those, and give two or three requests they can say. Do not quote version '
                     'numbers or endpoint names. Do not start any task yourself; wait for the user to ask.',
         introduce=introduction(zh, offers or {}),
+        conversation='用户会在 FreeVideo 的“AI 全自动”页里直接和你说话，你的话也显示在那里。'
+                     '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
+                     '回应里的 session 就是这段对话；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
+                     '{"type":"message","text":"…"}（MCP 用 freevideo_session_post）。在这里先只说一句话，不超过 20 个字，'
+                     '不列条目、不举例（页面上已经有例句），例如“连上了。告诉我想做什么视频。”'
+                     '你自己窗口里的那段介绍照常说，但它不是这一轮的结尾：说完紧接着去调等待接口。'
+                     '然后守在这段对话里：再调等待接口，它最多约 50 秒返回；"again": true 表示用户还没说话，'
+                     '马上再调下一次，一次接一次，不限次数。没有消息不是结束的理由：不要结束这一轮回复，'
+                     '不要停下来问用户——你一停，用户在 FreeVideo 里说的话就没人听了。'
+                     '用命令行调接口时，每次等待单独发一条命令（一条命令里不写循环，超时设到 60 秒以上），'
+                     '返回后接着发下一条。'
+                     '收到话（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
+                     '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
+                     '或者一句用户需要知道的话，发回同一个 session，再接着等。先把话发出去，再调等待接口；不要写成“等待返回后才发话”，那样这句话会晚到将近一分钟。中文用全角标点。'
+                     '做完一条视频也不是结尾：这句话就是汇报，不要再在自己窗口里写总结（一写总结这一轮就结束了，'
+                     '用户的下一句话没人听），紧接着再调等待接口，空等多少轮都接着等。'
+                     '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
+                     'The user talks to you inside FreeVideo, in the Autopilot view, and your words are shown there. '
+                     'After connecting, call the wait once: GET ' + base + PREFIX + '/inbox?wait=50 (MCP: freevideo_wait '
+                     'without id). Its "session" is this conversation; POST ' + base + PREFIX + '/sessions/{session}/events '
+                     'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
+                     'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
+                     '"Connected. Tell me what video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '
+                     'does not end your turn: right after it, call the wait. Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
+                     '"again": true means the user has not spoken yet, so call it again at once, time after time, with no '
+                     'limit. Nothing new is not a reason to finish: do not end your reply and do not stop to ask the '
+                     'user, because once you stop nobody hears what the user says in FreeVideo. From a command line, '
+                     'each wait is its own command (no loop inside one command, timeout above 60 seconds); when it '
+                     'returns, run the next one. '
+                     'When words arrive (text of each inbox row), answer with one sentence before you start, for example '
+                     '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
+                     'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
+                     'user needs to know, to the same session, and wait again. Post your words first and call the wait after; never wait and then post, or they reach the user up to a minute late. Chinese text takes full-width punctuation. '
+                     'A finished video is not the end either: that sentence is the report, so write no summary in your own '
+                     'window (a summary ends your turn, and then nobody hears the next thing the user says); call the wait '
+                     'again right away, and keep waiting however many waits come back empty. Do not create another session for this conversation. '
+                     'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
                  '“我连接不到你电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
@@ -404,6 +456,7 @@ def connection_text(value):
         *['- ' + row['description'] for row in value['capabilities']], '',
         '先介绍这几样：' if zh else 'Introduce these:', *['- ' + row for row in value['introduce']], '',
         value['first_reply'], value['fallback'], '',
+        '在 FreeVideo 里对话：' if zh else 'The conversation inside FreeVideo:', value['conversation'], '',
         '用户提出要求后的做事规则：' if zh else 'How to work once the user has asked for something:',
         *['%d. %s' % (number, rule) for number, rule in enumerate(value['rules'], 1)], '',
         ('详细使用指南：' if zh else 'More detail: ') + value['docs']['guide'],

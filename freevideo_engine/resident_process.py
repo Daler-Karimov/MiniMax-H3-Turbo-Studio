@@ -484,6 +484,8 @@ def serve(endpoint, runner, snapshot):
                         environment = execution_environment(request['environment'])
                         os.environ.clear()
                         os.environ.update(environment)
+                        from .triton_compat import own_temporary_environment
+                        own_temporary_environment()
                         os.environ.pop(processes.HANDLE_ENV, None)
                         os.environ['FREEVIDEO_RUNTIME_LOCK_FD'] = str(descriptor)
                         from .locking import runtime_lock

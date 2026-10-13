@@ -114,6 +114,7 @@ class Projects:
     def __init__(self, root, *, directory=None):
         self.root = root  # The ComfyUI output folder, where the page keeps FreeVideo/.editor
         self.lock = threading.Lock()
+        self.listen_lock = threading.Lock()
         self.receipts = {}  # (client, ref) -> {digest, result}; in memory, bounded; the page save keeps the durable one.
         self.prepared = {}  # job id -> the reserved project, until its chain id is written into it.
 
@@ -341,6 +342,24 @@ class Projects:
         self._remember(ref, digest, result, client)
         return result
 
+    def listen(self, identity, value, *, jobs, ref=None, client=None):
+        """Queue a listening job (align or transcribe) for the revision the caller read; a stale revision starts nothing."""
+        schema.validate(schema.project_schema('listen'), value)
+        if (value['mode'] == 'align') != ('lines' in value):
+            raise _invalid('/lines', 'lines for mode align, and none for transcribe', value.get('lines'))
+        with self.listen_lock:  # the same key sent twice at once queues one job
+            digest, replay = self._receipt('projects:listen', dict(id=identity, body=value), ref, client)
+            if replay is not None:
+                return replay
+            stored = self._load(identity)['project']
+            if stored['revision'] != value['revision']:
+                raise ProjectError('project_changed', project=stored)
+            job = jobs.submit(dict(kind='listen', editor_project=identity,
+                                   **{k: v for k, v in value.items() if k != 'ref'}), client=client)[0]
+            result = dict(job=jobs.view(job), jobs=[jobs.view(job)])
+            self._remember(ref, digest, result, client)
+            return result
+
     def _update(self, identity, change, *, tries=4):
         """Read, change and save; a page save in between makes it read again. None when nothing changed."""
         for _ in range(tries):
@@ -448,3 +467,49 @@ def run_export(port, row, *, poll=.25):
     relative = view['path']
     return dict(library_id=library_id(relative), video=library_view(port, relative),
                 editor_project=spec['editor_project'], revision=spec['revision'])
+
+
+# Listen ----------------------------------------------------------------------------------------------
+LISTEN_REASONS = {'no_engine': 'no_speech_model', 'language': 'no_speech_model', 'no_sound': 'invalid_request', 'too_long': 'invalid_request',
+                  'source_missing': 'clip_source_unusable', 'unreadable': 'clip_source_unusable',
+                  'disk_full': 'storage_unavailable'}
+LISTEN_MESSAGES = {
+    'no_engine': 'No speech model is installed on this machine; write the subtitle lines yourself with the subtitles edit',
+    'no_sound': 'The timeline has no sound to listen to',
+    'too_long': 'The sound is too long for one listening job; give a shorter range'}
+
+
+def run_listen(port, row, *, poll=.25):
+    """A listening job: the page's subtitle ears (align or transcribe) over one saved revision."""
+    spec = row['spec']
+    queue = port.editor_ears()
+    if queue is None:
+        raise JobError('not_ready', 'The subtitle service is not running')
+    request = dict(kind=spec['mode'], id=spec['editor_project'], revision=spec['revision'], language=spec['language'])
+    request.update({k: spec[k] for k in ('lines', 'range') if k in spec})
+    try:
+        view = queue.submit(request)
+    except FileNotFoundError as error:
+        raise JobError('not_found', 'The project does not exist') from error
+    except (ValueError, TypeError) as error:
+        raise JobError('invalid_request', 'This project cannot be listened to') from error
+    except Exception as error:
+        if getattr(error, 'reason', None) is None:
+            raise
+        raise JobError('busy', 'The subtitle queue is full; retry shortly') from error
+    identity, cancelled = view['id'], False
+    row['_phase'] = 'listening'
+    while view['state'] == 'running':
+        if row.get('_cancel') and not cancelled:
+            view, cancelled = queue.cancel(identity), True
+            continue
+        row['_detail'] = json.dumps(dict(fraction=round(view['fraction'], 3)))
+        time.sleep(poll)
+        view = queue.get(identity)
+    if view['state'] == 'cancelled':
+        raise JobError('cancelled', 'Cancelled')
+    if view['state'] != 'done':
+        reason = view.get('reason') or 'failed'
+        raise JobError(LISTEN_REASONS.get(reason, 'listen_failed'),
+                       LISTEN_MESSAGES.get(reason) or 'Listening failed (%s)' % reason)
+    return dict(editor_project=spec['editor_project'], revision=spec['revision'], **view['result'])

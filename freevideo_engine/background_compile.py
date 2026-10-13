@@ -125,6 +125,8 @@ class BackgroundCompile:
                 row = dict(started=time.time())
                 self.attempts.append(row)
                 with io_path(log).open('ab') as stream:
+                    from .triton_compat import temporary_environment
+                    environment = temporary_environment(environment.get('FREEVIDEO_HOME') or self.lock.parent, environment)
                     process = self.process = processes.popen(
                         command, env=environment, cwd=cwd, stdin=subprocess.DEVNULL, stdout=stream,
                         stderr=subprocess.STDOUT, start_new_session=True, supervise=True)

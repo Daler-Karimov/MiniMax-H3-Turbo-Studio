@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import __version__
 from . import disk_space
-from .comfy_launcher_runtime import Controller, layout, local_url, managed_frontend, new_layout
+from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text
 from .launcher_settings import Store, default_language
@@ -21,6 +21,7 @@ from .model_guidance import package_instructions, video_instructions, runtime_pa
 from .setup_progress import progress_text
 from .terminal_ui import clean, duration
 from .model_upgrade import TARGET
+from .runtime_alias import checked_real_path
 
 # Background launcher release checks while the window stays open.
 CHECK_SECONDS = 30 * 60
@@ -28,6 +29,15 @@ CHECK_SECONDS = 30 * 60
 SNOOZE_SECONDS = 4 * 3600
 QUEUE_POLL_SECONDS = 3
 RECEIPT_POLL_SECONDS = 5
+
+
+# package_cleanup.failure_reason codes; the raw error stays in the details.
+ARCHIVE_FAILURES = {
+    'changed': ('The file changed after the check, so it was kept.', '文件在检查后有改动，已保留。'),
+    'busy': ('An installation or a video is in progress. Try again when it finishes.', '有安装或生成正在进行，完成后可以再删除。'),
+    'in-use': ('Another program is using it, or this account does not have permission to delete it.', '正被其他程序使用，或当前账户没有删除权限。'),
+    'failed': ('It could not be deleted.', '未能删除。'),
+}
 
 
 class Session:
@@ -48,8 +58,12 @@ class Session:
     page = 'comfy'
     selected = installed_versions = engine_identity = bundled_identity = None
     release_details = None
+    adaln_thread = adaln_result = adaln_found = None
+    adaln_polled = 0.
+    adaln_hidden = adaln_retry = False
     # The source whose earlier copies were removed once ComfyUI ran it.
     old_versions_retired = None
+    archives_busy = False
 
     def __init__(self, source=None, *, controller=None, store=None, updater=None, smoke=False):
         from .offline_packages import Importer
@@ -69,7 +83,8 @@ class Session:
         self.form = dict(comfy='', destination=str(home / 'FreeVideo'), engine='', python='',
                          url='http://127.0.0.1:8188', models='', model_dirs=[], model_method='auto', environment_method='auto',
                          separate=False, repair=False, new_comfy=True, offline_runtime='', offline_models=[],
-                         imported_archives=[], sampling_caches=not saved.get('installation'))
+                         imported_archives=[], kept_archives=[], sampling_caches=not saved.get('installation'))
+        self.form['lan_access'] = False
         self.form.update({k: v for k, v in saved.items() if k in self.form})
         if 'environment_method' not in saved and self.form['offline_runtime']:
             self.form['environment_method'] = 'manual'
@@ -105,6 +120,14 @@ class Session:
         self.page_error = ''
         self.started = None
         self.closing = False
+        self.archives_busy = False
+        self.archives_from_dialog = False
+        self.archives_thread = self.archives_result = self.archives_deleting_offer = None
+        self.archives_failures = []
+        self.archives_retry_dialog = False
+        self.archives_prompt_offer = None
+        self.archives_freed = 0
+        self.archives_toast_until = 0.
         self.smoke = smoke
         self.reported_setup = None
         # An explicit update continues from tick() through update_intent:
@@ -165,6 +188,13 @@ class Session:
         return engine
 
     def persist(self):
+        if self.selected and self.form['comfy'] == self.selected.get('root') and self.form['engine'] == self.selected.get('engine'):
+            try:
+                self.selected['url'] = local_url(self.form['url'])
+                if 'lan_access' in self.selected or self.form.get('lan_access') is True:
+                    self.selected['lan_access'] = self.form.get('lan_access') is True
+            except ValueError:
+                pass  # Save the editable draft while retaining a valid installation.
         self.store.write(self.form, self.language, self.selected, self.saved_setup)
 
     def remember(self, selection, persist=True):
@@ -172,6 +202,7 @@ class Session:
         self.form.update(comfy=selection['root'], engine=selection['engine'],
                          python=selection.get('python') or '', url=selection['url'],
                          separate=selection.get('separate', False), new_comfy=False, repair=False)
+        self.form['lan_access'] = selection.get('lan_access') is True
         if persist:
             self.persist()
 
@@ -183,10 +214,12 @@ class Session:
                 raise ValueError(self.t('Pause installation before changing the token.', '请先暂停安装，再修改 Token。'))
             from .hf_auth import validate
             self.token = validate(str(value)); return
-        if key not in self.form or self.controller.busy or self.importer.busy or self.cleaner.busy:
+        if key not in self.form or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
             return
-        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches'):
+        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access'):
             value = bool(value)
+        if key == 'url':
+            value = local_url(str(value))
         if key == 'environment_method' and value not in ('auto', 'manual'):
             raise ValueError('Unknown environment installation method')
         if key == 'environment_method' and value == 'manual' and not runtime_packages_supported():
@@ -199,6 +232,23 @@ class Session:
             return
         self.repair_request = None
         self.form[key] = value
+        if (key in ('url', 'lan_access') and self.selected and not self.form['new_comfy']
+                and self.form['comfy'] == self.selected.get('root') and self.form['engine'] == self.selected.get('engine')):
+            selected = dict(self.controller.selection or self.selected, url=local_url(self.form['url']),
+                            lan_access=self.form.get('lan_access') is True)
+            previous_status = self.controller.state.get('status')
+            self.selected = selected
+            if key == 'url':
+                self.browser_attempted = False
+            self.browser_error = self.error = ''
+            self.persist()
+            if previous_status == 'open':
+                self.controller.run('configure_access', dict(url=selected['url'], lan_access=selected['lan_access']))
+            else:
+                self.controller.selection = dict(selected)
+                self.controller.state = dict(status='ready', selection=dict(selected), engine_update_available=bool(
+                    self.controller.state.get('engine_update_available')))
+            return
         if key in ('new_comfy', 'destination', 'comfy'):
             # A remembered installation's engine belongs to that installation;
             # another location installs into its own FreeVideo-engine.
@@ -215,7 +265,7 @@ class Session:
 
     def use_disk(self, folder):
         """Move a new installation to another disk, then show the location page to confirm it."""
-        if not self.form['new_comfy'] or self.controller.busy or self.importer.busy or self.cleaner.busy:
+        if not self.form['new_comfy'] or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
             return
         self.edit('destination', str(folder))
         self.page = 'comfy'
@@ -248,7 +298,7 @@ class Session:
 
 
     def import_packages(self, paths):
-        if self.controller.busy or self.importer.busy or self.cleaner.busy:
+        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
             return
         if not paths:
             return
@@ -266,6 +316,8 @@ class Session:
         Imported model packages are always used; the download is for an
         environment imported without any.
         """
+        if self.archives_busy:
+            return
         if self.form['model_method'] == 'auto' and not self.form['offline_models']:
             self.importer.download(self.form['offline_runtime'], self.source, self.form['sampling_caches'])
         else:
@@ -287,7 +339,7 @@ class Session:
         self.persist()
 
     def action(self, name, accepted=False):
-        if self.cleaner.busy:
+        if self.cleaner.busy or self.archives_busy:
             return
         # The model download holds the setup lease; launching and opening
         # FreeVideo continue, anything that would start setup waits for it.
@@ -358,6 +410,10 @@ class Session:
             self.queue_state = None
             self._update_engine_when_idle()
             return
+        if name == 'keep_adaln':
+            self.keep_adaln(); return
+        if name == 'delete_adaln':
+            self.delete_adaln(); return
         if name == 'back':
             self.page = 'comfy' if self.page == 'models' else 'models'
             return
@@ -372,6 +428,10 @@ class Session:
             self.open_browser(); return
         if name == 'delete_archives':
             self.delete_archives(); return
+        if name == 'delete_archives_dialog':
+            self.delete_archives(dialog=True); return
+        if name == 'keep_archives':
+            self.keep_archives(); return
         if name == 'shortcut':
             self.controller.run('shortcut', self.controller.state.get('status')); return
         if name not in ('primary', 'launch'):
@@ -400,7 +460,7 @@ class Session:
                     raise ValueError(self.t('Accept the installation plan and licenses.', '请先同意安装计划及许可证。'))
                 from .monitoring import save
                 save(consent, dict(accepted_at=time.time()))
-            self.controller.run('launch', {'url': self.form['url']})
+            self.controller.run('launch', {'url': self.form['url'], 'lan_access': self.form.get('lan_access') is True})
         elif self.page == 'launcher':
             self.controller.run('launch', {'installation': self.selected})
         elif self.page == 'progress' and state == 'review':
@@ -419,7 +479,7 @@ class Session:
     def can_repair(self):
         """An installed engine this launcher can check and reinstall again."""
         return (bool(self.selected) and getattr(self.controller, 'fixed_environment', False) is not True
-                and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.closing
+                and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
                          or self.engine_updating or self.upgrade.active or self.model_switch))
 
     def repair_unavailable(self):
@@ -453,7 +513,7 @@ class Session:
         return ''
 
     def cleanup_downloads(self, remove=False):
-        if (self.controller.busy or self.importer.busy or self.closing or self.upgrade.active or self.model_switch
+        if (self.controller.busy or self.importer.busy or self.archives_busy or self.closing or self.upgrade.active or self.model_switch
                 or self.update_intent or self.engine_updating or self.updater and self.updater.busy):
             return
         self.cleaner.start(self.engine_root(), remove=remove)
@@ -470,7 +530,7 @@ class Session:
         """
         state = self.upgrade.state
         if (state.get('status') not in ('available', 'failed', 'releasable') or self.upgrade.busy or self.model_switch
-                or self.closing or self.controller.busy or self.importer.busy or self.cleaner.busy or self.engine_updating):
+                or self.closing or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.engine_updating):
             return
         root = self.engine_root()
         # Started from Settings after "Later": show the card again.
@@ -505,7 +565,7 @@ class Session:
     def _tick_model_upgrade(self, row, busy):
         upgrade = self.upgrade
         state = upgrade.state
-        if self.closing or upgrade.busy:
+        if self.closing or upgrade.busy or self.archives_busy:
             return
         if (state.get('status') == 'idle' and self.page == 'launcher' and not busy
                 and row.get('status') in ('open', 'ready')):
@@ -760,7 +820,7 @@ class Session:
         """One explicit update: the newest launcher if one is known, otherwise
         the engine bundled with this launcher. Downloading, waiting for running
         ComfyUI jobs and restarting continue from tick()."""
-        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.closing:
+        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing:
             if source == 'browser':
                 self.bridge_pending = True
             return
@@ -840,6 +900,8 @@ class Session:
             return False
 
     def _restart_when_idle(self):
+        if self.archives_busy:
+            return
         row = self.updater.state
         if row.get('status') != 'ready' or self.update_restarting:
             return
@@ -865,7 +927,7 @@ class Session:
         self.closing = True
 
     def _update_engine_when_idle(self):
-        if self.controller.busy or self.importer.busy or self.upgrade.active or self.model_switch:
+        if self.controller.busy or self.importer.busy or self.archives_busy or self.upgrade.active or self.model_switch:
             return
         busy = self._queue_busy()
         self.update_waiting = bool(busy)
@@ -1082,6 +1144,11 @@ class Session:
         if getattr(self, '_closed', False):
             return
         try:
+            # A finished deletion is recorded (and saved) inside the same guarantee:
+            # a failed save never skips closing the engine.
+            if self.archives_thread:
+                self.archives_thread.join()
+                self._finish_archives()
             self.persist()
         finally:
             self.closing = True
@@ -1093,7 +1160,83 @@ class Session:
             remove(self.bridge)
             self._closed = True
 
+    # -- AdaLN sources the engine no longer reads: the user decides ---------------------
+    def adaln_offer(self):
+        """The background check's standing offer for this installation, or None; read at most every 5 s."""
+        now = time.monotonic()
+        if now - self.adaln_polled < 5:
+            return self.adaln_found
+        self.adaln_polled, self.adaln_found = now, None
+        try:
+            from . import adaln_reclaim
+            machine = json.loads((io_path(self.engine_root()) / 'machine.json').read_text(encoding='utf-8'))
+            offer = adaln_reclaim.offer(machine['cache'])
+            line = adaln_reclaim.release_line(self.installed_product_version() or adaln_reclaim.installed_release())
+            size = sum(offer.get(key, 0) for key in ('bytes', 'tables_bytes'))
+            if (all(type(offer.get(key, 0)) is int for key in ('bytes', 'tables_bytes')) and size >= 2**30
+                    and offer.get('manifest') and (line is None or offer.get('declined') != line)):
+                self.adaln_found = dict(bytes=size, machine=machine, line=line)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+        return self.adaln_found
+
+    def adaln_idle(self):
+        return (self.controller.state.get('status') == 'open'
+                and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.closing
+                         or self.update_intent or self.engine_updating or self.update_restarting
+                         or self.updater and self.updater.busy or self.upgrade.busy or self.model_switch)
+                and self._queue_busy() is False)
+
+    def keep_adaln(self):
+        """"Later": the question does not come back before the next release line."""
+        offer = self.adaln_offer()
+        if self.adaln_thread is not None or not offer:
+            return
+        if offer['line']:
+            from . import adaln_reclaim
+            try:
+                adaln_reclaim.decline(offer['machine']['cache'], offer['line'])
+            except OSError:
+                pass
+        self.adaln_hidden = True
+
+    def delete_adaln(self):
+        offer = self.adaln_offer()
+        if self.adaln_thread is not None or not offer or not self.adaln_idle():
+            return
+        machine = offer['machine']
+        def work():
+            from . import adaln_reclaim
+            self.adaln_result = adaln_reclaim.apply(machine)
+        self.adaln_retry = False
+        self.adaln_thread = threading.Thread(target=work, name='freevideo-adaln-cleanup', daemon=True)
+        self.adaln_thread.start()
+
+    def adaln_dialog_view(self, error, update):
+        thread = self.adaln_thread
+        if thread is not None and not thread.is_alive():
+            result, self.adaln_thread, self.adaln_result = self.adaln_result or {}, None, None
+            thread = None
+            # Busy GPU: ask again; anything else (deleted, or the conditions stopped holding) ends the question.
+            self.adaln_retry = result.get('reason') in ('busy', 'stopped')
+            self.adaln_hidden = not self.adaln_retry
+            self.adaln_polled, self.adaln_found = 0., None
+        offer = None if self.adaln_hidden else self.adaln_offer()
+        remind = bool(offer and self.page == 'launcher' and not error and not update['remind']
+                      and (thread is not None or self.adaln_idle()))
+        size = size_text((offer or {}).get('bytes', 0), decimal_sizes=sys.platform == 'darwin')
+        return dict(remind=remind, busy=thread is not None,
+                    title=self.t('Delete model files no longer in use?', '删除不再使用的模型文件？'),
+                    body=self.t('This frees %s of disk space. If the files are needed later, they will be downloaded again automatically.',
+                                '可释放 %s 磁盘空间。以后如需要，会自动重新下载。') % size,
+                    delete_text=(self.t('Deleting…', '正在删除…') if thread is not None else
+                                 self.t('Try again', '再试一次') if self.adaln_retry else self.t('Delete', '删除')),
+                    later_text=self.t('Not now', '暂不删除'))
+
     def tick(self):
+        if isinstance(self.controller, Controller) and not self.controller.busy:
+            self.controller.poll_access_proxy()
+        self._finish_archives()
         imported = self.importer.state
         if not self.importer.busy and imported is not self.imported_batch:
             self.imported_batch = imported
@@ -1151,7 +1294,7 @@ class Session:
         if groups:
             self.model_groups = groups
         selection = row.get('selection')
-        if not busy and selection and selection.get('ready') and (row.get('deployed') or row.get('status') in ('open', 'restart-required')):
+        if not busy and selection and selection.get('ready') and (row.get('deployed') or row.get('lan_status') == 'stopped' or row.get('status') in ('open', 'restart-required')):
             self.repair_request = None
             if selection != self.selected:
                 self.remember(selection)
@@ -1244,55 +1387,161 @@ class Session:
             return None
         def identity(path):
             try:
-                info = os.stat(io_path(path))
-                return path, info.st_size, info.st_mtime_ns
+                # An alias slot is authenticated before anything below it is read.
+                info = os.lstat(io_path(checked_real_path(path)))
+                return path, info.st_size, info.st_mtime_ns, info.st_ino, info.st_dev, info.st_mode, info.st_nlink
             except OSError:
                 return path, None, None
         # A ZIP moved, changed or deleted while the launcher is open is noticed on the next view.
-        key = (engine, tuple(identity(r['path']) for r in self.form['imported_archives']))
+        key = (engine, tuple((tuple(r.items()), identity(r['path'])) for r in self.form['imported_archives']),
+               tuple(identity(str(Path(engine) / name)) for name in ('verified-models.json', 'portable-verified.json')))
         if getattr(self, 'archive_view', None) is None or self.archive_view[0] != key:
             from .package_cleanup import archives
             self.archive_view = (key, archives(self.form['imported_archives'], engine))
         return self.archive_view[1]
 
-    def delete_archives(self):
+    def archives_idle(self):
+        """Use the engine update's queue check, including its unknown/wait state."""
+        return (not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy
+                     or self.closing or self.update_intent or self.engine_updating or self.update_restarting
+                     or self.updater and self.updater.busy or self.upgrade.busy or self.model_switch)
+                and self._queue_busy() is False)
+
+    @staticmethod
+    def archive_path(path):
+        """The authenticated real spelling that offers and removals report."""
+        try:
+            return plain(checked_real_path(path))
+        except (OSError, KeyError, TypeError, ValueError):
+            return path
+
+    @classmethod
+    def archive_identity(cls, row):
+        return dict(path=cls.archive_path(row['path']), bytes=row['bytes'], mtime_ns=row['mtime_ns'])
+
+    @staticmethod
+    def archive_size(value):
+        return size_text(value, decimal_sizes=sys.platform == 'darwin')
+
+    def keep_archives(self):
+        if self.archives_busy:
+            return
+        offer = self.archives_prompt_offer or self.archive_offer() or {}
+        recorded = [self.archive_identity(row) for row in self.form['imported_archives']]
+        kept = [row for row in self.form['kept_archives'] if row in recorded]
+        shown = [self.archive_identity(row) for row in offer.get('files', [])]
+        self.form['kept_archives'] = kept + [row for row in shown if row not in kept]
+        self.archives_retry_dialog = False
+        self.archives_prompt_offer = None
+        self.persist()
+
+    def delete_archives(self, dialog=False):
         from .package_cleanup import delete_archives
         engine = (self.controller.selection or {}).get('engine')
-        if self.controller.state.get('status') != 'open' or not engine:
+        if self.controller.state.get('status') != 'open' or not engine or not self.archives_idle():
             return
-        offered = len((self.archive_offer() or {}).get('paths', []))
-        freed, removed = delete_archives(self.form['imported_archives'], engine)
-        self.archives_failed = max(0, offered - len(removed))
-        self.form['imported_archives'] = [r for r in self.form['imported_archives'] if r['path'] not in removed]
+        offer = self.archives_prompt_offer if dialog and self.archives_prompt_offer else self.archive_offer()
+        if not offer or not offer['paths']:
+            return
+        self.archives_busy = True
+        self.archives_from_dialog = dialog
+        self.archives_deleting_offer = offer
+        self.archives_failures = []
+        records = [dict(r) for r in self.form['imported_archives']]
+        def work():
+            try:
+                self.archives_result = delete_archives(records, engine, offered=offer)
+            except Exception as error:
+                self.archives_result = (0, [], [dict(path=p, reason='failed', detail=str(error)) for p in offer['paths']])
+        self.archives_thread = threading.Thread(target=work, name='freevideo-delete-archives')
+        self.archives_thread.start()
+
+    def _finish_archives(self):
+        if self.archives_result is None:
+            return
+        freed, removed, failures = self.archives_result
+        offered = {r['path']: r for r in (self.archives_deleting_offer or {}).get('files', [])}
+        # Keep the checked size even if the file changed or is no longer eligible.
+        self.archives_failures = [dict(row, bytes=offered.get(row['path'], {}).get('bytes', 0))
+                                  for row in failures]
+        self.archives_result = None
+        self.archives_busy = False
+        self.archives_retry_dialog = bool(self.archives_failures) and self.archives_from_dialog
+        if self.archives_retry_dialog:
+            failed_paths = {r['path'] for r in self.archives_failures}
+            remaining = [r for r in offered.values() if r['path'] in failed_paths]
+            self.archives_prompt_offer = dict(bytes=sum(r['bytes'] for r in remaining), files=remaining,
+                                             paths=[r['path'] for r in remaining])
+        else:
+            self.archives_prompt_offer = None
+        self.archives_deleting_offer = None
+        gone = set(removed)
+        self.form['imported_archives'] = [r for r in self.form['imported_archives']
+                                          if r['path'] not in gone and self.archive_path(r['path']) not in gone]
         self.archive_view = None
-        self.archives_freed = (getattr(self, 'archives_freed', 0) or 0) + freed
+        self.archives_freed = freed
+        self.archives_toast_until = time.monotonic() + 3 if freed else 0.
         self.persist()
+
+    def archives_dialog_view(self, offer, idle, error, update):
+        files = (offer or {}).get('files', [])
+        kept = self.form['kept_archives']
+        new = any(self.archive_identity(row) not in kept for row in files)
+        remind = (self.page == 'launcher' and not error and (not update['remind'] or self.archives_busy)
+                  and ((idle and ((offer or {}).get('bytes', 0) >= 2**30 and new or self.archives_retry_dialog))
+                       or self.archives_busy and self.archives_from_dialog))
+        if remind and not self.archives_busy and not self.archives_retry_dialog:
+            self.archives_prompt_offer = offer
+        groups = {}
+        for row in files:
+            folder = str(Path(row['path']).parent)
+            groups.setdefault(folder, []).append(dict(name=Path(row['path']).name, size=self.archive_size(row['bytes'])))
+        size, count = self.archive_size((offer or {}).get('bytes', 0)), len(files)
+        retry = self.archives_retry_dialog
+        if retry:
+            failed_title = self.t('%d file could not be deleted' if count == 1 else '%d files could not be deleted',
+                                  '%d 个文件未能删除') % count
+            title = (self.t('%s freed. ', '已释放 %s，') % self.archive_size(self.archives_freed)
+                     if self.archives_freed else '') + failed_title
+        else:
+            title = self.t('Free up %s of disk space', '可以释放 %s 磁盘空间') % size
+        return dict(remind=bool(remind), size=size, count=count, retry=retry, title=title,
+                    body='' if retry else self.t(
+                        'The imported offline package ZIPs are still on the drive, and FreeVideo no longer needs them. '
+                        'Deleting them does not affect models, the runtime or your videos.',
+                        '导入过的离线包压缩包仍保留在磁盘上，FreeVideo 已不再需要。删除后，模型、运行环境和作品都不受影响。'),
+                    delete_text=(self.t('Deleting…', '正在删除…') if self.archives_busy else
+                                 self.t('Try again', '再试一次') if retry else
+                                 self.t('Delete and free %s', '删除并释放 %s') % size),
+                    keep_text=self.t('Keep for now', '暂时保留'),
+                    footnote=self.t('You can also delete them later in Settings › Preferences › Storage.',
+                                    '以后也可以在“设置 → 偏好 → 存储”里删除。'),
+                    groups=[dict(folder=folder, files=rows) for folder, rows in groups.items()])
 
     def archives_text(self):
         offer = self.archive_offer()
-        if offer and offer['bytes'] >= 2**20:
-            return self.t('The offline package ZIP files you imported still take %s. FreeVideo no longer needs them.',
-                          '导入用过的离线包压缩包还占着 %s，FreeVideo 已经用不到它们。') % size_text(offer['bytes'])
+        if offer and offer['bytes'] > 0:
+            return self.t('The ZIPs used for importing are no longer needed. Deleting them frees %s.',
+                          '导入用的压缩包已不再需要，删除后可释放 %s。') % self.archive_size(offer['bytes'])
         return ''
 
     def archives_confirm_text(self):
         offer = self.archive_offer()
-        if not offer or offer['bytes'] < 2**20:
+        if not offer or offer['bytes'] <= 0:
             return ''
         count = len(offer['paths'])
         english = 'Delete 1 ZIP file (%s)? This cannot be undone.' if count == 1 else 'Delete %d ZIP files (%%s)? This cannot be undone.' % count
-        return self.t(english % size_text(offer['bytes']), '删除 %d 个压缩包（%s）？删除后不能恢复。' % (count, size_text(offer['bytes'])))
+        return self.t(english % self.archive_size(offer['bytes']), '删除 %d 个压缩包（%s）？删除后不能恢复。' % (count, self.archive_size(offer['bytes'])))
 
     def archives_done_text(self):
         freed = getattr(self, 'archives_freed', 0) or 0
-        return self.t('ZIP files deleted · %s freed', '已删除压缩包 · 释放 %s') % size_text(freed) if freed >= 2**20 else ''
+        return self.t('ZIP files deleted · %s freed', '已删除压缩包 · 释放 %s') % self.archive_size(freed) if freed > 0 else ''
 
     def archives_failed_text(self):
-        failed = getattr(self, 'archives_failed', 0) or 0
-        if not failed:
-            return ''
-        return self.t('1 ZIP file could not be deleted.' if failed == 1 else '%d ZIP files could not be deleted.' % failed,
-                      '%d 个压缩包没能删除。' % failed)
+        return '\n'.join(self.t('%s (%s): %s', '%s（%s）：%s') % (
+                             Path(row['path']).name, self.archive_size(row['bytes']),
+                             self.t(*ARCHIVE_FAILURES.get(row.get('reason'), ARCHIVE_FAILURES['failed'])))
+                         for row in self.archives_failures)
 
     def licenses(self, row):
         """What the consent accepts, listed when the user reads the licences: an offline runtime's, or the installation plan's."""
@@ -1312,7 +1561,7 @@ class Session:
         row = self.controller.state
         task = row.get('task', {})
         port_from = int(row['moved_from']) if row.get('status') == 'open' and 'moved_from' in row else 0
-        port_to = (urlsplit(row['url']).port or 80) if port_from else 0
+        port_to = (urlsplit(row.get('selection', {}).get('url') or row['url']).port or 80) if port_from else 0
         progress = progress_view(task.get('progress') or {}, zh)
         overall = progress_view(row.get('overall') or task.get('phase_progress') or {}, zh)
         if self.importer.busy:
@@ -1342,6 +1591,10 @@ class Session:
                   'verifying': ('Downloaded; verifying', '已下载，正在校验'),
                   'paused': ('Paused', '已暂停')}
         review = row.get('status') == 'review'
+        # The model files are checked once the environment is installed; until their step
+        # reports, say that instead of a bare "waiting".
+        before_models = (row.get('action') == 'install' and row.get('status') == 'running'
+                         and not (row.get('task', {}).get('model_groups') or row.get('model_groups')))
         for name in FAMILIES:
             if name == 'sampling' and name not in by_id and not self.form['sampling_caches']:
                 continue
@@ -1361,8 +1614,12 @@ class Session:
             total = item.get('total_bytes', 0)
             done = total if state == 'ready' else min(total,
                     item.get('verified_bytes', 0)+item.get('downloaded_bytes', 0))
+            if state == 'waiting' and before_models:
+                shown = ('Checked after setup', '安装环境后检查')
+            else:
+                shown = states.get(state, states['waiting'])
             models.append(dict(id=name, title=self.t(*NAMES[name]), state=state,
-                detail=self.t(*states.get(state, states['waiting'])), done=done, total=total,
+                detail=self.t(*shown), done=done, total=total,
                 found=item.get('existing_bytes', 0), download=item.get('download_bytes', 0),
                 rate='%.1f MiB/s' % (item['bytes_per_second']/2**20) if item.get('bytes_per_second') else ''))
         # A model download names its group, so it shows the group's download, as in the plan and the rows below.
@@ -1447,11 +1704,15 @@ class Session:
         model_upgrade = dict(self.upgrade.state, busy=self.upgrade.busy)
         if alias_failure(model_upgrade.get('error', '')):
             model_upgrade['error'] = display_launcher_error(model_upgrade['error'], zh=zh)
+        archive_offer = (self.archives_deleting_offer if self.archives_busy else
+                         self.archives_prompt_offer if self.archives_retry_dialog else self.archive_offer())
+        archives_idle = bool(archive_offer and archive_offer['paths']) and self.archives_idle()
+        archive_dialog = self.archives_dialog_view(archive_offer, archives_idle, error, update)
         return plain_data(dict(sampling_cache_bytes=total_bytes(), version=__version__,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
             page=self.page, status=row.get('status', 'idle'), busy=self.controller.busy or self.importer.busy or self.cleaner.busy,
             cleanup=cleanup,
-            can_cleanup=not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.closing
+            can_cleanup=not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
                 or self.update_intent or self.engine_updating or self.updater and self.updater.busy
                 or self.upgrade.active or self.model_switch),
             model_upgrade=dict(model_upgrade, switching=bool(self.model_switch)),
@@ -1460,6 +1721,7 @@ class Session:
                 models=len(self.form['offline_models']), guide=package_instructions(self.form['new_comfy'] and self.form['environment_method'] == 'manual'
                                            and not self.form['offline_runtime'], zh)),
             video_model_guide=video_instructions(zh),
+            adaln_dialog=self.adaln_dialog_view(error, update),
             selected=bool(self.selected), can_repair=self.can_repair(), repair_offered=repair_offered, error=error, retry_kind=self.retry_kind(), notice=self.notice,
             # Qt reads a list as an array; LEVELS is a tuple.
             compatibility=dict(self.compatibility, levels=list(self.compatibility.get('levels') or ())),
@@ -1472,10 +1734,19 @@ class Session:
             probe=probe, speeds=speeds, token_set=bool(self.token),
             log=self.tail.text, logs=[dict(label=display(n, zh), path=str(p)) for n, p in self.controller.terminal_sources()],
             url=(self._browser_url(row.get('url', '')) if row.get('status') == 'open' else ''), shortcut=shortcut,
+            access_links=(list(self.controller.access_links) if row.get('status') == 'open'
+                          and isinstance(self.controller.access_links, list) else []),
+            lan_message=(self.t('LAN access has stopped. Turn it on again.', '局域网访问已停止，请重新开启。')
+                         if row.get('lan_status') == 'stopped' else
+                         self.t('No LAN address found. Connect to Wi-Fi or a wired network first.', '未找到局域网地址，请先连接 Wi-Fi 或有线网络。')
+                         if row.get('lan_status') == 'no-address' else ''),
             port_from=port_from, port_to=port_to,
             old_versions=self.old_versions_text(), copied_models=self.copied_models_text(),
             archives=self.archives_text(), archives_confirm=self.archives_confirm_text(),
             archives_done=self.archives_done_text(), archives_failed=self.archives_failed_text(),
+            archives_dialog=archive_dialog, archives_busy=self.archives_busy, can_delete_archives=archives_idle,
+            archives_toast=(self.t('Freed %s', '已释放 %s') % self.archive_size(self.archives_freed)
+                            if self.archives_freed and time.monotonic() < self.archives_toast_until else ''),
             can_shortcut=bool(self.controller.selection and self.controller.selection.get('ready')),
             update=update, engine_update_available=bool(row.get('engine_update_available')),
             settings_path=str(self.store.primary),

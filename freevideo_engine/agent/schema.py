@@ -58,6 +58,9 @@ FILE = string(1024, pattern=r'^(?!/)(?!.*(?:\\|:))(?!.*(?:^|/)\.\.(?:/|$)).+$')
 FRAME = {'oneOf': [enum(('first', 'last')), number(0)]}
 WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 25 seconds without rejecting larger values.', **{'x-clamp': 25})
 CLIENT_WAIT = number(0, 25, default=25)
+# Waiting for the user's words is longer: a person types slowly, and each wait is one tool call.
+INBOX_WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 50 seconds without rejecting larger values.', **{'x-clamp': 50})
+CHAT_ID = string(64, pattern=r'^[A-Za-z0-9_-]{1,64}$')
 EMPTY = obj()
 
 
@@ -206,6 +209,23 @@ def export(*, local=False):
         **{'x-job-kind': 'export'})
 
 
+LISTEN_FIELDS = dict(
+    mode=enum(('align', 'transcribe'), description='align: time the lines you give against the sound; transcribe: write down what is said.'),
+    language=string(8, pattern=r'^(auto|[a-z]{2,3})$', default='auto', description='Spoken language, e.g. zh or en; auto detects it.'),
+    lines=array(string(2000), 1, 1000, description='align only: the lines to time, in order.'),
+    range=obj(dict(start=EDITOR_FRAME, frames=number(1, 10**7, integer=True)), ('start', 'frames'),
+              description='Timeline frames to listen to; omit for the whole timeline.'))
+
+
+def listen(*, local=False):
+    return obj(dict(kind={'const': 'listen', 'type': 'string'},
+        editor_project=string(34, pattern=r'^e-[0-9a-f]{32}$', description='The editing project whose sound to listen to (GET /projects).'),
+        revision=number(1, 2**53 - 1, integer=True, description='The saved revision you read; a later save fails the job with project_changed.'),
+        **LISTEN_FIELDS, **common()), ('kind', 'editor_project', 'revision', 'mode'),
+        description='Listen to the timeline sound with the local speech model. The result lists each line with its start and end frame; nothing is saved.',
+        **{'x-job-kind': 'listen'})
+
+
 def image_edit(*, local=False):
     return obj(dict(kind={'const': 'image_edit', 'type': 'string'},
         image=dict(IMAGE, description='The image session to render (POST /images).'),
@@ -215,7 +235,7 @@ def image_edit(*, local=False):
         **{'x-job-kind': 'image_edit'})
 
 
-KINDS = dict(generate=generate, assemble=assemble, vlm=vlm, enhance=enhance, export=export, image_edit=image_edit)
+KINDS = dict(generate=generate, assemble=assemble, vlm=vlm, enhance=enhance, export=export, listen=listen, image_edit=image_edit)
 
 
 def job_schema(*, local=False, refs=False):
@@ -291,8 +311,8 @@ def contracts(*, local=False):
         ('POST', '/connect/hello'): route('Report a connected client', body=obj(dict(client=string(80),
             via=enum(('mcp', 'http'))), ('client', 'via'))),
         ('GET', '/connect/status'): route('Read recent connection status', auth=False, local=True),
-        ('GET', '/inbox'): route("Wait at most 25 seconds for the user's words or answers in this session",
-            query=obj({'wait': WAIT})),
+        ('GET', '/inbox'): route("Wait at most 50 seconds for the user's words or answers in this session; "
+            "again=true means nothing new yet, call it again", query=obj({'wait': INBOX_WAIT})),
     }
     for name, (method, suffix, summary) in DRAMA_OPERATIONS.items():
         shape = drama_schema(name)
@@ -317,7 +337,7 @@ def contracts(*, local=False):
         if method == 'GET':
             extra['query'] = shape
         else:
-            extra.update(body=shape, idempotent=True, **({'status': 201} if name in ('create', 'generate', 'export') else {}))
+            extra.update(body=shape, idempotent=True, **({'status': 201} if name in ('create', 'generate', 'export', 'listen') else {}))
         routes[method, suffix] = route(summary, **extra)
     for name, (method, suffix, summary) in IMAGE_OPERATIONS.items():
         shape = image_schema(name)
@@ -333,8 +353,14 @@ def contracts(*, local=False):
             body=obj({'ref': REF}), path=obj({'id': PRODUCTION}, ('id',)), auth=False, local=True, idempotent=True)
     for suffix, method, body in (('', 'GET', None), ('/session', 'GET', None), ('/activity', 'GET', None),
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
-            ('/connect/reset', 'POST', EMPTY)):
+            ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
+            ('/chat/video', 'GET', None),
+            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID}, ('text', 'id'))),
+            ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'}},
+                                          ('id', 'approve')))):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
+    routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True)})
+    routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for suffix in ('', '/connect'):
         routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
     for name, (method, suffix, summary) in SESSION_OPERATIONS.items():
@@ -614,10 +640,12 @@ PROJECT_OPERATIONS = {
     'operations': ('POST', '/projects/{id}/operations', 'Apply 1-64 timeline edits atomically and save once. First get revision and clip IDs; on project_changed recompute from error.project, and on clip_busy wait for generation to finish.'),
     'generate': ('POST', '/projects/{id}/generate', 'Make new picture and sound for selected clips or a frame range, as the page Generate does. First get revision and clip IDs; the parts are reserved at once and fill in as the returned job finishes.'),
     'export': ('POST', '/projects/{id}/export', 'Render one saved revision to an MP4 in the saved videos. First get the revision; wait for the returned job, then read its result video.'),
+    'listen': ('POST', '/projects/{id}/listen', 'Listen to the timeline sound for subtitles: mode align times lines you give, transcribe writes down what is said. First get the revision; wait for the returned job, then add the lines with the subtitles edit. Nothing is saved; with no speech model for the language the call fails with no_speech_model, so write the lines by hand.'),
 }
 PROJECT_TOOLS = dict(list='freevideo_projects', get='freevideo_project_read', create='freevideo_project_create',
                      write='freevideo_project_write', operations='freevideo_editor_operations',
-                     generate='freevideo_project_generate', export='freevideo_export')
+                     generate='freevideo_project_generate', export='freevideo_export',
+                     listen='freevideo_project_listen')
 
 SESSION_OPERATIONS = {
     'create': ('POST', '/sessions', 'Create a work conversation for messages and plans shared with the user.'),
@@ -718,6 +746,8 @@ def project_schema(name):
                         settings=settings, ref=REF), ('revision', 'target'))
     if name == 'export':
         return obj(dict(revision=revision, ref=REF), ('revision',))
+    if name == 'listen':
+        return obj(dict(revision=revision, **LISTEN_FIELDS, ref=REF), ('revision', 'mode'))
     if name != 'operations':
         return EMPTY
     fields = {
@@ -732,6 +762,9 @@ def project_schema(name):
         'describe': (dict(clip_ids=ids, text=dict(type='string', maxLength=8000)), ('clip_ids', 'text'), 'Set the description of selected clips. Use clip IDs from this revision and one paragraph of text.'),
         'set_ref': (dict(clip_ids=ids, ref=dict(type='string', maxLength=128, pattern=r'^[A-Za-z0-9_-]{0,128}$')), ('clip_ids', 'ref'), 'Set an outside shot reference on selected clips. Use clip IDs from this revision; an empty ref removes it.'),
         'use_version': (dict(clip_id=CLIP, index=number(0, 49, integer=True)), ('clip_id', 'index'), 'Restore a stored clip version. First get the clip ID and its versions array; index is zero based.'),
+        'subtitles': (dict(cues=array(obj(dict(start=EDITOR_FRAME, frames=number(1, 10**7, integer=True), text=dict(type='string', minLength=1, maxLength=400)),
+                                         ('start', 'frames', 'text')), 1, 500), replace=dict(type='boolean')), ('cues',),
+                      'Add subtitle lines as one undo step on the subtitle track (created if missing). Each cue is a start frame, a length in frames and one or two lines of text; cues may not overlap each other or lines already there. replace: true swaps the whole track.'),
     }
     operations = [obj(dict(op={'const': op}, **props), ('op', *required), description=description)
                   for op, (props, required, description) in fields.items()]
@@ -1167,7 +1200,7 @@ def openapi():
         elif suffix == '/jobs' and method == 'GET':
             response_schema = obj({'jobs': {'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}}})
         elif suffix in ('/jobs/{id}', '/jobs/{id}/cancel', '/jobs/{id}/resume'):
-            response_schema = {'$ref': '#/components/schemas/Job'}
+            response_schema = {'$ref': '#/components/schemas/JobAnswer'}
         elif '/drama/{id}' in suffix and not suffix.endswith('/sheet') or suffix == '/drama' and method == 'POST':
             response_schema = production_response()
         elif suffix == '/confirmations':
@@ -1197,16 +1230,18 @@ def openapi():
         if suffix == '/connect' and method == 'GET':
             success['content']['text/plain'] = {'schema': {'type': 'string'}}
         paths.setdefault(path, {})[method.lower()] = operation
+    job_view = {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
+        status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
+        chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
+        spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
+        error={'$ref': '#/components/schemas/Error'})}
     return dict(openapi='3.1.0', info=dict(title='FreeVideo Agent API', version=str(API_VERSION)), paths=paths,
         components=dict(securitySchemes={'bearer': {'type': 'http', 'scheme': 'bearer'},
             'page': {'type': 'apiKey', 'in': 'cookie', 'name': 'freevideo_agent_page'}}, schemas={
             'Session': session_view(), 'SessionEvent': session_event(stored=True),
-            'JobSpec': schemas()['job'], 'Batch': batch_schema(),
-            'Job': {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
-                status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
-                chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
-                spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
-                error={'$ref': '#/components/schemas/Error'})},
+            'JobSpec': schemas()['job'], 'Batch': batch_schema(), 'Job': job_view,
+            # One job answers the way a submission does: the same job is also under 'job'.
+            'JobAnswer': dict(job_view, properties=dict(job_view['properties'], job={'$ref': '#/components/schemas/Job'})),
             'Submitted': obj(dict(job={'$ref': '#/components/schemas/Job'},
                 jobs={'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}})),
             'Error': obj(dict(code=enum(ERRORS),
@@ -1363,7 +1398,7 @@ def _tool_schema(name):
             value['required'].append('shot')
         if name == 'freevideo_wait':
             value['properties'].pop('wait')
-            value['properties']['timeout'] = CLIENT_WAIT
+            value['properties']['timeout'] = number(0, 50, default=25, description='With id at most 25 seconds; without id (the user) up to 50, default 50.')
             value['required'] = [k for k in value['required'] if k != 'id']
         return value
     if name == 'freevideo_asset':

@@ -3,7 +3,7 @@ import {openEditor} from './editor.js';
 import {api} from '../../scripts/api.js';
 import {app} from '../../scripts/app.js';
 import {openStudio, showNodes} from './studio.js';
-import {viewChanged} from './view_navigation.js';
+import {openAutopilot, viewChanged} from './view_navigation.js';
 function editorPanel(node) {
     const values = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
     return {node: node.id, width: values.width, height: values.height, text: values.text || '', settings: Object.fromEntries(Object.entries({
@@ -15,7 +15,7 @@ function editorPanel(node) {
             return {node: String(node.id), prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};
         }};
 }
-export function openEditorView(node, {studio} = {}) {
+export function openEditorView(node, {studio, work = null} = {}) {
     studio?.querySelectorAll('video,audio').forEach(media => media.pause());
     const panel = editorPanel(node);
     const progressElement = studio?.querySelector('.fv-generation-progress');
@@ -27,8 +27,9 @@ export function openEditorView(node, {studio} = {}) {
             return number ? {percent: Number(number[1])} : {percent: 0};
         };
     }
-    const handle = openEditor({api, app, panel, onView(view) {
+    const handle = openEditor({api, app, panel, from: work ? {work} : null, onView(view) {
         if (view === 'nodes') showNodes(node, studio);
+        else if (view === 'autopilot') openAutopilot(node, {studio});
         else if (studio?.open) viewChanged('studio', node);
         else openStudio(node);
     }});

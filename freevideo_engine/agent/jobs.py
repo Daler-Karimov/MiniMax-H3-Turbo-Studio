@@ -395,10 +395,10 @@ class Jobs:
             records = list(latest.values())
         for row in records:
             if (isinstance(row, dict) and specs.JOB_ID.fullmatch(str(row.get('id')))
-                    and row.get('kind') in ('generate', 'assemble', 'export', 'image_edit') + GPU_KINDS
+                    and row.get('kind') in ('generate', 'assemble', 'export', 'listen', 'image_edit') + GPU_KINDS
                     and row.get('status') in ACTIVE + DONE and isinstance(row.get('spec'), dict)
                     and type(row.get('created_at')) in (int, float) and math.isfinite(row['created_at'])):
-                if row.get('status') == 'running' and row['kind'] in ('assemble', 'export', 'image_edit') + GPU_KINDS:
+                if row.get('status') == 'running' and row['kind'] in ('assemble', 'export', 'listen', 'image_edit') + GPU_KINDS:
                     # This process restarted while the work ran in it; nothing continues it.
                     self.finish(row, 'failed', error=dict(code='interrupted',
                                 message='ComfyUI restarted while this job ran; submit it again'), save=False)
@@ -967,6 +967,32 @@ class Jobs:
         return dict(phase=row.get('_phase') or ('running' if row['status'] == 'running' else 'queued'),
                     **({'detail': row['_detail']} if row.get('_detail') else {}))
 
+    def estimate(self, row):
+        """The engine's own timing of the current phase, for a page that moves its bar between two messages
+        the way the creation panel does. Only keys the engine sent."""
+        if row['status'] not in ('queued', 'running', 'cancelling'):
+            return None
+        try:
+            if row.get('chain_id'):
+                # A video in several parts has one bar over all of them; the engine times each part by itself.
+                chain = self.chain(row['chain_id'])
+                message = self.port.progress(chain['node']) or {} if chain['count'] == 1 and chain.get('node') else {}
+            elif row['kind'] == 'generate' and row.get('comfy'):
+                message = self.port.progress(row['comfy']['node']) or {}
+            else:
+                return None
+        except Exception:
+            return None
+        value = {key: message[key] for key in ('age_seconds', 'phase', 'done', 'total', 'display_fraction',
+                                               'step_elapsed_seconds', 'estimated_step_seconds') if message.get(key) is not None}
+        overall = message.get('overall') if isinstance(message.get('overall'), dict) else {}
+        overall = {key: overall[key] for key in ('fraction', 'estimated', 'status', 'phase_start_fraction', 'phase_weight',
+                                                 'phase_seconds', 'phase_elapsed_seconds', 'sampling_time_weighted')
+                   if overall.get(key) is not None}
+        if overall:
+            value['overall'] = overall
+        return value or None
+
     # Scheduling ----------------------------------------------------------------------------------------
     def active(self):
         return [r for r in self.rows() if r['status'] in ACTIVE]
@@ -1094,6 +1120,9 @@ class Jobs:
             if row['kind'] == 'export':
                 from .projects import run_export
                 result = run_export(self.port, row)
+            elif row['kind'] == 'listen':
+                from .projects import run_listen
+                result = run_listen(self.port, row)
             elif row['kind'] == 'image_edit':
                 from .images import run_render
                 result = run_render(self, row)

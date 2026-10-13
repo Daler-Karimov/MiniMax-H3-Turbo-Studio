@@ -11,6 +11,7 @@ from .long_paths import io_path, plain_data
 TEXT = ('comfy', 'destination', 'engine', 'models', 'python', 'url', 'language', 'offline_runtime')
 SELECTION = ('root', 'engine', 'source', 'python', 'url')
 ARCHIVE = ('path', 'bytes', 'mtime_ns', 'kind', 'root')
+ARCHIVE_IDENTITY = ('path', 'bytes', 'mtime_ns')
 
 
 def default_language():
@@ -48,10 +49,19 @@ def sanitize(value):
             {k: row[k] for k in ARCHIVE} for row in archives
             if isinstance(row, dict) and all(isinstance(row.get(k), str) for k in ('path', 'root', 'kind'))
             and all(type(row.get(k)) is int for k in ('bytes', 'mtime_ns'))][-64:]
+    kept = value.get('kept_archives')
+    if isinstance(kept, list):
+        result['kept_archives'] = [
+            {k: row[k] for k in ARCHIVE_IDENTITY} for row in kept
+            if isinstance(row, dict) and isinstance(row.get('path'), str)
+            and all(type(row.get(k)) is int for k in ('bytes', 'mtime_ns'))][-64:]
     record = value.get('installation')
     if isinstance(record, dict) and all(isinstance(record.get(k), str) and record[k] for k in SELECTION):
         result['installation'] = {k: record[k] for k in SELECTION}
         result['installation']['separate'] = record.get('separate') is True
+        result['installation']['lan_access'] = record.get('lan_access') is True
+        if type(record.get('lan_port')) is int and 1 <= record['lan_port'] <= 65535:
+            result['installation']['lan_port'] = record['lan_port']
     if type(value.get('saved_at_ns')) is int:
         result['saved_at_ns'] = value['saved_at_ns']
     resume = value.get('setup')

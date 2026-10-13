@@ -169,6 +169,10 @@ class ComfyPort:
         """The editor page's export queue (editor_export.register), shared so exports take turns."""
         return getattr(self.server, '_freevideo_editor_export', None)
 
+    def editor_ears(self):
+        """The auto-subtitle ears queue (subtitle_ears.register): time lines against the sound or write down speech."""
+        return getattr(self.server, '_freevideo_subtitle_ears', None)
+
     def queue_busy(self):
         running, pending = self.snapshot()
         return bool(running or pending)
@@ -188,7 +192,10 @@ class ComfyPort:
         from ..comfy_progress import STATE
         with STATE.lock:
             row = STATE.rows.get(str(node))
-            return json.loads(json.dumps(row['message'])) if row else None
+            if not row:
+                return None
+            # How old the message is, as a reopened page gets it, so a bar can go on from where the engine is now.
+            return dict(json.loads(json.dumps(row['message'])), age_seconds=max(0., STATE.clock() - row['measured']))
 
     async def submit(self, graph, extra):
         if self.handler is None:

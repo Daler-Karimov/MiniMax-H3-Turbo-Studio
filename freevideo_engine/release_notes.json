@@ -5,34 +5,34 @@
     "summary": "Adds an editing view, long videos generated one part after another, and AI agent connections, and makes generation faster.",
     "changes": [
       "New editing view: arrange generated clips on a timeline, add text and subtitles, change speed or reverse a clip, and choose the size and quality when exporting.",
-      "Long videos can be generated one part after another: select a range on the timeline in the editing view and press Generate, and each part continues from the one before.",
-      "Clips can be extended in the editing view: drag a new part out of the end of a clip and press Generate, and it continues from the clip.",
-      "A \"First-frame reference\" switch reduces drift when a clip is extended.",
+      "Long videos can be generated one part after another: select a range on the timeline in the editing view and press Generate, and each part continues from the one before. A 30-second video is generated in two parts.",
+      "Clips can be extended in the editing view: drag a new part out of the end of a clip and press Generate, and it continues from the clip. A \"First-frame reference\" switch reduces drift when a clip is extended.",
       "The editing view can create subtitles automatically: it recognizes Chinese, English, Japanese, Korean and Cantonese speech and gives each line its text and timing.",
       "A step-by-step guide appears the first time FreeVideo opens, and can be viewed again from Settings.",
       "Connect an AI agent and let it generate, edit and export videos.",
+      "A new \"LAN access\" switch in Settings lets phones and other computers on the same network open FreeVideo with a link.",
+      "After an offline package is imported, FreeVideo offers to delete the ZIP files that are no longer needed, freeing up disk space.",
       "LoRAs can be added directly in the creation panel.",
-      "A 30-second video is generated in two parts.",
       "The FreeVideo · Media node accepts several reference images.",
       "Faster generation: the wait before decoding is shorter; when generating several videos in a row, the models load faster for the later ones. On computers with less memory, background compiling after an update uses less memory.",
-      "Fixes: generating with several large reference images no longer runs out of memory; 16:9 videos can be saved as share videos; making the full video from a preview no longer stalls on a single step now and then; when setup cannot find a graphics driver, the error says so; when security software removes one of FreeVideo's files, the error says why and how to restore it."
+      "Fixes: generating with several large reference images no longer runs out of memory; 16:9 videos can be saved as share videos; making the full video from a preview no longer stalls on a single step now and then; when setup cannot find a graphics driver, the error says so; setup shows the current step; when security software removes one of FreeVideo's files, the error says why and how to restore it; on a slow network, setup waits longer and tries once more when no download source responds; on English Windows, FreeVideo starts when the install folder or the user name contains Chinese characters."
     ]
   },
   "zh": {
     "summary": "新增剪辑视图、一段接一段的长视频生成，并可以连接 AI Agent；生成也更快。",
     "changes": [
       "新增剪辑视图：把生成的片段排在时间线上剪辑，可以加文字和字幕、变速和倒放；导出时可以选画面大小和画质。",
-      "长视频可以一段接一段生成：在剪辑视图的时间线上选好范围再点生成，每一段都接着前一段往下生成。",
-      "剪辑视图里可以延长片段：从片段尾巴拖出一段再点生成，接在原片段后面往下生成。",
-      "延长片段时可以打开“首帧参考”，减小画面漂移。",
+      "长视频可以一段接一段生成：在剪辑视图的时间线上选好范围再点生成，每一段都接着前一段往下生成；30 秒的视频分两段生成。",
+      "剪辑视图里可以延长片段：从片段尾巴拖出一段再点生成，接在原片段后面往下生成；延长片段时可以打开“首帧参考”，减小画面漂移。",
       "剪辑视图可以自动生成字幕：识别中文、英文、日文、韩文和粤语语音，得到每句的文字和时间。",
       "第一次打开时有分步指引，设置里可以再看一遍。",
       "可以连接 AI Agent，让它生成、剪辑和导出视频。",
+      "设置里新增“局域网访问”开关，打开后，同一网络里的手机和其他电脑可以用链接打开 FreeVideo。",
+      "导入离线包以后，可以删掉用不到的压缩包，释放磁盘空间。",
       "创作面板里可以直接添加 LoRA。",
-      "30 秒的视频分两段生成。",
       "FreeVideo · Media 节点可以接多张参考图。",
       "生成更快：解码前的等待更短；连续生成时，后面的视频加载模型更快。内存较小的电脑上，更新后的后台编译占用的内存更少。",
-      "修复：用多张较大的参考图生成时不再内存不足；16:9 的视频可以保存分享视频；先出预览再生成正式视频时，不再偶尔在某一步停留很久；安装时没有找到显卡驱动，会直接说明；FreeVideo 的文件被安全软件移走时，会说明原因和恢复的办法。"
+      "修复：用多张较大的参考图生成时不再内存不足；16:9 的视频可以保存分享视频；先出预览再生成正式视频时，不再偶尔在某一步停留很久；安装时没有找到显卡驱动，会直接说明；安装时会显示当前步骤；FreeVideo 的文件被安全软件移走时，会说明原因和恢复的办法；网络较慢、下载源都连不上时，安装会多等一会儿再试一轮；英文 Windows 上，安装文件夹或用户名带中文时也能正常启动。"
     ]
   },
   "history": [
@@ -248,25 +248,6 @@
         "summary": "在 Windows 上，12–20 GB 显存的显卡采样稍快一些：显存允许时，注意力每次计算 16 个头。",
         "changes": [
           "在 Windows 上，只要显存预算有余量，注意力改为每次计算 16 个头（原来每次 8 个）。12–20 GB 显卡的第一遍，以及大多数 16 GB 和 20 GB 显卡的第二遍都会用上。在 16 GB 显卡上生成 10 秒 1344×768 视频，第一遍每步缩短约 6%，第二遍每步缩短约 2%，显存占用没有增加。FP8 模型、使用 LoRA 的生成、Linux 和 12 GB 以下的显卡保持现有设置。同一个种子生成的视频可能与以前略有不同，就像在显存不同的显卡上本来就会有差异一样。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.16",
-      "en": {
-        "summary": "On Windows, FreeVideo repairs its desktop shortcut each time the launcher opens, and keeps starting normally after it was once run as administrator.",
-        "changes": [
-          "On Windows, the launcher checks its desktop shortcut each time it opens and repairs it in place, and FreeVideo is now also added to the Start menu. A shortcut left by an earlier installation, or rewritten by Windows, is updated instead of a second \"FreeVideo (2)\" appearing next to it; a shortcut you renamed keeps its name, and one you gave another icon is left as it is. If Windows does not allow writing to the desktop (for example Controlled folder access in Windows Security), the launcher says so and how to allow FreeVideo, and FreeVideo is still in the Start menu.",
-          "After FreeVideo was once run as administrator, its desktop shortcut still opens it: the launcher copy behind the shortcut stays readable without administrator rights, and an unreadable copy left by an earlier version is replaced the next time the launcher opens.",
-          "Offline installations also keep starting after FreeVideo was once run as administrator. If Windows denies this account access to FreeVideo's program files, the launcher says so and how to fix it, instead of reporting a missing module."
-        ]
-      },
-      "zh": {
-        "summary": "在 Windows 上，每次打开启动器都会检查并修复桌面快捷方式；以管理员身份运行过一次之后，FreeVideo 也能正常启动。",
-        "changes": [
-          "在 Windows 上，启动器每次打开时都会检查桌面快捷方式并就地修复，开始菜单里现在也会有 FreeVideo。以前安装留下的、或被 Windows 改写过的快捷方式会直接更新，不会再在旁边多出一个“FreeVideo (2)”；改过名字的快捷方式保留原名，换过图标的保持不变。如果 Windows 不允许写入桌面（例如开启了“Windows 安全中心”的“受控文件夹访问”），启动器会说明原因和放行办法，开始菜单里仍然可以找到 FreeVideo。",
-          "以管理员身份运行过一次之后，桌面快捷方式仍能打开 FreeVideo：快捷方式指向的启动器副本不需要管理员权限也能读取；之前版本留下的读不了的副本，会在下次打开启动器时换掉。",
-          "以管理员身份运行过一次之后，离线安装也能正常启动；如果 Windows 不允许当前账户读取程序文件，启动器会说明原因和处理办法，不再只报缺少模块。"
         ]
       }
     }

@@ -23,7 +23,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import execution_paths
 from .hardware import Hardware, GiB, cgroup_capacity
-from . import __version__
+from . import __version__, subprocess_output
 from .policy import resource_budget
 from .monitoring import save
 from .install_tuning import build_parallelism, required_models, cache_compatible, wheel_key
@@ -211,7 +211,7 @@ def dependency_status(root, layout='unified', system=None):
         if python.exists():
             code = ('import importlib.metadata as m,json; '
                     'print(json.dumps({d.metadata["Name"].lower().replace("_","-"):d.version for d in m.distributions()}))')
-            check = execution_paths.run([str(python), '-B', '-c', code], capture_output=True, text=True)
+            check = subprocess_output.run_python([str(python), '-B', '-c', code], capture_output=True)
             if check.returncode:
                 row['error'] = check.stderr[-1000:]
             else:
@@ -280,8 +280,8 @@ def digest(path, algorithm='sha256', git_blob=False):
 def inventory(gpu=None):
     smi = nvidia_smi()
     query = 'index,uuid,name,compute_cap,memory.total,memory.free,driver_version,pci.bus_id'
-    result = subprocess.run([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
-                            check=True, capture_output=True, text=True, timeout=20)
+    result = subprocess_output.run_external([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
+                            check=True, capture_output=True, timeout=20)
     rows = [dict(zip(query.split(','), map(str.strip, row))) for row in csv.reader(result.stdout.splitlines())]
     selector = gpu if gpu is not None else os.environ.get('CUDA_VISIBLE_DEVICES', '0').split(',')[0]
     matches = [r for r in rows if r['index'] == selector or r['uuid'] == selector]
@@ -396,7 +396,36 @@ def offline_installation(root):
     return (root.parent / 'portable.json').is_file()
 
 
-def plan(args, *, local_progress=None):
+PREPARE_KEY = 'install-prepare'
+
+
+def prepare_step(ui, name, done=None, total=None):
+    """One running task for the silent steps between the model scan and the first real task.
+
+    Without it the card keeps the last finished event (the model scan) for as long as the
+    environment, the network and the download tools are examined.
+    """
+    with ui._lock:
+        if PREPARE_KEY not in ui.tasks:
+            ui.begin(PREPARE_KEY, 'Preparing installation')
+        elif ui.tasks[PREPARE_KEY]['state'] != 'running':
+            return  # Finished: a late step must not bring the card back to it.
+        if ui.tasks[PREPARE_KEY].get('step') != name:
+            ui.tasks[PREPARE_KEY]['event_tick'] = 0.  # Short steps must each reach the card.
+        ui.tasks[PREPARE_KEY]['step'] = name
+        shown = '%s %d / %d' % (name, done or 0, total) if total else name
+        ui.update(PREPARE_KEY, activity='note', name=shown, detail=shown, unit='items',
+                  done=done or 0, total=total or 0)
+
+
+def prepare_end(ui, success=True):
+    """Finish the step once; a repeated end would bring its finished line back as the card's last event."""
+    with ui._lock:
+        if ui.tasks.get(PREPARE_KEY, {}).get('state') == 'running':
+            ui.end(PREPARE_KEY, success=success)
+
+
+def plan(args, *, local_progress=None, stage=None):
     root = args.root.expanduser().resolve()
     saved = json.loads((root / 'machine.json').read_text(encoding='utf-8')) if (root / 'machine.json').is_file() else {}
     storage = getattr(args, 'storage', None) or saved.get('storage', 'compact')
@@ -569,6 +598,8 @@ def plan(args, *, local_progress=None):
     # Stream directly into final FP8 groups. The pinned model occupies ~45.3
     # GiB; allow 52 GiB including the largest group in progress. Never credit
     # future source deletion toward the space needed to complete conversion.
+    if stage:
+        stage('Checking the environment')
     dependencies = dependency_status(root, layout, system)
     environments_ready = all(r['exists'] and not r['missing'] and not r['mismatched'] for r in dependencies.values())
     python_version = None if mac_target else bootstrap_versions(
@@ -592,6 +623,8 @@ def plan(args, *, local_progress=None):
     errors.extend(disk_plan['errors'])
     # A repair also reinstalls what is damaged in the ComfyUI environment the launcher made.
     frontend_python = getattr(args, 'frontend_repair_python', None)
+    if stage:
+        stage('Checking the environment')
     package_download_bytes = reinstall_download_bytes(dependencies, system, root=root,
         frontend_python=str(frontend_python.expanduser().absolute()) if frontend_python else None,
         disk_mode=disk_plan['mode'])
@@ -600,18 +633,23 @@ def plan(args, *, local_progress=None):
     if reuse_cache and not cache_compatible(reuse_cache, **cache_format):
         errors.append('--cache must contain a prepared FP8 cache compatible with this GPU scale format.')
     from .download_settings import read as download_preferences
+    if stage:
+        stage('Testing download sources')
     networking = network.plan(json.loads((PACKAGE / 'dependencies.json').read_text(encoding='utf-8')),
         bootstrap_versions(json.loads((PACKAGE / 'bootstrap_versions.json').read_text(encoding='utf-8')), system), layout,
         mode=getattr(args, 'network', 'auto'), timeout=getattr(args, 'network_timeout', 5),
         offline=bool(args.hardware_json or errors),
         env=dict(os.environ, FREEVIDEO_HOME=str(root)),
-        proxy_mode=download_preferences(root / 'download-settings.json')['proxy_mode'])
+        proxy_mode=download_preferences(root / 'download-settings.json')['proxy_mode'],
+        progress=(lambda message: stage('Testing download sources', message['done'], message['total'])) if stage else None)
     networking['download_settings_path'] = str(root / 'download-settings.json')
     prepared_missing = prepared and any(
         not model_target(row, model_dir, encoder_dir, prepared_dir).is_file()
         for row in files if row.get('prepared') and not
         (local_reuse or {}).get('matches', {}).get(row['repo'] + '/' + row['file']))
     if prepared_missing and not args.hardware_json and not errors:
+        if stage:
+            stage('Testing download sources')
         error = prepared_model.access_error(prepared, networking)
         if error:
             errors.append(error)
@@ -1058,6 +1096,8 @@ class Installer:
         self.damaged_before = []
         if self.system != 'Darwin' and self.pythons['engine'].is_file():
             from .runtime_libraries import damaged
+            if ui is not None:
+                prepare_step(ui, 'Checking the environment')
             self.damaged_before = damaged(self.pythons['engine'])
         # Moving a working installation to int8 checks the int8 kernels first
         # (execute), so a GPU that fails them keeps its configuration as it was.
@@ -1262,6 +1302,8 @@ class Installer:
         from .package_progress import PackageOutput
         if self.cancel.is_set():
             raise RuntimeError(self.state.get('resource_guard', 'Installation cancelled.'))
+        from .triton_compat import temporary_environment
+        env = temporary_environment(self.root, env or self.env)
         args, cwd = uv_file_arguments(args, cwd)
         with self.state_lock:
             index = len(self.state['steps'])
@@ -1477,7 +1519,8 @@ class Installer:
 
     def packages(self, label, args, family='pypi'):
         return network.package_command(self.network, family,
-            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env), self.env)
+            lambda env, source: self.command(label if source == 'official' else label + '-' + source, args, env=env),
+            self.env, notice=lambda message: self.ui.write(message + '\n'))
 
     def python_install(self, uv):
         from .system import bootstrap_root
@@ -1488,38 +1531,35 @@ class Installer:
         # and unpack another copy. Existing installations keep their own base.
         if prepared.is_dir() and not any(current.glob('cpython-' + self.versions['python'] + '-*')):
             env = dict(self.env, UV_PYTHON_INSTALL_DIR=str(prepared))
-            found = execution_paths.run([str(uv), '--no-config', 'python', 'find', '--managed-python',
+            found = subprocess_output.run_external([str(uv), '--no-config', 'python', 'find', '--managed-python',
                                     '--no-python-downloads', self.versions['python']],
-                                   env=env, capture_output=True, text=True, timeout=30)
+                                   env=env, capture_output=True, timeout=30)
             if found.returncode == 0:
                 candidate = Path(found.stdout.strip())
                 if candidate.is_file() and candidate.resolve().is_relative_to(prepared.resolve()):
-                    check = execution_paths.run([str(candidate), '-I', '-B', '-c',
-                        'import platform; print(platform.python_version())'], capture_output=True, text=True, timeout=30)
+                    check = subprocess_output.run_python([str(candidate), '-I', '-B', '-c',
+                        'import platform; print(platform.python_version())'], capture_output=True, timeout=30)
                     if check.returncode == 0 and check.stdout.strip() == self.versions['python']:
                         self.env['UV_PYTHON_INSTALL_DIR'] = str(prepared)
                         self.command('python-bootstrap-reuse', [candidate, '-I', '-B', '-c',
                                      'import sys; print("Reusing verified bootstrap Python: " + sys.executable)'])
                         return
         custom = self.env.get('UV_PYTHON_INSTALL_MIRROR') if self.network.get('mode') != 'official' else None
-        sources = (['user-python'] if custom else []) + network.ordered(self.network, 'github')
         isolation = ['--no-bin', '--no-registry']
-        for source in sources:
-            for route in network.route_order(self.network, 'github', source, self.env):
-                env = network.route_environment(self.network, 'github', source, self.env, route)
-                env.update(UV_HTTP_TIMEOUT='20', UV_HTTP_RETRIES='1')
-                env['UV_PYTHON_INSTALL_MIRROR'] = custom if source == 'user-python' else network.source_url('github', source, self.env) + '/astral-sh/python-build-standalone/releases/download'
-                try:
-                    result = self.command('python-' + source + '-' + route, [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
-                    network.route_health(self.network, 'github', source, route)
-                    return result
-                except RuntimeError as error:
-                    if not network.retryable(error):
-                        raise
-                    network.event(self.network, category='python', source=source, route=route, action='fallback', reason='network-download-failed')
-                    if not network.connection_failure(error):
-                        break
-        raise RuntimeError('Python download failed on every route; see retained logs')
+        def attempt(source, route, retry_mode):
+            env = network.download_environment(
+                network.route_environment(self.network, 'github', source, self.env, route), retry_mode)
+            env['UV_PYTHON_INSTALL_MIRROR'] = custom if source == 'user-python' else network.source_url('github', source, self.env) + '/astral-sh/python-build-standalone/releases/download'
+            return self.command('python-' + source + '-' + route,
+                                [uv, 'python', 'install', *isolation, self.versions['python']], env=env)
+        try:
+            return network.download_command(self.network, 'github', attempt, self.env, category='python',
+                                            extra_sources=['user-python'] if custom else [],
+                                            notice=lambda message: self.ui.write(message + '\n'))
+        except network.PackageSourcesError as error:
+            failure = RuntimeError('Python download failed on every route; see retained logs')
+            failure.package_attempts = error.attempts
+            raise failure from error
 
     def install_sage(self, uv, python):
         if self.system == 'Windows':
@@ -1528,10 +1568,10 @@ class Installer:
                 'python="cp"+str(sys.version_info.major)+str(sys.version_info.minor), '
                 'torch=str(torch.__version__),cuda=torch.version.cuda,cxx11_abi=torch.compiled_with_cxx11_abi(), '
                 'machine=platform.machine(),glibc=platform.libc_ver())))')
-        identity = json.loads(subprocess.check_output([str(python), '-c', code], env=self.env, text=True))
+        identity = json.loads(subprocess_output.output_python([str(python), '-c', code], env=self.env))
         identity.update(arch='.'.join(map(str, self.plan['inventory']['hardware']['capability'])),
-                        source=self.spec['sageattention']['commit'], compiler=subprocess.check_output(
-                            ['g++', '--version'], text=True).splitlines()[0])
+                        source=self.spec['sageattention']['commit'], compiler=subprocess_output.output_external(
+                            ['g++', '--version']).splitlines()[0])
         wheel_dir = Path(self.plan['wheel_cache']) / wheel_key(identity)
         manifest = wheel_dir / 'manifest.json'
         record = json.loads(manifest.read_text(encoding='utf-8')) if manifest.is_file() else None
@@ -1556,7 +1596,7 @@ class Installer:
             save(stamp, identity)
             header_code = ('from pathlib import Path; import site; '
                           'print(":".join(str(p) for s in site.getsitepackages() for p in (Path(s)/"nvidia").glob("*/include")))')
-            headers = subprocess.check_output([str(python), '-c', header_code], env=self.env, text=True).strip()
+            headers = subprocess_output.output_python([str(python), '-c', header_code], env=self.env).strip()
             build = self.plan['build']
             build_env = dict(self.env, CUDA_HOME=str(toolkit), PATH=str(toolkit / 'bin') + os.pathsep + self.env['PATH'],
                 CPATH=headers, TORCH_CUDA_ARCH_LIST=identity['arch'], MAX_JOBS=str(build['jobs']),
@@ -1799,6 +1839,7 @@ class Installer:
             require_int8_kernels(self.plan, report)
             self.mark_unfinished()
         self.ui.phase('Prepare download tools', 0, 8)
+        prepare_step(self.ui, 'Preparing download tools')
         uv = self.prepare_tools()
         self.env['FREEVIDEO_UV'] = str(uv)
         from .install_schedule import run
@@ -1814,6 +1855,7 @@ class Installer:
                 weighted['shown'] = done = max(weighted['shown'], 1 + units)
             self.ui.phase(phase, done, total)
         def scheduling(name, status, completed, count):
+            prepare_end(self.ui)  # The first real task shows from here on.
             with self.state_lock:
                 self.state.setdefault('schedule', {})[name] = dict(status=status, after=tasks[name]['after'],
                     exclusive_writers=tasks[name]['writes'], epoch=time.time())
@@ -1943,6 +1985,16 @@ def run_prefetch(value, ui):
 
 
 def main(argv=None):
+    shown = []
+    try:
+        return run_main(argv, shown)
+    finally:
+        # An interrupt or an unexpected error anywhere must not leave the step running on the card.
+        for ui in shown:
+            prepare_end(ui, False)
+
+
+def run_main(argv, shown):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('FREEVIDEO_HOME', DEFAULT_ROOT)))
     parser.add_argument('--gpu', help='Physical nvidia-smi index or full GPU UUID')
@@ -2011,6 +2063,7 @@ def main(argv=None):
         parser.error('--prefetch-only needs --prepared-format int8 or fp8')
     ui = TerminalUI(platform.system() + ' setup', plain=args.plain, no_color=args.no_color,
                     verbose=args.verbose, show_location=args.verbose)
+    shown.append(ui)
     try:
         from .local_models import progress_output
         if platform.system() == 'Windows' and not args.plan:
@@ -2018,27 +2071,34 @@ def main(argv=None):
             def curl_progress(message):
                 print(json.dumps(message), flush=True)
             os.environ['FREEVIDEO_CURL'] = execution_paths.execution_path(ensure(args.root, progress=curl_progress))
-        value = plan(args, local_progress=progress_output if os.environ.get('FREEVIDEO_UI_EVENTS') == '1' or not args.json else None)
+        value = plan(args, local_progress=progress_output if os.environ.get('FREEVIDEO_UI_EVENTS') == '1' or not args.json else None,
+                     stage=None if args.plan else lambda *step: prepare_step(ui, *step))
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        prepare_end(ui, False)
         print('Preflight failed: ' + str(error), file=sys.stderr)
         return 1
     print(json.dumps(value, indent=2)) if args.json else display(value, ui, verbose=args.verbose)
     if args.plan:
         return 1 if value['errors'] else 0
     if value['errors']:
+        prepare_end(ui, False)
         return 1
     try:
         accepted = confirmed(args, value, ui=ui)
     except KeyboardInterrupt:
+        prepare_end(ui, False)
         print('\nCancelled. No engine or model installation was started.')
         return 130
     except ValueError as error:
+        prepare_end(ui, False)
         print(str(error), file=sys.stderr)
         return 1
     if not accepted:
+        prepare_end(ui, False)
         print('Cancelled. No engine or model installation was started.')
         return 0
     if args.prefetch_only:
+        prepare_end(ui)
         return run_prefetch(value, ui)
     try:
         installer_class = Installer
@@ -2046,6 +2106,7 @@ def main(argv=None):
             from .macos_setup import Installer as installer_class
         installer = installer_class(value, ui)
     except BlockingIOError:
+        prepare_end(ui, False)
         print('Setup, testing or generation is using this installation/GPU lock. Retry after it finishes.', file=sys.stderr)
         from .locking import lock_holders
         owners = lock_holders([Path(value['root']) / 'setup.lock', os.environ.get('FREEVIDEO_LOCK_PATH', str(Path(value['root']) / 'engine.lock'))])
@@ -2053,6 +2114,7 @@ def main(argv=None):
             print('Processes with open lock handles: %s. Stop the old task before retrying; do not delete lock files.' % ', '.join(map(str, owners)), file=sys.stderr)
         return 1
     except (OSError, ValueError) as error:
+        prepare_end(ui, False)
         print('Setup could not start: ' + str(error), file=sys.stderr)
         return 1
     def interrupted(signum, frame):
@@ -2061,10 +2123,13 @@ def main(argv=None):
     try:
         ui.start(installer.run_dir)
         installer.start_monitor()
+        if value.get('device_backend') == 'mps':
+            prepare_end(ui)  # The Mac installer does not schedule through execute() above.
         installer.execute()
         installer.state['status'] = 'complete'
     except BaseException as error:
         installer.state.update(status='failed', error='%s: %s' % (type(error).__name__, error))
+        prepare_end(ui, False)
         ui.phase('Setup interrupted' if isinstance(error, KeyboardInterrupt) else 'Setup failed', ui.done, ui.total)
     finally:
         try:

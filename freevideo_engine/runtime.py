@@ -658,6 +658,8 @@ class Engine:
                 if prefix is not None:
                     prefix.restore_video()
                 super().append(value)
+                if watch is not None:
+                    watch.step_done(pass_cache)
                 count = getattr(offloader, 'drive_reads', None)
                 total = count() if count is not None else None
                 if total is None:
@@ -679,6 +681,19 @@ class Engine:
                     live_budget = budget_refresh('sample', lambda limit: offloader.cache_between_steps(
                         min(cached, max(0, limit - base_peak - 512 * 2**20)), allow_growth=False),
                         workspace=base_peak)
+                    if watch is not None and type(live_budget) is int:
+                        # After the refresh: a cut since the last layer's read
+                        # is in `live_budget`. The planned group's workspace
+                        # replaces the narrower one's, and the cache this pass
+                        # grew beside the narrower group gives back what that
+                        # workspace needs.
+                        wide = watch.restore_if_room(live_budget)
+                        if wide is not None:
+                            base_peak = max(base_peak, wide)
+                            pass_cache['workspace_peak_bytes'] = base_peak
+                            offloader.cache_between_steps(
+                                min(offloader.cached_bytes(), max(0, live_budget - base_peak - 512 * 2**20)),
+                                allow_growth=False)
                     if len(self) < active_steps:
                         from .two_pass import pass_cache_allowance
                         from .system import system_memory
@@ -751,12 +766,22 @@ class Engine:
         if active_steps == 1:
             trigger_prefetch()
         checkpoint_seconds = 0.
+        # A budget cut inside a step (Windows): see step_pressure. The watch is
+        # the innermost context, so a narrowed group is put back before the
+        # offloader and the progress hooks leave.
+        from contextlib import nullcontext
         from .continuation import sampling
+        planned, watch = self.config, None
+        source = getattr(budget_refresh, 'pressure', None)
+        if source is not None:
+            from .step_pressure import LayerWatch
+            watch = LayerWatch(self, source, pass_cache=pass_cache)
         try:
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
                     self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
                     self.transformer, continuation, seed, self.device_backend.device,
-                    **({'video_offset': continuation_offset} if continuation_offset else {})) as prefix:
+                    **({'video_offset': continuation_offset} if continuation_offset else {})) as prefix, \
+                    (watch.layers(self.transformer.transformer_blocks) if watch is not None else nullcontext()):
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
                                                 conditions=conditions)
@@ -769,7 +794,7 @@ class Engine:
                 sampled = {'sample_seconds': time.perf_counter() - started, 'step_seconds': list(step_seconds),
                            'offload': stats, 'residual_offload_steps': residual_steps,
                            'pass_cache_admission': pass_cache,
-                           'compute_configuration': {key: self.config.get(key) for key in
+                           'compute_configuration': {key: planned.get(key) for key in
                                ('head_chunk', 'window_batch', 'ff_chunk', 'projection_chunk', 'prefetch',
                                 'attention_cpu_outputs', 'grouped_attention_outputs', 'residual_offload',
                                 'fp8_ff_recompute', 'resident_blocks', 'stream_weights', 'pin_host_gb')},
@@ -785,6 +810,10 @@ class Engine:
                            'text_refinement': refinement,
                            'torch_peak_allocated_bytes': self.device_backend.max_memory_allocated(),
                            'torch_peak_reserved_bytes': self.device_backend.max_memory_reserved()}
+                if watch is not None:
+                    sampled['step_pressure'] = watch.result()
+                    sampled['torch_peak_allocated_bytes'], sampled['torch_peak_reserved_bytes'] = watch.peaks(
+                        sampled['torch_peak_allocated_bytes'], sampled['torch_peak_reserved_bytes'])
                 if refining:
                     sampled['refinement'] = dict(base_steps=self.steps, steps=refine_steps,
                         start_index=1 if refine_schedule else self.steps - refine_steps, restart_seed=seed,
@@ -801,8 +830,11 @@ class Engine:
         self.device_backend.synchronize()
         elapsed = time.perf_counter() - started - checkpoint_seconds
         self.device_backend.empty_cache()
-        sampled.update(sample_seconds=elapsed, torch_peak_allocated_bytes=self.device_backend.max_memory_allocated(),
-                       torch_peak_reserved_bytes=self.device_backend.max_memory_reserved())
+        allocated, reserved = self.device_backend.max_memory_allocated(), self.device_backend.max_memory_reserved()
+        if watch is not None:
+            sampled['step_pressure'] = watch.result()
+            allocated, reserved = watch.peaks(allocated, reserved)
+        sampled.update(sample_seconds=elapsed, torch_peak_allocated_bytes=allocated, torch_peak_reserved_bytes=reserved)
         return latents, audio, sampled
 
     @torch.no_grad()

@@ -216,6 +216,56 @@ export function referenceTrimText(row, t) {
             `${name} 比生成的视频长，已截取前 ${used} 秒${rule}`);
 }
 
+// The time left on show `dt` seconds on, given the engine's newest estimate (null when it sent none). Never raised:
+// an estimate at or above the shown time holds it, so a slower run does not count down to "less than a minute"
+// early. A lower one is eased into.
+export function remainingShown(shown, target, dt) {
+    if (target === null) return Math.max(0, shown - dt);
+    if (target < shown - dt) {
+        const counted = Math.max(0, shown - dt);
+        return counted + (target - counted) * (1 - Math.exp(-dt / 15));
+    }
+    return target < shown ? target : shown;
+}
+// The whole-video fraction the engine's last message stands for now: its estimate moved on by the seconds since the
+// step sample (stateAge) and the whole-video sample (overallAge) arrived. Null when the message carries none.
+export function estimatedFraction(state, overall, stateAge, overallAge) {
+    const fraction = value => Math.min(1, Math.max(0, value));
+    const counted = Number.isInteger(state.total) && state.total > 0 && Number.isInteger(state.done)
+        && state.done >= 0 && state.done <= state.total;
+    let candidate = valid(overall.fraction) ? fraction(overall.fraction) : null;
+    const canEstimate = overall.status !== 'failed' && overall.estimated === true
+        && valid(overall.phase_start_fraction) && valid(overall.phase_weight);
+    if (canEstimate) {
+        let local = null;
+        if (state.phase === 'sampling' && counted && !overall.sampling_time_weighted) {
+            local = valid(state.display_fraction) ? fraction(state.display_fraction) : state.done / state.total;
+            if (state.done < state.total && valid(state.estimated_step_seconds) && state.estimated_step_seconds > 0) {
+                const stepElapsed = (valid(state.step_elapsed_seconds) ? state.step_elapsed_seconds : 0)
+                    + Math.max(0, stateAge);
+                local = Math.max(local, (state.done + Math.min(.88, .88 * stepElapsed / state.estimated_step_seconds)) / state.total);
+            } else if (valid(overall.phase_seconds) && overall.phase_seconds > 0
+                && valid(overall.phase_elapsed_seconds)) {
+                // Before the first warm NFE supplies a per-step duration,
+                // use the report-weighted sampling estimate as a smooth
+                // visual guide. The synchronized NFE counter remains the
+                // source of truth and this estimate stops short of 100%.
+                const phaseElapsed = overall.phase_elapsed_seconds
+                    + Math.max(0, overallAge);
+                local = Math.max(local, Math.min(.95, phaseElapsed / overall.phase_seconds));
+            }
+        } else if (valid(overall.phase_seconds) && overall.phase_seconds > 0 && valid(overall.phase_elapsed_seconds)) {
+            const phaseElapsed = overall.phase_elapsed_seconds + Math.max(0, overallAge);
+            // Time can move the estimate, but only an engine transition
+            // finishes a phase. Long phases stop short of their boundary.
+            local = Math.min(.95, phaseElapsed / overall.phase_seconds);
+        }
+        if (local !== null) candidate = Math.max(candidate ?? 0,
+            canEstimate ? overall.phase_start_fraction + overall.phase_weight * local : local);
+    }
+    return candidate;
+}
+
 export function createGenerationProgress(t, now = () => Date.now(), {compact = false, api = null, onLayout = null} = {}) {
     const element = el('section', 'fv-generation-progress'); element.hidden = true;
     if (compact) element.classList.add('fv-generation-compact');
@@ -330,36 +380,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             return;
         }
         const complete = overall.status === 'complete';
-        let candidate = valid(overall.fraction) ? fraction(overall.fraction) : null;
-        const canEstimate = overall.status !== 'failed' && overall.estimated === true
-            && valid(overall.phase_start_fraction) && valid(overall.phase_weight);
-        if (canEstimate) {
-            let local = null;
-            if (state.phase === 'sampling' && counted(state) && !overall.sampling_time_weighted) {
-                local = valid(state.display_fraction) ? fraction(state.display_fraction) : state.done / state.total;
-                if (state.done < state.total && valid(state.estimated_step_seconds) && state.estimated_step_seconds > 0) {
-                    const stepElapsed = (valid(state.step_elapsed_seconds) ? state.step_elapsed_seconds : 0)
-                        + Math.max(0, (now() - sampledAt) / 1000);
-                    local = Math.max(local, (state.done + Math.min(.88, .88 * stepElapsed / state.estimated_step_seconds)) / state.total);
-                } else if (valid(overall.phase_seconds) && overall.phase_seconds > 0
-                    && valid(overall.phase_elapsed_seconds)) {
-                    // Before the first warm NFE supplies a per-step duration,
-                    // use the report-weighted sampling estimate as a smooth
-                    // visual guide. The synchronized NFE counter remains the
-                    // source of truth and this estimate stops short of 100%.
-                    const phaseElapsed = overall.phase_elapsed_seconds
-                        + Math.max(0, (now() - overallAt) / 1000);
-                    local = Math.max(local, Math.min(.95, phaseElapsed / overall.phase_seconds));
-                }
-            } else if (valid(overall.phase_seconds) && overall.phase_seconds > 0 && valid(overall.phase_elapsed_seconds)) {
-                const phaseElapsed = overall.phase_elapsed_seconds + Math.max(0, (now() - overallAt) / 1000);
-                // Time can move the estimate, but only an engine transition
-                // finishes a phase. Long phases stop short of their boundary.
-                local = Math.min(.95, phaseElapsed / overall.phase_seconds);
-            }
-            if (local !== null) candidate = Math.max(candidate ?? 0,
-                canEstimate ? overall.phase_start_fraction + overall.phase_weight * local : local);
-        }
+        const candidate = estimatedFraction(state, overall, (now() - sampledAt) / 1000, (now() - overallAt) / 1000);
         // A retry or a new phase cannot rewind the whole-video bar. Even a
         // complete sampling phase is not a completed/saved video.
         if (complete) shownFraction = 1;
@@ -614,15 +635,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         elapsed.textContent = `${t('Elapsed', '已用时')} ${duration(Math.max(0, seconds))}`;
         if (ended) remainingSeconds = null;
         if (remainingSeconds !== null) {
-            // Never raised. An estimate at or above the shown time holds it, so
-            // a slower run does not count down to "less than a minute" early.
-            const dt = Math.max(0, (now() - remainingAt) / 1000);
-            const target = rawRemaining();
-            if (target === null) remainingSeconds = Math.max(0, remainingSeconds - dt);
-            else if (target < remainingSeconds - dt) {
-                const counted = Math.max(0, remainingSeconds - dt);
-                remainingSeconds = counted + (target - counted) * (1 - Math.exp(-dt / 15));
-            } else if (target < remainingSeconds) remainingSeconds = target;
+            remainingSeconds = remainingShown(remainingSeconds, rawRemaining(), Math.max(0, (now() - remainingAt) / 1000));
             if (remainingSeconds < 60 && lastMinuteAt === null) { lastMinuteAt = now(); lastMinute = remainingSeconds; }
             // A run slower than estimated would leave "less than a minute" up for minutes:
             // once that minute has passed, or the time reaches zero, stop showing it.

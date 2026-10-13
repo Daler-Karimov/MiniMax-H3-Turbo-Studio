@@ -11,7 +11,7 @@ const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
 const preference = 'freevideo.view';
-let toolbar, open, selected, currentView = 'nodes';
+let toolbar, open, selected, currentView = 'nodes', agentTab = null;
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./view_navigation.css', import.meta.url).href;
 document.head.append(style);
@@ -27,15 +27,34 @@ export function viewChanged(view, node) {
     refreshNavigation();
 }
 
-export function viewSwitch(view, onStudio, onNodes, onEditor) {
+// Whether this FreeVideo has the Agent interface on. The surfaces that open first (the toolbar, the studio) ask
+// and tell it here; a view switch shows its fourth tab only once the answer is yes.
+export function agentTabReady(answer) {
+    agentTab = Promise.resolve(answer).then(on => on === true, () => false);
+    return agentTab;
+}
+
+// The Autopilot page loads on demand, as the editing view does; a failure leaves the current view as it is.
+export async function openAutopilot(node, options) {
+    try { return (await import('./autopilot.js')).openAutopilotView(node, options); }
+    catch (error) { console.warn('FreeVideo autopilot view:', error); return null; }
+}
+
+export function viewSwitch(view, onStudio, onNodes, onEditor, onAutopilot) {
     const group = document.createElement('div'); group.className = 'fv-view-switch';
     group.setAttribute('role', 'group'); group.setAttribute('aria-label', t('FreeVideo view', 'FreeVideo 视图'));
-    for (const [id, label, action] of [['studio', t('Create', '创作面板'), onStudio], ['nodes', t('Nodes', '节点视图'), onNodes], ['editor', t('Edit', '剪辑视图'), onEditor]]) {
+    for (const [id, label, action] of [['studio', t('Create', '创作面板'), onStudio], ['nodes', t('Nodes', '节点视图'), onNodes], ['editor', t('Edit', '剪辑视图'), onEditor],
+        ['autopilot', t('Autopilot', 'AI 全自动'), onAutopilot]]) {
         const button = document.createElement('button'); button.type = 'button';
         const text = document.createElement('span'); text.textContent = label; button.append(text);
         button.dataset.label = label; button.dataset.view = id;
         if (id === 'editor') button.dataset.fvGuide = 'longer';
         button.setAttribute('aria-pressed', String(view === id)); button.onclick = action;
+        if (id === 'autopilot') {
+            button.hidden = view !== id;
+            // Settled once the tab is shown or known to stay away; the first-run guide waits for it.
+            group.ready = (agentTab || Promise.resolve(false)).then(on => { if (on) { button.hidden = false; button.dataset.fvGuide = 'agent'; } });
+        }
         group.append(button);
     }
     return group;
@@ -60,8 +79,9 @@ export function openCreativeWorkspace() {
     return true;
 }
 
-export function installNavigation(openStudio) {
+export function installNavigation(openStudio, agent = false) {
     open = openStudio;
+    if (!toolbar) agentTabReady(agent);
     if (toolbar) { refreshNavigation(); return; }
     toolbar = document.createElement('aside'); toolbar.className = 'fv-view-navigation';
     toolbar.setAttribute('aria-label', t('FreeVideo workspace', 'FreeVideo 工作区'));
@@ -76,7 +96,7 @@ export function installNavigation(openStudio) {
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
     row.append(grip, brand, viewSwitch('nodes', openCreativeWorkspace, () => {}, () => choose(node =>
-        openEditorView(node))), createVersionInfo(cn).element, settings); toolbar.append(row);
+        openEditorView(node)), () => choose(node => openAutopilot(node))), createVersionInfo(cn).element, settings); toolbar.append(row);
     let shown = false;
     try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }
     if (!shown) {

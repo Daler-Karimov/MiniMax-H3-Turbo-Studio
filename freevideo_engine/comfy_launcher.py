@@ -19,6 +19,9 @@ from .terminal_ui import clean, duration
 from .setup_progress import number, progress_text
 
 
+FIREWALL_HINT = ('If Windows asks about the firewall the first time, choose Allow.', 'Windows 首次询问防火墙权限时，请选择“允许”。')
+
+
 class Launcher:
     def __init__(self, window, source=None, controller=None, update_client=None):
         import tkinter as tk
@@ -52,6 +55,9 @@ class Launcher:
         self.error_text = ''
         self.python = tk.StringVar(value=settings.get('python', ''))
         self.url = tk.StringVar(value=settings.get('url', 'http://127.0.0.1:8188'))
+        self.lan_access = tk.BooleanVar(value=settings.get('lan_access', False))
+        self.lan_message = tk.StringVar()
+        self.access_link = tk.StringVar()
         self.token = tk.StringVar()  # Never stored in settings, commands or receipts.
         self.separate = tk.BooleanVar(value=settings.get('separate', False))
         self.repair, self.accept = tk.BooleanVar(), tk.BooleanVar()
@@ -73,6 +79,7 @@ class Launcher:
         self.terminal_operation = None
         self.options = None
         self.options_inputs = []
+        self.listen_entry = None
         self.download_dialog = None
         self.download_probes = {}
         if self.controller.restore(dict(settings, engine=self.engine.get())):
@@ -92,7 +99,7 @@ class Launcher:
         if update_client is not None:
             from .launcher_update_ui import UpdateUI
             self.updates = UpdateUI(self, update_client, self.update_row)
-        for variable in (self.mode, self.destination, self.comfy, self.engine, self.models, self.model_method, self.python, self.url, self.token, self.separate, self.repair):
+        for variable in (self.mode, self.destination, self.comfy, self.engine, self.models, self.model_method, self.python, self.url, self.lan_access, self.token, self.separate, self.repair):
             variable.trace_add('write', self.changed)
         window.protocol('WM_DELETE_WINDOW', self.close)
         window.bind('<Destroy>', self.cancel_timers, add='+')
@@ -128,7 +135,7 @@ class Launcher:
         self.queue_save()
 
     def values(self):
-        return dict({name: getattr(self, name).get() for name in ('comfy', 'destination', 'engine', 'models', 'python', 'url', 'token', 'separate', 'repair')},
+        return dict({name: getattr(self, name).get() for name in ('comfy', 'destination', 'engine', 'models', 'python', 'url', 'lan_access', 'token', 'separate', 'repair')},
                     new_comfy=self.mode.get() == 'new', model_dirs=list(self.model_dirs), model_method=self.model_method.get())
 
     def model_download_link(self, component):
@@ -185,6 +192,8 @@ class Launcher:
         if self.loading_settings:
             return
         self.queue_save()
+        if self.launch_selection and _ and _[0] in (str(self.url), str(self.lan_access)):
+            return  # Apply a valid listening change after the saved draft settles.
         if self.controller.busy:
             return
         self.controller.selection = None
@@ -229,14 +238,31 @@ class Launcher:
             if name in ('engine', 'models', 'python'):
                 browse = self.button(row, '…', '…', lambda n=name: self.browse(getattr(self, n), n == 'python'))
                 browse.pack(side='right', padx=(6, 0)); self.options_inputs.append(browse)
+            if name == 'url':
+                self.listen_entry = entry
+                self.label(body, "With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.",
+                           '填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。',
+                           style='Muted.TLabel', wraplength=580).pack(fill='x')
+                if sys.platform == 'win32':
+                    self.label(body, FIREWALL_HINT[0], FIREWALL_HINT[1], style='Muted.TLabel', wraplength=580).pack(fill='x')
         for variable, en, zh in (
+            (self.lan_access, 'LAN access', '局域网访问'),
             (self.separate, 'Use a separate ComfyUI environment', '使用独立 ComfyUI 环境'),
             (self.repair, 'Repair the engine environment', '修复引擎环境')):
-            if fixed_environment:
+            if fixed_environment and variable is not self.lan_access:
                 continue
             check = self.ttk.Checkbutton(body, variable=variable, text=self.t(en, zh))
             self.labels.append((check, en, zh)); check.pack(anchor='w', pady=(3, 3))
             self.options_inputs.append(check)
+            if variable is self.lan_access:
+                self.ttk.Label(body, textvariable=self.lan_message, style='Muted.TLabel').pack(fill='x')
+        self.label(body, 'When on, other devices on the same network can open FreeVideo with the link below. Anyone with the link can use it, so keep it private.',
+                   '开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。拿到链接的人都能使用，请勿公开。',
+                   style='Muted.TLabel', wraplength=580).pack(fill='x')
+        if sys.platform == 'win32':
+            self.label(body, FIREWALL_HINT[0], FIREWALL_HINT[1], style='Muted.TLabel', wraplength=580).pack(fill='x')
+        self.ttk.Entry(body, textvariable=self.access_link, state='readonly').pack(fill='x', pady=(8, 0))
+        self.button(body, 'Copy link', '复制链接', self.copy_access_link).pack(anchor='w')
         self.button(body, 'Done', '完成', dialog.destroy).pack(side='bottom', anchor='e', pady=(10, 0))
         compatibility = self.button(body, 'Compatibility settings', '兼容性设置', self.compatibility_settings)
         compatibility.pack(side='bottom', anchor='w'); self.options_inputs.append(compatibility)
@@ -310,6 +336,7 @@ class Launcher:
                 from .comfy_launcher_runtime import local_url
                 try:
                     selected['url'] = local_url(self.url.get())
+                    selected['lan_access'] = self.lan_access.get()
                     if self.python.get() and io_path(self.python.get()).is_file():
                         selected['python'] = self.python.get()
                 except ValueError:
@@ -320,6 +347,12 @@ class Launcher:
         written, failures = self.settings_store.write(self.values(), 'zh' if self.zh else 'en',
                                                      self.launch_selection, self.saved_setup)
         self.settings_path = written[0]
+        if (self.launch_selection and row.get('status') == 'open' and not self.controller.busy
+                and self.launch_selection != self.controller.selection):
+            if self.launch_selection['url'] != self.controller.selection['url']:
+                self.browser_attempted = False
+            self.controller.run('configure_access', dict(url=self.launch_selection['url'],
+                lan_access=self.launch_selection.get('lan_access') is True))
 
     def queue_save(self):
         if self.save_timer is not None:
@@ -342,6 +375,7 @@ class Launcher:
                 getattr(self, name).set(selection.get(key) or '')
             self.mode.set('existing')
             self.separate.set(selection.get('separate', False))
+            self.lan_access.set(selection.get('lan_access', False))
             self.repair.set(False)
         finally:
             self.loading_settings = False
@@ -477,6 +511,10 @@ class Launcher:
         self.window.clipboard_clear()
         self.window.clipboard_append(self.browser_address.get())
 
+    def copy_access_link(self):
+        self.window.clipboard_clear()
+        self.window.clipboard_append(self.access_link.get())
+
     def create_shortcut(self):
         if self.controller.busy or not self.controller.selection:
             return
@@ -528,7 +566,8 @@ class Launcher:
         self.model_list.configure(height=max(2, min(6, len(self.model_dirs))))
         self.error_text = '\n'.join(str(e) for e in row.get('errors', []))
         if row.get('error'):
-            self.error_text += ('\n' if self.error_text else '') + str(row['error'])
+            from .launcher_copy import lan_error
+            self.error_text += ('\n' if self.error_text else '') + lan_error(row['error'], self.zh)
         if self.browser_error:
             self.error_text += ('\n' if self.error_text else '') + self.browser_error
         if row.get('shortcut', {}).get('status') == 'failed':
@@ -553,6 +592,12 @@ class Launcher:
         self.launch_paths.configure(text='ComfyUI · ' + selected.get('root', '') + '\n' +
             self.t('Engine', '引擎') + ' · ' + selected.get('engine', ''))
         self.browser_address.set(row.get('url', '') if state == 'open' else '')
+        links = self.controller.access_links
+        self.lan_message.set(self.t('LAN access has stopped. Turn it on again.', '局域网访问已停止，请重新开启。')
+            if row.get('lan_status') == 'stopped' else
+            self.t('No LAN address found. Connect to Wi-Fi or a wired network first.', '未找到局域网地址，请先连接 Wi-Fi 或有线网络。')
+            if row.get('lan_status') == 'no-address' else '')
+        self.access_link.set(links[0] if state == 'open' and links else '')
         if state == 'open':
             self.browser_controls.pack(fill='x', pady=(16, 0))
         else:
@@ -586,6 +631,8 @@ class Launcher:
         for widget in (self.entry, self.browse_button, self.add_model_button, self.remove_model_button, *self.mode_buttons, *self.options_inputs):
             if widget.winfo_exists():
                 widget.state(['disabled'] if busy else ['!disabled'])
+        if self.listen_entry is not None and self.listen_entry.winfo_exists():
+            self.listen_entry.state(['readonly'] if self.lan_access.get() else ['!readonly'])
         if busy:
             self.stop_button.pack(side='right', padx=(0, 10))
         else:
@@ -646,6 +693,8 @@ class Launcher:
         self.button(dialog, 'Model licenses', '模型许可证', lambda: webbrowser.open('https://huggingface.co/OpenVDN/vdn-minimax-h3-edge/blob/main/LICENSE')).pack(pady=8)
 
     def poll(self):
+        if not self.controller.busy:
+            self.controller.poll_access_proxy()
         if self.poll_timer is not None:
             self.window.after_cancel(self.poll_timer)
             self.poll_timer = None
@@ -665,7 +714,7 @@ class Launcher:
                 self.window.destroy(); return
             selected = row.get('selection')
             if (selected and selected.get('ready') and
-                    (row.get('deployed') or row.get('status') in ('open', 'restart-required')) and
+                    (row.get('deployed') or row.get('lan_status') == 'stopped' or row.get('status') in ('open', 'restart-required')) and
                     row.get('status') != 'running'):
                 if selected != self.launch_selection:
                     self.remember_installation(selected)
@@ -677,7 +726,8 @@ class Launcher:
                     self.open_browser()
         # Include busy separately: the task's final state arrives just before
         # the thread exits, and the action must become enabled at that boundary.
-        key = (row.get('status'), self.controller.busy, row.get('error'), id(row.get('plan')), row.get('overall', {}).get('label'))
+        key = (row.get('status'), self.controller.busy, row.get('error'), id(row.get('plan')),
+               row.get('overall', {}).get('label'), row.get('lan_status'), tuple(self.controller.access_links))
         if key != self.last_state:
             self.last_state = key
             if row.get('action') == 'install':

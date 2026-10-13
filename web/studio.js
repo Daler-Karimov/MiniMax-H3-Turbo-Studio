@@ -4,7 +4,8 @@ import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, encoderFileText, encoderFilePath } from './generation_progress.js';
-import { viewSwitch, viewChanged } from './view_navigation.js';
+import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
+import { agentInterfaceEnabled } from './agent_connect.js';
 import { createUpdateNotice, createVersionInfo, productVersion } from './updates.js';
 import { createPortNotice } from './port_notice.js';
 import { reportIssue, reportTipClosed, showReportTip } from './report_issue.js';
@@ -204,14 +205,13 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const tools = el('div', null, 'fv-header-actions');
     const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
-    const settingsButton = button(t('Settings', '设置'), openSetup, 'fv-quiet');
-    // The Agent connection card lives in Settings, so the guide's last step circles this button when the card is there.
-    // The guide starts after this settles: it fixes its steps from the anchors present at that moment.
-    const agentDiscovery = api.fetchApi('/freevideo/agent', {cache: 'no-store'}).then(reply => reply.ok ? reply.json() : null)
-        .then(found => { if (found?.enabled === true) settingsButton.dataset.fvGuide = 'agent'; }).catch(() => {});
-    tools.append(settingsButton);
+    tools.append(button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    // The Agent's page is the fourth tab, shown where the Agent interface is on; the guide's last step circles it.
+    agentTabReady(agentInterfaceEnabled(api));
     const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
-        () => openEditorView(node, {studio: dialog}));
+        () => openEditorView(node, {studio: dialog}), () => openAutopilot(node, {studio: dialog}));
+    // The guide starts after the tab settles: it fixes its steps from the anchors present at that moment.
+    const agentDiscovery = navigation.ready;
     header.append(brand, navigation, tools);
     const body = el('div', null, 'fv-body'), controls = el('div', null, 'fv-controls'), output = el('div', null, 'fv-preview-column');
     dialog.append(header, body); body.append(controls, output);

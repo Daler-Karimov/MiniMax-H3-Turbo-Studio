@@ -15,6 +15,8 @@ SOURCES = {
 ZH = dict([
     ('Prepare Python', '准备 Python'), ('Install Python', '安装 Python'),
     ('Prepare download tools', '准备下载工具'), ('Tsinghua mirror', '清华镜像'),
+    ('Preparing installation', '准备安装'), ('Checking the environment', '正在检查运行环境'),
+    ('Testing download sources', '正在测试下载源'), ('Preparing download tools', '正在准备下载工具'),
     ('GitHub mirror', 'GitHub 镜像'), ('attempt', '正在连接'),
     ('fallback', '正在切换下载源'), ('route-retry', '正在切换连接'),
     ('verifying', '正在校验'), ('no-progress', '下载无进展'),
@@ -54,6 +56,7 @@ ZH = dict([
     ('Install FreeVideo workflow', '安装 FreeVideo 工作流'),
     ('Open ComfyUI', '打开 ComfyUI'), ('Starting ComfyUI', '启动 ComfyUI'),
     ('Loading nodes and the web interface', '加载节点与界面'),
+    ('Still loading. This may take a few more minutes.', '仍在加载，可能还需要几分钟'),
     ('Checking configuration', '检查配置'), ('Check installation', '检查安装'),
     ('Verify bundled files', '校验离线包'), ('Check local files', '检查本地文件'),
     ('All bundled files verified', '离线包校验完成'),
@@ -134,6 +137,25 @@ def source_name(value, zh=False):
     return SOURCES.get(value, (value, value))[bool(zh)]
 
 
+LAN_ERRORS = {
+    'Enter localhost or an IP address of this computer, for example http://127.0.0.1:8188.': '请填写 localhost 或本机的 IP 地址，例如 http://127.0.0.1:8188。',
+    'This address does not belong to this computer. Enter one of its IP addresses or 0.0.0.0.': '这个地址不属于本机。请填写本机的 IP 地址或 0.0.0.0。',
+    'The ports for LAN access are in use. Choose another ComfyUI port.': '局域网访问要用的端口已被占用，请换一个 ComfyUI 端口。',
+    'A generation is running. Change the address after it finishes.': '正在生成，暂时不能修改地址。请在生成完成后再改。',
+    'The ComfyUI already running does not use this address. After its jobs finish, restart it with this address and connect again.': '已在运行的 ComfyUI 没有使用这个地址。请在任务完成后用这个地址重新启动 ComfyUI，再重新连接。',
+    'The ComfyUI already running is open to the network directly. After its jobs finish, restart it on 127.0.0.1, then turn on LAN access.': '已在运行的 ComfyUI 正在直接对局域网开放。请在任务完成后改用 127.0.0.1 重新启动它，再开启局域网访问。',
+    'LAN access startup cancelled': '已取消开启局域网访问。',
+}
+
+
+def lan_error(value, zh=False):
+    value = str(value)
+    if zh:
+        for english, chinese in LAN_ERRORS.items():
+            value = value.replace(english, chinese)
+    return value
+
+
 def display(value, zh=False):
     value = clean(value)
     if not zh:
@@ -161,6 +183,7 @@ def display(value, zh=False):
         (r'Downloading packages · about (.+) across (\d+) files', r'下载组件 · 约 \1，共 \2 个文件'),
         (r'about (.+) across (\d+) files', r'约 \1，共 \2 个文件'),
         (r'(\d+) files / folders scanned', r'已扫描 \1 个文件和目录'),
+        (r'Testing download sources (\d+ / \d+)', r'正在测试下载源 \1'),
         (r'(\d+ / \d+) files', r'\1 个文件'), (r'shard (\d+ / \d+)', r'分片 \1'),
         (r'([\d.]+ MiB) retained', r'已保留 \1'), (r'([\d.]+ GiB) released', r'已释放 \1'),
         (r'([\d.]+ MiB) downloaded', r'已下载 \1'),

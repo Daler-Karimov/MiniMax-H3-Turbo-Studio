@@ -77,6 +77,11 @@ def origin(url):
     return value.scheme, value.hostname.lower(), value.port or (443 if value.scheme == 'https' else 80)
 
 
+def one_job(answer):
+    """The job of a single-job answer, without the copy the server adds under 'job'."""
+    return {key: value for key, value in answer.items() if key != 'job'}
+
+
 class LocalProxyHandler(urllib.request.ProxyHandler):
     def proxy_open(self, req, proxy, type):
         host = urllib.parse.urlsplit(req.full_url).hostname
@@ -246,8 +251,8 @@ class Client:
 
     def job(self, identity, wait=0):
         wait = max(0, min(25, wait))
-        return self.request('GET', '/freevideo/agent/v1/jobs/' + identity, query={'wait': wait} if wait else None,
-                            timeout=max(self.timeout, wait + 5))
+        return one_job(self.request('GET', '/freevideo/agent/v1/jobs/' + identity, query={'wait': wait} if wait else None,
+                                    timeout=max(self.timeout, wait + 5)))
 
     def jobs(self, status=None, project=None, kind=None, limit=None):
         return self.get('/jobs', status=status, project=project, kind=kind, limit=limit)['jobs']
@@ -264,10 +269,10 @@ class Client:
                 return view
 
     def cancel(self, identity):
-        return self.post('/jobs/%s/cancel' % identity, {})
+        return one_job(self.post('/jobs/%s/cancel' % identity, {}))
 
     def resume(self, identity, *, ref=None):
-        return self.post('/jobs/%s/resume' % identity, {'ref': ref} if ref else {})
+        return one_job(self.post('/jobs/%s/resume' % identity, {'ref': ref} if ref else {}))
 
     def asset(self, identity, target, *, thumbnail=False):
         """Retrieve a library file through authenticated HTTP only."""

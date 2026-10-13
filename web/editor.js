@@ -103,7 +103,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         transport = el('div', 'fv-ed-transport'), genHost = el('div', 'fv-ed-genbar'), tracksHost = el('div', 'fv-ed-tracks'), zoomHost = el('div', 'fv-ed-zoom');
     const adjustHost = el('aside', 'fv-ed-adjust-host');
     const button = (label, action, cls = '') => { const value = el('button', cls, label); value.type = 'button'; value.onclick = action; return value; };
-    const navigation = viewSwitch('editor', () => handle.switchView('studio'), () => handle.switchView('nodes'), () => {});
+    const navigation = viewSwitch('editor', () => handle.switchView('studio'), () => handle.switchView('nodes'), () => {}, () => handle.switchView('autopilot'));
     for (const control of navigation.querySelectorAll('button')) control.removeAttribute('title');
     const brand = el('div', 'fv-brand');
     const headerActions = el('div', 'fv-header-actions');

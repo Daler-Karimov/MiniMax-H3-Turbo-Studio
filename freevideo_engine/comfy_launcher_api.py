@@ -123,6 +123,8 @@ def register():
     root = Path(folder_paths.__file__).resolve().parent
     info = dict(protocol=1, source=str(source), engine_root=str(installation_root(source)),
                 comfy_root=str(root), data_root=str(Path(folder_paths.base_path).resolve()))
+    from comfy.cli_args import args
+    info['listen'] = args.listen
     from .comfy_console import install
     try:
         info['console_log'] = str(install(info['engine_root']))

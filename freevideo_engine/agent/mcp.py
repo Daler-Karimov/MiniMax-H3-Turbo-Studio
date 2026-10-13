@@ -47,7 +47,7 @@ def tool_list():
         dict(name='freevideo_generate', title='Generate a video', description='Generate one video from an H3 prompt, up to 60 seconds: a longer request continues and joins into one file automatically. Prefer a new shot with its reference pictures wherever the film can cut; continue only a take, action or sound that must stay unbroken. Use this for any single video, also after freevideo_enhance_prompt; the drama tools are only for a film of several separately chosen shots. Optionally from first/last frames or references (files, local paths, or frames of earlier jobs). Returns the job; with wait, its result (video path and URL).', annotations=write),
         dict(name='freevideo_submit_batch', title='Submit a storyboard', description='Submit several jobs at once. Each row is a job object with "kind" (generate default, assemble, vlm, enhance) and an optional "ref"; later rows use "@ref" wherever a job id is expected (from_job, after, clips, refine_from). FreeVideo runs them in dependency order.', annotations=write),
         dict(name='freevideo_job', title='Job status', description='Status, progress, result or error of a job.', annotations=read),
-        dict(name='freevideo_wait', title='Wait for a job or the user', description="Wait at most 25 seconds for a job (with id) or, without id, for the user's words in this session. Returns early when the user says something (inbox). If the job is still active, call it again with the same ID; do not resubmit.", annotations=read),
+        dict(name='freevideo_wait', title='Wait for a job or the user', description="Wait at most 25 seconds for a job (with id) or, without id, at most 50 seconds for what the user says in FreeVideo (inbox). again=true means nothing new yet: call it again. A job wait returns early when the user says something. If the job is still active, call it again with the same ID; do not resubmit.", annotations=read),
         dict(name='freevideo_jobs', title='List jobs', description='Recent agent jobs, optionally by status (comma-separated), project or kind.', annotations=read),
         dict(name='freevideo_cancel', title='Cancel a job', description='Cancel a waiting, queued or running job.', annotations={'readOnlyHint': False, 'destructiveHint': True, 'openWorldHint': False}),
         dict(name='freevideo_resume', title='Resume generation', description='Resume a failed, interrupted or cancelled generation; only unfinished blocks run. Poll the same job ID.', annotations=write),
@@ -330,8 +330,8 @@ class Server:
             return c.job(args['id'], **({'wait': wait} if wait is not None else {})), []
         if name == 'freevideo_wait':
             if not args.get('id'):
-                return c.get('/inbox', wait=min(25., float(args.get('timeout', 25)))), []
-            return self.wait(identity, args['id'], args.get('timeout', 25), token), []
+                return c.get('/inbox', wait=min(50., float(args.get('timeout', 50)))), []
+            return self.wait(identity, args['id'], min(25., float(args.get('timeout', 25))), token), []
         if name == 'freevideo_jobs':
             return dict(jobs=c.jobs(**args)), []
         if name == 'freevideo_cancel':
