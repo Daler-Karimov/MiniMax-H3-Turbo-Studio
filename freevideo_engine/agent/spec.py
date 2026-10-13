@@ -213,6 +213,9 @@ def normalize(value):
         result.update({k: value[k] for k in ('format', 'max_tokens', 'system') if k in value})
     elif kind == 'export':
         result.update(editor_project=value['editor_project'], revision=value['revision'])
+    elif kind == 'listen':
+        result.update(editor_project=value['editor_project'], revision=value['revision'], mode=value['mode'],
+                      language=value.get('language', 'auto'), **{k: value[k] for k in ('lines', 'range') if k in value})
     elif kind == 'image_edit':
         result.update(image=value['image'], revision=value['revision'])
     else:

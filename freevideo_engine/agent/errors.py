@@ -106,6 +106,10 @@ ERRORS.update({
     'image_changed': (409, False, 'The image changed since you read it.', 'Apply your operations to error.image and send its revision.'),
     'layer_locked': (409, False, 'An operation changes a layer the user locked.', 'Leave the locked layer unchanged; ask the user to unlock it if it must change.'),
     'export_failed': (409, True, 'The export did not finish.', 'Read the project, then submit the export again with a new ref.'),
+    'no_speech_model': (409, False, 'No speech model is installed on this machine.',
+                        'Do not retry. Write the subtitle lines yourself with the subtitles edit, or tell the user the model is not installed.'),
+    'listen_failed': (409, True, 'Listening to the sound did not finish.',
+                      'Read the project, then submit the listening job again with a new ref; if it fails again, write the lines yourself.'),
     'clip_source_unusable': (409, False, 'A clip\'s source is missing, or cannot be read as far as the clip uses it.',
                              'Read the project and check each clip\'s source: it must exist and play, and in + frames must stay '
                              'within its real length. Correct the project, then export the new revision.'),

@@ -154,7 +154,7 @@ def features(continuation, vlm):
             'queue.shared': True, 'queue.busy': True, 'chain.auto': bool(continuation),
             'enhance': bool(vlm.get('ready')), 'drama.film': True, 'images.edit': rules,
             'images.layers': rules, 'images.heal': rules, 'images.render': rules, 'projects.read': True,
-            **{'projects.' + name: rules for name in ('insert', 'split', 'move', 'trim', 'remove', 'export', 'generate')}}
+            **{'projects.' + name: rules for name in ('insert', 'split', 'move', 'trim', 'remove', 'export', 'generate', 'listen')}}
 
 
 def capabilities(port, jobs):
@@ -192,6 +192,7 @@ def capabilities(port, jobs):
                'vlm': 'Ask the local vision-language model about images or sampled video frames',
                'enhance': 'Rewrite a rough idea into a full H3 prompt with the local VLM',
                'export': 'Render a saved revision of an editing project to a video',
+               'listen': 'Listen to the sound of an editing project for subtitle lines and times',
                'image_edit': 'Render a saved revision of an image session to a picture'},
         limits=dict(width=[256, 4096, 32], height=[256, 4096, 32], seconds=[1.625, 60 if continuation else BLOCK_SECONDS],
                     seconds_tested=[4, 15],
@@ -1633,7 +1634,7 @@ def register():
                 raise JobError('idempotency_conflict', 'Conflicting keys')
             args = [] if operation == 'create' else [identity]
             extra = dict(client=request.headers.get('X-FreeVideo-Client', '')[:80] or None)
-            if operation in ('generate', 'export'):
+            if operation in ('generate', 'export', 'listen'):
                 extra['jobs'] = jobs
             if operation == 'generate':
                 def capability(size):
@@ -1643,9 +1644,9 @@ def register():
                         return None
                 extra['capability'] = capability
             result = await asyncio.to_thread(getattr(projects, operation), *args, value, ref=key or ref, **extra)
-            if operation in ('generate', 'export'):
+            if operation in ('generate', 'export', 'listen'):
                 await jobs.tick()
-            return reply(result, 201 if operation in ('create', 'generate', 'export') else 200)
+            return reply(result, 201 if operation in ('create', 'generate', 'export', 'listen') else 200)
         return guarded(handler)
 
     for operation, (method, suffix, _) in contract.PROJECT_OPERATIONS.items():

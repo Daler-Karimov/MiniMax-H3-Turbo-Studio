@@ -395,10 +395,10 @@ class Jobs:
             records = list(latest.values())
         for row in records:
             if (isinstance(row, dict) and specs.JOB_ID.fullmatch(str(row.get('id')))
-                    and row.get('kind') in ('generate', 'assemble', 'export', 'image_edit') + GPU_KINDS
+                    and row.get('kind') in ('generate', 'assemble', 'export', 'listen', 'image_edit') + GPU_KINDS
                     and row.get('status') in ACTIVE + DONE and isinstance(row.get('spec'), dict)
                     and type(row.get('created_at')) in (int, float) and math.isfinite(row['created_at'])):
-                if row.get('status') == 'running' and row['kind'] in ('assemble', 'export', 'image_edit') + GPU_KINDS:
+                if row.get('status') == 'running' and row['kind'] in ('assemble', 'export', 'listen', 'image_edit') + GPU_KINDS:
                     # This process restarted while the work ran in it; nothing continues it.
                     self.finish(row, 'failed', error=dict(code='interrupted',
                                 message='ComfyUI restarted while this job ran; submit it again'), save=False)
@@ -1120,6 +1120,9 @@ class Jobs:
             if row['kind'] == 'export':
                 from .projects import run_export
                 result = run_export(self.port, row)
+            elif row['kind'] == 'listen':
+                from .projects import run_listen
+                result = run_listen(self.port, row)
             elif row['kind'] == 'image_edit':
                 from .images import run_render
                 result = run_render(self, row)

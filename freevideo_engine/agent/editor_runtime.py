@@ -103,7 +103,7 @@ globalThis.__call = text => {
 // before; the first rejection stops the batch and nothing is returned to save.
 globalThis.__batch = text => {
     const {project, operations} = JSON.parse(text), model = __load('editor_model'), actions = __load('editor_actions');
-    const by = {by: 'agent'}, results = [];
+    const texts = __load('editor_text_model'), by = {by: 'agent'}, results = [];
     const ids = record => new Set(record.tracks.flatMap(track => track.clips.map(clip => clip.id)));
     let record;
     try { record = model.parse(project); }
@@ -138,6 +138,8 @@ globalThis.__batch = text => {
             case 'describe': record = model.describe(record, actions.linkedIds(record, op.clip_ids), op.text, by); break;
             case 'set_ref': record = model.setRef(record, actions.linkedIds(record, op.clip_ids), op.ref); break;
             case 'use_version': record = model.restoreVersion(record, op.clip_id, op.index, by); break;
+            // One undo on the page; rejects as subtitles / range / text / locked / overlap.
+            case 'subtitles': record = texts.addSubtitles(record, op.cues, {replace: op.replace === true}); break;
             default: throw new model.EditError('invalid', 'unknown operation');
             }
         } catch (error) {

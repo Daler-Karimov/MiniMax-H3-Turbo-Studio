@@ -169,6 +169,10 @@ class ComfyPort:
         """The editor page's export queue (editor_export.register), shared so exports take turns."""
         return getattr(self.server, '_freevideo_editor_export', None)
 
+    def editor_ears(self):
+        """The auto-subtitle ears queue (subtitle_ears.register): time lines against the sound or write down speech."""
+        return getattr(self.server, '_freevideo_subtitle_ears', None)
+
     def queue_busy(self):
         running, pending = self.snapshot()
         return bool(running or pending)

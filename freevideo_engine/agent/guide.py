@@ -94,6 +94,7 @@ GUIDE = {
         'POST /projects/{id}/operations sends revision and 1-64 operations, using whole frames at 24 fps. The batch saves once or changes nothing.',
         'On 409 project_changed, recompute edits from error.project and its current_revision, then send a new request. On clip_busy wait for generation to finish.',
         'POST /projects/{id}/generate reserves pending parts for clip_ids or a start/frames range and fills them as the returned job finishes. POST /projects/{id}/export renders the revision you read; wait for its job.',
+        'Subtitles: POST /projects/{id}/listen with mode transcribe (writes down what is said) or align (times the lines you give) and the revision you read; wait for the job and read result.lines, each with start and end frames. Then add them with a subtitles operation of cues {start, frames, text}; replace true swaps the whole track. With no speech model the job fails with no_speech_model: write the lines yourself.',
         'Reuse ref or Idempotency-Key only for the identical request. Source video/audio/thumbnail URLs require the same Agent token.',
     ],
     'project_routes': [dict(operation=name, method=method, path=path, description=summary)
@@ -265,6 +266,9 @@ CAPABILITIES_ZH = {
         '先读取 revision 和片段标识；所选部分会立即预留，返回的任务完成后填入结果',
     ('POST', '/projects/{id}/export'): '将保存的某个版本导出为 MP4，存入已保存视频。'
         '先读取 revision，等待返回的任务完成，再读取结果视频',
+    ('POST', '/projects/{id}/listen'): '听剪辑工程的声音，得到字幕行及其时间：对给定字幕行定时，或直接转写。'
+        '先读取 revision，等待返回的任务完成，再用 subtitles 编辑把字幕行加入时间线；'
+        '没有安装语音模型时返回 no_speech_model，改为自己写字幕行',
     ('POST', '/images'): '像图片编辑页面一样打开图片；提交 source，会话会保留源图片副本和图层文档',
     ('GET', '/images/{id}'): '读取图片编辑会话的图层文档、选区和 revision；编辑前先读取 revision 和图层标识',
     ('PUT', '/images/{id}'): '替换整个图片文档；先读取会话并提交其 revision。'
