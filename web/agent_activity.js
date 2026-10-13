@@ -76,7 +76,6 @@ function row(job, t, api, refresh, open) {
     if (reason) meta.push(t(...reason));
     else if (job.error?.message && job.status === 'failed') meta.push(job.error.message);
     if (job.project) meta.push(job.project);
-    if (job.client) meta.push(job.client);
     const foot = el('div', 'fv-agent-foot');
     const details = el('p', 'fv-agent-meta', meta.join(' · '));
     if (reason && job.error?.message) details.title = job.error.message;
