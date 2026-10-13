@@ -19,7 +19,7 @@ export const CHAPTERS = [
     {id: 'longer', anchor: '[data-fv-guide="longer"]', added: true,
         en: 'For a longer video, or to change part of one, choose "Edit".', zh: '要做更长的视频，或者修\u2060改\u2060其\u2060中\u2060一\u2060段，点“剪辑”。'},
     {id: 'agent', anchor: '[data-fv-guide="agent"]', added: true,
-        en: 'Connect Claude Code, Codex, FreeToken or another agent here to make videos automatically.', zh: '在这里连接 Claude Code、Codex、FreeToken 等 Agent，全自动生成视频。'},
+        en: 'Connect Claude Code, Codex or another agent in Settings and let it make videos.', zh: '在设置里连接 Claude Code、Codex 等 Agent，让它生成视频。'},
 ];
 
 export function guideSteps({record, available = [], returning = false, blockers = {}, all = false}) {
