@@ -152,8 +152,15 @@ class ComfyHost:
         blocks = chain_store.leading_blocks(record)
         # A planned chain shows exactly the requested length: what the last block made beyond it is left out.
         frames = planned['frames'] if planned and not planned['single'] and len(blocks) == len(record['blocks']) else None
+        kept = {'leads': record['lead_reader'], 'expected_seams': record.get('expected_seams')} \
+            if record.get('lead_reader') is not None else {}
         return join_outputs([block['output'] for block in blocks], record['id'], cancelled,
-                            frames=frames, replace=record.get('output'))
+                            frames=frames, replace=record.get('output'), **kept)
+
+    def lead(self, output, previous):
+        """A finished block's seam sound, read while its record is still in the shared store."""
+        from .comfy_continuation import audio_lead_in
+        return audio_lead_in(output, previous=previous)
 
 
 def continuation_directions():
@@ -198,6 +205,7 @@ def block_finished(chain, node_id, output, report_id, continuation=None):
 class FakeHost(ComfyHost):
     """Optional CPU-only prompts for development; never touch the host queue."""
     fake = True
+    repairs_seams = False  # It saves no new sound: its join returns the last block as it is.
 
     def __init__(self, server, seconds=None):
         super().__init__(server)

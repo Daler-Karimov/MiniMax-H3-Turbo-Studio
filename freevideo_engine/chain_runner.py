@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 
+from . import chain_leads
 from . import chain_store as store
 
 
@@ -50,6 +51,7 @@ class ChainRunner:
         self.wake = threading.Event()
         self.closed = threading.Event()
         self.records = {row['id']: row for row in store.load_all(store_dir)}
+        chain_leads.prune(store_dir, self.records)
         self.starts, self.success, self.cancel_sent, self.progress_values = {}, {}, set(), {}
         self.progress_messages = {}
         self.estimates, self.queue, self.active = {}, [], None
@@ -269,6 +271,45 @@ class ChainRunner:
             self.success[prompt_id] = (self.clock(), self.wall())
             self._save(record)
             self.wake.set()
+            previous = self._sources(record, block)['after']
+            keep = (record['id'], block['index'], output, previous['output'] if previous is not None else None,
+                    bool(saved))
+        self._keep_lead(*keep)
+
+    def _keep_lead(self, identity, index, output, previous, continues):
+        """Copy the block's seam sound out of the shared store before newer records push it out."""
+        reader = getattr(self.host, 'lead', None)
+        if not continues or reader is None or not getattr(self.host, 'repairs_seams', True) or not isinstance(output, str) or not isinstance(previous, str):
+            return False
+        try:
+            lead = reader(output, previous)
+            if lead is not None:
+                chain_leads.save(self.store_dir, identity, index, lead, previous, output)
+                return True
+        except Exception:
+            pass
+        logging.warning('[FreeVideo] A chain block\'s seam sound could not be kept: %s', identity)
+        return False
+
+    @staticmethod
+    def _continues(row):
+        """A block generated from the one before it: its seam must be repaired, whatever its receipt promised."""
+        return isinstance(row['after'], str) and bool(row['continuation'])
+
+    def _seams_kept(self, snapshot):
+        """(expected, kept) seam sounds of the leading blocks, keeping late any a record still has."""
+        identity, blocks = snapshot['id'], store.leading_blocks(snapshot)
+        expected = kept = 0
+        for row in blocks[1:] if getattr(self.host, 'repairs_seams', True) else ():
+            if not self._continues(row):
+                continue
+            expected += 1
+            after = self._sources(snapshot, row)['after']
+            if chain_leads.load(self.store_dir, identity, row['index'], after['output'], row['output']) is not None:
+                kept += 1
+            elif self._keep_lead(identity, row['index'], row['output'], after['output'], True):
+                kept += 1
+        return expected, kept
 
     def _finish_blocks(self, record, final_state='done'):
         if not record['join']:
@@ -459,11 +500,20 @@ class ChainRunner:
             with self.lock:
                 return self.closed.is_set() or (final_state != 'cancelled'
                                                and self.records[identity]['state'] == 'cancelling')
+        index_by_output = {row['output']: row['index'] for row in snapshot['blocks'] if row['output']}
+        def lead_reader(following, previous):
+            index = index_by_output.get(following)
+            return chain_leads.load(self.store_dir, identity, index, previous, following) if index is not None else None
+        promised, kept = self._seams_kept(snapshot)
+        snapshot = dict(snapshot, lead_reader=lead_reader, expected_seams=promised)
         texts = [row['inputs']['text'] for row in snapshot['blocks']]
         texts += [row['inputs'].get('text') for row in snapshot['snapshot']['prompt'].values()
                   if isinstance(row, dict) and isinstance(row.get('inputs'), dict)]
         failure = None
         try:
+            if kept < promised:
+                # A sound seam that cannot be repaired is never published as a finished video.
+                raise ValueError('%d of %d seam sounds were not kept' % (promised - kept, promised))
             output = self.host.join(snapshot, cancelled)
             if not isinstance(output, str) or not output:
                 raise ValueError('Joining did not return a video path')
@@ -484,7 +534,7 @@ class ChainRunner:
                 logging.warning('[FreeVideo] Chain joining failed: %s', identity)
             else:
                 record.update(state=final_state, output=output, output_blocks=len(store.leading_blocks(snapshot)),
-                              output_state='done', output_error=None)
+                              output_state='done', output_error=None, output_seams=dict(expected=promised, kept=kept))
             if record['state'] not in store.ACTIVE and self.active == identity:
                 self.active = None
             self._save(record)

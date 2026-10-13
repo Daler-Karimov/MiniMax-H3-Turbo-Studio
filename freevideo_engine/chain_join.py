@@ -147,27 +147,34 @@ def _exact_tail(source, target, wanted, cancelled=None):
         temporary.unlink(missing_ok=True)
 
 
-def join_files(sources, target, cancelled=None, frames=None):
+def join_files(sources, target, cancelled=None, frames=None, leads=None, expected=None):
     """Write `target` from `sources` in order; returns the joined frame and sample counts.
 
     `frames`: stop at this length when a compatible short tail can close it exactly,
     otherwise keep the packet-copy ending at or just after it.
+    `leads`: optional `leads(following, previous)` returning a seam lead kept by the chain;
+    the shared continuation record is read only when it has none.
+    `expected`: how many seams should be repaired; only reported back, the caller decides.
     """
     sources = list(sources)
     try:
-        return _join_files(sources, target, cancelled, frames)
+        return _join_files(sources, target, cancelled, frames, leads=leads, expected=expected)
     except _ExactEndFailed:
         # A late mux or validation error must also leave the original ending available.
-        return _join_files(sources, target, cancelled, frames, exact=False)
+        return _join_files(sources, target, cancelled, frames, exact=False, leads=leads, expected=expected)
 
 
-def _join_files(sources, target, cancelled, frames, exact=True):
+def _join_files(sources, target, cancelled, frames, exact=True, leads=None, expected=None):
     import av
     from .comfy_metadata import _copy_stream
     try:
         from .comfy_continuation import audio_lead_in, apply_audio_lead_in
     except ImportError:
         audio_lead_in = apply_audio_lead_in = None
+    if leads is not None and audio_lead_in is not None:
+        stored = audio_lead_in
+        def audio_lead_in(video, previous=None):
+            return leads(video, previous) or stored(video, previous=previous)
     sources, target = [Path(source) for source in sources], Path(target)
     if len(sources) < 2:
         raise ValueError('Joining needs at least two videos')
@@ -276,7 +283,8 @@ def _join_files(sources, target, cancelled, frames, exact=True):
         os.replace(temporary, target)
         return dict(exact_end=wanted is not None and frames == wanted, frames=frames, width=shape[1], height=shape[2],
                     audio_samples=samples, sample_rate=rate,
-                    seams_repaired=joined_audio.seams_repaired if joined_audio is not None else 0)
+                    seams_repaired=joined_audio.seams_repaired if joined_audio is not None else 0,
+                    seams_expected=expected)
     except JoinCancelled:
         raise
     except Exception as error:
@@ -494,7 +502,7 @@ def _replace_target(root, replace, identity, sources):
     return None
 
 
-def join_outputs(outputs, identity, cancelled=None, frames=None, replace=None):
+def join_outputs(outputs, identity, cancelled=None, frames=None, replace=None, leads=None, expected_seams=None):
     """Join relative block outputs into a saved video, replacing only this chain's earlier join."""
     import folder_paths
     root = Path(folder_paths.get_output_directory()).resolve()
@@ -506,6 +514,9 @@ def join_outputs(outputs, identity, cancelled=None, frames=None, replace=None):
         if not source.is_relative_to(root) or not source.is_file():
             raise ValueError('A block video is missing')
         sources.append(source)
+    if leads is not None and len(set(sources)) != len(sources):
+        # The chain's seam sounds are looked up per video; one video in two places would take the wrong one.
+        raise ValueError('Two blocks share one video')
     # A saved video is a folder the library lists once its report says it is complete.
     target = _replace_target(root, replace, identity, sources)
     replacing = target is not None
@@ -516,12 +527,23 @@ def join_outputs(outputs, identity, cancelled=None, frames=None, replace=None):
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex[:8] + '.tmp')
     backup = target.with_name('.join-backup-' + uuid.uuid4().hex + '.mp4') if replacing else None
     try:
-        joined = join_files(sources, staged, cancelled, frames)
+        kept = None
+        if leads is not None:
+            # The chain asks for its own output strings, never a path rebuilt from the disk.
+            originals = {str(source): output for source, output in zip(sources, outputs)}
+            def kept(following, previous):
+                return leads(originals.get(str(following)), originals.get(str(previous)) if previous is not None else None)
+        joined = join_files(sources, staged, cancelled, frames, leads=kept, expected=expected_seams)
+        if expected_seams is not None and joined['seams_repaired'] < expected_seams:
+            # A seam sound left unrepaired is never reported as a finished video.
+            raise ValueError('Only %d of %d seam sounds could be repaired' % (joined['seams_repaired'], expected_seams))
         report = dict(success=True, geometry=dict(width=joined['width'], height=joined['height'], frames=joined['frames'],
                                                   fps=FPS, seconds=joined['frames'] / FPS),
                       request_seconds=_request_seconds(sources), video={}, encoding={},
                       chain_join=dict(chain=identity, blocks=len(sources), seams_repaired=joined['seams_repaired'],
                                       exact_end=joined['exact_end']))
+        if expected_seams is not None:
+            report['chain_join']['seams_expected'] = expected_seams
         with temporary.open('w', encoding='utf-8') as stream:
             json.dump(report, stream, ensure_ascii=False)
             stream.flush()

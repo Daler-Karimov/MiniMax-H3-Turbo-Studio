@@ -164,6 +164,7 @@ def summary(record):
     return dict({key: deepcopy(record[key]) for key in
                  ('version', 'id', 'node', 'created', 'updated', 'state',
                   'join', 'output', 'output_state', 'output_error', 'output_blocks')},
+                output_seams=deepcopy(record.get('output_seams')),
                 count=len(blocks), done=sum(row['state'] == 'done' for row in blocks),
                 current=current, elapsed_seconds=sum(row['seconds'] or 0 for row in blocks if row['state'] == 'done'),
                 last_report_id=record.get('last_report_id') or next((row['report_id'] for row in reversed(blocks)
@@ -221,6 +222,10 @@ def load_all(directory, limit=200, *, identity=None):
             if (type(record['output_blocks']) is not int or not 0 <= record['output_blocks'] <= len(record['blocks'])
                     or record['output'] is None and record['output_blocks'] != 0):
                 raise ValueError('Invalid chain output block count')
+            seams = record.get('output_seams')
+            if seams is not None and (not isinstance(seams, dict) or set(seams) != {'expected', 'kept'}
+                                      or any(type(value) is not int or value < 0 for value in seams.values())):
+                raise ValueError('Invalid chain seam count')
             if record.get('join_final_state', 'done') not in ('done', 'cancelled', 'failed', 'interrupted'):
                 raise ValueError('Invalid chain join final state')
             if record['plan'] is not None:
