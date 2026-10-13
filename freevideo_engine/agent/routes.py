@@ -467,7 +467,9 @@ def register():
             except web.HTTPException as error:
                 return problem('too_large' if error.status == 413 else 'invalid_request')
             except Exception:
-                return reply({'error': errors.build('internal_error', stage='submission_unknown' if suffix == '/jobs' else 'request')}, 500)
+                value = errors.build('internal_error', stage='submission_unknown' if suffix == '/jobs' else 'request')
+                logging.exception('[FreeVideo] Agent request %s failed', value['request_id'])
+                return reply({'error': value}, 500)
             finally:
                 for variable, token in attached or ():
                     variable.reset(token)
