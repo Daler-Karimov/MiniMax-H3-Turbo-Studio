@@ -43,12 +43,15 @@ def gpu_bytes(model):
     return sum(storages.values())
 
 
-def pinned_cpu_storages(model):
+def pinned_cpu_storages(model, *, committed=False):
     """Owned, physically backed weights which eviction can actually release.
 
     Mapped/pageable weights are excluded: Linux already credits clean file
     cache, and Windows commit is not resident RAM. Count storage once even
     when several tensor views (or model entries) share a pinned plane.
+    ``committed`` also leaves out registered read-only checkpoint maps: they
+    are resident while pinned, but file-backed, so releasing them returns no
+    commit.
     """
     if hasattr(model, 'transformer'):
         model = model.transformer
@@ -56,12 +59,13 @@ def pinned_cpu_storages(model):
         model = model.cond_stage_model
     if model is None:
         return {}
+    from .encoder_checkpoint import owns_readonly_tensor
     storages = {}
     for tensor in list(model.parameters()) + list(model.buffers()):
         if tensor.device.type != 'cpu':
             continue
         try:
-            if tensor.is_pinned():
+            if tensor.is_pinned() and not (committed and owns_readonly_tensor(tensor)):
                 storage = tensor.untyped_storage()
                 storages[storage.data_ptr()] = storage.nbytes()
         except (NotImplementedError, RuntimeError):
@@ -239,9 +243,14 @@ class ModelBank:
         # Keep the existing affordable cache rather than rereading every block
         # just to pin one more layer. A lower cap must still release the old
         # placement; never silently retain pins beyond a reduced RAM budget.
-        retained_pin_gb = getattr(found, 'config', {}).get('pin_host_gb', 0.)
+        # The allowance is a ceiling the load may not have reached, and free
+        # RAM moves it between requests: compare what the cache really pinned.
+        config = getattr(found, 'config', {})
+        retained_pin_gb = config.get('pin_host_gb', 0.)
         requested_pin_gb = options.get('pin_host_gb', 0.)
-        if found is not None and retained_pin_gb > requested_pin_gb:
+        pinned = config.get('pinned_host_allocated_bytes') or config.get('pinned_model_bytes')
+        held_pin_gb = min(retained_pin_gb, pinned / 1e9) if type(pinned) is int and pinned > 0 else retained_pin_gb
+        if found is not None and held_pin_gb > requested_pin_gb:
             self.drop('engine', 'Host weight cache allowance decreased')
             found = None
         hit = found is not None
@@ -331,9 +340,10 @@ class ModelBank:
         uuid = str(getattr(torch.cuda.get_device_properties(0), 'uuid', ''))
         if uuid and not uuid.startswith(('GPU-', 'MIG-')):
             uuid = 'GPU-' + uuid
-        host = {}
+        host, committed = {}, {}
         for entry in self.entries.values():
             host.update(pinned_cpu_storages(entry['model']))
+            committed.update(pinned_cpu_storages(entry['model'], committed=True))
         memory, gpu_capacity = None, None
         from .system import windows
         if windows():
@@ -347,8 +357,9 @@ class ModelBank:
         can_release_host = host_cache_release_supported(torch)
         return dict(reclaimable_gpu_bytes=torch.cuda.memory_reserved(),
                     reclaimable_ram_bytes=sum(host.values()) if can_release_host else 0,
+                    reclaimable_commit_bytes=sum(committed.values()) if can_release_host else 0,
                     retained_pinned_ram_bytes=sum(host.values()), host_cache_release_supported=can_release_host,
                     memory=memory, gpu_capacity=gpu_capacity,
-                    ram_credit_scope='Owned pinned model storage only; deduplicated, reclaimable on eviction. No mapped-page, commit or swap credit.',
+                    ram_credit_scope='Owned pinned model storage only; deduplicated, reclaimable on eviction. No mapped-page or swap credit; commit only for pinned private storage.',
                     gpu_uuid=uuid, models=[dict(role=role, gpu_bytes=gpu_bytes(entry['model']))
                                            for role, entry in self.entries.items()], decisions=self.decisions)

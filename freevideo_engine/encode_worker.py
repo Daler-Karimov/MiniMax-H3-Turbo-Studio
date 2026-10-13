@@ -116,6 +116,10 @@ def preload(clip, request, resident):
     except (PreloadCancelled, MemoryError, torch.OutOfMemoryError) as error:
         resident.drop('encoder', 'Speculative preload interrupted; foreground work wins')
         result.update(state='cancelled' if isinstance(error, PreloadCancelled) else 'released', reason=str(error))
+    except Exception:
+        # An unfinished placement left its weights where they were; never keep it.
+        resident.drop('encoder', 'Speculative preload failed; partial placement discarded')
+        raise
     result.update(gpu_bytes_after=gpu_bytes(clip), elapsed_seconds=time.perf_counter()-started,
                   torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                   torch_peak_reserved_bytes=torch.cuda.max_memory_reserved())

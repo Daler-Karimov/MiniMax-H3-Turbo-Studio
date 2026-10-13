@@ -12,13 +12,16 @@ from .system import windows
 from .long_paths import io_path, plain_data
 
 
-def save(path, value):
+def save(path, value, *, staging=None):
     path = io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Unique, closed staging file; Windows readers/antivirus may briefly hold
     # the destination. Keep the previous good report and the failed staging file.
+    # ``staging`` names it for a caller whose folder cannot take a longer name
+    # than the file itself.
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',
-            prefix=path.name + '.', suffix='.tmp', dir=path.parent, delete=False) as stream:
+            prefix=path.name + '.' if staging is None else staging, suffix='.tmp',
+            dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
         stream.write(json.dumps(plain_data(value), ensure_ascii=False, indent=2) + '\n')
     for attempt in range(8):
