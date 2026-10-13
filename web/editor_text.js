@@ -3,7 +3,7 @@
 import * as model from './editor_model.js';
 import {FONT_KEYS} from './fonts.js';
 import {row, button, slider, number, segmented, toggle} from './editor_adjust.js';
-import {isText, isTextTrack, addText, changeText, changeSubtitleStyle, styleOf, activeText, setTextTrack, parseSRT, importSRT, defaults} from './editor_text_model.js';
+import {isText, isTextTrack, addText, changeText, changeSubtitleStyle, styleOf, activeText, setTextTrack, parseSRT, importSRT, addSubtitles, defaults} from './editor_text_model.js';
 import {loadCoverage, loadTextFonts, textFontStack, missingGlyphs, missingHint, overTwoHint, textLayout, drawText} from './editor_text_layout.js';
 import {createSelectionActions, isTyping} from './editor_select.js';
 import {plan} from './editor_geometry.js';
@@ -46,6 +46,46 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         const change=r=>changeText(r,c.id,{text:value});
         if(preview){try{draft={record:change(state.record),change};render();updateWarnings();}catch(e){report(e);}return;}
         apply(t('Content','内容'),change);
+    }
+    // Subtitles from the speech on the timeline. One press starts, the next cancels; the lines replace the subtitle track in one step.
+    // `need` is what has to be downloaded before the first use, in bytes; the same press downloads it and goes on.
+    const speech={buttons:new Set(),available:false,need:0,busy:false,loading:false,shown:null,job:null,stop:null,run:0};
+    function speechLabel(fraction){speech.shown=fraction;const p=Math.round(Math.min(1,Math.max(0,Number(fraction)||0))*100),size=Math.max(1,Math.round(speech.need/1e6)),text=fraction==null?(speech.need?t(`Auto subtitles · Download ${size} MB`,`自动字幕 · 下载 ${size} MB`):t('Auto subtitles','自动字幕')):speech.loading?t(`Cancel · Downloading ${p}%`,`取消 · 下载 ${p}%`):t(`Cancel · ${p}%`,`取消 · ${p}%`);for(const b of speech.buttons){b.textContent=text;b.hidden=!(speech.available||speech.need);}}
+    function speechEnd(text){speech.stop?.();speech.stop=null;speech.job=null;speech.busy=false;speech.loading=false;speechLabel(null);if(text)actions.notify?.(text);}
+    const speechFailed=()=>t('Could not create subtitles','没能生成字幕'),speechSilent=()=>t('No speech found','没有听到说话声');
+    const speechReason=reason=>reason==='no_sound'?speechSilent():reason==='language'?t('English only for now','暂时只能识别英语'):speechFailed();
+    function speechResult(job){
+        if(job.state==='running'){speechLabel(job.fraction);return true;}
+        if(job.state!=='done'){speechEnd(job.state==='cancelled'?null:speechReason(job.reason));return false;}
+        const cues=(Array.isArray(job.result?.lines)?job.result.lines:[]).filter(l=>typeof l?.text==='string'&&l.text.trim()&&l.end>l.start).map(l=>({start:l.start,frames:l.end-l.start,text:l.text.trim()}));
+        speechEnd();if(!cues.length){actions.notify?.(speechSilent());return false;}
+        finishInline();commitDraft();
+        if(!apply(t('Auto subtitles','自动字幕'),r=>addSubtitles(r,cues,{replace:true})))actions.notify?.(speechFailed());
+        else{const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}
+        return false;
+    }
+    async function toggleSpeech(){
+        if(speech.busy){const id=speech.job,loading=speech.loading;speech.run++;speechEnd();if(loading)Promise.resolve(actions.speech.cancelDownload()).catch(()=>{});else if(id)Promise.resolve(actions.speech.cancel(id)).catch(()=>{});return;}
+        const run=++speech.run;speech.busy=true;
+        try{
+            if(speech.need){
+                speech.loading=true;speechLabel(0);
+                const done=await actions.speech.download(fraction=>{if(run===speech.run)speechLabel(fraction);});
+                if(run!==speech.run)return;
+                const ability=done?await actions.speech.ability():null;
+                if(run!==speech.run)return;
+                if(ability){speech.available=ability.available;speech.need=ability.need;}
+                if(!done||speech.need){speechEnd(t('Could not download','没能下载'));return;}
+                if(!speech.available){speechEnd(speechFailed());return;}
+                speech.loading=false;
+            }
+            speechLabel(0);
+            const job=await actions.speech.start();
+            if(run!==speech.run){if(job?.id)Promise.resolve(actions.speech.cancel(job.id)).catch(()=>{});return;}
+            if(!job){speechEnd(speechFailed());return;}
+            speech.job=job.id??null;
+            if(speechResult(job))speech.stop=actions.speech.watch(job.id,value=>{if(run!==speech.run)return false;if(!value){speechEnd(speechFailed());return false;}return speechResult(value);});
+        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download','没能下载'):speechFailed());}
     }
     function commitDraft(){if(draft){const change=draft.change;apply(t('Text','文字'),change);const c=selectedText();if(c?.text_kind==='text')lastStyle={...styleOf(state.record,c)};}}
     // Editing a text ended. One left without words is taken away; one that never had any leaves no step behind.
@@ -106,7 +146,10 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             const importButton=button(t('Import subtitle file','导入字幕文件'),{onClick:()=>file.click()});importButton.classList.add('fv-ed-import-srt');
             // Only a file that cannot be read says so; a refused edit (a locked track) flashes red like any other.
             file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text);}catch{actions.notify?.(t('Could not read this subtitle file','读不出这个字幕文件'));return;}finally{file.value='';}
-                if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}};host.append(importButton,file);
+                if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}};
+            // Shown only where this computer can recognise speech.
+            const hear=button(t('Auto subtitles','自动字幕'),{onClick:toggleSpeech});hear.classList.add('fv-ed-auto-subtitles');for(const b of speech.buttons)if(!b.isConnected)speech.buttons.delete(b);speech.buttons.add(hear);speechLabel(speech.busy?speech.shown:null);
+            host.append(importButton,hear,file);
         }
         content.oninput=()=>{const c=selectedText();if(c)updateContent(c,content.value,true);};content.onchange=finishContent;
         content.onfocus=()=>{typing=selectedText()?.id??null;};
@@ -283,9 +326,9 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         const stop=isolateDialogKeys(dialog,(e)=>{if(e.type==='keydown'&&e.key==='Escape'){e.preventDefault();dialog.close();}else if(e.type==='keydown'&&e.key==='Enter'){e.preventDefault();dialog.close();}});
         dialog.onclose=()=>{stop();dialog.remove();jumpMissing();};dialog.showModal();close.focus();return false;
     }
-    return {get ready(){return ensureFonts();},beforeExport,flush(){finishInline();commitDraft();},keyboard(e){
+    return {get ready(){return ensureFonts();},beforeExport,speech(value){speech.available=value?.available===true;speech.need=Number(value?.need)||0;if(!speech.busy)speechLabel(null);},flush(){finishInline();commitDraft();},keyboard(e){
         if(isTyping(e.target)||e.ctrlKey||e.metaKey||e.altKey||e.isComposing)return false;
         if(e.key.toLowerCase()==='t'){e.preventDefault();e.stopPropagation();add('text');return true;}
         if(e.key==='Escape'&&(drag||!menu.hidden)){e.preventDefault();if(drag)endDrag(e,true);menu.hidden=true;return true;}return false;
-    },dispose(){disposed=true;player.setTextRenderer?.(null);unsubscribe();resize?.disconnect();cancelAnimationFrame(raf);tracksHost.removeEventListener('contextmenu',contextMenu);element.removeEventListener('pointerdown',outside);frame.removeEventListener('seeked',seeked,true);frame.removeEventListener('loadeddata',seeked,true);canvas.remove();boundsLayer.remove();buttons.remove();notice.remove();menu.remove();}};
+    },dispose(){disposed=true;if(speech.busy){const id=speech.job;speech.run++;speechEnd();if(id)Promise.resolve(actions.speech.cancel(id)).catch(()=>{});}speech.buttons.clear();player.setTextRenderer?.(null);unsubscribe();resize?.disconnect();cancelAnimationFrame(raf);tracksHost.removeEventListener('contextmenu',contextMenu);element.removeEventListener('pointerdown',outside);frame.removeEventListener('seeked',seeked,true);frame.removeEventListener('loadeddata',seeked,true);canvas.remove();boundsLayer.remove();buttons.remove();notice.remove();menu.remove();}};
 }

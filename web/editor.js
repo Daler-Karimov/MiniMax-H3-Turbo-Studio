@@ -537,6 +537,38 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             state.settle(record => model.settle(record, ids, 'queued')); if (job) { await deliverChain(job); watchJob(id); }
         },
         async retry(id) { if (!store.generationAvailable) return; state.select({kind: 'clip', ids: [id]}); const clip = model.find(state.record, id); if (clip.job) { mostRecentJob = clip.job; await actions.resume(); } else await actions.generate({text: clip.text || panel.text || ''}); },
+        // Subtitles from speech hear the saved project, so it is saved first; a project never saved has nothing in it to hear.
+        speech: {
+            async start() {
+                await queue.flush();
+                if (queue.dirty) return null;
+                if (!state.record.id) return {state: 'failed', reason: 'no_sound'};
+                for (let attempt = 0; ; attempt++) {
+                    try { return await store.startEars(state.record.id, state.record.revision); }
+                    catch (value) {
+                        if (value.status !== 409 || attempt >= 2) throw value;
+                        queue.enqueue(state.record); await queue.flush();
+                        if (queue.dirty) return null;
+                    }
+                }
+            },
+            watch: (id, fn) => store.watchEars(id, fn),
+            cancel: id => store.cancelEars(id),
+            // Whether speech can be recognised here now, and how many bytes must be downloaded first.
+            async ability() {
+                const [ears, pack] = await Promise.all([store.ears(), store.earsPack().catch(() => null)]);
+                return {available: ears?.transcribe === true, need: pack?.installable === true && pack.bytes > 0 ? pack.bytes : 0};
+            },
+            download: report => new Promise((resolve, reject) => {
+                const step = value => {
+                    const install = value?.install;
+                    if (install?.state !== 'running') { resolve(install?.state === 'done'); return false; }
+                    report(install.total > 0 ? install.done / install.total : 0); return true;
+                };
+                store.installEars().then(value => { if (step(value)) store.watchEarsPack(step); }, reject);
+            }),
+            cancelDownload: () => store.cancelEarsPack(),
+        },
         async export(options) {
             if (['running', 'queued'].includes(exportStatus?.state)) return;
             if (exportStatus?.state === 'done' && exportMatches()) { await viewExport(exportStatus); return; }
@@ -609,6 +641,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     const transportControls = createEditorTransport({element, preview, transport, toolbar, editTools, zoomHost, state, player, t, notify});
     toolbar.append(adjust.toggleButton);
     const textTools = createEditorText({element, state, t, actions, adjust, player, toolbar, exportBox, tracksHost});
+    actions.speech.ability().then(value => { if (!disposed) textTools.speech(value); }).catch(() => {});
     const audio = createAudioIntegration({state, player, t, error, adjust, library: libraryHost, store});
     registerEditorShortcuts(AUDIO_SHORTCUTS, speedShortcuts);
     adjust.register('speed', createSpeedComponent({state, t, onError: error}));

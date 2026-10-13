@@ -480,6 +480,16 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         },
         watchExport(id, fn) { return watch(async () => (await json('/freevideo/editor/export?' + new URLSearchParams({id})))?.export || null, fn); },
         cancelExport: id => json('/freevideo/editor/export/cancel', post({id})),
+        // Subtitles from speech. What this computer can recognise; null where it cannot or the server is older.
+        async ears() { return (await json('/freevideo/editor/ears'))?.available || null; },
+        async startEars(id, revision) { return (await json('/freevideo/editor/ears', post({kind: 'transcribe', id, revision})))?.job || null; },
+        watchEars(id, fn) { return watch(async () => (await json('/freevideo/editor/ears?' + new URLSearchParams({id})))?.job || null, fn); },
+        cancelEars: id => json('/freevideo/editor/ears/cancel', post({id})),
+        // What recognising speech needs is downloaded on first use; null where the server has no such download.
+        earsPack: () => json('/freevideo/editor/subtitle-pack'),
+        installEars: () => json('/freevideo/editor/subtitle-pack', post({action: 'install', language: true})),
+        cancelEarsPack: () => json('/freevideo/editor/subtitle-pack', post({action: 'cancel'})),
+        watchEarsPack(fn) { return watch(() => json('/freevideo/editor/subtitle-pack'), fn); },
         dispose() { disposed = true; session.dispose(); for (const poller of pollers) poller.dispose(); pollers.clear(); watchers.clear();
             for (const upload of [...uploads]) { upload.release(); upload.xhr.abort(); upload.reject(new Error('editor_closed')); } },
     };

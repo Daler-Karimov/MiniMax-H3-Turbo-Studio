@@ -12,6 +12,13 @@ engine reports "not installed" and the ears stay off.
 An optional shared `subtitles/silero_vad_v5.onnx` gates words by speech time.
 It leaves the CTC windows intact; without the verified VAD file the engine
 continues with unfiltered recognition. No models are downloaded at runtime.
+
+Recognition with `auto` first names the spoken language (Whisper-tiny language
+identification, `subtitles/lid/`, size and SHA-256 pinned). A speech language
+without an installed model is refused with the `language` reason; without the
+verified identification files `auto` is refused as `no_engine`, so a sound in
+another language never becomes a track of wrong words. An explicit language
+needs its own model, never another one.
 """
 import hashlib
 import logging
@@ -21,7 +28,7 @@ import threading
 import unicodedata
 
 from .paths import model_root
-from .subtitle_ears import Cancelled, register_engine
+from .subtitle_ears import Cancelled, EarsError, register_engine
 
 RATE = 16000
 CORE = 24.0            # seconds each window owns
@@ -35,6 +42,15 @@ VAD_MODEL = 'silero_vad_v5.onnx'
 # incompatible exports (including faster-whisper's v6); verify before loading.
 VAD_SHA256 = '6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396'
 VAD_BYTES = 2313101
+# Whisper-tiny int8 export (HF csukuangfj/sherpa-onnx-whisper-tiny): only the
+# language-identification pass is used. Verified before the native loader sees it.
+LID_FOLDER = 'lid'
+LID_FILES = {
+    'tiny-encoder.int8.onnx': (12937772, 'd24fb083ae3b1041fc24e97971d60e280c9342201fbb67b0ab428a8b4a51a434'),
+    'tiny-decoder.int8.onnx': (89855401, 'd2fece8dd42771f1df975c6c0445770d0c292bf7547c2cae04a6c0cc57540925'),
+}
+LID_SECONDS = 30.      # speech handed to the identifier (its own window)
+LID_MIN_SECONDS = .5   # less speech than this is "nobody said anything"
 VAD_PAD = .4           # include soft onsets and the delay of CTC token peaks
 _LOG = logging.getLogger(__name__)
 
@@ -326,16 +342,95 @@ class Engine:
         self._vad = None
         self._vad_signature = None
         self._vad_lock = threading.Lock()
+        self._lid_folder = next(iter(directories.values())).parent / LID_FOLDER
+        self._lid = None
+        self._lid_signature = None
+        self._lid_lock = threading.Lock()
 
     def languages(self):
         return sorted(self._directories)
 
     def _pick(self, language, text=''):
+        """The model for a language that is already known (named, or read from given lines)."""
         if language in self._directories:
             return language
-        # auto, or a language without a model: judge by the script when there is one
-        wanted = ('zh' if _CJK.search(text) else 'en') if text.strip() else 'zh'
-        return wanted if wanted in self._directories else sorted(self._directories)[0]
+        if language == 'auto' and text.strip():
+            wanted = 'zh' if _CJK.search(text) else 'en'
+            if wanted in self._directories:
+                return wanted
+        raise EarsError('no_engine')
+
+    def _lid_ready(self):
+        """The identification files, verified by size and SHA-256, or None."""
+        try:
+            for name, (size, digest) in LID_FILES.items():
+                path = self._lid_folder / name
+                if path.stat().st_size != size:
+                    return None
+            signature = tuple((self._lid_folder / name).stat().st_mtime_ns for name in LID_FILES)
+            if signature != self._lid_signature:
+                self._lid = None
+                self._lid_signature = None
+                for name, (size, digest) in LID_FILES.items():
+                    if hashlib.sha256((self._lid_folder / name).read_bytes()).hexdigest() != digest:
+                        _LOG.warning('Subtitle language identification model is unverified')
+                        return None
+                self._lid_signature = signature
+            return self._lid_folder
+        except OSError:
+            return None
+
+    def _identify(self, audio, cancelled):
+        """Spoken language code of the first stretch of speech; None when nobody speaks."""
+        import numpy as np
+        pieces, total = [], 0.
+        for first, last, own_from, own_to in windows(audio.size):
+            if cancelled and cancelled():
+                raise Cancelled('cancelled')
+            spans = self._speech_spans(audio[first:last], cancelled)
+            if spans is None:
+                spans = [(0., (last - first) / RATE)]
+            for begin, end in spans:
+                take = min(end - begin, LID_SECONDS - total)
+                if take > 0:
+                    start = first + int(begin * RATE)
+                    pieces.append(audio[start:start + int(take * RATE)])
+                    total += take
+            if total >= LID_SECONDS:
+                break
+        if total < LID_MIN_SECONDS:
+            return None
+        with self._lid_lock:
+            folder = self._lid_ready()
+            if folder is None:
+                raise EarsError('no_engine')
+            try:
+                if self._lid is None:
+                    import sherpa_onnx
+                    whisper = sherpa_onnx.SpokenLanguageIdentificationWhisperConfig(
+                        encoder=str(folder / 'tiny-encoder.int8.onnx'),
+                        decoder=str(folder / 'tiny-decoder.int8.onnx'))
+                    self._lid = sherpa_onnx.SpokenLanguageIdentification(
+                        sherpa_onnx.SpokenLanguageIdentificationConfig(
+                            whisper=whisper, num_threads=min(2, self._threads), provider='cpu'))
+                stream = self._lid.create_stream()
+                stream.accept_waveform(RATE, np.concatenate(pieces).astype('float32', copy=False))
+                return str(self._lid.compute(stream)).strip().lower()
+            except Exception:
+                self._lid = None
+                _LOG.warning('Subtitle language identification failed', exc_info=True)
+                raise EarsError('no_engine') from None
+
+    def _spoken(self, audio, language, cancelled):
+        """Model language for recognition; `auto` asks the identifier and refuses what it cannot read."""
+        if language != 'auto':
+            return self._pick(language)
+        code = self._identify(audio, cancelled)
+        if code is None:
+            return sorted(self._directories)[0]
+        if code not in self._directories:
+            raise EarsError('language')
+        return code
 
     def _recognizer(self, language):
         with self._lock:
@@ -421,7 +516,7 @@ class Engine:
         return result
 
     def transcribe(self, audio, language, progress, cancelled):
-        language = self._pick(language)
+        language = self._spoken(audio, language, cancelled)
         words = self._listen(audio, language, lambda f: progress(f * .98), cancelled)
         limit = LINE_UNITS[language]
         lines, current = [], []
@@ -459,6 +554,12 @@ def folders(root=None):
 
 def factory():
     """The ears engine, or None while the models or the runtime are not installed."""
+    try:
+        from . import subtitle_pack
+        # The speech runtime is downloaded on demand; put it on the path before the import.
+        subtitle_pack.activate()
+    except Exception:
+        pass
     try:
         import sherpa_onnx  # noqa: F401
         import numpy  # noqa: F401

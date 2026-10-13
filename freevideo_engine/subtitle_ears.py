@@ -35,7 +35,7 @@ MAX_LINE_CHARS = 2000
 MAX_JOBS = 200
 _JOB_ID = re.compile(r's-[0-9a-f]{32}')
 _LANGUAGE = re.compile(r'auto|[a-z]{2,3}(-[A-Za-z0-9]{2,8})?')
-_REASONS = ('no_engine', 'no_sound', 'too_long', 'source_missing', 'unreadable', 'disk_full', 'failed')
+_REASONS = ('no_engine', 'no_sound', 'language', 'too_long', 'source_missing', 'unreadable', 'disk_full', 'failed')
 
 
 class EarsError(Exception):
@@ -482,3 +482,40 @@ def register():
             return web.json_response({'reason': 'failed'}, status=404)
         except (ValueError, TypeError):
             return web.json_response({'reason': 'failed'}, status=400)
+
+    from . import subtitle_pack
+    installer = subtitle_pack.Installer()
+    server._freevideo_subtitle_pack = installer
+
+    def pack_state():
+        return dict(subtitle_pack.status(), install=installer.state())
+
+    @server.routes.get('/freevideo/editor/subtitle-pack')
+    async def pack_status(request):
+        value = await asyncio.to_thread(pack_state)
+        return web.json_response(value, headers={'Cache-Control': 'no-store'})
+
+    @server.routes.post('/freevideo/editor/subtitle-pack')
+    async def pack_install(request):
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) - {'action', 'language'}:
+                raise ValueError('Invalid request')
+            action = body.get('action')
+            if action == 'cancel':
+                installer.cancel()
+            elif action == 'install':
+                value = await asyncio.to_thread(subtitle_pack.status)
+                if not value['supported']:
+                    return web.json_response({'reason': 'unsupported'}, status=409)
+                if not value['published']:
+                    return web.json_response({'reason': 'not_published'}, status=409)
+                groups = ('runtime', 'speech', 'language') if body.get('language') is True else ('runtime', 'speech')
+                if body.get('language') not in (None, True, False):
+                    raise ValueError('Invalid request')
+                installer.start(groups)
+            else:
+                raise ValueError('Invalid request')
+        except (ValueError, TypeError):
+            return web.json_response({'reason': 'failed'}, status=400)
+        return web.json_response(await asyncio.to_thread(pack_state), headers={'Cache-Control': 'no-store'})
