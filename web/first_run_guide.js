@@ -12,7 +12,7 @@ export const REPLAY_TEXT = {
 export const CHAPTERS = [
     {id: 'describe', anchor: '[data-fv-guide="describe"]', added: false,
         en: 'Type your prompt here. You can have an agent follow the Skill at the top right, or turn on FreeToken enhancement.',
-        zh: '在这里输入提示词。可以让 Agent 参考右⁠上⁠角的 Skill，或开启 FreeToken 提示词增强。'},
+        zh: '在这里输入提示词。可以让 Agent 参⁠考 Skill，或开启 FreeToken 提示词增强。'},
     {id: 'range', anchor: '[data-fv-guide="range"]', added: true,
         en: 'See the available sizes and lengths here, and how long each takes.', zh: '在这里查看可生成的尺\u2060寸、时长和预计用时。'},
     {id: 'generate', anchor: '[data-fv-guide="generate"]', added: false,
@@ -320,10 +320,18 @@ export function createFirstRunGuide({dialog, api, cn, isBusy = () => false}) {
         if (current === handle) current = null;
     }};
     current = handle;
-    const startTimer = setTimeout(() => {
-        if (!automatic || attempted || manual || layer) return;
-        attempted = true;
-        show().then(shown => { if (!shown) stopped = true; });
-    }, 1000);
+    // Steps are fixed when the guide starts, so give an anchor that is still waiting for its data up to 5 s.
+    // The Agent tab is not waited for: its discovery has already finished when the guide is created.
+    const pending = () => CHAPTERS.some(c => c.id !== 'agent' && target(c) && !visible(target(c)));
+    function begin(waited = 0) {
+        startTimer = setTimeout(() => {
+            if (!automatic || attempted || manual || layer || disposed) return;
+            if (pending() && waited < 5000) { begin(waited + 250); return; }
+            attempted = true;
+            show().then(shown => { if (!shown) stopped = true; });
+        }, waited ? 250 : 1000);
+    }
+    let startTimer = null;
+    begin();
     return handle;
 }
