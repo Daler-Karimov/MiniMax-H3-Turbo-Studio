@@ -37,6 +37,10 @@ TEMPLATE = 'FreeVideo-All-in-One.json'
 # daemon's join is a wall-clock bound even if a server trickles HTTP bytes.
 SHUTDOWN_CANCEL_SECONDS = 3.
 SHUTDOWN_REQUEST_SECONDS = .5
+# After this long the card says ComfyUI is still loading; the wait goes on while the process lives, up to
+# the limit. The log is no signal: importing Torch and its libraries can print nothing for minutes.
+START_WAIT_SECONDS = 180
+START_WAIT_LIMIT_SECONDS = 600
 SHUTDOWN_POLL_SECONDS = .1
 
 
@@ -1064,8 +1068,10 @@ class Controller:
             self.server_url = url
         save(directory / 'launch.json', dict(command=command, pid=server.pid, root=selected['root'], url=url, **context))
         self.state = dict(self.state, task=dict(progress=dict(label='Starting ComfyUI', detail='Loading nodes and the web interface'), log=plain(directory)))
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
+        waiting_since = time.monotonic()
+        extended = False
+        while True:
+            now = time.monotonic()
             if self.cancelled.is_set():
                 with self._server_lock:
                     if self.server is server:
@@ -1093,6 +1099,13 @@ class Controller:
                     self.state = dict(self.state, moved_from=self.port_move)
                     self.port_move = None
                 return
+            if now - waiting_since >= START_WAIT_SECONDS:
+                if now - waiting_since >= START_WAIT_LIMIT_SECONDS:
+                    break
+                if not extended:
+                    extended = True
+                    self.state = dict(self.state, task=dict(progress=dict(
+                        label='Starting ComfyUI', detail='Still loading. This may take a few more minutes.'), log=plain(directory)))
             self.cancelled.wait(.5)
         from .failure_details import startup_failure
         raise RuntimeError(startup_failure('ComfyUI is still starting or could not load FreeVideo; retry Connect.', directory / 'comfy.log'))

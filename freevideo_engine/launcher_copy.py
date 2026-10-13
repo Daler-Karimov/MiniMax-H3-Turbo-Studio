@@ -56,6 +56,7 @@ ZH = dict([
     ('Install FreeVideo workflow', '安装 FreeVideo 工作流'),
     ('Open ComfyUI', '打开 ComfyUI'), ('Starting ComfyUI', '启动 ComfyUI'),
     ('Loading nodes and the web interface', '加载节点与界面'),
+    ('Still loading. This may take a few more minutes.', '仍在加载，可能还需要几分钟'),
     ('Checking configuration', '检查配置'), ('Check installation', '检查安装'),
     ('Verify bundled files', '校验离线包'), ('Check local files', '检查本地文件'),
     ('All bundled files verified', '离线包校验完成'),
