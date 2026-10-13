@@ -58,6 +58,18 @@ GUIDE = {
         'Name subjects <Subject 1>, <Subject 2> in subject_definitions and reuse those labels in every section.',
         'Clips are cut to the generated length (at most 15 s); the job result lists any cut.',
     ],
+    'camera_draft': [
+        'Optional, never the default. When the user asks for a specific camera path, placement or order of actions '
+        'and two direct generations did not get it, offer to make a rough camera draft first and tell them it '
+        'takes you 10 to 30 minutes, more the more there is in the shot. Do not offer it for an ordinary shot.',
+        'The draft is a video you render yourself from a simple 3D scene: 960x544, 24 fps, 124 frames. Only the '
+        'camera path, the positions of things and the timing of the action need to be right.',
+        'Generate at 960x544 for 5 s with the draft as the only media.references video. Write the description as '
+        'one plain paragraph without sections and end it with: "The reference video is a rough 3D stand-in of this '
+        'scene: follow its camera path, object positions and motion timing, but render real materials, colours, '
+        'lighting and surroundings as described above; do not copy its simplified, flat look." The result follows '
+        'the draft and looks plainer than a direct generation, so keep the direct one when the user prefers its look.',
+    ],
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
@@ -156,7 +168,9 @@ RULES = [
     'Solve problems yourself first. Every error has a next field, and often details with alternatives; these are '
     'steps that work on this computer. Not enough graphics memory: use a listed alternative (a lower resolution '
     'or a shorter video) and try again. A take is not good: make another; if it is still not good after two more, '
-    'describe it a different way instead of repeating the request. The queue is busy: wait with wait=25 on the '
+    'describe it a different way instead of repeating the request. When what stays wrong is the camera path, where '
+    'things are or the order of actions, the guide (camera_draft) has a slower way: offer it to the user. '
+    'The queue is busy: wait with wait=25 on the '
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
@@ -188,7 +202,8 @@ RULES_ZH = [
     '提交的每条视频都起个名字：label 写拍的是什么，用用户的语言，2 到 8 个字，例如“清晨海边”。',
     '先自己解决问题。每个错误都有 next 字段，details 里也常有可选方案；这些是在本机可行的处理步骤。'
     '显存不足时，从列出的方案中选择较低分辨率或较短时长重试。一条拍得不好就再拍；再拍两条仍不满意，'
-    '换一种描述，不要反复提交同一个要求。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
+    '换一种描述，不要反复提交同一个要求。一直不对的是镜头路线、位置或动作先后时，指南的 camera_draft 一节有一种更慢的做法，'
+    '可以向用户提议。队列繁忙时，用 wait=25 等待该任务，不要不停查询。'
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
