@@ -60,9 +60,9 @@ GUIDE = {
     ],
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
-        'Generation uses the continuous backend. A request of up to 15 s is one generation; a longer one is made '
-        'in parts of up to 15 s (30 s is 15 + 15) that continue one another and join automatically. '
-        'Continuing (longer than 15 s, or continue_from) needs two-pass text generation: quality "light" '
+        'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
+        'Otherwise it uses parts of up to 15 s (30 s is 15 + 15), continued and joined automatically. '
+        'Multiple blocks or continue_from need two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
         'A continue_from job saves a new video that holds only the added part; to hand the user one video, '
@@ -119,7 +119,7 @@ GUIDE = {
                        for name, (method, path, summary) in SESSION_OPERATIONS.items()],
     'filming': [
         'Filming is for a film of several shots, each picked from takes. One video of up to 60 seconds is one generate '
-        'job (longer requests continue and join automatically); to polish an idea first, run enhance, then generate. '
+        'job (30 s or more, or beyond the device limit, continues and joins automatically); to polish an idea first, run enhance, then generate. '
         'A film is cut into shots: see the rule "Cut by default" before making one long continued video.',
         'Use drama plan → start → get → sheet → choose/reshoot → finish; inspect todo after every change.',
         'At start tell the user the estimated total time; on over_budget decide whether to ask them; '
@@ -176,8 +176,7 @@ RULES = [
     'Cut by default. Wherever the film can change shot, make the new shot from the reference pictures it should '
     'have (cast cards, scene pictures) instead of continuing the previous video. Continue a video only for a '
     'long take that cannot be cut, an action that must stay unbroken, or sound that must stay unbroken, and '
-    'continuing again and again is not recommended. Content of 16 to 29 seconds is better made as shots of '
-    'up to 15 seconds each. One video has at most 5 parts (the first and 4 '
+    'continuing again and again is not recommended. One video has at most 5 parts (the first and 4 '
     'continuations), each continued part at least 10 seconds, about 70 seconds in all; filling that is not '
     'recommended. Past it, cut to a new shot.',
 ]
@@ -470,8 +469,8 @@ GUIDE['agent_jobs'] += [
     'Keys survive restart. Batch-level ref names the whole request; row refs still name earlier dependencies.',
     'Upload media content with POST /media. HTTP accepts no local absolute paths; MCP and CLI read local files '
     'before uploading. Unknown fields are rejected and every batch is validated before it is recorded.',
-    'limits.seconds in the status reply is what this installation can make now. While continuation is false, '
-    'one block (15 s) is the longest video; plan and submit refuse longer requests with continuation_unavailable.',
+    'POST /plan gives the length supported for the current size and quality. Without continuation, only a '
+    'single block can run; unknown device limits use 15 s. Multiple blocks return continuation_unavailable.',
     'One video has at most 5 parts (60 s in one request). continue_from counts the parts of the video it '
     'continues; plan and submit refuse a longer one and name the longest seconds that still fits.',
     'features in the status reply names what this installation offers; false means not usable now (for example '

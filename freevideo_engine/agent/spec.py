@@ -4,6 +4,7 @@ import math
 import re
 import secrets
 from . import schema as contract
+from .length import single_frame_limit
 
 QUALITY, ASPECTS = contract.QUALITY, contract.ASPECTS
 KINDS = tuple(contract.KINDS)
@@ -149,12 +150,13 @@ def task(media):
     return 'i2va' if 'first' in media else 'l2va' if 'last' in media else 't2va'
 
 
-def saved_length(canvas, seconds, continued=False):
-    """Frames and seconds of the saved video. One generation keeps its aligned canvas; a longer video is
-    made in blocks and joined to exactly the planned whole seconds. A continuation saves only what it adds."""
+def saved_length(canvas, spec):
+    """Saved length: one generation keeps its aligned canvas; multiple blocks are joined to the planned
+    whole seconds. A continuation saves only what it adds."""
     from ..chain_plan import PlanError, plan
+    continued = bool(spec.get('continue_from'))
     try:
-        planned = plan(seconds, continued=continued)
+        planned = plan(spec['seconds'], max_frames=single_frame_limit(spec), continued=continued)
     except PlanError:
         return canvas['frames'], canvas['seconds']
     if planned['single'] and not continued:
@@ -162,7 +164,7 @@ def saved_length(canvas, seconds, continued=False):
     return planned['frames'], planned['frames'] / canvas['fps']
 
 
-def normalize(value):
+def normalize(value, *, port=None):
     # Local Python callers retain local media refs. HTTP validates its stricter
     # (content-only) schema first; the client adapts local refs before transport.
     contract.validate_job(value, local=True)
@@ -180,9 +182,8 @@ def normalize(value):
             from ..geometry import geometry
             width, height = canvas_size(original)
             canvas = geometry(width, height, seconds=value['seconds'])
-            frames, output_seconds = saved_length(canvas, value['seconds'], bool(value.get('continue_from')))
             result.update(prompt=value['prompt'], width=width, height=height, seconds=float(value['seconds']),
-                          frames=frames, output_seconds=output_seconds, seed_random=value['seed'] is None,
+                          seed_random=value['seed'] is None,
                           seed=secrets.randbelow(MAX_SEED + 1) if value['seed'] is None else value['seed'],
                           preview=value['preview'], media=generation_media(value.get('media')), **sampling(value))
             result['task'] = task(result['media'])
@@ -192,6 +193,9 @@ def normalize(value):
                 result['first_frame_reference'] = True
             result['loras'] = [dict(name=row, strength=1.) if isinstance(row, str) else {'strength': 1., **row}
                                for row in value['loras']]
+            if port is not None:
+                result['single_max_frames'] = single_frame_limit(result, port=port)
+            result['frames'], result['output_seconds'] = saved_length(canvas, result)
     elif kind == 'assemble':
         result['clips'] = []
         for row in value['clips']:

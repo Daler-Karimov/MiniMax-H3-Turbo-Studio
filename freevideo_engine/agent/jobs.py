@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import spec as specs
 from . import schema, errors, assets
+from .length import single_frame_limit
 from ..system import windows
 
 ACTIVE = ('waiting', 'queued', 'running', 'cancelling')
@@ -60,9 +61,10 @@ def chain_error(code, message, next_action, *, details=None, retryable=False):
     return JobError(code, message, details=details or [], next=next_action, retryable=retryable)
 
 
-def single_block(seconds):
+def single_block(spec, seconds=None):
     from ..chain_plan import plan
-    return plan(seconds)['single']
+    return plan(spec['seconds'] if seconds is None else seconds, max_frames=single_frame_limit(spec),
+                continued=bool(spec.get('continue_from')))['single']
 
 
 def continuation_problems(spec, prefix='', *, editor=None):
@@ -73,9 +75,9 @@ def continuation_problems(spec, prefix='', *, editor=None):
     if spec['kind'] != 'generate' or spec.get('refine_from'):
         return []
     if not (any(block['after'] for block in editor['blocks']) if editor is not None
-            else spec.get('continue_from') or not single_block(spec['seconds'])):
+            else spec.get('continue_from') or not single_block(spec)):
         return []
-    why = ' when continuing a video or making one longer than 15 s'
+    why = ' when continuing a saved video or generating multiple blocks'
     problems = []
     if not spec['two_pass']:
         # The quality name is a contract enum, never caller text.
@@ -94,7 +96,7 @@ def cut_problems(spec, seconds, prefix='', *, editor=None):
     """A shot cut at or after the end of the video never appears; refuse it before anything is generated."""
     if spec['kind'] != 'generate' or spec.get('refine_from') or spec.get('continue_from') or seconds is None:
         return []
-    if any(block['after'] for block in editor['blocks']) if editor is not None else not single_block(seconds):
+    if any(block['after'] for block in editor['blocks']) if editor is not None else not single_block(spec, seconds):
         return []  # Every block of a continued video reads the same text.
     late = [cut for cut in specs.cut_times(spec.get('prompt')) if cut >= seconds]
     if not late:
@@ -118,7 +120,7 @@ def parts_problems(spec, runner, prefix='', *, editor=None, work=None, planned=N
     from ..chain_runner import ChainTooLong
     from ..chain_store import reference
     limit, continued = runner.max_parts, bool(spec.get('continue_from'))
-    count = lambda seconds: len(plan(seconds, continued=continued)['blocks'])
+    count = lambda seconds: len(plan(seconds, max_frames=single_frame_limit(spec), continued=continued)['blocks'])
     try:
         with runner.lock:
             if editor is not None:
@@ -148,7 +150,7 @@ def parts_problems(spec, runner, prefix='', *, editor=None, work=None, planned=N
 
 def continuation_unavailable():
     return chain_error('continuation_unavailable', 'This backend cannot continue multiple video blocks.',
-                       'Submit a new job with seconds<=15, or enable a backend with continuation inputs and resume.')
+                       'Use POST /plan for a supported single block (unknown limit: seconds<=15), or enable continuation and resume.')
 
 
 def library_id(relative):
@@ -403,6 +405,9 @@ class Jobs:
                     self.finish(row, 'failed', error=dict(code='interrupted',
                                 message='ComfyUI restarted while this job ran; submit it again'), save=False)
                 row['_restored'] = True
+                if row['kind'] == 'generate' and not row['spec'].get('refine_from'):
+                    # Before device-aware Agent planning, every accepted job used the unknown limit.
+                    row['spec'].setdefault('single_max_frames', None)
                 self.jobs[row['id']] = row
         for row in self.jobs.values():
             if (row['kind'] != 'generate' or row['spec'].get('refine_from')
@@ -569,7 +574,7 @@ class Jobs:
                 from .routes import substitute
                 item = substitute(item, names)
                 try:
-                    normalized = specs.normalize(item)
+                    normalized = specs.normalize(item, port=self.port)
                 except specs.SpecError as error:
                     problems.extend(schema.prefix_diagnostic(e, prefix) for e in error.errors)
                     continue
@@ -619,7 +624,7 @@ class Jobs:
                         if any(block['after'] for block in row['editor']['blocks']) and not self.continuation_ready():
                             raise continuation_unavailable()
                         continue
-                    self.require_continuation(row['spec']['seconds'])
+                    self.require_continuation(row['spec'])
                     if row['spec'].get('continue_from') and not self.continuation_ready():
                         raise continuation_unavailable()
             if receipt:
@@ -697,8 +702,8 @@ class Jobs:
         from ..comfy_chain import continuation_available
         return continuation_available() and os.environ.get('FREEVIDEO_CHAIN_INDEPENDENT') != '1'
 
-    def require_continuation(self, seconds):
-        if not single_block(seconds) and not self.continuation_ready():
+    def require_continuation(self, spec):
+        if not single_block(spec) and not self.continuation_ready():
             raise continuation_unavailable()
 
     def require_runner(self):
@@ -1197,7 +1202,8 @@ class Jobs:
                 spec = source['spec']
                 if spec['kind'] != 'generate' or spec.get('refine_from') or source.get('editor'):
                     return None
-                total += len(plan(spec['seconds'], continued=bool(spec.get('continue_from')))['blocks'])
+                total += len(plan(spec['seconds'], max_frames=single_frame_limit(spec),
+                                  continued=bool(spec.get('continue_from')))['blocks'])
                 if not spec.get('continue_from'):
                     return total
                 work = self.continued_work(spec)
@@ -1278,6 +1284,7 @@ class Jobs:
                 return graph, extra, node
             else:
                 payload = dict(node=node, prompt=graph, seconds=spec['seconds'],
+                               max_frames=single_frame_limit(spec),
                                client_id='agent:' + row['id'], extra_data=extra)
                 if row.get('editor'):
                     payload.pop('seconds')
@@ -1315,7 +1322,7 @@ class Jobs:
             if (any(b['state'] != 'done' and (b['after'] or b['before'])
                     for b in runner.records[row['chain_id']]['blocks']) if resume
                     else any(b['after'] for b in payload['blocks']) if row.get('editor')
-                    else bool(row['spec'].get('continue_from')) or not single_block(payload['seconds'])) and not self.continuation_ready():
+                    else bool(row['spec'].get('continue_from')) or not single_block(row['spec'])) and not self.continuation_ready():
                 raise continuation_unavailable()
             self.touch(row, chain_submission='creating', status='queued', queued_at=self.clock())
             from ..chain_runner import ChainBusy, ChainTooLong

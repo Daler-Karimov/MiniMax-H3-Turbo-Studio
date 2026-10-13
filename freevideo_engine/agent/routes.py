@@ -214,7 +214,7 @@ def capabilities(port, jobs):
 def plan(port, value, jobs=None):
     from ..two_pass import plan as sampling_plan
     from ..geometry import geometry
-    spec = specs.normalize(value)
+    spec = specs.normalize(value, port=port)
     result = dict(spec={k: v for k, v in spec.items() if k != 'depends_on'}, warnings=[])
     if spec['kind'] != 'generate' or spec.get('refine_from'):
         return result
@@ -226,7 +226,7 @@ def plan(port, value, jobs=None):
     if problems:
         raise specs.SpecError(problems)
     if jobs is not None:
-        jobs.require_continuation(spec['seconds'])
+        jobs.require_continuation(spec)
         if spec.get('continue_from') and not jobs.continuation_ready():
             from .jobs import continuation_unavailable
             raise continuation_unavailable()
@@ -243,7 +243,9 @@ def plan(port, value, jobs=None):
     if spec['width'] * spec['height'] > 2 * 1024 ** 2:
         result['warnings'].append('Above 2 MP takes much longer and needs more memory')
     from ..chain_plan import plan as chain_plan
-    result['chain_plan'] = chain_plan(spec['seconds'], continued=bool(spec.get('continue_from')))
+    from .length import single_frame_limit
+    result['chain_plan'] = chain_plan(spec['seconds'], max_frames=single_frame_limit(spec),
+                                     continued=bool(spec.get('continue_from')))
     from .forecast import generation_estimate
     result['estimate'], result['capabilities_revision'] = generation_estimate(port, spec, result['chain_plan'])
     return result

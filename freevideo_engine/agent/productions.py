@@ -360,7 +360,7 @@ class Productions:
                 continues=shot['continues'])
             if resolved['references']:
                 item['media'] = dict(references=deepcopy(resolved['references']))
-            estimate, revision = generation_estimate(self.jobs.port, spec.normalize(item))
+            estimate, revision = generation_estimate(self.jobs.port, spec.normalize(item, port=self.jobs.port))
             return dict(estimate, revision=revision)
         except Exception:  # Timing is optional; a forecast failure must not reject a film or job.
             return dict(seconds=None, basis=None, reason='unavailable')
@@ -375,7 +375,7 @@ class Productions:
                 return dict(seconds=None, basis=None, reason='no_matching_estimate')
             item = deepcopy(take['spec'])
             item.pop('continue_from', None)
-            normalized = spec.normalize(item)
+            normalized = spec.normalize(item, port=self.jobs.port)
             shapes.append([normalized[k] for k in ('width', 'height', 'frames')])
         current = next((j for j in state['joins'] if j['ref'] == state['current_join']), None)
         transition = current['transition'] if current else state['screenplay'].get('transition', 'cut')
