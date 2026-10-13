@@ -229,6 +229,12 @@ def torch_stack(name):
     return name in ('torch', 'torchvision', 'torchaudio') or name.startswith(('nvidia-', 'cuda-'))
 
 
+def environment_seeded(folder):
+    """An environment uv seeded with pip: the folder has one, as `uv venv --seed` leaves it."""
+    folder = Path(folder)
+    return any(folder.glob('Lib/site-packages/pip')) or any(folder.glob('lib/python*/site-packages/pip'))
+
+
 def environment_in_place(row, python_version):
     """An existing environment that only lacks ordinary packages: setup adds them beside the rest."""
     if not row.get('exists') or row.get('error'):
@@ -1333,8 +1339,9 @@ class Installer:
                 self.ui.end(key, success=success, detail=(getattr(progress, 'last_notice', None) or 'Log: ' + str(log))
                             if self.ui.verbose or not success else 'Ready')
         if child.returncode:
-            from .failure_details import setup_command_failure
-            raise RuntimeError(setup_command_failure(label, log, child.returncode))
+            from .failure_details import setup_command_failure, environment_python_removed
+            raise RuntimeError(environment_python_removed(args, getattr(self, 'pythons', {}).values())
+                               + setup_command_failure(label, log, child.returncode))
         return log
 
     def component_tasks(self, uv):
@@ -1359,8 +1366,25 @@ class Installer:
             pythons[name] = python
             writer = ('environment:' + name,)
             def environment(folder=venv, executable=python, label=name):
-                if not executable.exists():
-                    return self.packages(label + '-venv', [uv, 'venv', '--seed', '--python', self.versions['python'], folder])
+                if executable.exists() and environment_seeded(folder):
+                    return None
+                command = [uv, 'venv', '--seed', '--python', self.versions['python']]
+                # The Python file came back (restored from quarantine) without
+                # the seed packages: keep it and add them. Without the file, the
+                # folder is a leftover that uv replaces.
+                if executable.exists():
+                    command.append('--allow-existing')
+                elif folder.exists():
+                    command.append('--clear')
+                try:
+                    return self.packages(label + '-venv', [*command, folder])
+                except RuntimeError as error:
+                    from .failure_details import environment_python_removed
+                    # uv failed while the new interpreter was disappearing.
+                    removed = '' if executable.exists() else environment_python_removed([executable], [executable])
+                    if not removed:
+                        raise
+                    raise RuntimeError(removed + str(error)) from error
             task(name + '-venv', environment, ('python',), writer)
             command = [uv, 'pip', 'install', '--python', python, *spec['torch'], '-c', constraints_file(name, self.system)]
             family = 'torch-' + spec['cuda'] + '-' + spec['torch'][0].split('==')[1]

@@ -120,6 +120,8 @@ class Engine:
         self.cache = Path(cache)
         self.input_cache_dir = input_cache_dir
         self.closed = False
+        # (module, '_parameters' or '_buffers', name) moved to host by park().
+        self.parked = None
         self.offloader = None
         self.stream_weight_source = None
         self.stream_refiner_count = 0
@@ -889,9 +891,71 @@ class Engine:
         return {'seconds': time.perf_counter() - started, 'shape': list(text.shape),
                 'refiner_weights_released': True, 'offload': stats, 'cache_hit': False, 'cache_saved': saved, 'cache_note': note}
 
+    def device_tensors(self):
+        """The registered tensors this engine keeps on the GPU, or None.
+
+        None when two of them share storage or one is a view of a larger
+        storage: a per-tensor copy would duplicate that storage on its way back.
+        """
+        found, storages = [], set()
+        device = torch.device(self.device_backend.device).type
+        for module in self.transformer.modules():
+            for kind in ('_parameters', '_buffers'):
+                for name, tensor in getattr(module, kind).items():
+                    if tensor is None or tensor.device.type != device:
+                        continue
+                    storage = tensor.untyped_storage()
+                    if storage.data_ptr() in storages or storage.nbytes() != tensor.numel() * tensor.element_size():
+                        return None
+                    storages.add(storage.data_ptr())
+                    found.append((module, kind, name))
+        return found
+
+    @torch.no_grad()
+    def park(self):
+        """Move the weights this engine keeps on the GPU to ordinary host memory.
+
+        Streamed, pinned and mapped weights stay where they are, so the next
+        request with the same plan copies only these back instead of reading,
+        binding and pinning every block again. Copies are exact, so the output
+        is unchanged. Returns the bytes moved, or None when this engine cannot
+        be parked; the caller then releases it as before.
+        """
+        if self.closed or self.parked is not None:
+            return None
+        found = self.device_tensors()
+        if found is None:
+            return None
+        moved = 0
+        for module, kind, name in found:
+            tensor = getattr(module, kind)[name]
+            moved += tensor.numel() * tensor.element_size()
+            # .data keeps every reference to this tensor object valid, as
+            # Module.to does for parameters.
+            tensor.data = tensor.data.to('cpu')
+        self.parked = found
+        gc.collect()
+        self.device_backend.empty_cache()
+        return moved
+
+    @torch.no_grad()
+    def unpark(self):
+        """Copy parked weights back to the GPU; returns the bytes moved."""
+        if self.parked is None:
+            return 0
+        moved = 0
+        for module, kind, name in self.parked:
+            tensor = getattr(module, kind)[name]
+            moved += tensor.numel() * tensor.element_size()
+            tensor.data = tensor.data.to(self.device_backend.device)
+        self.parked = None
+        self.device_backend.synchronize()
+        return moved
+
     def close(self):
         if self.closed:
             return
+        self.parked = None
         if self.schedule_hook is not None:
             self.schedule_hook.remove()
         self.transformer = None

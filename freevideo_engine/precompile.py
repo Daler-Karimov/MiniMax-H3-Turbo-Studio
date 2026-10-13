@@ -201,9 +201,10 @@ def run(machine, *, environment=None, timeout=TIMEOUT_SECONDS, background=False,
     checkpoint()
     room = None
     if background:
-        from .background_room import DEFAULT_RAM_NEED, Room, recent_need
+        from .background_room import Room, compile_need
         room = Room(machine.get('gpu_uuid'), owner=owner,
-                    need_bytes=recent_need(history) if history is not None else DEFAULT_RAM_NEED)
+                    need_bytes=compile_need(previous, identity=identity,
+                        requested=json.loads(json.dumps(shapes)), inputs=receipt['inputs']))
         reason = room.start_reason()
         if reason:
             room.close()
@@ -353,6 +354,8 @@ def compile_shapes(machine, shapes, history, identity, receipt, environment, tim
     # receipt records it, so the next start does not compile it again.
     receipt['success'] = all(row.get('returncode') == 0 for row in receipt['shapes'])
     receipt['seconds'] = time.time() - receipt['started']
+    if room is not None:
+        receipt['host_memory'] = room.memory_result()
     if receipt['success']:
         mark(receipt['caches'], receipt['started'])
     save(root / 'precompile.json', receipt)
@@ -371,6 +374,10 @@ def compile_plan(receipt, shape, request, profile, index, folder, environment, d
         path = folder / ('request-%d.json' % index)
         save(path, request)
         env = inference_environment(environment, profile['inference_ram_budget_gb'] * 1e9)
+        if room is not None:
+            # Background work must not grow a pool of compiler heaps even
+            # when the generation profile has a generous RAM budget.
+            env['TORCHINDUCTOR_COMPILE_THREADS'] = '1'
         env.update(PYTORCH_ALLOC_CONF=profile['allocator_config'], PYTORCH_CUDA_ALLOC_CONF=profile['allocator_config'])
         log = folder / ('worker-%d.log' % index)
         returncode = watch_worker([sys.executable, '-m', 'freevideo_engine.precompile_worker', '--request', str(path)],
@@ -441,7 +448,9 @@ def watch_worker(command, env, descriptor, log, timeout, room):
     deadline = time.monotonic() + timeout
     try:
         while process.poll() is None:
-            checkpoint(room, memory.sample(process.pid) if room is not None else None)
+            # Include this supervisor's torch/conditioning heap and probe children,
+            # not just the active worker. This also credits only our mapped pages.
+            checkpoint(room, memory.sample(os.getpid()) if room is not None else None)
             if time.monotonic() > deadline:
                 raise subprocess.TimeoutExpired(command, timeout)
             try:
@@ -452,6 +461,15 @@ def watch_worker(command, env, descriptor, log, timeout, room):
         processes.stop(process, grace=1)
         raise
     return process.returncode
+
+
+def worker_options(options):
+    """No host weight retention for blocks that a compile never executes.
+
+    Keep every compute shape, GPU placement and arithmetic option. Streaming
+    profiles can then bind offloaded weights without a load-all/pinning pass.
+    """
+    return dict(options, pin_host_gb=0., pin_host_weights=False, preload_host=False)
 
 
 def zero_conditioning(folder, tokens):

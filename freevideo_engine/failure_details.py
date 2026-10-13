@@ -77,6 +77,20 @@ def setup_command_failure(label, log, exit_code):
     return '\n'.join(lines) + STEP_OUTPUT + output
 
 
+# Leads the error of a step that needed an environment's Python file after it
+# disappeared, e.g. while security software was holding it in quarantine.
+ENVIRONMENT_PYTHON_REMOVED = 'The Python file of the FreeVideo environment is missing'
+
+
+def environment_python_removed(args, pythons):
+    """The line that opens a failed step's error when it used an environment Python that is gone, or ''."""
+    used = {str(value) for value in args}
+    for python in pythons:
+        if str(python) in used and not io_path(python).exists():
+            return '%s: %s\n' % (ENVIRONMENT_PYTHON_REMOVED, python)
+    return ''
+
+
 # Checked before free space: freeing space cannot fix a disk that cannot hold the installation.
 PLACE_RULES = (
     (r'The installation folder is on a FAT32 disk', 'disk-format',
@@ -195,6 +209,26 @@ def _stopped_on_missing_module(text):
         and not any('for custom nodes' in line for line in lines[errors[-1] + 1:])
 
 
+def _without_ready_curl_diagnostics(text):
+    """Ignore successful tool checks only when matching failure guidance.
+
+    Candidate failures can be normal (e.g. Sysnative from a 64-bit process).
+    The complete diagnostics stay in the caller's retained and copied output.
+    """
+    lines = []
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith('{'):
+            try:
+                report = json.loads(line)
+            except ValueError:
+                pass
+            else:
+                if isinstance(report, dict) and report.get('event') == 'curl_diagnostic' and report.get('status') == 'ready':
+                    continue
+        lines.append(line)
+    return ''.join(lines)
+
+
 def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_repair=False, repairs_comfy=False,
                      unavailable='none'):
     """Short guidance for known failures; callers retain the full error separately.
@@ -207,11 +241,11 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
     """
     if not value:
         return dict(title='', detail='', action='', kind='')
+    text = _without_ready_curl_diagnostics(str(value))
     from .offline_errors import alias_failure, guidance
-    if alias_failure(value):
+    if alias_failure(text):
         return dict(title=guidance('title', zh), detail=guidance('runtime-alias', zh),
                     action='', kind='runtime-alias')
-    text = str(value)
     summary = text.partition(STEP_OUTPUT)[0]
     from .comfy_launcher_runtime import OlderLauncher
     # Controller and offline Importer retain strings; direct callers keep the exception.
@@ -342,6 +376,11 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('The browser has not opened FreeVideo', '浏览器还没有打开 FreeVideo'),
          ('Click “Open FreeVideo”. If the page stays blank or keeps loading, open it in a current Chrome or Edge.',
           '请点击“打开 FreeVideo”。如果页面空白或一直在加载，请用最新版 Chrome 或 Edge 打开。')),
+        (r'NVIDIA driver/nvidia-smi is missing\.', 'gpu-driver-missing',
+         ('No NVIDIA driver was found', '未找到 NVIDIA 显卡驱动'),
+         ('If this computer has an NVIDIA graphics card, install NVIDIA driver 580 or newer, '
+          'restart the computer, then click Retry installation.',
+          '如果这台电脑有 NVIDIA 显卡，请安装 580 或更新版本的 NVIDIA 显卡驱动，重启电脑后点击“重试安装”。')),
         (r'CUDA_ARCH_UNSUPPORTED', 'gpu-architecture',
          ('This GPU lacks the required compute support', '这张显卡不满足当前计算要求'),
          ('The detected GPU and compute capability are shown below. The CUDA runtime requires native BF16 computation (SM80 or newer). Use a compatible GPU; changing the driver does not change its hardware capability.',
@@ -394,6 +433,11 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          _joined(CHANGED_WHY['files'], CHANGED_REPAIR)),
         (r'The installation plan changed\. Detect configuration again', 'plan-changed', CHANGED_TITLE,
          _joined(CHANGED_WHY['other'], CHANGED_REPAIR)),
+        (ENVIRONMENT_PYTHON_REMOVED, 'environment-python-removed',
+         ('A Python file is missing', '一个 Python 文件不见了'),
+         ('It may have been quarantined by security software. Restore the file or allow the FreeVideo folder, '
+          'then click Retry installation.',
+          '可能被安全软件隔离了。恢复这个文件或允许 FreeVideo 所在的文件夹后，点“重试安装”。')),
         (r'PermissionError|Access is denied|Permission denied|WinError 5\b', 'permission',
          ('This folder is not writable', '无法写入这个目录'),
          ('Choose an installation folder you can write to, then retry.', '选择有写入权限的安装目录后重试。')),

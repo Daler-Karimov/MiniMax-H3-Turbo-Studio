@@ -65,6 +65,9 @@ def device_memory_report(budget_bytes, allocator_limit_bytes=None, *, reserve_by
 
 
 def generate(request, resident=None):
+    def released(engine):
+        # A parked engine (ModelBank.park) holds no GPU weights either.
+        return engine.closed or type(getattr(engine, 'parked', None)) is list
     torch.set_num_threads(8)
     started = time.perf_counter()
     prefetch_compiler_keys()
@@ -136,6 +139,10 @@ def generate(request, resident=None):
             # The pass cache grows only into memory no other process holds.
             refresh_budget.device_headroom = live_budget.device_headroom
         if resident is not None:
+            # Idle models stay beside sampling only where the device holds both,
+            # with this request's growth reserve left over.
+            resident.device_free = live_budget.device_free if live_budget is not None else None
+            resident.device_reserve = request.get('gpu_reserve_bytes', 0) if live_budget is not None else 0
             limit = metrics['device_memory'].get('effective_allocator_limit_bytes')
             if limit is not None:
                 resident.gpu_budget = min(resident.gpu_budget, limit)
@@ -227,7 +234,7 @@ def generate(request, resident=None):
                 resident.decoder_room(decoder, canvas)
             latents, audio = latents.to('cuda'), audio.to('cuda')
             metrics['latent_reload_seconds'] = time.perf_counter() - tick
-            metrics['transformer_released_before_decode'] = resident is None or 'engine' not in resident.entries
+            metrics['transformer_released_before_decode'] = resident is None or not resident.engine_on_gpu()
         else:
             tick = time.perf_counter()
             # Windows charges the allocator room still to be reserved to commit;
@@ -420,7 +427,7 @@ def generate(request, resident=None):
                                     lift_canvas['width'], lift_canvas['height'], **kwargs)
                             except Exception as error:
                                 from .adaptive import classify_failure
-                                if classify_failure(error)['kind'] != 'gpu_oom' or (engine.closed and memory_saving):
+                                if classify_failure(error)['kind'] != 'gpu_oom' or (released(engine) and memory_saving):
                                     raise
                                 from .diagnostic_resources import error_details
                                 upscale_failures.append(error_details(error))
@@ -429,7 +436,7 @@ def generate(request, resident=None):
                                 # Leave the failed call's traceback before retrying so
                                 # its tensors no longer occupy the allocator. Do not
                                 # sample again or change the temporal normalization.
-                                if not engine.closed:
+                                if not released(engine):
                                     if resident is not None:
                                         resident.drop('engine', 'Latent upscale allocation needs additional workspace')
                                     else:
@@ -455,9 +462,10 @@ def generate(request, resident=None):
                                 allocation_failures=upscale_failures,
                                 torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                                 torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),
-                                transformer_reloaded=engine.closed)
+                                transformer_reloaded=released(engine))
                             metrics['latent_upscale'] = lifted
-                            if engine.closed:
+                            # A parked engine is reacquired too: its GPU weights come back.
+                            if released(engine):
                                 tick = time.perf_counter()
                                 engine, _ = resident.engine(request, factory) if resident is not None else (factory(), False)
                                 reload_seconds = time.perf_counter() - tick
@@ -535,7 +543,7 @@ def generate(request, resident=None):
                 resident.decoder_room(decoder, canvas)
             else:
                 engine.close()
-            metrics['transformer_released_before_decode'] = engine.closed
+            metrics['transformer_released_before_decode'] = released(engine)
             # Keep the bounded file reader alive through transformer teardown.
             # Releasing DiT mappings is independent of the decoder checkpoint,
             # so both operations can run concurrently and give slow storage
@@ -552,7 +560,7 @@ def generate(request, resident=None):
         if live_budget is not None:
             refresh_budget('decode')
             if engine is not None:
-                metrics['transformer_released_before_decode'] = engine.closed
+                metrics['transformer_released_before_decode'] = released(engine)
         if resident is not None:
             metrics['resident_admission'] = list(resident.decisions)
         save(request['metrics'], metrics)
@@ -601,8 +609,9 @@ def generate(request, resident=None):
             from .resident_models import key
             if not resume:
                 from .two_pass_metrics import sampling_workspace_peak
-                resident.observe_peak('engine', resident.engine_key(request),
-                    sampling_workspace_peak(sampled) - foreign_sample_bytes)
+                # A preview's first pass is kept apart from the complete request's peak.
+                resident.observe_peak('engine_preview' if request.get('preview') is True else 'engine',
+                    resident.engine_key(request), sampling_workspace_peak(sampled) - foreign_sample_bytes)
             resident.observe_peak('decode', key(dict(options=decoder, canvas=canvas)), torch.cuda.max_memory_allocated() - foreign_decode_bytes)
             metrics['resident_models'] = resident.snapshot()
     except BaseException as error:
@@ -627,6 +636,8 @@ def generate(request, resident=None):
         save(request['metrics'], metrics)
         raise
     finally:
+        if resident is not None:
+            resident.device_free, resident.device_reserve = None, 0
         if live_budget is not None:
             live_budget.close()
         if resident is not None:
