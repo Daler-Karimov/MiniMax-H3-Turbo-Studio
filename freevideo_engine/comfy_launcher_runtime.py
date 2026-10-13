@@ -177,9 +177,8 @@ def host_repair_pending(python):
     return bool(python) and (io_path(python).parent.parent / 'freevideo-host-repair.json').exists()
 
 
-def managed_python(engine, comfy):
-    """Find our previously completed frontend without requiring its full disk budget again."""
-    from .comfy_host import NODE_PACKAGES
+def _managed_environment(engine, comfy):
+    """(python, recorded identity) of our previously completed frontend, or None."""
     engine, comfy = io_path(engine), io_path(comfy)
     try:
         record = json.loads((engine / 'launcher/comfy-host.json').read_text(encoding='utf-8'))
@@ -188,16 +187,53 @@ def managed_python(engine, comfy):
         machine = json.loads((engine / 'machine.json').read_text(encoding='utf-8'))
         if (identity['comfy'] != plain(comfy) or identity['engine_python'] != machine['python']
                 or identity['requirements'] != hashlib.sha256((comfy / 'requirements.txt').read_bytes()).hexdigest()
-                # Packages our nodes need beyond ComfyUI's own, added since the environment was made.
-                or identity.get('nodes', []) != list(NODE_PACKAGES)
                 or environment.resolve().parent != (engine / 'envs').resolve()
                 or python != environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
                 or json.loads((environment / 'freevideo-host.json').read_text(encoding='utf-8')) != identity
                 or not python.is_file()):
             return None
-        return plain(python)
+        return plain(python), identity
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def managed_python(engine, comfy):
+    """Find our previously completed frontend without requiring its full disk budget again.
+
+    Packages our own nodes gained since (node_packages_pending) do not make it unusable:
+    ComfyUI and generation run without them, and only what needs them is not offered.
+    """
+    found = _managed_environment(engine, comfy)
+    return found and found[0]
+
+
+NODE_PACKAGES_RETRY = 6 * 3600
+
+
+def node_packages_pending(engine, comfy, *, now=None):
+    """Our frontend runs, but lacks packages our nodes gained in an update, and it is time to try adding them.
+
+    A failed attempt (offline, say) is tried again after NODE_PACKAGES_RETRY, not at every start.
+    """
+    from .comfy_host import NODE_PACKAGES
+    found = _managed_environment(engine, comfy)
+    if not found or found[1].get('nodes', []) == list(NODE_PACKAGES):
+        return False
+    try:
+        failed = json.loads((io_path(engine) / 'launcher/node-packages.json').read_text(encoding='utf-8'))
+        recent = failed['nodes'] == list(NODE_PACKAGES) and 0 <= (now or time.time()) - failed['failed'] < NODE_PACKAGES_RETRY
+    except (OSError, ValueError, KeyError, TypeError):
+        recent = False
+    return not recent
+
+
+def node_packages_failed(engine):
+    """Remember that adding the node packages failed just now; the rest of FreeVideo carries on."""
+    from .comfy_host import NODE_PACKAGES
+    try:
+        save(io_path(engine) / 'launcher/node-packages.json', dict(nodes=list(NODE_PACKAGES), failed=time.time()))
+    except OSError:
+        pass
 
 
 @plain_errors
@@ -549,7 +585,8 @@ class Controller:
         # Anything that installs into this environment stops our idle server first
         # and never runs beside a job, including a host repair resumed here.
         if (repair or host_repair_pending(selected.get('python'))
-                or managed_python(Path(selected['engine']), Path(selected['root'])) is None):
+                or managed_python(Path(selected['engine']), Path(selected['root'])) is None
+                or node_packages_pending(Path(selected['engine']), Path(selected['root']))):
             self._stop_server_for_setup(selected['url'])
         self.setup.state = dict(status='running', action='comfy-host')
         self.setup.events.reset()
@@ -898,9 +935,9 @@ class Controller:
         shield_engine(selected['engine'])
         url = selected['url']
         frontend_error = None
-        if (selected.get('python') and managed_frontend(selected)
-                and (managed_python(Path(selected['engine']), Path(selected['root'])) is None
-                     or host_repair_pending(selected['python']))):
+        managed = bool(selected.get('python') and managed_frontend(selected))
+        if managed and (managed_python(Path(selected['engine']), Path(selected['root'])) is None
+                        or host_repair_pending(selected['python'])):
             # Requirements changed, or a previous host repair was interrupted.
             self.sections = [('comfy', 5), ('open', 1)]
             self.stage('comfy', label='Update ComfyUI packages')
@@ -911,6 +948,19 @@ class Controller:
                     raise
                 # Offline, say: the previous environment may still run this ComfyUI.
                 frontend_error = str(error)
+        elif (managed and node_packages_pending(Path(selected['engine']), Path(selected['root']))
+              # Never beside a running job: adding the package stops our idle server first.
+              and not matches_server(server_info(url), selected['root'], selected['engine'], selected['source'])):
+            # An update gave our nodes a package. Without it everything but what needs it still works,
+            # so a failure (offline, say) is not an error here and is tried again later.
+            self.sections = [('comfy', 5), ('open', 1)]
+            self.stage('comfy', label='Update ComfyUI packages')
+            try:
+                self._prepare_frontend(selected)
+            except Exception:
+                if self.cancelled.is_set():
+                    raise
+                node_packages_failed(Path(selected['engine']))
         self.stage('open', label='Open ComfyUI')
         info = server_info(url)
         if matches_server(info, selected['root'], selected['engine'], selected['source']):

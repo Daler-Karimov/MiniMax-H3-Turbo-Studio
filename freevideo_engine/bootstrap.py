@@ -190,7 +190,7 @@ def dependency_status(root, layout='unified', system=None):
         'engine': ['torch', 'torchvision', 'triton', 'transformers', 'accelerate', 'peft', 'safetensors',
                    'huggingface-hub', 'omegaconf', 'pyyaml', 'einops', 'numpy', 'pillow', 'av',
                    'psutil', 'tqdm', 'importlib-metadata', 'requests', 'httpx', 'socksio', 'pysocks',
-                   'modelscope-hub', 'hf-xet', 'quickjs', 'sageattention', 'diffusers', 'freevideo-engine'],
+                   'modelscope-hub', 'hf-xet', 'sageattention', 'diffusers', 'freevideo-engine'],
         'encoder': ['torch', 'torchvision', 'torchaudio', 'freevideo-engine'] +
                    [s.strip() for s in (SOURCE / 'constraints/encoder-runtime.txt').read_text(encoding='utf-8').splitlines()
                     if s.strip() and not s.startswith('#')]}

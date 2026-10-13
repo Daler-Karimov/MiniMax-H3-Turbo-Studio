@@ -15,7 +15,6 @@ httpx[socks]
 requests[socks]
 importlib-metadata
 packaging
-quickjs==1.19.4
 wheel
 setuptools
 pip

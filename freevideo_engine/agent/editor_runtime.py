@@ -335,8 +335,12 @@ _RUNTIME_LOCK = threading.Lock()
 
 def available():
     """Whether this process can run the editor rules (project and image edits)."""
-    import importlib.util
-    return importlib.util.find_spec('quickjs') is not None
+    try:
+        import quickjs  # noqa: F401
+    except Exception:
+        # Not installed (an update could not add it), or installed and its library does not load here.
+        return False
+    return True
 
 
 def runtime():

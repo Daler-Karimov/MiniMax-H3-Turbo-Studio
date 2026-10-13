@@ -169,13 +169,28 @@ def _prepare(root, comfy, machine, run, download, repair=False):
     # The receipt records the dependency contract, not that every package is
     # still there: uv only checks versions, so repair checks the files too.
     try:
-        recorded = python.is_file() and json.loads(receipt.read_text(encoding='utf-8')) == identity
+        saved = json.loads(receipt.read_text(encoding='utf-8')) if python.is_file() else None
     except (OSError, ValueError):
-        recorded = False
-    if repair or not recorded:
+        saved = None
+    recorded = saved == identity
+    uv = root / 'tools' / ('uv.exe' if os.name == 'nt' else 'uv' if sys.platform == 'darwin' else 'uv-x86_64-unknown-linux-gnu/uv')
+    if not repair and not recorded and isinstance(saved, dict) and dict(saved, nodes=identity['nodes']) == identity:
+        # An update gave our own nodes a package. Add only that: everything this ComfyUI
+        # already runs on stays as it is, so a failure here leaves a working environment.
+        if not uv.is_file():
+            raise ValueError('The engine download tool is missing. Run engine repair first.')
+        ui.phase('Install ComfyUI packages', stage_offset + 2, stage_total)
+        try:
+            network.package_command(plan, 'pypi', lambda environment, _: execute(
+                [uv, 'pip', 'install', '--python', python, *NODE_PACKAGES], environment, 'Install ComfyUI packages'), env)
+        except network.PackageSourcesError as error:
+            error.log_files = list(package_logs)
+            error.args = (str(error) + '. Attempt logs: ' + ', '.join(package_logs),)
+            raise
+        save(receipt, identity)
+    elif repair or not recorded:
         if repair and not repair_marker.exists():
             save(repair_marker, dict(started=time.time()))
-        uv = root / 'tools' / ('uv.exe' if os.name == 'nt' else 'uv' if sys.platform == 'darwin' else 'uv-x86_64-unknown-linux-gnu/uv')
         if not uv.is_file():
             raise ValueError('The engine download tool is missing. Run engine repair first.')
         if not python.is_file():
