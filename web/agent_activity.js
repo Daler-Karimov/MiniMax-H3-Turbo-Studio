@@ -32,7 +32,8 @@ const left = (s, t) => s >= 60 ? t(`About ${Math.ceil(s / 60)} min`, `约 ${Math
 // The engine's phases in the reader's language.
 function phaseText(p, t) {
     const step = p.step;
-    // The first step is still getting ready: the line does not count from zero.
+    // The first step is still getting ready: the line does not count from zero. A row here does not know which
+    // part of a long video it is on, and a later part loads nothing, so it does not say the model is loading.
     if (p.phase === 'sampling' && step?.total) return step.done >= 1 ? t(`Step ${step.done} / ${step.total}`, `生成 ${step.done} / ${step.total}`) : t('Preparing', '准备中');
     return {encoding: t('Reading prompt and media', '读取提示词和素材'), load: t('Loading the model', '加载模型'),
         decode: t('Saving video and audio', '保存视频与音频'), starting: t('Starting', '启动中'),

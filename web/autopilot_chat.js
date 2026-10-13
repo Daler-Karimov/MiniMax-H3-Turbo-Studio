@@ -22,29 +22,50 @@ export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(second
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 export const jobName = (job, t) => job.label || t('Video', '视频');
 export const jobFraction = job => Math.max(0, Math.min(1, Number(job.progress?.fraction) || 0));
-// What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule. While the
-// engine has no timing for what it is doing (a model loading for the first time, a video in several parts), the
-// level still rises over the seconds the reported fraction has stood (`still`): at the pace of the time the engine
-// said is left, slowing down, and by no more than a quarter of what remains.
-const DRIFT = .25;
-export function jobEstimate(job, age, still = age) {
-    const p = job.progress || {}, e = p.estimate, overall = e?.overall, left = p.remaining_seconds;
-    const sent = overall ? estimatedFraction(e, overall, age, age) : null;
-    if (overall?.estimated === true && overall.phase_weight > 0) return sent ?? jobFraction(job);
-    const base = Math.max(jobFraction(job), sent ?? 0);
-    return left > 0 ? base + (1 - base) * DRIFT * (1 - Math.exp(-Math.max(0, still) / (DRIFT * left))) : base;
+// What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule.
+export function jobEstimate(job, age) {
+    const e = job.progress?.estimate, sent = e?.overall ? estimatedFraction(e, e.overall, age, age) : null;
+    return Math.max(jobFraction(job), sent ?? 0);
+}
+// The level a job shows, given the engine's number (`base`), the time it says is left and the clock. The engine's
+// number can stand for a long while: a model loading for the first time runs far past the time the engine gave it,
+// and a video in several parts has no timing at all. While it stands the level still rises, at the pace of the time
+// left, slowing down, and by no more than a quarter of what remains. What was added is kept when the number moves
+// again: the rest of the way is drawn shorter, so the level neither waits nor goes back, and is full at the end.
+const DRIFT = .25, RISE = .0005;
+export const newLevel = () => ({value: 0, top: null, since: 0, scale: 1});
+export function jobLevel(row, base, left, time) {
+    if (row.top === null || base > row.top + RISE) {
+        if (row.top !== null && row.top < 1) row.scale = (1 - row.value) / (1 - row.top);
+        row.top = base; row.since = time;
+    }
+    const level = 1 - row.scale * (1 - Math.max(base, row.top));
+    const more = left > 0 ? (1 - level) * DRIFT * (1 - Math.exp(-Math.max(0, time - row.since) / (DRIFT * left))) : 0;
+    return row.value = Math.max(row.value, Math.min(.99, level + more));
 }
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
+const SAVING = ['decode', 'finishing', 'assembling'], stepped = p => p.phase === 'sampling' && p.step?.total && p.step.done >= 1;
 // The one line that says where a job is. No step count is written unless the engine gave one.
 export function jobLine(job, t) {
     const p = job.progress || {};
     if (job.status !== 'running') return t('Queued', '排队中');
-    if (p.phase === 'sampling' && p.step?.total && p.step.done >= 1) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
-    if (['decode', 'finishing', 'assembling'].includes(p.phase)) return t('Saving', '保存中');
+    if (stepped(p)) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
+    if (SAVING.includes(p.phase)) return t('Saving', '保存中');
     if (p.phase === 'encoding') return t('Reading the prompt', '读取提示词');
-    if (['load', 'loading'].includes(p.phase)) return t('Loading the model', '加载模型');
+    // Before the first step of the first part the model is still settling in: the line does not turn back to "Preparing".
+    if (['load', 'loading'].includes(p.phase) || p.phase === 'sampling' && !(p.block?.done > 0)) return t('Loading the model', '加载模型');
     return t('Preparing', '准备中');
+}
+// The line a card shows. After the last step, and again after saving, the engine has a moment with no step and no
+// stage to report: a card that has counted steps or said "Saving" for a part keeps that line until there is a newer
+// one, and does not go back to the lines from before the first step. `said` is the card's own memory.
+export function cardLine(said, job, t) {
+    const p = job.progress || {}, part = p.block?.index ?? 0;
+    if (job.status !== 'running' || said.part !== part) said.last = null;
+    said.part = part;
+    if (job.status === 'running' && (stepped(p) || SAVING.includes(p.phase))) said.last = job;
+    return jobLine(said.last || job, t);
 }
 export function jobMeta(job, t) {
     const parts = [];
@@ -110,14 +131,14 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     function fractionOf(job) {
         const p = job.progress || {}, {age_seconds: sent, ...sample} = p.estimate || {fraction: p.fraction};
         const key = JSON.stringify(sample), time = performance.now() / 1000;
+        // A job that stopped or failed and is tried again starts from the beginning, not from where the last try got to.
+        if (job.status !== 'running' && job.status !== 'succeeded') levels.delete(job.id);
         let row = levels.get(job.id);
-        if (!row) levels.set(job.id, row = {key: null, at: 0, job: null, value: 0, raw: null, since: time});
+        if (!row) levels.set(job.id, row = {key: null, at: 0, job: null, level: newLevel()});
         // remaining_seconds counts down between samples; the one that came with the sample is the one to move by.
         if (row.key !== key) { row.key = key; row.at = time - (sent > 0 ? sent : 0); row.job = job; }
-        // A loading model sends its own counts on and on while the fraction stands: that standing time is its own clock.
-        if (row.raw !== p.fraction) { row.raw = p.fraction; row.since = time; }
-        if (job.status === 'running') row.value = Math.max(row.value, Math.min(.99, jobEstimate(row.job, time - row.at, time - row.since)));
-        return row.value;
+        if (job.status === 'running') jobLevel(row.level, jobEstimate(row.job, time - row.at), row.job.progress?.remaining_seconds, time);
+        return row.level.value;
     }
     // The time left each job shows, by the creation panel's rule: never raised, and gone once its last minute has passed.
     const times = new Map();
@@ -160,6 +181,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             poll();
         });
         foot.append(left, stop); info.append(head, middle, foot); item.replaceChildren(box, info);
+        const said = {};
         // The number rides on the water, and goes under the line once there is no room left above it.
         const level = next => {
             const fraction = fractionOf(next);
@@ -180,8 +202,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             cells.forEach((value, index) => parts.children[index].style.setProperty('--w', `${value * 100}%`));
             parts.hidden = !cells.length;
             const block = next.progress?.block;
-            part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : jobLine(next, t);
-            step.textContent = cells.length ? jobLine(next, t) : '';
+            const where = cardLine(said, next, t);
+            part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : where;
+            step.textContent = cells.length ? where : '';
             const going = stopping.has(next.id);
             stop.disabled = going; stop.textContent = going ? t('Stopping', '正在停止') : t('Stop', '停止');
             stop.setAttribute('aria-label', t('Stop ', '停止 ') + jobName(next, t));

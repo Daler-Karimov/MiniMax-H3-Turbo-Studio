@@ -70,5 +70,5 @@
 .fv-studio .fv-chat-send:disabled{opacity:1;background:#22344a;color:#9fb3c8}
 .fv-studio .fv-chat-send:focus-visible{outline-offset:2px}
 @media(max-width:480px){.fv-chat{padding:0 14px 14px}.fv-chat-scroll{margin:0 -14px;padding:16px 14px 2px}.fv-chat-hello{padding-top:32px}.fv-chat-job{max-width:none;gap:12px}.fv-chat-confirm{max-width:none}
- .fv-chat-preview,.fv-chat-preview[data-shape=wide]{width:98px}.fv-chat-percent{font-size:22px}.fv-studio.fv-autopilot .fv-chat-input textarea{font-size:16px}.fv-studio .fv-chat-down{right:14px;bottom:84px}}
+ .fv-chat-preview,.fv-chat-preview[data-shape=wide]{width:98px}.fv-chat-length{display:none}.fv-chat-percent{font-size:22px}.fv-studio.fv-autopilot .fv-chat-input textarea{font-size:16px}.fv-studio .fv-chat-down{right:14px;bottom:84px}}
 @media(prefers-reduced-motion:reduce){.fv-chat-water,.fv-chat-percent,.fv-chat-parts>i::after{transition:none}.fv-chat-water::after,.fv-chat-dots>i,.fv-chat-preview>img{animation:none}}
