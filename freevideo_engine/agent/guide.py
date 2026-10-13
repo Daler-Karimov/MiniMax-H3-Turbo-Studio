@@ -155,6 +155,8 @@ RULES = [
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
+    'When a video is done, tell the user it is in "Creations" in FreeVideo, in plain words. Do not read out job, library '
+    'or project ids; give a file path only when the user asks for one.',
     'Ask the user only when you would have to change the content or style they asked for, when the work will '
     'take clearly longer than you told them at the start, or when you would have to delete or overwrite their '
     'own works or edits.',
@@ -184,6 +186,8 @@ RULES_ZH = [
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
+    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“作品”里。不要念任务、作品或剪辑的编号；'
+    '文件路径在用户问起时再给。',
     '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
     '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
     '只在 FreeVideo 内工作，不要改动本机的其他文件，不要撤销用户做的修改。'
