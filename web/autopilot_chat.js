@@ -1,6 +1,7 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
+import { estimatedFraction } from './generation_progress.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -15,19 +16,27 @@ const press = (cls, text, action) => { const b = el('button', cls, text); b.type
 
 const WORKING = ['running', 'queued', 'waiting'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
-const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Writing the prompt', '润色提示词']};
+const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Polishing', '润色中']};
 
 export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 export const jobName = (job, t) => job.label || t('Video', '视频');
 export const jobFraction = job => Math.max(0, Math.min(1, Number(job.progress?.fraction) || 0));
+// What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule. Without the
+// engine's estimate the reported fraction moves toward the end over the time the engine said is left.
+export function jobEstimate(job, age) {
+    const p = job.progress || {}, e = p.estimate;
+    if (e?.overall) return estimatedFraction(e, e.overall, age, age) ?? jobFraction(job);
+    const raw = jobFraction(job);
+    return p.remaining_seconds > 0 ? raw + (1 - raw) * Math.min(.9, Math.max(0, age) / p.remaining_seconds) : raw;
+}
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
 // The one line that says where a job is. No step count is written unless the engine gave one.
 export function jobLine(job, t) {
     const p = job.progress || {};
     if (job.status !== 'running') return t('Queued', '排队中');
-    if (p.phase === 'sampling' && p.step?.total) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
+    if (p.phase === 'sampling' && p.step?.total && p.step.done >= 1) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
     if (['decode', 'finishing', 'assembling'].includes(p.phase)) return t('Saving', '保存中');
     return t('Preparing', '准备中');
 }
@@ -86,7 +95,22 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     form.append(input, sendButton); scroller.append(log); element.append(scroller, down, form);
 
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
+    // Whether the reader is at the newest entry. It holds while the conversation is out of sight, which forgets where it was scrolled.
+    let pinned = true;
+    const closed = new AbortController();
     const nodes = new Map(), answers = new Map(), stopping = new Set();
+    // The fraction each job shows: the estimate, never backwards, short of 100% until the video is saved.
+    const levels = new Map();
+    function fractionOf(job) {
+        const p = job.progress || {}, {age_seconds: sent, ...sample} = p.estimate || {fraction: p.fraction};
+        const key = JSON.stringify(sample), time = performance.now() / 1000;
+        let row = levels.get(job.id);
+        if (!row) levels.set(job.id, row = {key: null, at: 0, job: null, value: 0});
+        // remaining_seconds counts down between samples; the one that came with the sample is the one to move by.
+        if (row.key !== key) { row.key = key; row.at = time - (sent > 0 ? sent : 0); row.job = job; }
+        if (job.status === 'running') row.value = Math.max(row.value, Math.min(.99, jobEstimate(row.job, time - row.at)));
+        return row.value;
+    }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
 
     // ---- one entry of the conversation each ----
@@ -112,9 +136,18 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             poll();
         });
         foot.append(left, stop); info.append(head, middle, foot); item.replaceChildren(box, info);
+        // The number rides on the water, and goes under the line once there is no room left above it.
+        const level = next => {
+            const fraction = fractionOf(next);
+            box.style.setProperty('--level', `${fraction * 100}%`);
+            percent.textContent = next.status === 'running' && fraction >= .01 ? `${Math.floor(fraction * 100)}%` : '';
+            const high = box.clientHeight;
+            box.dataset.under = String(high > 0 && high * (1 - fraction) < percent.offsetHeight + 10);
+        };
+        item.tick = () => level(state.jobs[job.id] || job);
         return next => {
-            const fraction = jobFraction(next), cells = jobParts(next), queued = next.status !== 'running';
-            water.style.height = `${fraction * 100}%`; percent.textContent = queued ? '' : `${Math.round(fraction * 100)}%`;
+            const cells = jobParts(next), queued = next.status !== 'running';
+            level(next);
             name.textContent = jobName(next, t); meta.textContent = jobMeta(next, t); meta.hidden = !meta.textContent;
             while (parts.children.length > cells.length) parts.lastChild.remove();
             while (parts.children.length < cells.length) parts.append(el('i'));
@@ -266,7 +299,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (tail?.type !== 'job' && tail?.type !== 'confirm' && (pending.length || tail?.role === 'user') && state.agent.connected === true
             && (state.agent.listening !== false || tail.taken === true)) wanted.push(['dots', 'dots', null]);
 
-        const stick = follow || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+        const stick = follow || pinned;
         const before = log.children.length, keep = new Set(wanted.map(([key]) => key));
         for (const [key, node] of nodes) if (!keep.has(key)) { node.element.remove(); nodes.delete(key); }
         wanted.forEach(([key, kind, value, extra], index) => {
@@ -279,13 +312,18 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         input.disabled = state.agent.connected !== true;
         input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to keep listening', '回到 Agent 那边让它继续') : t('Message the agent…', '对 Agent 说…');
         sendButton.disabled = !sendable || !input.value.trim();
-        if (stick) { scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
+        if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
         else if (log.children.length > before) down.hidden = false;
     }
-    scroller.addEventListener('scroll', () => { if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48) down.hidden = true; }, {passive: true});
+    scroller.addEventListener('scroll', () => {
+        if (!scroller.clientHeight) return;
+        pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+        if (pinned) down.hidden = true;
+    }, {passive: true});
 
     function report() {
-        changed({known, agent: state.agent, current: state.current ? state.jobs[state.current] || null : null, active: state.active,
+        const current = state.current ? state.jobs[state.current] || null : null;
+        changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, active: state.active,
             any: state.items.size > 0 || pending.length > 0});
     }
     async function send(text) {
@@ -330,7 +368,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         let again = false;
         try {
             const after = state.session ? state.last : 0;
-            const response = await agentGet(api, '/freevideo/agent/chat' + (after ? `?after=${after}` : ''));
+            const response = await agentGet(api, '/freevideo/agent/chat' + (after ? `?after=${after}` : ''), {signal: closed.signal});
             if (stopped) return;
             if (response.ok) {
                 const data = await response.json();
@@ -345,13 +383,24 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         finally { busy = false; }
         if (stopped) return;
         if (again) return poll();
-        known = true; render(); report();
+        known = true;
+        // The next read is booked before the page hears of this one, so the page's sync() does not start another.
         const idle = state.agent.connected !== true && !state.active;
         timer = setTimeout(poll, (idle ? Math.max(interval, 3000) : interval) * Math.min(4, 1 + failures));
+        render(); report();
     }
+    // Between reads the estimate keeps moving, on the cards and in the page's header alike.
+    const moving = setInterval(() => {
+        if (!active() || !Object.values(state.jobs).some(job => job.status === 'running')) return;
+        for (const item of log.children) item.tick?.();
+        report();
+    }, 250);
     const visible = () => { if (!document.hidden) sync(); };
     document.addEventListener('visibilitychange', visible);
-    function sync() { if (active() && !timer && !busy) poll(); }
+    function sync() {
+        if (pinned) scroller.scrollTop = scroller.scrollHeight;
+        if (active() && !timer && !busy) poll();
+    }
     render();
     return {element, input, sync, refresh: poll,
         scrollToJob(id) { log.querySelector(`[data-job="${CSS.escape(id)}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'}); },
@@ -361,5 +410,5 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             await Promise.allSettled(ids.map(id => agentPost(api, '/freevideo/agent/activity/cancel', {id})));
             poll();
         },
-        stop() { stopped = true; clearTimeout(timer); timer = null; document.removeEventListener('visibilitychange', visible); log.querySelectorAll('video').forEach(video => video.pause()); }};
+        stop() { stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null; document.removeEventListener('visibilitychange', visible); log.querySelectorAll('video').forEach(video => video.pause()); }};
 }

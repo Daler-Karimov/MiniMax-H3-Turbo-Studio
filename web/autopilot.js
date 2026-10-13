@@ -1,7 +1,7 @@
 // The Agent's own page, beside the studio and the editing view: the card that connects one, then the conversation with it.
 import { api } from '../../scripts/api.js';
 import { agentConnectCard, connectionLabel } from './agent_connect.js';
-import { about, agentChat, jobFraction, jobName } from './autopilot_chat.js';
+import { about, agentChat, jobName } from './autopilot_chat.js';
 import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
 import { openSetup } from './setup.js';
@@ -46,7 +46,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
     const closed = () => dialog.open ? new Promise(done => { dialog.addEventListener('close', done, {once: true}); closeDialog(dialog); }) : null;
     const chat = agentChat(t, api, {shown: inSight,
         // A finished video opens as its work in Creations. Continuing it there belongs to the studio, so this page gives way first.
-        open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to Autopilot', '返回 AI 全自动'),
+        open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
             extend: async record => { await closed(); return extendVideo(record, node); }}),
         edit: job => leave(() => openEditorView(node, {studio: studio?.open ? studio : undefined, work: {id: job.work, video: `FreeVideo/${job.work}/video.mp4`, geometry: {width: job.width, height: job.height, seconds: job.seconds}}})),
         changed: view => { last = view; show(); }});
@@ -60,15 +60,16 @@ export function openAutopilotView(node, {studio = null} = {}) {
         // The card gives way to the conversation: typing can start at once.
         const arrived = talking && chat.element.hidden && (card.element.contains(document.activeElement) || document.activeElement === lamp);
         card.element.hidden = !ready || talking; chat.element.hidden = !talking;
-        if (arrived) chat.input.focus();
         body.dataset.view = talking ? 'chat' : 'connect';
+        if (talking) chat.sync();
+        if (arrived) chat.input.focus();
         lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = label.text; lamp.disabled = connected || !last.any;
         const job = talking ? last.current : null;
         now.hidden = !job; line.dataset.on = String(!!job);
         if (job) {
-            const fraction = jobFraction(job), running = job.status === 'running';
+            const fraction = last.fraction || 0, running = job.status === 'running';
             currentId = job.id; name.textContent = jobName(job, t); more.textContent = last.active > 1 ? `+${last.active - 1}` : '';
-            percent.textContent = running ? `${Math.round(fraction * 100)}%` : '';
+            percent.textContent = running && fraction >= .01 ? `${Math.floor(fraction * 100)}%` : '';
             eta.textContent = running && job.progress?.remaining_seconds > 0 ? about(job.progress.remaining_seconds, t) : '';
             ring.style.setProperty('--p', String(fraction * 100)); line.style.width = `${fraction * 100}%`;
         }
