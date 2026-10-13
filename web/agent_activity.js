@@ -1,4 +1,4 @@
-import {agentGet, agentPost} from './agent_session.js';
+import {agentPost} from './agent_session.js';
 // What agents connected to this FreeVideo are doing. Their requests share the
 // studio's queue, so people can see them, follow progress and stop them.
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./agent_activity.css', import.meta.url).href; document.head.append(css);
@@ -129,58 +129,6 @@ function refill(root, list, items) {
 // "Open" on a finished video leads to that work in Creations.
 async function showWork(t, job) {
     (await import('./library.js')).openLibrary(t, {selectedWork: job.work});
-}
-
-// The same jobs as a list that is always open, for a view of its own: what the agents are doing, how far
-// along, where the result is, and a stop on each; open(job) can replace where a finished video opens. It shows
-// once an agent is connected or has jobs, and asks nothing while it is out of sight.
-export function agentActivityList(t, api, {interval = [1500, 8000], open = job => showWork(t, job)} = {}) {
-    const element = el('section', 'fv-agent-list'); element.hidden = true;
-    const heading = el('h2', null, t('Jobs', '任务')), list = el('ol');
-    const empty = el('p', 'fv-agent-empty', t('Videos the agent makes will appear here.', 'Agent 生成的视频会显示在这里。'));
-    element.append(heading, list, empty);
-    let timer = null, stopped = false, on = null, failures = 0, active = 0;
-    // Hidden itself, the list is in sight when the view that holds it is.
-    const inSight = () => element.isConnected && (element.hidden ? element.parentElement : element)?.getClientRects().length > 0;
-    async function connected() {
-        try {
-            const response = await agentGet(api, '/freevideo/agent/v1/connect/status');
-            return response.ok && (await response.json()).connected === true;
-        } catch { return false; }
-    }
-    async function poll() {
-        clearTimeout(timer); timer = null;
-        if (stopped) return;
-        const shown = inSight();
-        if (shown && on === null) {
-            // Agent features can be off in this FreeVideo: ask once.
-            try {
-                const response = await api.fetchApi('/freevideo/agent', {cache: 'no-store'});
-                on = response.ok && (await response.json()).enabled === true;
-            } catch { on = false; }
-        }
-        if (stopped || on === false) return;
-        if (shown && on) {
-            try {
-                const response = await api.fetchApi('/freevideo/agent/activity', {cache: 'no-store'});
-                if (response.ok) {
-                    const data = await response.json(), jobs = data.jobs || [];
-                    const show = jobs.length > 0 || await connected();
-                    if (stopped) return;
-                    failures = 0; active = data.active || 0;
-                    const key = refill(element, list, rows(jobs, t, api, poll, open));
-                    list.hidden = !jobs.length; empty.hidden = !!jobs.length; element.hidden = !show;
-                    if (key) list.querySelector(`[data-job="${key[0]}"] .${key[1].split(' ')[0]}`)?.focus?.();
-                } else failures++;
-            } catch { failures++; }
-        }
-        if (stopped) return;
-        // Fast while agents work; every 3 s while empty, like the connection card, so connecting shows at once.
-        const wait = !shown ? 500 : active ? interval[0] : list.hidden ? Math.min(3000, interval[1]) : interval[1] * Math.min(4, 1 + failures);
-        timer = setTimeout(poll, wait);
-    }
-    poll();
-    return {element, refresh: poll, stop() { stopped = true; clearTimeout(timer); }};
 }
 
 export function createAgentActivity(t, api, host, {interval = [1500, 8000], open = job => showWork(t, job)} = {}) {
