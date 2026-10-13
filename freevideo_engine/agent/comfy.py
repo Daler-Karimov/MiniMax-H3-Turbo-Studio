@@ -110,6 +110,9 @@ class ComfyPort:
             raise ValueError('Invalid library output')
         report = _report(path)
         summary = output_summary(report, Path(relative))
+        if summary.get('geometry'):
+            from .media import saved_geometry
+            summary['geometry'] = saved_geometry(path, summary['geometry'])
         if report.get('result_cache_hit') is not None:
             summary['result_cache_hit'] = report['result_cache_hit']
         return summary

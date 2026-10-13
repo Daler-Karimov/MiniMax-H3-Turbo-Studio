@@ -1176,6 +1176,9 @@ def register():
             from ..comfy_assets import output_summary
             report = _report(video)
             summary = output_summary(report, Path(port.output_relative(video)))
+            if summary.get('geometry'):
+                from .media import saved_geometry
+                summary['geometry'] = saved_geometry(video, summary['geometry'])
             prompt = (folder / 'prompt.txt').read_text(encoding='utf-8') if (folder / 'prompt.txt').is_file() else None
             return dict(id=identity, video=library_view(port, port.output_relative(video)), prompt=prompt,
                         seed=report.get('seed'), geometry={k: v for k, v in (summary.get('geometry') or {}).items()

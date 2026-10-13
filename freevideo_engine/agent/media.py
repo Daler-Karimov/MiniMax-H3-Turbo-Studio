@@ -704,6 +704,21 @@ def _reading(path):
         raise ValueError('Cannot read %s: %s' % (path.name, error)) from None
 
 
+def saved_geometry(path, geometry):
+    """The report's geometry with the length the saved video really has.
+
+    A continued clip's report also counts the frames it took over from the clip before it.
+    """
+    try:
+        info = inspect(path)
+    except Exception:  # noqa: BLE001 - the report's own numbers stand when the file cannot be read here
+        return geometry
+    if not info.get('frames_exact') or info['frames'] == geometry.get('frames'):
+        return geometry
+    fps = geometry.get('fps') or info.get('fps')
+    return dict(geometry, frames=info['frames'], **(dict(seconds=info['frames'] / fps) if fps else {}))
+
+
 def _file(path, kind=None):
     if not isinstance(path, (str, Path)) or not str(path):
         raise ValueError('A media file path is required')
