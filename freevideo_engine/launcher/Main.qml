@@ -13,6 +13,7 @@ ApplicationWindow {
     property bool settingsOpen: false
     property bool terminalOpen: false
     property bool confirmArchives: false  // the in-place "delete the imported ZIPs?" step
+    property bool archivesExpanded: false
     property string settingsTab: "downloads"
     property string modelInfo: "video"
     property bool modelInfoOpen: false
@@ -21,6 +22,7 @@ ApplicationWindow {
     property bool releaseConfirm: false
     property bool accepted: false
     property bool manualUpdate: false
+    readonly property bool updateDialogWanted: !s.busy && (s.update.remind || manualUpdate)
     property bool releaseNotesOpen: false
     property bool licensesOpen: false
     property string previousStatus: ""
@@ -867,20 +869,7 @@ ApplicationWindow {
                         }
                         FText { objectName: "oldVersions"; visible: !!s.old_versions; text: "✓  " + s.old_versions; color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         FText { objectName: "copiedModels"; visible: !!s.copied_models; text: s.copied_models || ""; color: theme.muted; font.pixelSize: theme.micro; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                        RowLayout {
-                            visible: !!s.archives && !confirmArchives; spacing: 12; Layout.fillWidth: true
-                            FText { objectName: "archivesOffer"; text: s.archives || ""; color: theme.muted; font.pixelSize: theme.micro; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            FButton { objectName: "deleteArchives"; implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding; Layout.rightMargin: -rightPadding; text: t("Delete ZIP files", "删除压缩包"); flat: true; implicitHeight: theme.heightSm - 2; font.pixelSize: theme.micro + 1; enabled: !s.busy; onClicked: confirmArchives = true }
-                        }
-                        // The user's own files, and not recoverable: confirm in place, no dialog.
-                        RowLayout {
-                            visible: !!s.archives && confirmArchives; spacing: 8; Layout.fillWidth: true
-                            FText { objectName: "archivesConfirm"; text: s.archives_confirm || ""; color: theme.text; font.pixelSize: theme.micro; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            FButton { objectName: "confirmDeleteArchives"; text: t("Delete", "删除"); danger: true; implicitHeight: theme.heightSm - 2; font.pixelSize: theme.micro + 1; enabled: !s.busy; onClicked: { confirmArchives = false; backend.action("delete_archives", false) } }
-                            FButton { objectName: "cancelDeleteArchives"; implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding; Layout.rightMargin: -rightPadding; text: t("Cancel", "取消"); flat: true; implicitHeight: theme.heightSm - 2; font.pixelSize: theme.micro + 1; onClicked: confirmArchives = false }
-                        }
-                        FText { objectName: "archivesDone"; visible: !!s.archives_done; text: "✓  " + (s.archives_done || ""); color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                        FText { objectName: "archivesFailed"; visible: !!s.archives_failed; text: s.archives_failed || ""; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                        FText { objectName: "archivesDone"; visible: !!s.archives_toast; text: s.archives_toast || ""; color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         FCheck { visible: s.needs_consent; text: s.consent; checked: accepted; onToggled: accepted = checked; Layout.fillWidth: true }
                         FButton { objectName: "bundleLicensesButton"; visible: s.needs_consent; text: t("View licenses", "查看许可证"); flat: true; implicitHeight: theme.heightSm - 2; leftPadding: 32; font.pixelSize: theme.micro + 1; onClicked: licensesOpen = true }
                     }
@@ -1098,6 +1087,27 @@ ApplicationWindow {
                                 }
                             }
                             FText { visible: !!s.cleanup.error; text: s.cleanup.error || ""; color: theme.danger; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FDivider { objectName: "archivesStorageDivider"; visible: !!s.archives }
+                            RowLayout {
+                                objectName: "archivesStorageRow"
+                                visible: !!s.archives
+                                spacing: 12; Layout.fillWidth: true
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    FText { objectName: "archivesStorageTitle"; text: t("Offline package ZIPs", "离线包压缩包"); Layout.fillWidth: true }
+                                    FText { objectName: "archivesStorageOffer"; text: s.archives || ""; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                                }
+                                FButton { objectName: "deleteArchives"; visible: !confirmArchives; text: s.archives_busy ? t("Deleting…", "正在删除…") : t("Delete", "删除"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: s.can_delete_archives; onClicked: confirmArchives = true }
+                            }
+                            // The user's own files, and not recoverable: confirm in place.
+                            RowLayout {
+                                visible: !!s.archives && confirmArchives; spacing: 8; Layout.fillWidth: true
+                                FText { objectName: "archivesConfirm"; text: s.archives_confirm || ""; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                                FButton { objectName: "confirmDeleteArchives"; text: t("Delete", "删除"); danger: true; implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: s.can_delete_archives; onClicked: { confirmArchives = false; backend.action("delete_archives", false) } }
+                                FButton { objectName: "cancelDeleteArchives"; text: t("Cancel", "取消"); flat: true; implicitHeight: theme.heightSm; enabled: !s.archives_busy; onClicked: confirmArchives = false }
+                            }
+                            FText { objectName: "archivesStorageDone"; visible: !!s.archives_done; text: s.archives_done || ""; color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "archivesStorageFailed"; visible: !!s.archives_failed; text: s.archives_failed || ""; color: theme.danger; font.pixelSize: theme.micro; Layout.fillWidth: true }
                             RowLayout {
                                 objectName: "modelStorageRow"
                                 visible: ["available", "low-disk", "downloading", "downloaded", "switching", "releasing", "releasable", "complete", "failed"].indexOf(upgrade.status) >= 0
@@ -1275,7 +1285,68 @@ ApplicationWindow {
     }
 
     FPopup {
-        id: updateDialog; visible: !s.busy && (s.update.remind || manualUpdate)
+        id: archivesDialog; objectName: "archivesDialog"
+        visible: s.archives_dialog.remind && !updateDialogWanted && !settingsOpen && !releaseNotesOpen && !modelInfoOpen && !closePending && !s.notice
+        width: Math.min(480, win.width - 40); closePolicy: Popup.NoAutoClose
+        onClosed: archivesExpanded = false
+        height: Math.min(archivesContents.implicitHeight + padding * 2 + archivesActions.implicitHeight + archivesFootnote.implicitHeight + 28, win.height - 48)
+        contentItem: ColumnLayout {
+            spacing: 14
+            ScrollView {
+                id: archivesScroll; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; contentWidth: availableWidth
+                ColumnLayout {
+                    id: archivesContents; width: archivesScroll.availableWidth; spacing: 14
+                    FText { objectName: "archivesDialogTitle"; text: s.archives_dialog.title; font.pixelSize: theme.section + 2; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    FText {
+                        objectName: "archivesDialogText"; color: theme.muted; Layout.fillWidth: true
+                        visible: !!s.archives_dialog.body; text: s.archives_dialog.body
+                    }
+                    FButton { objectName: "archivesFilesToggle"; visible: !s.archives_dialog.retry; text: t("Show these files (" + s.archives_dialog.count + ")", "查看这些文件（" + s.archives_dialog.count + " 个）") + (archivesExpanded ? "  −" : "  +"); flat: true; leftPadding: 0; onClicked: archivesExpanded = !archivesExpanded }
+                    ColumnLayout {
+                        objectName: "archivesFileList"; visible: archivesExpanded && !s.archives_dialog.retry; Layout.fillWidth: true; spacing: 12
+                        Repeater {
+                            model: s.archives_dialog.groups
+                            delegate: ColumnLayout {
+                                id: archiveGroup
+                                required property var modelData
+                                required property int index
+                                Layout.fillWidth: true; spacing: 8
+                                FText {
+                                    objectName: "archivesFolder-" + archiveGroup.index; text: archiveGroup.modelData.folder
+                                    color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true
+                                    wrapMode: Text.NoWrap; elide: Text.ElideMiddle; maximumLineCount: 1
+                                    MouseArea { id: folderHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+                                    ToolTip { objectName: "archivesFolderTooltip-" + archiveGroup.index; text: archiveGroup.modelData.folder; visible: folderHover.containsMouse; delay: 300 }
+                                }
+                                Repeater {
+                                    model: archiveGroup.modelData.files
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        required property int index
+                                        Layout.fillWidth: true; Layout.leftMargin: 12; spacing: 12
+                                        FText { objectName: "archivesFile-" + archiveGroup.index + "-" + index; text: modelData.name; Layout.fillWidth: true; font.pixelSize: theme.micro + 1; wrapMode: Text.WrapAnywhere }
+                                        FText { objectName: "archivesFileSize-" + archiveGroup.index + "-" + index; text: modelData.size; font.pixelSize: theme.micro + 1 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    FText { objectName: "archivesDialogFailure"; visible: s.archives_dialog.retry && !!s.archives_failed; text: s.archives_failed || ""; color: theme.danger; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                }
+            }
+            RowLayout {
+                id: archivesActions; Layout.fillWidth: true; spacing: 8
+                // As the update dialog: the secondary choice on the left, the primary on the right.
+                FButton { objectName: "archivesKeepButton"; text: s.archives_dialog.keep_text; flat: true; enabled: !s.archives_busy; onClicked: backend.action("keep_archives", false) }
+                Item { Layout.fillWidth: true }
+                FButton { objectName: "archivesDeleteButton"; text: s.archives_dialog.delete_text; primary: true; enabled: s.can_delete_archives; onClicked: backend.action("delete_archives_dialog", false) }
+            }
+            FText { id: archivesFootnote; objectName: "archivesDialogFootnote"; text: s.archives_dialog.footnote; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+        }
+    }
+
+    FPopup {
+        id: updateDialog; visible: updateDialogWanted && !archivesDialog.visible
         objectName: "updateDialog"
         width: Math.min(540,win.width-40); closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         // State changes also close it (an update started from the banner or a
