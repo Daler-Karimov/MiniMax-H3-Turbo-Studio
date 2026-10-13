@@ -599,12 +599,26 @@ async function check() {
     // Opening the workspace waits for an animation frame.
     await sleep(1500);
     const problems = [];
-    const ui = window.FreeVideoUI || {};
-    if (!ui.ready) {
+    if (!window.FreeVideoUI?.ready) {
         problems.push(...await diagnoseModules());
         if (problems.length && problems.every(p => p.retry && !extensionProblem(p)) && await reloadOnce(problems)) return;
     }
-    if (!ui.ready && !problems.length) problems.push({text: t('FreeVideo’s scripts loaded, but ComfyUI did not start them.', 'FreeVideo 的脚本已下载，但 ComfyUI 没有启动它们。'), advice: 'reload'});
+    // Every file loads, so ComfyUI is most likely still working through other
+    // extensions: it starts them one after another, and a slow one ahead of
+    // FreeVideo's delays it. Give it the rest of the minute before naming it.
+    if (!window.FreeVideoUI?.ready && !problems.length) await waitFor(() => window.FreeVideoUI?.ready, 50000);
+    const notStarted = {text: t('FreeVideo’s scripts loaded, but ComfyUI did not start them.', 'FreeVideo 的脚本已下载，但 ComfyUI 没有启动它们。'), advice: 'reload'};
+    if (!window.FreeVideoUI?.ready && !problems.length) {
+        problems.push(notStarted);
+        // A start later than that clears the card instead of leaving it up.
+        const timer = setInterval(() => {
+            if (!window.FreeVideoUI?.ready) return;
+            clearInterval(timer);
+            if (!card || !lastProblems.length || !lastProblems.every(p => p === notStarted || p.advice === 'plugin')) return;
+            card.remove(); card = null; lastProblems = [];
+            send('ready', []);
+        }, 1000);
+    }
     if (!problems.length) problems.push(...await diagnoseStyles());
     let checkStudio = false;
     if (launchVisit && !problems.length) {
@@ -637,6 +651,8 @@ async function check() {
         && !reports.some(item => item.type === 'error' && item.where === 'studio'))
         problems.unshift({text: t('The creative workspace did not open.', '创作面板没有打开。'), advice: 'reload'});
     problems.push(...lastProblems);
+    // Started while this check was waiting for the page to be in front.
+    if (window.FreeVideoUI?.ready && problems.includes(notStarted)) problems.splice(problems.indexOf(notStarted), 1);
     if (problems.length) {
         problems.push(...pluginErrors());
         show(distinct(problems)); send('error', distinct(problems));
