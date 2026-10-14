@@ -23,7 +23,11 @@ html.fv-toolbar-dragging,html.fv-toolbar-dragging *{cursor:grabbing!important;us
 /* Six dots in the left padding, beside the first row, as on ComfyUI's own run bar. */
 .fv-view-row{position:relative}.fv-view-grip{position:absolute;left:-14px;top:50%;translate:0 -50%;width:8px;height:12px;opacity:0;pointer-events:none;color:var(--fv-muted);transition:opacity .2s,color .2s;background:radial-gradient(circle,currentColor 1.1px,transparent 1.5px) 0 0/4px 4px}
 .fv-view-navigation:hover .fv-view-grip{opacity:.75}.fv-view-navigation.fv-dragging .fv-view-grip{opacity:1;color:var(--fv-ink)}@media(hover:none){.fv-view-grip{opacity:.5}}
-@media(max-width:480px){.fv-view-navigation .fv-version-info{display:none}}
+@media(max-width:480px){
+ .fv-view-navigation .fv-version-info,.fv-view-navigation .fv-view-row>.fv-wordmark{display:none}
+ .fv-view-navigation .fv-view-switch button{font-size:12px;padding:7px 6px}
+ .fv-view-navigation .fv-view-switch,.fv-view-navigation .fv-view-settings{flex-shrink:0}
+}
 
 /* Reserve the selected label's width so bold English text cannot move the switch. */
 .fv-view-switch button,.fv-studio .fv-view-switch button{display:grid;gap:0}
