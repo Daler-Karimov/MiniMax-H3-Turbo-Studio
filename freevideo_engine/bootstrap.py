@@ -328,6 +328,34 @@ def usable_git(path=None, env=None):
     return executable if version and version >= git_floor() else None
 
 
+def gcc_major(executable, env=None):
+    """Major version of a GCC driver, or None when it does not run or does not answer like GCC."""
+    try:
+        text = subprocess_output.output_external([str(executable), '-dumpfullversion', '-dumpversion'], env=env,
+                                                 stderr=subprocess.DEVNULL, timeout=30)
+        return int(text.split()[0].split('.')[0])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+
+
+def host_compiler_choice(below, path=None, env=None, find=shutil.which, major=gcc_major):
+    """Which C/C++ compiler builds GPU code when the toolkit accepts GCC only below major version `below`.
+
+    ({}, ...) when the system compiler is accepted, or when its version cannot be told: the build then
+    behaves as it always did. ({'CC': ..., 'CXX': ...}) when it is too new and a versioned pair
+    (g++-15 and gcc-15 ...) is installed beside it. None when no installed compiler is accepted.
+    """
+    system = find('g++', path=path)
+    version = major(system, env) if system else None
+    if version is None or version < below:
+        return {}
+    for candidate in range(below - 1, 8, -1):
+        cxx, cc = find('g++-%d' % candidate, path=path), find('gcc-%d' % candidate, path=path)
+        if cxx and cc and major(cxx, env) == candidate and major(cc, env) == candidate:
+            return {'CC': cc, 'CXX': cxx}
+    return None
+
+
 def existing_parent(path):
     while not path.exists():
         path = path.parent
@@ -1060,6 +1088,8 @@ def setup_task(label):
         'windows-runtime-check': ('Check GPU runtime', 'Verify CUDA and the Windows runtime libraries'),
         'portable-git': ('Prepare Git', 'Install the verified Git packages'),
         'portable-git-check': ('Prepare Git', 'Check the installed Git'),
+        'portable-gcc': ('Prepare compiler', 'Install the verified compiler packages'),
+        'portable-gcc-check': ('Prepare compiler', 'Check the installed compiler'),
     }
     title, detail = tasks.get(key, ('Prepare dependencies', 'Prepare verified source files'))
     for prefix, name in (('h3-text-encoder-', 'text encoder'), ('SageAttention-', 'SageAttention 2')):
@@ -1640,9 +1670,9 @@ class Installer:
                 'torch=str(torch.__version__),cuda=torch.version.cuda,cxx11_abi=torch.compiled_with_cxx11_abi(), '
                 'machine=platform.machine(),glibc=platform.libc_ver())))')
         identity = json.loads(subprocess_output.output_python([str(python), '-c', code], env=self.env))
+        compiler = self.host_compiler(identity['cuda'])
         identity.update(arch='.'.join(map(str, self.plan['inventory']['hardware']['capability'])),
-                        source=self.spec['sageattention']['commit'], compiler=subprocess_output.output_external(
-                            ['g++', '--version']).splitlines()[0])
+                        source=self.spec['sageattention']['commit'], compiler=compiler['identity'])
         wheel_dir = Path(self.plan['wheel_cache']) / wheel_key(identity)
         manifest = wheel_dir / 'manifest.json'
         record = json.loads(manifest.read_text(encoding='utf-8')) if manifest.is_file() else None
@@ -1672,6 +1702,7 @@ class Installer:
             build_env = dict(self.env, CUDA_HOME=str(toolkit), PATH=str(toolkit / 'bin') + os.pathsep + self.env['PATH'],
                 CPATH=headers, TORCH_CUDA_ARCH_LIST=identity['arch'], MAX_JOBS=str(build['jobs']),
                 EXT_PARALLEL='1', NVCC_APPEND_FLAGS='--threads=' + str(build['nvcc_threads']))
+            build_env.update(compiler['env'] if compiler['env'] is not None else self.install_compiler_linux())
             self.command('sage2-toolchain-check', [python, '-c',
                 'from torch.utils.cpp_extension import is_ninja_available; '
                 'assert is_ninja_available(), "Ninja must be visible in the build PATH; serial fallback is refused"'], env=build_env)
@@ -1689,6 +1720,47 @@ class Installer:
                                            '--reinstall-package', 'sageattention', wheel])
         save(self.run_dir / 'sage-wheel.json', dict(record, reused=cached, cache=str(wheel_dir)))
         return manifest
+
+    def host_compiler(self, cuda):
+        """The compiler pair Sage is built with: the system's, a versioned one beside it, or FreeVideo's own.
+
+        `env` is empty when the system compiler is used; `identity` names the compiler in the wheel cache key.
+        A portable compiler is only installed when a build is needed (see install_compiler_linux).
+        """
+        spec = json.loads((PACKAGE / 'gcc_linux.json').read_text(encoding='utf-8'))
+        below = spec['host_compiler_below'].get(cuda)
+        choice = host_compiler_choice(below, self.env['PATH'], self.env) if below else {}
+        if choice is None:
+            return {'env': None, 'identity': 'conda-forge gcc ' + spec['version']}
+        cxx = choice.get('CXX', 'g++')
+        return {'env': choice, 'identity': subprocess_output.output_external([cxx, '--version']).splitlines()[0]}
+
+    def install_compiler_linux(self):
+        """GCC from conda-forge, pinned by package hashes, for a system compiler newer than the toolkit accepts."""
+        spec = json.loads((PACKAGE / 'gcc_linux.json').read_text(encoding='utf-8'))
+        prefix = self.root / 'tools' / ('gcc-' + spec['version'])
+        triple = 'x86_64-conda-linux-gnu'
+        compilers = {'CC': prefix / 'bin' / (triple + '-gcc'), 'CXX': prefix / 'bin' / (triple + '-g++')}
+        receipt, content = prefix / '.freevideo-gcc.json', {k: spec[k] for k in ('version', 'packages')}
+        if not (receipt.is_file() and json.loads(receipt.read_text(encoding='utf-8')) == content
+                and all(path.is_file() for path in compilers.values())):
+            micromamba, packages = self.fetch_conda_lock(spec, 'gcc-linux', 'compiler')
+            if prefix.is_symlink():
+                prefix.unlink()
+            elif prefix.exists():
+                shutil.rmtree(prefix)
+            explicit = self.root / 'downloads' / 'gcc-linux' / 'explicit.txt'
+            explicit.write_text('@EXPLICIT\n' + ''.join(path.resolve().as_uri() + '\n' for path in packages), encoding='utf-8')
+            cache = self.root / 'tools' / 'micromamba-root'
+            env = {k: v for k, v in self.env.items() if not k.upper().startswith(('CONDA', 'MAMBA'))}
+            self.command('portable-gcc', [micromamba, 'create', '--yes', '--no-rc', '--offline',
+                                          '--root-prefix', cache, '--prefix', prefix, '--file', explicit], env=env)
+            save(receipt, content)
+            shutil.rmtree(cache, ignore_errors=True)
+            shutil.rmtree(explicit.parent, ignore_errors=True)
+            micromamba.unlink(missing_ok=True)
+        self.command('portable-gcc-check', [compilers['CXX'], '--version'])
+        return {key: str(path) for key, path in compilers.items()}
 
     def install_sage_windows(self, uv, python):
         spec = self.versions['windows']['sageattention']
@@ -1750,7 +1822,10 @@ class Installer:
 
     def fetch_git_linux(self, spec):
         """micromamba and the locked packages, verified by SHA-256, as one step."""
-        directory = self.root / 'downloads' / 'git-linux'
+        return self.fetch_conda_lock(spec, 'git-linux', 'Git')
+
+    def fetch_conda_lock(self, spec, folder, label):
+        directory = self.root / 'downloads' / folder
         tool = spec['micromamba']
         micromamba = self.root / 'tools' / ('micromamba-' + tool['version'])
         channels = spec['channels']
@@ -1762,21 +1837,21 @@ class Installer:
         rows += [(directory / row['path'].split('/')[-1], [(n, channels[n] + '/' + row['path']) for n in names], row)
                  for row in spec['packages']]
         total = sum(row['bytes'] for _, _, row in rows)
-        key = 'download-git-linux'
-        self.ui.begin(key, 'Prepare Git', detail='Download and verify Git %s' % spec['version'])
+        key = 'download-' + folder
+        self.ui.begin(key, 'Prepare ' + label, detail='Download and verify %s %s' % (label, spec['version']))
         done = 0
         try:
             for path, candidates, row in rows:
                 def progress(current, size, speed, before=done):
                     if self.cancel.is_set():
                         raise RuntimeError('Installation cancelled; partial download retained.')
-                    # One step for micromamba and the packages: the line names Git with the step's total.
-                    self.ui.update(key, done=before + current, total=total, rate=speed, unit='bytes', scope='git',
-                                   activity='download', name='Git',
+                    # One step for micromamba and the packages: the line names the tool with the step's total.
+                    self.ui.update(key, done=before + current, total=total, rate=speed, unit='bytes', scope=label.lower(),
+                                   activity='download', name=label,
                                    detail='%.1f MiB / %.1f MiB' % ((before + current) / 2**20, total / 2**20))
                 def feedback(event):
                     if event['action'] in ('retry', 'route-retry'):
-                        self.ui.update(key, activity='resume', name='Git')
+                        self.ui.update(key, activity='resume', name=label)
                 network.download(candidates, path, row['sha256'], progress,
                                  network=dict(self.network, quiet=True, event_callback=feedback),
                                  env=self.env, size=row['bytes'], category='github' if path == micromamba else 'download')
