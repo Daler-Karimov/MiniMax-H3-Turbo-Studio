@@ -508,6 +508,11 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('It may have been quarantined by security software. Restore the file or allow the FreeVideo folder, '
           'then click Retry installation.',
           '可能被安全软件隔离了。恢复这个文件或允许 FreeVideo 所在的文件夹后，点“重试安装”。')),
+        # Windows refuses PyTorch's unsigned DLLs under Smart App Control; reinstalling changes nothing.
+        (r'WinError 4551|Application Control policy has blocked', 'app-control',
+         ('Windows blocked the PyTorch files', 'Windows 拦截了 PyTorch 的文件'),
+         ('Smart App Control in Windows blocked these files. Search Windows for "Smart App Control", or open Windows Security → App & browser control → Smart App Control settings.',
+          'Windows 的“智能应用控制”拦截了这些文件。在 Windows 中搜索“智能应用控制”，或打开“Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置”。')),
         (r'PermissionError|Access is denied|Permission denied|WinError 5\b', 'permission',
          ('This folder is not writable', '无法写入这个目录'),
          ('Choose an installation folder you can write to, then retry.', '选择有写入权限的安装目录后重试。')),
