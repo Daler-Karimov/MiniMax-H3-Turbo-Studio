@@ -64,7 +64,7 @@ export function refreshNavigation() {
     if (!toolbar) return;
     const nodes = (app.graph?._nodes || []).filter(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
     if (!nodes.includes(selected)) selected = nodes[0];
-    toolbar.hidden = !selected || currentView !== 'nodes';
+    toolbar.hidden = !app.graph || currentView !== 'nodes';
     for (const button of toolbar.querySelectorAll('[data-view]')) {
         button.setAttribute('aria-pressed', String(button.dataset.view === currentView));
     }
@@ -89,14 +89,33 @@ export function installNavigation(openStudio, agent = false) {
     // The whole bar drags like a window; these dots say so on hover.
     const grip = document.createElement('span'); grip.className = 'fv-view-grip'; grip.setAttribute('aria-hidden', 'true');
     const brand = wordmark();
-    const choose = action => {
-        const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
-        refreshNavigation(); if (focused || selected) return action(focused || selected);
+    const choose = (action, create = false) => {
+        const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => (app.graph?._nodes || []).includes(n)
+            && (n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate'));
+        refreshNavigation();
+        let node = focused || selected, created = false;
+        if (!node && create) {
+            try {
+                node = globalThis.LiteGraph?.createNode('FreeVideoGenerate');
+                if (!node) throw new Error('FreeVideo node unavailable');
+                app.graph.add(node); app.graph.change?.();
+                selected = node; created = true;
+            } catch (error) {
+                console.warn('FreeVideo edit project:', error);
+                app.extensionManager?.toast?.add({severity: 'error', summary: 'FreeVideo',
+                    detail: t('Could not complete. Try again.', '没有完成，请重试'), life: 9000});
+                return null;
+            }
+        }
+        if (node) return action(node, created);
     };
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
-    row.append(grip, brand, viewSwitch('nodes', openCreativeWorkspace, () => {}, () => choose(node =>
-        openEditorView(node)), () => choose(node => openAutopilot(node))), createVersionInfo(cn).element, settings); toolbar.append(row);
+    row.append(grip, brand, viewSwitch('nodes', () => choose(node => { open?.(node); }, true), () => {}, () => choose(async (node, created) => {
+        const handle = await openEditorView(node);
+        if (created) handle?.notify(t('Created an editing project for you.', '已为你新建一个剪辑工程'));
+        return handle;
+    }, true), () => choose(node => openAutopilot(node), true)), createVersionInfo(cn).element, settings); toolbar.append(row);
     let shown = false;
     try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }
     if (!shown) {

@@ -1012,7 +1012,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     });
     const leaving = () => { player.pause(); rememberView(); if (queue.dirty) queue.flush(); };
     window.addEventListener('pagehide', leaving);
-    const handle = {element, state, actions, store, adjust, audio,
+    const handle = {element, state, actions, store, adjust, audio, notify,
         async switchView(view) {
             if (closing || disposed || view === 'editor') return;
             if (await handle.close() !== false) await onView(view);
