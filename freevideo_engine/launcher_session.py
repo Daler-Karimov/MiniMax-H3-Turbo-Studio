@@ -1633,6 +1633,7 @@ class Session:
         from .launcher_copy import display, progress_view, source_name
         zh = self.language.startswith('zh')
         row = self.controller.state
+        busy = self.controller.busy or self.importer.busy or self.cleaner.busy
         task = row.get('task', {})
         port_from = int(row['moved_from']) if row.get('status') == 'open' and 'moved_from' in row else 0
         port_to = (urlsplit(row.get('selection', {}).get('url') or row['url']).port or 80) if port_from else 0
@@ -1797,7 +1798,7 @@ class Session:
             download_state.update(error=self.t(*DOWNLOAD_COPY['error_read']), needs_check=True)
         return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
-            page=self.page, status=row.get('status', 'idle'), busy=self.controller.busy or self.importer.busy or self.cleaner.busy,
+            page=self.page, status=row.get('status', 'idle'), busy=busy,
             cleanup=cleanup,
             can_cleanup=not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
                 or self.update_intent or self.engine_updating or self.updater and self.updater.busy
@@ -1815,7 +1816,9 @@ class Session:
             report=dict(self.report),
             models=models, overall=overall, progress=progress, detail='' if file_text else clean(progress.get('detail', '')),
             progress_text=file_text, remaining_seconds=remaining,
-            elapsed=duration(time.monotonic()-self.started) if self.started else '', summary=' · '.join(estimate),
+            # The elapsed row is only shown while working. An idle clock would
+            # keep publishing changed snapshots after a launch has failed.
+            elapsed=duration(time.monotonic()-self.started) if self.started and busy else '', summary=' · '.join(estimate),
             failure=failure,
             source=source, source_name=source_name(source, zh), proxy_mode=preferences['proxy_mode'],
             probe=probe, speeds=speeds, token_set=bool(self.token),

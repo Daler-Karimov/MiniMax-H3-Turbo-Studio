@@ -471,7 +471,7 @@ ApplicationWindow {
                         FText { text: s.form.new_comfy ? t("Install location", "安装位置") : t("ComfyUI folder", "ComfyUI 目录"); font.weight: Font.DemiBold }
                         RowLayout {
                             Layout.fillWidth: true; spacing: 8
-                            FField { objectName: "installationPath"; Layout.fillWidth: true; text: s.form.new_comfy ? s.form.destination : s.form.comfy; placeholderText: t("Choose a folder", "选择文件夹"); enabled: !s.busy; onEditingFinished: backend.edit(s.form.new_comfy ? "destination" : "comfy", text) }
+                            FField { objectName: "installationPath"; Layout.fillWidth: true; value: s.form.new_comfy ? s.form.destination : s.form.comfy; placeholderText: t("Choose a folder", "选择文件夹"); enabled: !s.busy; onEditingFinished: backend.edit(s.form.new_comfy ? "destination" : "comfy", text) }
                             FButton { text: t("Browse…", "浏览…"); implicitHeight: theme.height + 4; onClicked: backend.browse(s.form.new_comfy ? "destination" : "comfy") }
                         }
                         FText { visible: !s.form.new_comfy; text: t("Uses your existing Python when available. A separate environment loads only FreeVideo.", "优先使用已有 Python；独立环境仅加载 FreeVideo。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
@@ -1159,16 +1159,16 @@ ApplicationWindow {
                         Layout.fillWidth: true; visible: settingsTab === "advanced"; spacing: 20; enabled: !s.busy
                         FGroup {
                             Layout.fillWidth: true; title: t("ComfyUI address", "ComfyUI 地址")
-                            FField { objectName: "listenAddress"; Layout.fillWidth: true; text: s.form.url; enabled: !s.form.lan_access; onEditingFinished: backend.edit("url", text) }
+                            FField { objectName: "listenAddress"; Layout.fillWidth: true; value: s.form.url; enabled: !s.form.lan_access; onEditingFinished: backend.edit("url", text) }
                             FText { objectName: "listenAddressHint"; text: t("With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.", "填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                             FText { visible: Qt.platform.os === "windows"; text: t("If Windows asks about the firewall the first time, choose Allow.", "Windows 首次询问防火墙权限时，请选择“允许”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         }
                         FGroup {
                             Layout.fillWidth: true; title: t("Folders · optional", "目录 · 可选"); enabled: !s.portable
                             FText { text: t("Engine folder", "引擎目录"); font.pixelSize: theme.micro; color: theme.muted }
-                            RowLayout { Layout.fillWidth: true; spacing: 8; FField { Layout.fillWidth: true; text: s.form.engine; placeholderText: t("Automatic", "自动选择"); onEditingFinished: backend.edit("engine", text) } FButton { text: t("Browse…", "浏览…"); implicitHeight: theme.height + 4; onClicked: backend.browse("engine") } }
+                            RowLayout { Layout.fillWidth: true; spacing: 8; FField { Layout.fillWidth: true; value: s.form.engine; placeholderText: t("Automatic", "自动选择"); onEditingFinished: backend.edit("engine", text) } FButton { text: t("Browse…", "浏览…"); implicitHeight: theme.height + 4; onClicked: backend.browse("engine") } }
                             FText { text: t("ComfyUI Python", "ComfyUI Python"); font.pixelSize: theme.micro; color: theme.muted; Layout.topMargin: 4 }
-                            FField { Layout.fillWidth: true; text: s.form.python; placeholderText: t("Path to python.exe", "python.exe 的路径"); onEditingFinished: backend.edit("python", text) }
+                            FField { Layout.fillWidth: true; value: s.form.python; placeholderText: t("Path to python.exe", "python.exe 的路径"); onEditingFinished: backend.edit("python", text) }
                         }
                         FGroup {
                             Layout.fillWidth: true; title: t("Maintenance", "维护"); enabled: !s.portable
