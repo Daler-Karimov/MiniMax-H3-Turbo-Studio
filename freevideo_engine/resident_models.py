@@ -355,6 +355,9 @@ class ModelBank:
             found = None
         hit = found is not None
         rows = canvas.get('video_tokens', 72576) + canvas.get('reference_video_tokens', 0) + canvas.get('reference_audio_tokens', 0)
+        if canvas.get('early_reference') is not None:
+            from .two_pass import placement_tokens
+            rows = placement_tokens(canvas)
         from .policy import BLOCK_BYTES, activation_bytes, windows_gpu_output_workspace
         from .system import windows
         # Use the same measured token/head envelopes as placement. The old

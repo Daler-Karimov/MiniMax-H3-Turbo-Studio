@@ -38,6 +38,10 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     if not same_device(hardware, gpu_uuid) or hardware.get('system') != system:
         return None
     shape = report.get('geometry', {})
+    # The pooled ETA/capability schema has no per-step reference schedule.
+    # An early-only success cannot calibrate a sustained-reference request.
+    if shape.get('early_reference') is not None:
+        return None
     plan = report.get('sampling_plan') or shape.get('sampling_plan') or {}
     if not all(type(shape.get(k)) is int and shape[k] > 0 for k in ('width', 'height', 'frames')):
         return None

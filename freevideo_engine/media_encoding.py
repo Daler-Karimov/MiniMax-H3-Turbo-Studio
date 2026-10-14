@@ -133,6 +133,8 @@ def prepare(media, canvas, directory):
     for index, row in enumerate(media.get('references', [])):
         kind, path = row['kind'], row['path']
         ref = {'kind': kind}
+        if 'early_steps' in row:
+            ref['early_steps'] = row['early_steps']
         numbers[kind] += 1
         longer, length, used = False, None, limit / 24.
         target = directory / ('reference-%02d.npy' % index)
@@ -204,6 +206,17 @@ def prepare(media, canvas, directory):
     return result, {'images': key_images} if key_images else {'minimax_ref_items': ref_items} if ref_items else {}
 
 
+def reference_options(normalized, options, step):
+    """Filter whole references, including a video's optional audio presentation."""
+    items, offset = [], 0
+    for row in normalized:
+        count = 1 + int(row['kind'] == 'video' and bool(row.get('audio')))
+        if 'early_steps' not in row or step < row['early_steps']:
+            items.extend(options['minimax_ref_items'][offset:offset + count])
+        offset += count
+    return {'minimax_ref_items': items} if items else {}
+
+
 def encode_latents(normalized, value, base, canvas, *, resident=None, device='cuda'):
     import gc
     import numpy as np
@@ -214,7 +227,7 @@ def encode_latents(normalized, value, base, canvas, *, resident=None, device='cu
     if torch.device(device).type not in ('cuda', 'mps'):
         raise ValueError('Media encoding requires a CUDA or MPS device')
     empty_cache = torch.mps.empty_cache if torch.device(device).type == 'mps' else torch.cuda.empty_cache
-    refs = [{'kind': row['kind']} for row in normalized]
+    refs = [{key: row[key] for key in ('kind', 'early_steps') if key in row} for row in normalized]
     if any(row.get('pixels') for row in normalized):
         print(json.dumps({'event': 'media_encode_phase', 'phase': 'Encoding image/video references'}), flush=True)
         # Conditioning never decodes: the 9.0 GiB decoder in the shared shards
@@ -265,5 +278,9 @@ def encode_latents(normalized, value, base, canvas, *, resident=None, device='cu
                      condition_latents=[row['latent'] for row in refs])
     else:
         value['references'] = refs
+        for stage in value.get('early_reference', {}).get('conditions', []):
+            remaining = [ref for ref in refs if 'early_steps' not in ref or stage['start_step'] < ref['early_steps']]
+            if remaining:
+                stage['value']['references'] = remaining
     from .media_conditioning import describe
     return describe(value, canvas['width'], canvas['height'], canvas['frames'])
