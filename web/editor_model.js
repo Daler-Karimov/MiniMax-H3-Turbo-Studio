@@ -161,7 +161,7 @@ export function parse(value) {
             const versions = item.versions.map(value => versionData(value, kind)), versionKeys = versions.map(key);
             check(new Set(versionKeys).size === versions.length, 'versions');
             const clip = {id: item.id, start: item.start, frames: item.frames, in: item.in, length: item.length,
-                source, link, text, part, pending, reason, job, extend: item.extend, versions};
+                source, link, text, part, pending, reason, job, extend: item.extend || (source?.kind === 'import' && item.length >= TAIL_FRAMES), versions};
             if (kind === 'video') { Object.assign(clip, pictureFields(item)); clip.fit = pictureFit(item.fit); }
             else check(item.fit === undefined, 'fit');
             if (kind === 'audio') { check(typeof item.volume === 'number' && Number.isFinite(item.volume) && item.volume >= 0 && item.volume <= 2, 'volume'); clip.volume = item.volume; }
@@ -321,10 +321,12 @@ function audioTrack(record, id = 'a1') {
     return trackBy(record, id);
 }
 const freshId = record => `c${++record.serial}`;
+// A continued video needs this many frames for its encoded tail.
+const TAIL_FRAMES = 39;
 function newClip(record, track, {source = null, start, frames, part = null, text = ''}) {
     const clip = {id: freshId(record), start, frames, in: 0, length: frames, source, link: null,
         text, part, pending: source ? null : 'draft', reason: null, job: null,
-        extend: source ? source.kind !== 'import' : true, versions: []};
+        extend: source?.kind !== 'import' || frames >= TAIL_FRAMES, versions: []};
     if (track.kind === 'audio') clip.volume = 1;
     track.clips.push(clip); return clip;
 }
@@ -911,7 +913,7 @@ export function prepare(record, ids) {
             const spare = Math.min(...members.map(clip => clip.length - clip.in - clip.frames));
             const first = find(next, clips[0].id);
             // Leave at least one visible frame in every planned segment.
-            const credit = spare < first.frames ? spare : 0;
+            const credit = spare > 0 && spare < first.frames ? spare : 0;
             if (credit) {
                 busy(members);
                 for (const clip of members) clip.frames += credit;
@@ -939,6 +941,12 @@ export function generationBefore(record, ids) {
     return generationPlan(record, clips).filter(row => !row.before || !clips.some(clip => clip.id === row.before.id))
         .map(row => row.before ? key(row.before.source) : null);
 }
+// An imported video is continued from the copy the editor plays, which is upright and at 24 fps.
+function continuedPath(source, path) {
+    if (source.kind !== 'import') return sourceData({kind: 'generated', id: path}).id;
+    check(path === `FreeVideo/.editor/imports/${source.id}/preview.mp4`, 'source');
+    return path;
+}
 export function generationRequest(record, ids, {text, paths = {}} = {}) {
     check(object(paths), 'source');
     if (text !== undefined) check(validText(text), 'text');
@@ -947,7 +955,7 @@ export function generationRequest(record, ids, {text, paths = {}} = {}) {
         let after = null;
         if (row.before) {
             if (clips.some(clip => clip.id === row.before.id)) after = row.before.id;
-            else { const path = paths[key(row.before.source)]; check(typeof path === 'string' && path.length > 0, 'source', 'missing source path'); after = {work: sourceData({kind: 'generated', id: path}).id}; }
+            else { const path = paths[key(row.before.source)]; check(typeof path === 'string' && path.length > 0, 'source', 'missing source path'); after = {work: continuedPath(row.before.source, path)}; }
         }
         blocks.push({id: row.clip.id, part: row.clip.part ?? row.clip.id, after, before: null, text: text ?? row.clip.text, frames: row.request_frames});
         plan[row.clip.id] = {target_frames: row.target_frames, net_frames: row.net_frames, request_frames: row.request_frames, audio: row.clip.link};
@@ -996,7 +1004,7 @@ export function fill(record, id, {source, frames, width, height, skip_frames = 0
         const take = numberTakes(clip) + 1;
         remember(clip, source); clip.source = source; clip.in = skip_frames; clip.length = frames; clip.take = take;
         if (clip.text) clip.made_text = clip.text; else delete clip.made_text;
-        clip.pending = clip.reason = clip.job = null; clip.extend = source.kind !== 'import';
+        clip.pending = clip.reason = clip.job = null; clip.extend = true;
         delete clip.splice;
         if (skip_frames || skip_audio_samples) clip.splice = {frames: skip_frames, audio_samples: skip_audio_samples};
         clearPlan(clip);
@@ -1040,7 +1048,7 @@ export function restoreVersion(record, id, index, {by = 'user'} = {}) {
         remember(clip, version); clip.source = {kind: version.kind, id: version.id}; clip.in = version.in; clip.length = version.length;
         delete clip.take; delete clip.made_text; madeFields(version, clip); touchedBy(clip, by);
         // Placement belongs to this timeline part, including when its media changes.
-        clip.pending = clip.reason = clip.job = null; clip.extend = version.kind !== 'import'; clearPlan(clip);
+        clip.pending = clip.reason = clip.job = null; clip.extend = version.kind !== 'import' || version.length >= TAIL_FRAMES; clearPlan(clip);
         delete clip.splice; if (version.splice) clip.splice = version.splice;
     }
     return finish(next);

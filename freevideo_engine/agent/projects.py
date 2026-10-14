@@ -325,10 +325,18 @@ class Projects:
         if any(info['missing'] or not info.get('path') for info in found.values()):
             raise ProjectError('source_missing', 'The part this generation continues from is not available.')
         request = rules.generation(mode='request', project=plan['project'], ids=plan['ids'], text=text,
-                                   paths={key: info['path'] for key, info in found.items()})
+                                   paths={key: info['path'] for key, info in found.items()},
+                                   sizes={key: dict(width=info['width'], height=info['height']) for key, info in found.items()})
         if not request['ok']:
             self._rejected(request['error'], stored, '/target', target)
-        limit = plan['max_request_frames']
+        size, limit = plan['size'], plan['max_request_frames']
+        if request.get('size') and request['size'] != size:
+            # A part continuing footage of another size has that size's limit, as on the page.
+            size = request['size']
+            reply = capability(size) if capability is not None else None
+            if isinstance(reply, dict) and reply.get('status', 'ready') == 'ready':
+                limit = rules.generation(mode='plan', project=stored, target=target, text=text, capability=reply,
+                                         size=size).get('max_request_frames')
         longest = max(block['frames'] for block in request['blocks'])
         if limit is not None and longest > limit:
             raise _invalid('/target', 'parts of at most %d frames at this size and quality; choose a shorter range'
@@ -338,8 +346,8 @@ class Projects:
         prompt = text.strip() or next((b['text'] for b in blocks if b['text'].strip()), '') or 'Continue the video.'
         frames = sum(block['frames'] for block in blocks)
         spec = dict({k: v for k, v in settings.items() if k in ('quality', 'sampling', 'loras', 'force_regenerate')},
-                    kind='generate', prompt=prompt, seed=seed, width=plan['size']['width'],
-                    height=plan['size']['height'], seconds=min(60., max(1.625, frames / 24)),
+                    kind='generate', prompt=prompt, seed=seed, width=size['width'],
+                    height=size['height'], seconds=min(60., max(1.625, frames / 24)),
                     label='Editing project ' + identity)
         saved = self._save(plan['project'])  # The reservation: the page's revision check orders it.
         editor = dict(project=identity, ids=plan['ids'], blocks=blocks, revision=saved['revision'])

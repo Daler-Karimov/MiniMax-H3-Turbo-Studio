@@ -166,12 +166,15 @@ globalThis.__generation = text => {
     };
     try {
         const record = model.parse(request.project);
+        const generation = __load('editor_generation');
         if (request.mode === 'request') {
             const value = model.generationRequest(record, request.ids, {text: request.text, paths: request.paths});
-            return JSON.stringify({ok: true, blocks: value.blocks.map(({before, ...block}) => block)});
+            // Parts that continue finished footage are made at its shape, as on the page.
+            const follow = generation.continuedSize(model.generationBefore(record, request.ids), new Map(Object.entries(request.sizes || {})));
+            return JSON.stringify({ok: true, blocks: value.blocks.map(({before, ...block}) => block), size: follow});
         }
-        const store = __load('editor_store'), generation = __load('editor_generation');
-        const size = generation.generationSize(record), target = request.target, words = request.text;
+        const store = __load('editor_store');
+        const size = request.size || generation.generationSize(record), target = request.target, words = request.text;
         const reply = request.capability, ready = reply && (!reply.status || reply.status === 'ready');
         const limits = ready ? store.capabilityPoints(reply, {...record, ...size})
             : {maxSeconds: 15, maxFollowSeconds: 15, maxRequestFrames: null};
@@ -354,7 +357,7 @@ class EditorRuntime(ScriptRuntime):
         return self._entry('__batch', dict(project=project, operations=operations))
 
     def generation(self, **request):
-        """mode='plan' (project, target, text, capability) or mode='request' (project, ids, text, paths)."""
+        """mode='plan' (project, target, text, capability[, size]) or mode='request' (project, ids, text, paths, sizes)."""
         return self._entry('__generation', request)
 
     def deliver(self, **request):
