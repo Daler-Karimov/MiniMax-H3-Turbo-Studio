@@ -189,6 +189,10 @@ RULES = [
     'otherwise make its reference pictures with POST /cast/{id}/generate. '
     'Before shooting, tell the user the casting in one sentence. Later shots use the card\'s current pictures. '
     'Keep cards you made so later films can reuse them.',
+    'Pictures. When the user wants a picture, or a first frame or reference picture that does not exist yet, make '
+    'it with freevideo_generate_image; to change a picture, pass it in images. The result is an input file: use '
+    'result.file as a first frame, as a reference, or in images again. When where people stand in the shot matters, '
+    'make the first frame with people (cast pictures and places) and generate the video from it.',
     'Cut by default. Wherever the film can change shot, make the new shot from the reference pictures it should '
     'have (cast cards, scene pictures) instead of continuing the previous video. Continue a video only for a '
     'long take that cannot be cut, an action that must stay unbroken, or sound that must stay unbroken, and '
@@ -218,6 +222,9 @@ RULES_ZH = [
     '先选角，再拍摄。先搜索角色库，使用用户指定的卡片或明确符合要求的卡片；拿不准时询问用户。'
     '只有找不到合适卡片时才新建：用户提供了照片就用照片，否则通过 POST /cast/{id}/generate 生成参考图。'
     '开拍前用一句话告诉用户选角结果。后续镜头使用卡片当前的图片。保留你创建的卡片，方便以后拍片复用。',
+    '图片。用户要一张图，或者缺一张首帧、参考图时，用 freevideo_generate_image 生成；要改一张图，把它放进 images。'
+    '结果是一个输入文件：result.file 可以当首帧、当参考图，也可以再放进 images。镜头里人物站位要紧时，'
+    '先用 people（角色图和各自的位置）做出首帧，再用它生成视频。',
     '默认切镜头。能切镜头的地方就切：新镜头直接用对应的参考图（人物卡、场景图）生成，不接上一段视频。'
     '只有不能切镜的长镜头、必须连贯的动作、必须连贯的声音，才接着上一段生成，而且不建议一段接一段地连续接。'
     '一条视频最多 5 段（第一段加 4 次接着生成），接着生成的每一段至少 10 秒，总长约 70 秒；不建议接满，超过就切镜头。',
@@ -523,7 +530,8 @@ GUIDE['cast'] = [
     'continue the previous one carry no references (cast_reference inherited); POST /drama/plan shows each shot\'s cast. '
     'A shot with a carded character is at most 15 s; continue it in the next shot to go longer.',
     'POST /cast/{id}/generate makes reference pictures from the description as a normal job (face=true adds a close-up). '
-    'When the job ends the card gets the sharpest frames (labels guessed, label_guess) and a new revision; a failure '
+    'It defaults to the installed image model, otherwise video frames (labels guessed, label_guess). '
+    'When generation ends the card gets the pictures and a new revision; a failure '
     'sets generate_error and keeps the pictures. If the user changed the pictures (meanwhile, or before an agent asked), '
     'they go to candidates.',
 ]

@@ -16,6 +16,7 @@ import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';
 import { regenerateResult, upscaleResult } from './studio_queue.js';
 import { openImageEditor, icon } from './image_editor.js';
+import { imageGenerationSupported } from './image_generation.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -112,6 +113,9 @@ function mediaPanel(node, mount = null) {
     const picker = el("input"); picker.type = "file"; picker.multiple = true;
     picker.accept = "image/*,video/*,audio/*"; picker.hidden = true;
     const add = button(text("Upload files", "上传文件"), text("Upload images, video or audio", "上传图片、视频或音频"), () => picker.click());
+    const generateImage = button(text('Generate with AI', 'AI 生成'), text('Generate with AI', 'AI 生成'), () => newImage());
+    generateImage.prepend(document.createRange().createContextualFragment(icon('generate')));
+    generateImage.hidden = !imageGenerationSupported();
     const audioPicker = el('input'); audioPicker.type = 'file'; audioPicker.multiple = true;
     audioPicker.accept = 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus'; audioPicker.hidden = true;
     const addAudio = button(text('Reference audio', '参考音频'),
@@ -122,7 +126,7 @@ function mediaPanel(node, mount = null) {
         const option = el("option", label); option.value = value; role.append(option);
     }
     role.value = 'reference';
-    toolbar.append(add, addAudio, role, picker, audioPicker); panel.append(toolbar, mode, note, audioHelp, connections, cards);
+    toolbar.append(add, generateImage, addAudio, role, picker, audioPicker); panel.append(toolbar, mode, note, audioHelp, connections, cards);
     const read = () => {
         const rows = JSON.parse(serialized.value || "[]");
         if (!Array.isArray(rows) || rows.length > 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
@@ -189,11 +193,31 @@ function mediaPanel(node, mount = null) {
             const result = await uploadOne(new File([outcome.blob], outcome.name, {type: outcome.blob.type}));
             const latest = read(), index = latest.findIndex(row => row.file === file);
             if (index < 0) return;
-            latest[index] = {...latest[index], file: result.file, source, edit: outcome.edit}; update(latest);
-            message(text(`Saved the edited image, ${outcome.width}×${outcome.height}. The original is kept.`,
-                `已保存编辑后的图片（${outcome.width}×${outcome.height}），原图保留。`));
+            const hasOriginal = outcome.edit.layers.some(layer => layer.id === 'base');
+            latest[index] = {...latest[index], file: result.file, ...(hasOriginal ? {source} : {}), edit: outcome.edit}; update(latest);
+            message(hasOriginal ? text(`Saved the edited image, ${outcome.width}×${outcome.height}. The original is kept.`,
+                `已保存编辑后的图片（${outcome.width}×${outcome.height}），原图保留。`) : '');
         } catch (error) { message(error.message, true); }
         finally { node.isUploading = false; add.disabled = false; addAudio.disabled = false; }
+    }
+    async function newImage() {
+        if (node.isUploading || read().length >= 32) return;
+        const library = read().filter(row => mediaKind(row.file) === 'image')
+            .map(row => ({file: row.file, label: (row.source || row.file).split('/').pop()}));
+        let outcome;
+        try {
+            outcome = await openImageEditor({target: videoSize(), role: role.value, t: text,
+                resolve: viewURL, upload: uploadOne, library});
+        } catch { message(text('The image could not be opened for editing.', '这张图片无法打开编辑。'), true); return; }
+        if (!outcome?.blob || read().length >= 32) return;
+        node.isUploading = true; add.disabled = addAudio.disabled = generateImage.disabled = true;
+        try {
+            const result = await uploadOne(new File([outcome.blob], outcome.name, {type: outcome.blob.type}));
+            const latest = read();
+            latest.push({file: result.file, role: role.value, enabled: true, edit: outcome.edit});
+            update(latest);
+        } catch (error) { message(error.message, true); }
+        finally { node.isUploading = false; add.disabled = addAudio.disabled = generateImage.disabled = false; }
     }
     function restoreImage(file) {
         const rows = read(), at = rows.findIndex(row => row.file === file);

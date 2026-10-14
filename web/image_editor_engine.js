@@ -44,6 +44,11 @@ export function newDocument(file, image) {
         extend: {l: 0, t: 0, r: 0, b: 0, color: '#000000'}, crop: {x: 0, y: 0, w, h}, ratio: 'original',
         layers: [baseLayer(file, image)], active: 'base'};
 }
+export function blankDocument({width, height}, ratio = 'free') {
+    return {version: 2, width, height, rotate: 0, flipX: false, flipY: false,
+        extend: {l: 0, t: 0, r: 0, b: 0, color: '#000000'},
+        crop: {x: 0, y: 0, w: width, h: height}, ratio, layers: [], active: null};
+}
 // Edits saved before layers: crop and strokes in fractions of the oriented picture.
 export function migrate(edit, file, image) {
     if (!edit) return newDocument(file, image);

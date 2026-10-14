@@ -368,6 +368,10 @@ def prepared_precision(prepared):
 
 
 def model_target(row, model_dir, encoder_dir, prepared_dir=None):
+    from .model_status import family
+    if family(row) == 'image':
+        from .image_gen.image_pack import target
+        return target(row, model_dir)
     if row.get('sampling_file'):
         from .adaln_assets import asset_path
         from .sampling_assets import cache_root
@@ -2146,6 +2150,26 @@ def main(argv=None):
             prepare_end(ui, False)
 
 
+def install_image_model(engine_root, model_root):
+    """The optional image model, after the video installation is complete; its failure never fails setup."""
+    from .image_gen import image_pack
+    last = [-1]
+    def progress(value):
+        total, done = value.get('total') or 0, value.get('done') or 0
+        if total and done * 100 // total != last[0]:
+            last[0] = done * 100 // total
+            print('Image model: %d%%' % last[0], flush=True)
+    print('Downloading the image model (%.1f GiB)…' % (sum(r['bytes'] for r in image_pack.rows()) / 2**30), flush=True)
+    try:
+        image_pack.install(Path(model_root), progress, engine_root=Path(engine_root))
+    except image_pack.PackError as error:
+        print('The image model was not downloaded (%s). Download it later from the launcher.' % error.reason, file=sys.stderr)
+    except (OSError, ValueError, RuntimeError) as error:
+        print('The image model was not downloaded (%s). Download it later from the launcher.' % type(error).__name__, file=sys.stderr)
+    else:
+        print('Image model ready.')
+
+
 def run_main(argv, shown):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('FREEVIDEO_HOME', DEFAULT_ROOT)))
@@ -2156,6 +2180,9 @@ def run_main(argv, shown):
     parser.add_argument('--sampling-caches', action=argparse.BooleanOptionalAction, default=None,
                         help='Install every quality level in advance (default for new installations; existing ones keep '
                              'their choice). The default 8 + 3 refinement tables are always installed.')
+    parser.add_argument('--image-model', action='store_true',
+                        help='After setup, also download the optional image generation model (about 16 GiB). '
+                             'A failure here does not fail setup; the launcher can download it later')
     parser.add_argument('--prepared-format', choices=('auto', 'int8', 'fp8'), default='auto',
                         help='auto: an installation keeps its recorded format and new installations use int8 on GeForce '
                              'and Ampere cards, FP8 elsewhere. int8/fp8 switch explicitly; files of the other format are kept')
@@ -2304,6 +2331,8 @@ def run_main(argv, shown):
     if installer.state['status'] == 'complete':
         if args.verbose:
             print('Configuration: %s' % (installer.root / 'machine.json'))
+        if args.image_model and platform.system() != 'Darwin':
+            install_image_model(installer.root, value['model_dir'])
         from .comfy_service import after_setup, continues_after_setup
         if continues_after_setup(no_launch=args.no_launch, approved_plan=args.approved_plan):
             print('\nSetup complete.')

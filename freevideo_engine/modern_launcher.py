@@ -161,6 +161,10 @@ def create_ui(session, *, show=True):
         def upgradeModel(self):
             self.invoke(session.upgrade_model)
 
+        @Slot(str)
+        def imagePackAction(self, action):
+            self.invoke(session.image_pack_action, action)
+
         @Slot()
         def cancelModelUpgrade(self):
             self.invoke(session.cancel_model_upgrade)

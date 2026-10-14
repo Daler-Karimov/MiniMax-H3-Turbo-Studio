@@ -117,10 +117,37 @@ ERRORS.update({
 
 
 # Recovery is a function of the committed task and phase, not just an error code.
+IMAGE_ERRORS = {
+    'invalid_request': 'The picture request contains invalid fields.',
+    'invalid_prompt': 'The picture prompt must contain text and be at most 2000 characters.',
+    'invalid_dimensions': 'Picture width and height must be integers from 256 to 2048.',
+    'invalid_seed': 'The picture seed must be an integer from -9223372036854775808 to 18446744073709551615.',
+    'invalid_media': 'A reference picture must be a regular file inside the input directory without symlinks.',
+    'too_many_images': 'Use at most four reference pictures.',
+    'busy': 'Another picture is being generated; this picture is waiting for it.',
+    'busy_video': 'A video is being generated; this picture is waiting for it.',
+    'pack_missing': 'The image model is not installed on this computer; tell the user to install it in FreeVideo first and do not retry.',
+    'unknown_job': 'The image service no longer has this picture job.',
+    'closed': 'The image service has shut down.',
+    'image_unavailable': 'The image service is not loaded on this computer.',
+    'no_memory': 'There is not enough GPU or system memory for this picture.',
+    'generation_failed': 'The image model could not finish this picture.',
+    'worker_exit': 'The image worker stopped before finishing this picture.',
+    'cancelled': 'The picture job was cancelled.',
+}
+for _code, _message in IMAGE_ERRORS.items():
+    if _code not in ERRORS:
+        ERRORS[_code] = (503 if _code in ('pack_missing', 'closed', 'image_unavailable') else 422,
+                        _code in ('busy_video', 'unknown_job', 'closed', 'image_unavailable', 'worker_exit'),
+                        _message, 'Read the picture job before submitting a corrected request with a new ref.')
+ERRORS['pack_missing'] = (503, False, IMAGE_ERRORS['pack_missing'],
+                        'Tell the user to install the image model in FreeVideo first; do not retry.')
+
 RECOVERY = {
     'generate': 'POST /freevideo/agent/v1/jobs/{id}/resume to retry unfinished generation blocks.',
     'vlm': 'Submit the question again with a new ref.',
     'enhance': 'Submit the prompt enhancement again with a new ref.',
+    'image': 'Submit the picture request again with a new ref.',
     'assemble': 'Submit the clip assembly again with a new ref.',
     'refine': 'Submit the second-pass generation again with a new ref.',
     'submission_unknown': 'Read the job list, then retry the original submission with the same ref.',
@@ -138,6 +165,10 @@ REPAIR = {
 
 
 def recovery(code, *, kind=None, stage='request', resumable=True):
+    if kind == 'image' and code == 'pack_missing':
+        return ERRORS[code][3]
+    if kind == 'image' and code == 'no_memory':
+        return 'Lower the picture dimensions or use fewer reference pictures, then submit with a new ref.'
     if kind in RECOVERY and stage == 'terminal':
         return REPAIR.get(code, '') + RECOVERY['refine' if kind == 'generate' and not resumable else kind]
     if stage == 'submission_unknown' and code in ('internal_error', 'storage_unavailable', 'unreachable'):
@@ -177,6 +208,8 @@ def build(code, *, details=None, request=None, validation=False, message=None, n
     code = code if code in ERRORS else 'internal_error'
     _, retryable, default_message, _ = ERRORS[code]
     action = recovery(code, kind=kind, stage=stage, resumable=resumable)
+    if kind == 'image':
+        default_message = IMAGE_ERRORS.get(code, default_message)
     result = dict(code=code, message=message if validation and message else default_message,
                   details=(details or []) if validation else safe_details(details or []),
                   retryable=retryable, request_id=request or request_id(),

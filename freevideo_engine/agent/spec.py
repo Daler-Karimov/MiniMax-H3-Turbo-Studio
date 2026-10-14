@@ -215,6 +215,19 @@ def normalize(value, *, port=None):
                 item['video'] = media_item({k: v for k, v in video.items() if k != 'frames'} if isinstance(video, dict) else video, '/questions/video')
             result['questions'].append(item)
         result.update({k: value[k] for k in ('format', 'max_tokens', 'system') if k in value})
+    elif kind == 'image':
+        width, height = ((value['width'], value['height']) if 'width' in value else
+                         contract.IMAGE_ASPECTS[value.get('aspect', '1:1')])
+        result.update(prompt=value['prompt'], width=width, height=height,
+                      images=[item if isinstance(item, str) else item['file'] for item in value.get('images', [])])
+        if value.get('seed') is not None:
+            result['seed'] = value['seed']
+        if value.get('people'):
+            result['people'] = [dict(image=person['image'], x=person.get('x', .5), height=person.get('height', .62),
+                                     feet=person.get('feet', .9), **({'name': person['name']} if person.get('name') else {}))
+                                for person in value['people']]
+            if value.get('scene_image'):
+                result['scene_image'] = value['scene_image']
     elif kind == 'export':
         result.update(editor_project=value['editor_project'], revision=value['revision'])
     elif kind == 'listen':

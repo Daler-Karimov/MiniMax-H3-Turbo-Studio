@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import threading
 import uuid
 
@@ -537,7 +538,7 @@ class Cast:
 
     # Reference pictures -------------------------------------------------------------------------------
     def generate(self, identity, value=None, *, by='builtin', ref=None, revision=None, client=None):
-        """Submit a reference clip (and a face close-up) for this card; the scheduler lands the frames."""
+        """Submit reference pictures or clips for this card; the scheduler lands the pictures."""
         value = value or {}
         shape = schema.cast_schema('generate')
         schema.validate(shape, value)
@@ -560,25 +561,78 @@ class Cast:
                                 card=view(card), job=job)
             if value['face'] and card['kind'] != 'character':
                 raise spec.SpecError([schema.diagnostic('/face', 'false for a setting card', True)])
+            ready = value.get('source') != 'video' and getattr(self.jobs.port, 'image_ready', lambda: False)()
+            source = value.get('source', 'image' if ready else 'video')
+            if source == 'image' and not ready:
+                raise CastError('pack_missing', errors.IMAGE_ERRORS['pack_missing'],
+                                'omit source, or use source video')
             seed = secrets.randbelow(spec.MAX_SEED + 1)
             token = uuid.uuid4().hex[:12]
-            parts = [('turn', SCENE if card['kind'] == 'setting' else TURN, False)]
-            if value['face']:
-                parts.append(('face', CLOSE_UP, True))
-            items = [dict(kind='generate', prompt=reference_prompt(card, face=face), seed=seed,
-                          label=('Cast · %s · %s' % (card['name'], part))[:120],
-                          metadata=dict(cast_card=identity, cast_part=part), **shot)
-                     for part, shot, face in parts]
+            if source == 'image':
+                from ..image_gen.cast_views import VIEWS, SETTING_VIEWS
+                # A picture takes seconds, so a character always gets every view, the face close-up included.
+                views = list(SETTING_VIEWS if card['kind'] == 'setting' else VIEWS)
+                items = self._image_items(card, views[:1], seed)
+            else:
+                parts = [('turn', SCENE if card['kind'] == 'setting' else TURN, False)]
+                if value['face']:
+                    parts.append(('face', CLOSE_UP, True))
+                items = [dict(kind='generate', prompt=reference_prompt(card, face=face), seed=seed,
+                              label=('Cast · %s · %s' % (card['name'], part))[:120],
+                              metadata=dict(cast_card=identity, cast_part=part), **shot)
+                         for part, shot, face in parts]
             rows, _ = self.jobs.submit_request(dict(jobs=items), client='cast:' + identity,
                                                parent=dict(cast=identity, ref=token))
             jobs = [row['id'] for row in rows]
             card['generating'] = dict(job=jobs[0], face_job=jobs[1] if len(jobs) > 1 else None,
-                                      replace=value['replace'], at=self._now(), by=by)
+                                      jobs=list(jobs), source=source, replace=value['replace'], at=self._now(), by=by)
             card['_generating'] = dict(ref=token, seed=seed, kind=card['kind'], user_images=card.get('_user_images', 0))
+            if source == 'image':
+                card['_generating'].update(source=source, stage='front', views=views[1:],
+                                            job_views={jobs[0]: views[0]}, name=card['name'],
+                                            description=card['description'])
             result = dict(job=jobs[0], jobs=jobs, card=view(card))
             self._remember(record, ref, digest, result, client)
             self._save(record)
             return result
+
+    def _image_items(self, card, views, seed, front=None, from_photo=False):
+        from ..image_gen.cast_views import size, uses_front, view_prompt, photo_prompt
+        # A picture somebody put on the card (the user, or an agent passing on the user's photo) is the person.
+        photo = next((row['media'] for row in card.get('images', []) if not row.get('generated')), None)
+        items = []
+        for part in views:
+            width, height = size(part)
+            images = [front] if uses_front(part) else [photo] if part == 'front' and photo else []
+            # When the front was made from a photo, the photo and not the text says what the person looks like.
+            prompt = (photo_prompt() if part == 'front' and photo else
+                      view_prompt(dict(card, photo=True) if from_photo else card, part))
+            items.append(dict(kind='image', prompt=prompt, width=width, height=height, seed=seed,
+                              images=images, label=('Cast · %s · %s' % (card['name'], part))[:120],
+                              metadata=dict(cast_card=card['id'], cast_part=part)))
+        return items
+
+    def _image_views(self, identity, generating, hidden, rows):
+        """Submit edits of the finished front once, while this tick owns the card's claim."""
+        front = rows[generating['job']]
+        if hidden['stage'] != 'front' or not hidden['views'] or not front or front['status'] != 'succeeded':
+            return False
+        with self.changed:
+            record = self.records.get(identity)
+            if record is None or record['card'].get('_generating') != hidden:
+                return True
+            record = deepcopy(record)
+            card = record['card']
+            basis = dict(id=identity, kind=hidden['kind'], name=hidden['name'], description=hidden['description'])
+            items = self._image_items(basis, hidden['views'], hidden['seed'], dict(file=front['result']['file']),
+                                      from_photo=bool(front['spec'].get('images')))
+            jobs, _ = self.jobs.submit_request(dict(jobs=items, ref='cast-' + hidden['ref'] + '-views'),
+                client='cast:' + identity, parent=dict(cast=identity, ref=hidden['ref']))
+            card['generating']['jobs'].extend(row['id'] for row in jobs)
+            card['_generating']['job_views'].update({row['id']: part for row, part in zip(jobs, hidden['views'])})
+            card['_generating'].update(stage='views', views=[])
+            self._save(record)
+        return True
 
     def allows(self, parent):
         """May Jobs still start this generation? Only while its card waits for it."""
@@ -588,7 +642,7 @@ class Cast:
             return bool(hidden) and hidden['ref'] == parent.get('ref')
 
     def _finished(self):
-        """Cards whose generation jobs have all ended, with those jobs as they ended."""
+        """Cards ready to submit more views or land, with their current jobs as they ended."""
         ready = []
         with self.changed:
             for identity, record in self.records.items():
@@ -618,7 +672,11 @@ class Cast:
             if not self._claim(identity, hidden):
                 continue  # Landed already, or another tick is landing it now.
             try:
-                self._land(identity, generating, hidden, rows)
+                if hidden.get('source') == 'image':
+                    if not self._image_views(identity, generating, hidden, rows):
+                        self._land_image(identity, generating, hidden, rows)
+                else:
+                    self._land(identity, generating, hidden, rows)
             except Exception as error:  # noqa: BLE001 - one card must never stop the others
                 logging.getLogger(__name__).warning('Reference pictures could not be saved (%s)', type(error).__name__)
                 self._fail(identity, hidden, dict(code='internal_error', job=generating['job'],
@@ -632,10 +690,43 @@ class Cast:
         with self.changed:
             record = self.records.get(identity)
             if (identity in self.landing or record is None
-                    or (record['card'].get('_generating') or {}).get('ref') != hidden['ref']):
+                    or record['card'].get('_generating') != hidden):
                 return False
             self.landing.add(identity)
             return True
+
+    def _land_image(self, identity, generating, hidden, rows):
+        pictures, failure, staged = [], None, []
+        try:
+            for job in _generation_jobs(generating):
+                row = rows[job]
+                if row is None or row['status'] != 'succeeded':
+                    code = (row.get('error') or {}).get('code') if row else 'not_found'
+                    failure = failure or dict(code=code or row['status'], job=job, message=(
+                        'The generation was cancelled.' if row and row['status'] == 'cancelled'
+                        else 'The reference picture did not finish.'))
+                    continue
+                folder = 'freevideo/agent/%s/ref-%s' % (identity, job)
+                file = folder + '-0.png'
+                temporary = self.jobs.port.input_path(folder + '-0.landing-' + uuid.uuid4().hex[:8] + '.png', create=True)
+                for left in temporary.parent.glob('ref-%s-*.landing-*.png' % job):
+                    if left != temporary:
+                        left.unlink(missing_ok=True)
+                try:
+                    shutil.copyfile(self.jobs.port.input_path(row['result']['file']), temporary)
+                except Exception:  # noqa: BLE001 - the other views still land
+                    temporary.unlink(missing_ok=True)
+                    failure = failure or dict(code='invalid_media', job=job,
+                                              message='The reference picture could not be read.')
+                    continue
+                staged.append((temporary, file))
+                part = hidden['job_views'][job]
+                pictures.append(dict(media=dict(file=file), by=generating['by'], from_job=job,
+                                     generated=True, label='other' if hidden['kind'] == 'setting' else part))
+            self._settle(identity, hidden, pictures, failure, staged)
+        finally:
+            for out, _ in staged:
+                out.unlink(missing_ok=True)
 
     def _land(self, identity, generating, hidden, rows):
         from . import media
@@ -733,6 +824,8 @@ class Cast:
                         generate_error=failure, revision=card['revision'] + 1, updated_at=self._now(), by=by,
                         generated=dict(job=generating['job'], face_job=generating.get('face_job'),
                                        seed=hidden['seed'], prompt_version=PROMPT_VERSION))
+            if hidden.get('source') == 'image':
+                card['generated']['source'] = 'image'
             card.pop('_generating', None)
             self._save(record)
 
@@ -772,4 +865,4 @@ def _unreadable(error):
 def _generation_jobs(generating):
     if not generating:
         return []
-    return [generating['job']] + ([generating['face_job']] if generating.get('face_job') else [])
+    return generating.get('jobs') or [generating['job']] + ([generating['face_job']] if generating.get('face_job') else [])

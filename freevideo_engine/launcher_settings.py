@@ -30,7 +30,7 @@ def default_language():
 def sanitize(value):
     value = plain_data(value) if isinstance(value, dict) else {}
     result = {k: value[k] for k in TEXT if isinstance(value.get(k), str)}
-    for key in ('separate', 'new_comfy', 'sampling_caches', 'lan_access'):
+    for key in ('separate', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model'):
         if type(value.get(key)) is bool:
             result[key] = value[key]
     if value.get('model_method') in ('auto', 'manual', 'reuse'):

@@ -635,6 +635,24 @@ ApplicationWindow {
                             onToggled: backend.edit("sampling_caches", checked)
                         }
                     }
+                    FCard {
+                        objectName: "imageModelCard"
+                        visible: Qt.platform.os !== "osx" && !!s.image_pack && s.image_pack.total_bytes > 0 && s.image_pack.state !== "ready"
+                        Layout.fillWidth: true; padding: 16
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 14
+                            FCheck {
+                                objectName: "imageModelSwitch"; Layout.fillWidth: true
+                                text: t("Image generation models", "图像生成模型")
+                                checked: !!s.form.image_model && s.image_pack.enough_disk; enabled: !s.busy && s.image_pack.enough_disk
+                                onToggled: backend.edit("image_model", checked)
+                            }
+                            FText {
+                                objectName: "imageModelSize"; color: theme.muted
+                                text: s.image_pack.enough_disk ? bytes(s.image_pack.total_bytes).replace(" ", "\u00a0") : t("Not enough disk space", "磁盘空间不足")
+                            }
+                        }
+                    }
                     FText { visible: s.offline.models > 0; text: "✓  " + t("Model packages: ", "已导入模型包：") + s.offline.models; color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
                 }
 
@@ -844,6 +862,7 @@ ApplicationWindow {
                         }
                     }
                     FCard {
+                        objectName: "installationCard"
                         Layout.fillWidth: true; padding: 22; spacing: 12
                         FText { text: t("Installation", "安装信息"); font.weight: Font.DemiBold }
                         GridLayout {
@@ -863,6 +882,28 @@ ApplicationWindow {
                         FText { objectName: "archivesDone"; visible: !!s.archives_toast; text: s.archives_toast || ""; color: theme.success; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         FCheck { visible: s.needs_consent; text: s.consent; checked: accepted; onToggled: accepted = checked; Layout.fillWidth: true }
                         FButton { objectName: "bundleLicensesButton"; visible: s.needs_consent; text: t("View licenses", "查看许可证"); flat: true; implicitHeight: theme.heightSm - 2; leftPadding: 32; font.pixelSize: theme.micro + 1; onClicked: licensesOpen = true }
+                    }
+                    FCard {
+                        objectName: "imagePackCard"
+                        visible: !!s.image_pack && s.image_pack.visible
+                        Layout.fillWidth: true; padding: 22; spacing: 10
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 14
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 4
+                                FText { objectName: "imagePackTitle"; text: s.image_pack.title; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                                FText { objectName: "imagePackStatus"; text: s.image_pack.detail; color: theme.muted; Layout.fillWidth: true }
+                            }
+                            FText { objectName: "imagePackSize"; text: bytes(s.image_pack.total_bytes).replace(" ", "\u00a0"); color: theme.muted }
+                            FButton { objectName: "imagePackInstall"; visible: !s.image_pack.ready && !s.image_pack.busy; text: s.image_pack.downloaded_bytes > 0 ? t("Resume", "继续") : t("Download", "下载"); enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("install") }
+                            FButton { objectName: "imagePackCancel"; visible: s.image_pack.busy; text: t("Pause", "暂停"); flat: true; onClicked: backend.imagePackAction("cancel") }
+                            FButton { objectName: "imagePackRepair"; visible: s.image_pack.repairable && s.image_pack.downloaded_bytes > 0 && !s.image_pack.busy; text: t("Repair", "修复"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("repair") }
+                            FButton { objectName: "imagePackRemove"; visible: s.image_pack.removable_bytes > 0 && !s.image_pack.busy; text: t("Remove", "删除"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("remove") }
+                        }
+                        FMeter {
+                            objectName: "imagePackProgress"; visible: s.image_pack.busy; Layout.fillWidth: true; active: visible
+                            fraction: s.image_pack.install.total > 0 ? s.image_pack.install.done / s.image_pack.install.total : -1
+                        }
                     }
                 }
 
