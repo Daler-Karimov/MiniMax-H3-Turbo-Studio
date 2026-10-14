@@ -219,7 +219,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         try {
             const response = await agentGet(api, '/freevideo/agent/chat/list', {signal: closed.signal});
             if (stopped) return;
-            conversations = mergeConversations(conversations, response.ok ? await response.json() : null, response.status);
+            // The body is awaited first: a conversation chosen meanwhile must stay the current one.
+            const data = response.ok ? await response.json() : null;
+            if (stopped) return;
+            conversations = mergeConversations(conversations, data, response.status);
             renderConversations();
             if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; selection++; void poll(); }
         } catch { /* List failures do not interrupt reading or sending. */ }
@@ -496,8 +499,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             away = job ? {session: row.id, job, ids: jobs.map(job => job.id)} : null;
         } catch { /* The last reading stays until the next one. */ }
     }
+    let reportedJob = null;
     function report() {
         const current = (state.current ? state.jobs[state.current] : away?.job) || null;
+        // A job that starts or ends changes a dot in the list, so the list is read again right away.
+        if ((current?.id || null) !== reportedJob) { reportedJob = current?.id || null; void readConversations(true); }
         changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, left: current ? leftOf(current) : null, active: state.active,
             any: state.items.size > 0 || pending.length > 0});
     }
