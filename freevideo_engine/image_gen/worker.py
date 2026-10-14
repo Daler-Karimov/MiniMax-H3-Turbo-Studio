@@ -154,7 +154,10 @@ def main():
     stream = None
     if os.name == 'nt':
         from ..win32 import private_stdin
-        stream = private_stdin()
+        try:
+            stream = private_stdin()
+        except OSError as error:
+            print('private stdin unavailable, reading stdin directly: %s' % error, file=sys.stderr, flush=True)
     serve(args.pack_dir, device=args.device, idle_seconds=args.idle_seconds, stream=stream)
     return 0
 

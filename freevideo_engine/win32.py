@@ -65,12 +65,18 @@ def private_stdin(encoding='utf-8'):
     import msvcrt
     import sys
     private = os.dup(sys.stdin.fileno())
-    null = os.open(os.devnull, os.O_RDONLY)
     try:
-        os.dup2(null, 0)
-    finally:
-        os.close(null)
-    checked(kernel32().SetStdHandle(DWORD(-10 & 0xffffffff), msvcrt.get_osfhandle(0)))  # STD_INPUT_HANDLE
+        null = os.open(os.devnull, os.O_RDONLY)
+        try:
+            os.dup2(null, 0)
+        finally:
+            os.close(null)
+        checked(kernel32().SetStdHandle(DWORD(-10 & 0xffffffff), msvcrt.get_osfhandle(0)))  # STD_INPUT_HANDLE
+    except OSError:
+        # Put the pipe back so the caller can still read from sys.stdin.
+        os.dup2(private, 0)
+        os.close(private)
+        raise
     return open(private, encoding=encoding, errors=sys.stdin.errors)
 
 
