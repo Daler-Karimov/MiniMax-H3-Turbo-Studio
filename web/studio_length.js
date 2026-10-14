@@ -115,8 +115,9 @@ export function createStudioLength({api, node, seconds, advanced, fields, t, fie
     };
     const input = () => { submitted = false; planLimits = limits; edited = false; invalidate(); schedule(); };
     seconds.addEventListener('input', input);
-    function commit() {
-        if (!seconds.value || !seconds.reportValidity()) return false;
+    function commit({report = true} = {}) {
+        const valid = report ? seconds.reportValidity() : seconds.checkValidity();
+        if (!seconds.value || !valid) return false;
         const value = total() > 30 ? Math.round(total()) : total(); seconds.value = value;
         if (value > 60) remember(LENGTH_PROPERTIES.seconds, value);
         else if (node.properties && Object.hasOwn(node.properties, LENGTH_PROPERTIES.seconds)) { delete node.properties[LENGTH_PROPERTIES.seconds]; node.graph?.change(); }

@@ -109,6 +109,7 @@ export function createSamplingEffort(t, {onChange, onPreview = () => {}}) {
         if (isCustom) rail.setAttribute('aria-valuetext', custom.textContent);
         rail.title = disabled ? state.reason || t('Controlled by connected nodes.', '由连接的节点控制。')
             : t('Same model. Higher effort uses more sampling steps; results vary by scene.', '使用同一模型，提高档位会增加采样步数；效果因场景而异。');
+        for (const name of nameButtons) { name.disabled = disabled; name.title = ''; }
     }
     return {element, update, setEstimate(text, title = '') { estimate.textContent = text; estimate.title = title; }, dispose: cancel};
 }

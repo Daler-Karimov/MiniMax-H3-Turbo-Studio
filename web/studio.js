@@ -394,7 +394,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const references = attachReferencePicker(prompt, {items: () => referenceItems(node), t, view, host: dialog,
         addMedia: () => { mediaDetails.open = true; mediaDetails.scrollIntoView({block: 'nearest', behavior: 'smooth'}); mediaMount.querySelector('button')?.focus(); }});
     const mention = button('@', () => references.open(), 'fv-reference-trigger');
-    mention.title = t('Reference media (@)', '引用素材（@）'); mention.setAttribute('aria-label', mention.title);
+    mention.setAttribute('aria-label', t('Reference media (@)', '引用素材（@）'));
+    mention.title = mention.getAttribute('aria-label');
     mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault(); promptEditor.append(mention);
     cleanup.push(() => references.dispose());
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
@@ -440,7 +441,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     mp.value = sizeSelection.value;
     const legacyOption = [...mp.options].find(o => Number(o.value) === 1);
     mp.title = t('1 MP = 1024 × 1024, as in ComfyUI.', '1 MP = 1024 × 1024，与 ComfyUI 一致。'); mp.disabled = dimensionsLinked;
-    const seconds = el('input'); seconds.type = 'number'; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）'));
+    const seconds = el('input'); seconds.type = 'number'; seconds.required = true; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）'));
     const fields = el('div', null, 'fv-fields'); fields.append(field(t('Total pixels', '总像素'), mp), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
     const canvasNote = el('div', null, 'fv-canvas-note'), dimensions = el('span'), duration = el('span'); canvasNote.append(dimensions, duration); canvas.append(canvasNote);
     const rangeMount = el('div'); canvas.append(rangeMount);
@@ -463,6 +464,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     });
     passOptions[2].title = t('Two-pass, paused after the half-resolution first pass so you can look at it. Run the second pass from the result when it looks right: the video matches generating it directly.',
         '二次采样跑完半分辨率的一采先停下，给你看预览；满意后在结果里点「继续二采」，成片与直接生成一致。');
+    const previewPassHint = passOptions[2].title;
     passMode.append(...passOptions);
     passMode.addEventListener('keydown', event => {
         const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[event.key];
@@ -495,13 +497,15 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     function syncPassMode() {
         const mode = !twoPass.checked ? 'off' : previewFirst.checked ? 'preview' : 'on';
+        const passLinked = linked(node, 'two_pass'), previewLinked = linked(node, 'preview');
         for (const option of passOptions) {
             const selected = option.dataset.mode === mode;
             option.setAttribute('aria-checked', String(selected)); option.tabIndex = selected ? 0 : -1;
+            option.title = !(passLinked || (option.dataset.mode === 'preview' && previewLinked)) && option.dataset.mode === 'preview' ? previewPassHint : '';
         }
-        passOptions[0].disabled = Boolean(extension.source) || linked(node, 'two_pass') || !widget(node, 'two_pass');
+        passOptions[0].disabled = Boolean(extension.source) || passLinked || !widget(node, 'two_pass');
         passOptions[1].disabled = twoPass.disabled;
-        passOptions[2].disabled = Boolean(extension.source) || twoPass.disabled || linked(node, 'preview') || !widget(node, 'preview');
+        passOptions[2].disabled = Boolean(extension.source) || twoPass.disabled || previewLinked || !widget(node, 'preview');
         passOptions[2].hidden = !widget(node, 'preview');
     }
     samplingSettings.append(effort.element, twoPassLabel);
@@ -532,7 +536,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const [, advanced] = expand(t('Advanced', '高级选项'));
     const custom = el('div', null, 'fv-fields');
     const width = el('input'), height = el('input');
-    for (const [w, name, label] of [[width, 'width', t('Width', '宽度')], [height, 'height', t('Height', '高度')]]) { w.type = 'number'; w.min = '256'; w.max = '4096'; w.step = '32'; w.value = value(node, name); w.disabled = dimensionsLinked; w.setAttribute('aria-label', label); custom.append(field(label, w)); w.onchange = () => { if (w.value && w.reportValidity()) { set(node, name, Number(w.value)); selected = 'custom'; node.properties.freevideo_aspect = selected; ratio = Number(width.value) / Number(height.value); updateCanvas(); } }; }
+    for (const [input, name, label] of [[width, 'width', t('Width', '宽度')], [height, 'height', t('Height', '高度')]]) {
+        input.type = 'number'; input.required = true; input.min = '256'; input.max = '4096'; input.step = '32';
+        input.value = value(node, name); input.disabled = dimensionsLinked; input.setAttribute('aria-label', label);
+        custom.append(field(label, input));
+        input.onchange = () => {
+            if (!input.value || !input.reportValidity()) return;
+            set(node, name, Number(input.value)); selected = 'custom'; node.properties.freevideo_aspect = selected;
+            ratio = Number(value(node, 'width')) / Number(value(node, 'height'));
+            updateCanvas();
+        };
+    }
     advanced.append(custom);
     lengthControl = createStudioLength({api, node, seconds, advanced, fields, t, field,
         setSeconds: seconds => set(node, 'seconds', seconds), onChange: () => { if (runButtonReady) { updateRunButton(); showEffortEstimate(); updateDuration(); } }});
@@ -548,7 +562,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const plan = lengthControl.plan; if (plan || !lengthControl.needsPlan) manyParts = plan?.count > 1;
         firstFrame.row.hidden = !widget(node, 'first_frame_reference') || !(manyParts || extension.source);
         firstFrame.input.checked = value(node, 'first_frame_reference') === true;
-        firstFrame.input.disabled = Boolean(capturing || queueState?.submitting || queueState?.running || chainController?.active);
+        firstFrame.setDisabled(Boolean(capturing || queueState?.submitting || queueState?.running || chainController?.active));
     }
     const samplingFields = el('div', null, 'fv-fields'); samplingFields.style.marginTop = '14px';
     const baseSteps = el('input'), refineSteps = el('input');
@@ -689,7 +703,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         }, 220);
     }
     const seedFields = el('div', null, 'fv-fields'); seedFields.style.marginTop = '14px';
-    const seed = el('input'); seed.type = 'number'; seed.min = '0'; seed.max = String(2 ** 53 - 1); seed.step = '1'; seed.value = value(node, 'seed'); seed.disabled = linked(node, 'seed'); seed.setAttribute('aria-label', t('Seed', '种子'));
+    const seed = el('input'); seed.type = 'number'; seed.required = true; seed.min = '0'; seed.max = String(2 ** 53 - 1); seed.step = '1'; seed.value = value(node, 'seed'); seed.disabled = linked(node, 'seed'); seed.setAttribute('aria-label', t('Seed', '种子'));
     seed.onchange = () => { if (seed.value && seed.reportValidity()) set(node, 'seed', Number(seed.value)); };
     const mode = el('select'); for (const [v, label] of [['randomize', t('New each run', '每次随机')], ['fixed', t('Keep fixed', '保持固定')], ['increment', t('Increment', '递增')], ['decrement', t('Decrement', '递减')]]) { const o = el('option', label); o.value = v; mode.append(o); }
     mode.value = value(node, 'control_after_generate') || 'fixed'; mode.onchange = () => set(node, 'control_after_generate', mode.value);
@@ -1109,7 +1123,19 @@ export function openStudio(node, {extendFrom = null} = {}) {
         // Ctrl+Enter leaves focus in a field: commit its edit (change fires on blur) first.
         const editing = dialog.contains(document.activeElement) ? document.activeElement : null;
         if (editing && editing !== generate) { editing.blur(); editing.focus({preventScroll: true}); }
-        if ([...dialog.querySelectorAll('input:not(:disabled)')].some(e => !e.reportValidity())) return;
+        const invalid = [...dialog.querySelectorAll('input:not(:disabled)')].find(e => !e.checkValidity());
+        if (invalid) {
+            const details = invalid.closest('details'); if (details) details.open = true;
+            if (invalid.validity.valueMissing) {
+                const message = new Map([[seconds, t('Fill in the duration.', '请填写时长。')],
+                    [width, t('Fill in the width.', '请填写宽度。')], [height, t('Fill in the height.', '请填写高度。')],
+                    [seed, t('Fill in the seed.', '请填写种子。')],
+                    [baseSteps, t('Fill in the first-pass steps.', '请填写一采步数。')],
+                    [refineSteps, t('Fill in the second-pass steps.', '请填写二采步数。')]]).get(invalid);
+                if (message) { status.dataset.error = 'true'; status.textContent = message; }
+            }
+            invalid.focus(); invalid.reportValidity(); return;
+        }
         if (!extension.source && !prompt.disabled && !prompt.value.trim() && !untouched()) { prompt.focus(); status.textContent = t('Describe your scene first.', '请先描述画面。'); return; }
         const chosenMode = runMode, batchCount = chosenMode === 'batch' ? Number(count.value) : 1;
         const originalSeed = value(node, 'seed'), seedMode = mode.value;
@@ -1173,21 +1199,30 @@ export function openStudio(node, {extendFrom = null} = {}) {
             : rest ? t(`${minutes} min ${rest} s`, `${minutes} 分 ${rest} 秒`) : t(`${minutes} min`, `${minutes} 分钟`)} · 24 fps`;
     }
     function updateCanvas() {
-        width.value = extension.source?.geometry.width ?? value(node, 'width'); height.value = extension.source?.geometry.height ?? value(node, 'height');
-        dimensionText(dimensions, dimensionsLinked && !extension.source ? t('Size from connected nodes', '尺寸来自已连接节点') : `${width.value} × ${height.value}`);
+        // Render committed dimensions without replacing either input draft.
+        // Duration/estimate refreshes and edits to the other dimension also
+        // come here; only an explicit size choice should fill both fields.
+        const w = extension.source?.geometry.width ?? value(node, 'width');
+        const h = extension.source?.geometry.height ?? value(node, 'height');
+        dimensionText(dimensions, dimensionsLinked && !extension.source ? t('Size from connected nodes', '尺寸来自已连接节点') : `${w} × ${h}`);
         updateDuration();
         for (const b of shapes.children) b.setAttribute('aria-pressed', String(b.dataset.ratio === selected));
         const shapeIndex = [...shapes.children].findIndex(b => b.dataset.ratio === selected);
         shapes.style.setProperty('--fv-shape-index', Math.max(0, shapeIndex));
         shapes.dataset.custom = String(shapeIndex < 0);
-        if (!busy) previewSize(Number(width.value), Number(height.value));
+        if (!busy) previewSize(Number(w), Number(h));
         refreshEffortEstimate();
+    }
+    function syncCanvasSize() {
+        width.value = extension.source?.geometry.width ?? value(node, 'width');
+        height.value = extension.source?.geometry.height ?? value(node, 'height');
+        updateCanvas();
     }
     function applySize() {
         if (dimensionsLinked || extension.source) return;
         const [w, h] = canvasDimensions(pixels, ratio);
         if (w < 256 || h < 256 || w > 4096 || h > 4096) throw new Error(t('This aspect ratio and pixel count exceed the supported dimensions. Use custom dimensions.', '该比例与像素数超出尺寸范围，请使用自定义宽高。'));
-        set(node, 'width', w); set(node, 'height', h); node.properties.freevideo_aspect = selected; node.properties.freevideo_pixels = pixels; updateCanvas();
+        set(node, 'width', w); set(node, 'height', h); node.properties.freevideo_aspect = selected; node.properties.freevideo_pixels = pixels; syncCanvasSize();
     }
     async function inputRatio(required = false) {
         const rows = mediaNode ? JSON.parse(value(mediaNode, 'assets') || '[]') : [];
@@ -1195,8 +1230,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const source = active.find(r => r.role === 'first') || active.find(r => r.role === 'last') || active.find(r => /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(r.file));
         if (!source) { if (required) throw new Error(t('Add an image in Media to follow its aspect ratio.', '请先在素材中添加图片，再跟随输入比例。')); return; }
         const image = new Image(); image.src = view(source.file);
-        await image.decode();
-        if (disposed || !image.naturalWidth || !image.naturalHeight) return;
+        const unreadable = () => new Error(t('Could not read the image dimensions. Choose another image.', '无法读取图片尺寸，请换一张图片。'));
+        try { await image.decode(); } catch { if (disposed) return; throw unreadable(); }
+        if (disposed) return;
+        if (!image.naturalWidth || !image.naturalHeight) throw unreadable();
         if (selected === 'input') { ratio = image.naturalWidth / image.naturalHeight; applySize(); }
     }
     for (const [id, label, r] of [...frameShapes(t), ['input', t('Match image', '跟随图片'), null]]) {
@@ -1205,7 +1242,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         b.append(el('span', null, 'fv-shape-icon'), el('span', label)); shapes.append(b);
     }
     mp.onchange = () => { try { pixels = Number(mp.value); applySize(); if (pixels !== 1) legacyOption?.remove(); } catch (error) { status.dataset.error = 'true'; status.textContent = error.message; } };
-    seconds.onchange = () => { if (lengthControl.commit()) updateCanvas(); };
+    seconds.onchange = () => { if (lengthControl.commit({report: false})) updateCanvas(); };
     const mediaChanged = async e => { if (String(e.detail) !== String(mediaNode?.id)) return; refreshEffortEstimate(true); if (selected !== 'input') return; try { await inputRatio(); } catch (error) { status.textContent = error.message; } };
     const lorasChanged = e => { if (String(e.detail) === String(loraNode?.id)) refreshEffortEstimate(true); };
     window.addEventListener('freevideo-loras', lorasChanged);
@@ -1273,7 +1310,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         pixels = point.pixels; mp.value = String(pixels);
         set(node, 'width', point.width); set(node, 'height', point.height);
         node.properties.freevideo_pixels = pixels;
-        seconds.value = point.seconds; set(node, 'seconds', point.seconds); updateCanvas();
+        seconds.value = point.seconds; set(node, 'seconds', point.seconds); syncCanvasSize();
     }});
     rangeMount.append(capabilityView.element); cleanup.push(capabilityView.dispose);
     controls.addEventListener('change', () => capabilityView.update());
@@ -1305,7 +1342,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         twoPass.checked = Boolean(source) || value(node, 'two_pass') !== false;
         previewFirst.checked = !source && value(node, 'preview') === true;
         prompt.value = shown(value(node, 'text')); placeholder(); enhancer.sync();
-        syncSamplingSteps(); updateCanvas(); seconds.dispatchEvent(new Event('input'));
+        syncSamplingSteps(); syncCanvasSize(); seconds.dispatchEvent(new Event('input'));
         prompt.focus({preventScroll: true});
     }
     current.enterExtend = record => {
