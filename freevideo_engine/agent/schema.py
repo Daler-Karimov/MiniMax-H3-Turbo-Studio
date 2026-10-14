@@ -1297,6 +1297,8 @@ def openapi():
     job_view = {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
         status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
         chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
+        cancelled_by=enum(('user',), description='Present when the user stopped this job on the page.'),
+        next=string(description='Instructions for the agent after a user stop.'),
         spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
         waiting_for=array(string()), notice=string(),
         error={'$ref': '#/components/schemas/Error'})}

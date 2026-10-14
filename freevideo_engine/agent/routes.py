@@ -990,7 +990,7 @@ def register():
             return problem('unsupported_media_type', 'Send JSON', 415)
         value = await body(request)
         try:
-            row = await asyncio.to_thread(jobs.cancel, value.get('id') if isinstance(value, dict) else None)
+            row = await asyncio.to_thread(jobs.cancel, value.get('id') if isinstance(value, dict) else None, by='user')
         except KeyError:
             return problem('not_found', 'No such job', 404)
         return reply(dict(id=row['id'], status=row['status']))

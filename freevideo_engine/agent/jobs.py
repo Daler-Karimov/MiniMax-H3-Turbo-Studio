@@ -67,6 +67,17 @@ def image_reference(port, relative):
         raise JobError('invalid_media', IMAGE_ERRORS['invalid_media']) from None
 
 
+USER_STOP_NEXT = ('The user stopped this job on the page, and the page already shows it as stopped. Send no message '
+                  'about it, and do not retry or resume it unless they ask. Wait for what they say next.')
+
+
+def user_stop_notice(row):
+    """What a job the user stopped on the page tells the agent. A job the agent cancelled, and one that finished
+    some other way before the stop took hold, read as before."""
+    stopped = row.get('cancelled_by') == 'user' and row.get('status') not in ('succeeded', 'failed', 'interrupted')
+    return dict(cancelled_by='user', next=USER_STOP_NEXT) if stopped else {}
+
+
 class JobError(Exception):
     def __init__(self, code, message, **details):
         super().__init__(message)
@@ -578,6 +589,8 @@ class Jobs:
                 card = (row.get('parent') or {}).get('cast')
                 if card and '/resume' in error['next']:
                     error['next'] = CAST_AGAIN % card
+            if row.get('cancelled_by') == 'user' and status == 'cancelled':
+                error['next'] = USER_STOP_NEXT
         if row['status'] == status and row.get('error') == error and row.get('finished_at') is not None:
             if result is not None and row.get('result') != result:
                 row['result'] = result
@@ -739,11 +752,14 @@ class Jobs:
                 and (not project or r['spec'].get('project') == project)]
         return rows[:limit]
 
-    def cancel(self, identity):
+    def cancel(self, identity, *, by=None):
         row = self.get(identity)
         with self.lock:
             if row['status'] in DONE:
                 return row
+            if by == 'user':
+                # Save before contacting an executor, including jobs still being dispatched.
+                self.touch(row, cancelled_by='user')
             if row['kind'] == 'generate' and not row['spec'].get('refine_from'):
                 row['_cancel'] = True
                 row['cancel_requested'] = True
@@ -921,6 +937,7 @@ class Jobs:
                 row.setdefault('receipts', []).append(dict(receipt, jobs=[identity]))
             row.pop('error', None)
             row.pop('_cancel', None)
+            row.pop('cancelled_by', None)
             self.touch(row, status='waiting', resume_pending=bool(row.get('chain_id')), cancel_requested=False,
                        cancelled_in_jobs=False,
                        chain_submission='linked' if row.get('chain_id') else None,
@@ -1008,6 +1025,10 @@ class Jobs:
             if result['error'].get('next'):
                 result['error'] = dict(result['error'], next=errors.recovery(result['error']['code'], kind=row['kind'],
                     stage='terminal', resumable=not row['spec'].get('refine_from')).replace('{id}', row['id']))
+        notice = user_stop_notice(row)
+        result.update(notice)
+        if notice and result.get('error'):
+            result['error'] = dict(result['error'], next=USER_STOP_NEXT)
         if detail:
             result['spec'] = {k: v for k, v in spec.items() if k not in ('depends_on',)}
             if row.get('comfy'):
