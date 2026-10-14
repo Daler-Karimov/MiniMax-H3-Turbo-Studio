@@ -1223,7 +1223,7 @@ ApplicationWindow {
                             FText { text: t("Engine folder", "引擎目录"); font.pixelSize: theme.micro; color: theme.muted }
                             RowLayout { Layout.fillWidth: true; spacing: 8; FField { Layout.fillWidth: true; value: s.form.engine; placeholderText: t("Automatic", "自动选择"); onEditingFinished: backend.edit("engine", text) } FButton { objectName: "engineBrowse"; text: t("Browse…", "浏览…"); enabled: s.can_manage; implicitHeight: theme.height + 4; onClicked: backend.browse("engine") } }
                             FText { text: t("ComfyUI Python", "ComfyUI Python"); font.pixelSize: theme.micro; color: theme.muted; Layout.topMargin: 4 }
-                            FField { Layout.fillWidth: true; value: s.form.python; placeholderText: t("Path to python.exe", "python.exe 的路径"); onEditingFinished: backend.edit("python", text) }
+                            FField { Layout.fillWidth: true; value: s.form.python; placeholderText: Qt.platform.os === "windows" ? t("Path to python.exe", "python.exe 的路径") : t("Path to python", "python 的路径"); onEditingFinished: backend.edit("python", text) }
                         }
                         FGroup {
                             Layout.fillWidth: true; title: t("Maintenance", "维护"); enabled: !s.portable
@@ -1235,8 +1235,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true; spacing: 2
                                     FText { text: t("Repair FreeVideo", "修复 FreeVideo"); Layout.fillWidth: true; color: s.can_repair ? theme.text : theme.disabled }
                                     FText {
-                                        text: s.can_repair ? t("Checks this installation and reinstalls anything missing or changed. Models and videos are kept.", "检查这份安装，重新安装缺失或被改动的部分。模型和视频都会保留。")
-                                                           : t("Available once FreeVideo is installed.", "安装完成后可用。")
+                                        visible: s.can_repair
+                                        text: t("Checks this installation and reinstalls anything missing or changed. Models and videos are kept.", "检查这份安装，重新安装缺失或被改动的部分。模型和视频都会保留。")
                                         font.pixelSize: theme.micro; color: theme.muted; Layout.fillWidth: true
                                     }
                                 }
