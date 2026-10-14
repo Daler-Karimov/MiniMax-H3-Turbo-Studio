@@ -389,6 +389,8 @@ class Service:
                 if (stage in ('load', 'text', 'encode', 'denoise', 'decode') and type(fraction) in (int, float)
                         and math.isfinite(fraction) and 0 <= fraction <= 1):
                     with self.mutex:
+                        if self.state.get('stage') == stage and type(self.state.get('fraction')) in (int, float):
+                            fraction = max(fraction, self.state['fraction'])
                         self.state.update(phase='cancelling' if self.stop.is_set() else 'progress',
                                           stage=stage, fraction=fraction)
             elif phase in ('result', 'error'):

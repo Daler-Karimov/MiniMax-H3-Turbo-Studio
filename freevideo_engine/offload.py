@@ -99,7 +99,7 @@ def live_pin_capacity(*, headroom_bytes=None, nonlocal_reserve_bytes=None, commi
 
 @torch.no_grad()
 def pin_layer_weights(layers, max_bytes=None, *, headroom_bytes=None, nonlocal_reserve_bytes=None,
-                      commit_reserve_bytes=0):
+                      commit_reserve_bytes=0, progress=None):
     """Pack immutable CPU parameters into persistent pinned planes, one per dtype.
 
     This optional mode trades pageable/mapped storage for locked host residency.
@@ -174,6 +174,8 @@ def pin_layer_weights(layers, max_bytes=None, *, headroom_bytes=None, nonlocal_r
             offset += parameter.numel()
             parameter.data = view
         pinned += sum(p.numel() * p.element_size() for p in parameters)
+        if progress is not None:
+            progress(pinned, required)
     return pinned
 
 
