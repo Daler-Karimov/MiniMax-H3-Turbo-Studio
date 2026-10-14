@@ -4,7 +4,7 @@
 .fv-chat[hidden],.fv-chat [hidden]{display:none}
 /* List dimensions are kept here for art review; the breakpoint below is shared with the drawer's keyboard behavior. */
 .fv-chat[data-conversations=true]{grid-template-columns:var(--fv-chats-width) minmax(0,1fr)}
-.fv-chat-conversations{box-sizing:border-box;min-height:0;min-width:0;display:flex;flex-direction:column;gap:var(--fv-chats-gap);padding:16px var(--fv-chats-pad);border-right:1px solid var(--fv-border);background:var(--fv-bg)}
+.fv-chat-conversations{position:relative;box-sizing:border-box;min-height:0;min-width:0;display:flex;flex-direction:column;gap:var(--fv-chats-gap);padding:16px var(--fv-chats-pad);border-right:1px solid var(--fv-border);background:var(--fv-bg)}
 .fv-chat-conversation-list{min-height:0;overflow:auto;display:grid;align-content:start;gap:var(--fv-chats-gap)}
 .fv-studio .fv-chat-conversations button{box-sizing:border-box;flex:none;justify-content:flex-start;min-width:0;width:100%;min-height:var(--fv-chats-row);padding:8px var(--fv-chats-pad);border-radius:var(--fv-chats-radius);border:1px solid transparent;background:transparent;font-size:var(--fv-chats-font);font-weight:var(--fv-regular);color:var(--fv-ink);text-align:left;gap:10px}
 .fv-studio .fv-chat-conversations .fv-chat-new{border-color:var(--fv-border);margin-bottom:6px}
@@ -12,6 +12,25 @@
 .fv-studio .fv-chat-conversations button:focus-visible{outline-offset:-2px}
 .fv-studio .fv-chat-conversation[aria-current]{background:var(--fv-raised);border-color:var(--fv-accent-dim)}
 .fv-chat-conversation span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The row button keeps its full frame; the inset action only takes space from the title. */
+.fv-chat-conversation-row{position:relative;min-width:0;display:flex;align-items:center;border-radius:var(--fv-chats-radius)}
+.fv-chat-conversation-row:is(:hover,:focus-within,[data-menu-open=true]){background:var(--fv-raised)}
+.fv-studio .fv-chat-conversations .fv-chat-conversation{flex:1;width:100%}
+.fv-studio .fv-chat-conversation-row:has(> .fv-chat-more:not([hidden])):is(:hover,:focus-within,[data-menu-open=true]) .fv-chat-conversation{padding-right:calc(var(--fv-chats-pad) + 28px)}
+.fv-studio .fv-chat-conversations .fv-chat-more{position:absolute;right:1px;top:50%;transform:translateY(-50%);width:0;height:28px;min-height:28px;padding:0;border:0;overflow:hidden;justify-content:center;color:var(--fv-muted);opacity:0;pointer-events:none}
+.fv-studio .fv-chat-conversation-row:is(:hover,:focus-within,[data-menu-open=true]) .fv-chat-more{width:28px;opacity:1;pointer-events:auto}
+.fv-studio .fv-chat-conversations .fv-chat-more:hover:not(:disabled){background:transparent;color:var(--fv-ink)}
+.fv-chat-more svg{flex:none}
+/* Menu values match .fv-menu / .fv-menu-item in result_actions.css (lines 16–18). */
+.fv-chat-menu{box-sizing:border-box;position:absolute;z-index:5;display:grid;width:max-content;max-width:calc(100% - 2px);max-height:100%;overflow:auto;padding:6px;border:1px solid var(--fv-border);border-radius:13px;background:var(--fv-raised);box-shadow:0 14px 36px #00000073;animation:fv-chat-menu-enter .16s ease}
+.fv-chat-menu-layer{grid-area:1/1;display:flex;min-width:0}
+.fv-chat-menu-layer[data-active=false]{visibility:hidden;pointer-events:none}
+.fv-studio .fv-chat-menu .fv-chat-menu-item{flex:1;width:auto;min-height:0;padding:9px 11px;border:0;border-radius:9px;background:none;color:var(--fv-ink);font-size:13px;white-space:nowrap}
+.fv-studio .fv-chat-menu .fv-chat-menu-item:is(:hover,:focus-visible){background:var(--fv-hover);outline:none}
+.fv-studio .fv-chat-menu .fv-chat-menu-delete{color:var(--fv-danger)}
+.fv-studio .fv-chat-menu .fv-chat-menu-delete:is(:hover,:focus-visible){background:var(--fv-danger-subtle)}
+@keyframes fv-chat-menu-enter{from{opacity:0}}
+@media(hover:none){.fv-studio .fv-chat-conversations .fv-chat-conversation-row:has(> .fv-chat-more:not([hidden])) .fv-chat-conversation{padding-right:calc(var(--fv-chats-pad) + 36px)}.fv-studio .fv-chat-conversations .fv-chat-more,.fv-studio .fv-chat-conversation-row:is(:hover,:focus-within,[data-menu-open=true]) .fv-chat-more{width:36px;height:36px;min-height:36px;opacity:1;pointer-events:auto}}
 .fv-chat-running{flex:none;width:var(--fv-chats-dot);height:var(--fv-chats-dot);border-radius:50%;background:var(--fv-accent)}
 .fv-chat-tools{display:none}
 .fv-chat-scroll{min-height:0;overflow:auto;margin:0 -40px;padding:24px 40px 2px;scrollbar-gutter:stable both-edges}
@@ -83,6 +102,8 @@
 .fv-studio .fv-chat-send:disabled{opacity:1;background:#22344a;color:#9fb3c8}
 .fv-studio .fv-chat-send:focus-visible{outline-offset:2px}
 @media(max-width:720px){
+ .fv-studio .fv-chat-conversations .fv-chat-conversation-row:has(> .fv-chat-more:not([hidden])) .fv-chat-conversation{padding-right:calc(var(--fv-chats-pad) + 36px)}
+ .fv-studio .fv-chat-conversations .fv-chat-more,.fv-studio .fv-chat-conversation-row:is(:hover,:focus-within,[data-menu-open=true]) .fv-chat-more{width:36px;height:36px;min-height:36px;opacity:1;pointer-events:auto}
  .fv-chat[data-conversations=true]{grid-template-columns:minmax(0,1fr)}
  .fv-chat[data-conversations=true] .fv-chat-main{grid-template-rows:auto minmax(0,1fr) auto}
  .fv-chat-tools:not([hidden]){display:flex;padding-top:12px;margin-bottom:-12px}
@@ -93,4 +114,4 @@
 }
 @media(max-width:480px){.fv-chat-main{padding:0 14px 14px}.fv-chat-scroll{margin:0 -14px;padding:16px 14px 2px}.fv-chat-hello{padding-top:32px}.fv-chat-job{max-width:none;gap:12px}.fv-chat-confirm{max-width:none}
  .fv-chat-preview,.fv-chat-preview[data-shape=wide]{width:98px}.fv-chat-length{display:none}.fv-chat-percent{font-size:22px}.fv-studio.fv-autopilot .fv-chat-input textarea{font-size:16px}.fv-studio .fv-chat-down{right:14px;bottom:84px}}
-@media(prefers-reduced-motion:reduce){.fv-chat-water,.fv-chat-percent,.fv-chat-parts>i::after{transition:none}.fv-chat-water::after,.fv-chat-dots>i,.fv-chat-preview>img{animation:none}}
+@media(prefers-reduced-motion:reduce){.fv-chat-water,.fv-chat-percent,.fv-chat-parts>i::after{transition:none}.fv-chat-water::after,.fv-chat-dots>i,.fv-chat-preview>img,.fv-chat-menu{animation:none}}

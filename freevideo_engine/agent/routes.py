@@ -360,6 +360,7 @@ def register():
         # Operations an agent runs only after the user approves them; the page changes the policy.
         confirmations = Confirmations(port.output_root / 'FreeVideo' / '.agent' / 'confirm.json', sessions)
         jobs.productions.gate = confirmations.gate
+        jobs.session_open = sessions.require_open
     except Exception as error:
         # Optional agent state must never prevent the studio or other routes from loading.
         logging.getLogger(__name__).warning('[FreeVideo] Agent startup unavailable: %s', error)
@@ -979,6 +980,34 @@ def register():
                                         request_id=errors.request_id())}, 409)
         return reply(done[1], done[0])
 
+    @routes.post('/freevideo/agent/chat/delete')
+    @guarded
+    async def chat_delete(request):
+        value = await body(request)
+        def write():
+            store = work_sessions()
+            before = chat_session(store)
+            sid = chat_session(store, value['session'])
+            if sid is None:
+                raise JobError('not_found', 'No conversation')
+            # Work in progress still writes into its conversation; finished videos stay in the library.
+            # New work is refused first, so what is counted below cannot grow before the file goes.
+            store.begin_delete(sid)
+            try:
+                with jobs.lock:  # Productions share it.
+                    if (any(r.get('session') == sid and r['status'] in ACTIVE for r in jobs.rows())
+                            or any(f['session'] == sid and not f['paused']
+                                   for f in jobs.productions.list(status='active', limit=None))):
+                        raise JobError('conflict', 'Work is in progress in this conversation')
+                    store.delete(sid)
+            except BaseException:
+                store.end_delete(sid)
+                raise
+            chat['folds'].pop(sid, None)  # The page cache held its whole text.
+            chat_moved(store, before)
+            return dict(deleted=sid, here=chat_session(store), agent=agent_state())
+        return reply(await asyncio.to_thread(write))
+
     @routes.get('/freevideo/agent/chat/video')
     @guarded
     async def chat_video(request):
@@ -1261,6 +1290,9 @@ def register():
                     after = row['seq']
         except (ConnectionError, asyncio.CancelledError):
             pass
+        except JobError as error:
+            if error.code != 'not_found':
+                raise  # A deleted conversation ends its stream; the next request for it says it is gone.
         finally:
             tasks = [task for task in (disconnect, pending) if task is not None]
             for task in tasks:
@@ -1607,7 +1639,9 @@ def register():
         try:
             while True:
                 if follow:
-                    sid = request['agent_session'] = await asyncio.to_thread(store.current_for, client) or sid
+                    # The user may delete the conversation the agent waits in; with none left, it listens in a new one.
+                    sid = request['agent_session'] = await asyncio.to_thread(
+                        lambda: store.current_for(client) or (sid if store.has(client, sid) else store.create(client=client)['id']))
                 if store is not None and sid is not None:
                     # Mark before reading so words arriving in between wake the wait below.
                     def read():

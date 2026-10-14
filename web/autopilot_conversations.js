@@ -4,6 +4,20 @@ export const selectConversation = (state, session) => ({...state, current: sessi
 export const hasConversations = state => state.supported === true && state.conversations.length > 0;
 // The first other conversation with work under way; null when there is none.
 export const runningElsewhere = (state, session) => state.conversations.find(row => row.running > 0 && row.id !== session) || null;
+export const canDeleteConversation = row => !!row?.id && !(row.running > 0);
+// The one menu moves from closed to Delete, then to Delete/Cancel. Snapshots can close either stage.
+export function conversationMenu(state, menu, action = 'reconcile', session = null) {
+    const eligible = id => state.supported === true && state.conversations.some(row => row.id === id && canDeleteConversation(row));
+    if (action === 'close') return null;
+    if (action === 'open') return eligible(session) ? {session, stage: 'delete'} : null;
+    if (!menu || !eligible(menu.session)) return null;
+    if (action === 'confirm' && menu.stage === 'delete') return {...menu, stage: 'confirm'};
+    return menu;
+}
+// Only deleting the conversation being read changes the reader's destination. An unsaid `here` is valid too.
+export const removeConversation = (state, session, here = null) => ({...state,
+    current: state.current === session ? here ?? null : state.current,
+    conversations: state.conversations.filter(row => row.id !== session)});
 
 export function mergeConversations(state, data, status = 200) {
     // A legacy server is probed once per page; ordinary errors retain the last good snapshot.

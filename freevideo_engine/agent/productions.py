@@ -560,6 +560,8 @@ class Productions:
             if ref:
                 record['receipts'].append(dict(key=ref, digest=digest, result=result,
                                                **({'client': client} if client else {})))
+            if self.jobs.session_open is not None and record.get('session'):
+                self.jobs.session_open(record['session'])  # Deleting a conversation checks for films under this same lock.
             self._save(record)
             if cards:
                 self.jobs.cast.used(sorted(cards), identity)

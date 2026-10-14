@@ -164,7 +164,16 @@ REPAIR = {
 }
 
 
+# A conversation that is not there: the user may delete one while the agent still works or waits in it.
+SESSION_GONE = ('This conversation does not exist; the user may have deleted it.',
+                'Do not repeat elsewhere what you were saying or doing for it. Call the wait again without a session '
+                '(GET /freevideo/agent/v1/inbox?wait=50; MCP: freevideo_wait without id) and carry on in the session '
+                'it names.')
+
+
 def recovery(code, *, kind=None, stage='request', resumable=True):
+    if kind == 'session' and code == 'not_found':
+        return SESSION_GONE[1]
     if kind == 'image' and code == 'pack_missing':
         return ERRORS[code][3]
     if kind == 'image' and code == 'no_memory':
@@ -210,6 +219,8 @@ def build(code, *, details=None, request=None, validation=False, message=None, n
     action = recovery(code, kind=kind, stage=stage, resumable=resumable)
     if kind == 'image':
         default_message = IMAGE_ERRORS.get(code, default_message)
+    if kind == 'session' and code == 'not_found':
+        default_message = SESSION_GONE[0]
     result = dict(code=code, message=message if validation and message else default_message,
                   details=(details or []) if validation else safe_details(details or []),
                   retryable=retryable, request_id=request or request_id(),

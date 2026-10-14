@@ -386,6 +386,7 @@ def contracts(*, local=False):
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
             ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
             ('/chat/video', 'GET', None), ('/chat/list', 'GET', None), ('/chat/new', 'POST', EMPTY),
+            ('/chat/delete', 'POST', obj({'session': SESSION}, ('session',))),
             ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION}, ('text', 'id'))),
             ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
                                            'session': SESSION}, ('id', 'approve')))):

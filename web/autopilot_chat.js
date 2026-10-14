@@ -2,7 +2,7 @@
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
 import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
-import {emptyConversations, hasConversations, mergeConversations, runningElsewhere, selectConversation} from './autopilot_conversations.js';
+import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -164,33 +164,145 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     chats.setAttribute('aria-controls', sidebar.id); chats.setAttribute('aria-expanded', 'false');
     tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, list); element.prepend(sidebar);
     const listNodes = new Map(), narrow = () => window.matchMedia('(max-width: 720px)').matches;
+    let menuState = null, changingMenu = false;
+    const deleting = new Set(), deleted = new Set();
+    // One overlay outside the scrolling list, positioned in the sidebar's own coordinates.
+    const menu = el('div', 'fv-chat-menu'), first = el('div', 'fv-chat-menu-layer'), confirmation = el('div', 'fv-chat-menu-layer fv-chat-menu-confirm');
+    menu.id = `${sidebar.id}-menu`; menu.setAttribute('role', 'menu'); menu.hidden = true;
+    const remove = press('fv-chat-menu-item', t('Delete', '删除'), () => {
+        menuState = conversationMenu(conversations, menuState, 'confirm');
+        updateMenu(true);
+    });
+    const yes = press('fv-chat-menu-item fv-chat-menu-delete', t('Delete', '删除'), () => void deleteChat(menuState?.session));
+    const cancel = press('fv-chat-menu-item', t('Cancel', '取消'), () => closeMenu(true));
+    for (const button of [remove, yes, cancel]) button.setAttribute('role', 'menuitem');
+    first.append(remove); confirmation.append(yes, cancel); menu.append(first, confirmation); sidebar.append(menu);
+    const menuOrigin = () => listNodes.get(menuState?.session)?.more;
+    const inMenu = target => menu.contains(target) || menuOrigin()?.contains(target);
+    const leaveMenu = event => { if (menuState && !changingMenu && !inMenu(event.relatedTarget)) closeMenu(); };
+    menu.addEventListener('focusout', leaveMenu);
     function drawer(on, restore = false) {
+        if (!on) closeMenu();
         element.dataset.chatsOpen = String(on); chats.setAttribute('aria-expanded', String(on));
         // Only the overlay needs to keep keyboard focus in its list.
         main.inert = on && narrow();
         if (on) (list.querySelector('[aria-current]') || newChat).focus();
         else if (restore) chats.focus();
     }
+    function positionMenu() {
+        const node = listNodes.get(menuState?.session);
+        if (!node) return;
+        const bounds = sidebar.getBoundingClientRect(), anchor = node.more.getBoundingClientRect(), row = node.row.getBoundingClientRect();
+        // Local dimensions also handle the enclosing dialog's entry scale without fixed-position offsets.
+        const sx = bounds.width / (sidebar.offsetWidth || bounds.width) || 1, sy = bounds.height / (sidebar.offsetHeight || bounds.height) || 1;
+        const left = bounds.left + (sidebar.clientLeft || 0) * sx, top = bounds.top + (sidebar.clientTop || 0) * sy;
+        const width = sidebar.clientWidth, height = sidebar.clientHeight || bounds.height / sy;
+        const mw = menu.offsetWidth || menu.getBoundingClientRect().width / sx, mh = menu.offsetHeight || menu.getBoundingClientRect().height / sy;
+        const x0 = Math.max(0, -left / sx), x1 = Math.min(width, ((window.innerWidth || bounds.right) - left) / sx);
+        const y0 = Math.max(0, -top / sy), y1 = Math.min(height, ((window.innerHeight || bounds.bottom) - top) / sy);
+        const below = (row.bottom - top) / sy, above = (row.top - top) / sy - mh;
+        menu.style.left = `${Math.max(x0, Math.min((anchor.right - left) / sx - mw, x1 - mw))}px`;
+        menu.style.top = `${Math.max(y0, Math.min(below + mh <= y1 ? below : above, y1 - mh))}px`;
+    }
+    function updateMenu(focus = false) {
+        changingMenu = true;
+        try {
+            menu.hidden = !menuState;
+            const confirming = menuState?.stage === 'confirm';
+            first.dataset.active = String(!confirming); confirmation.dataset.active = String(confirming);
+            first.inert = !!confirming; confirmation.inert = !confirming;
+            remove.tabIndex = confirming ? -1 : 0; yes.tabIndex = cancel.tabIndex = confirming ? 0 : -1;
+            yes.disabled = cancel.disabled = deleting.has(menuState?.session);
+            for (const [id, node] of listNodes) {
+                const opened = menuState?.session === id;
+                node.row.dataset.menuOpen = String(opened); node.more.setAttribute('aria-expanded', String(opened));
+            }
+            if (menuState) {
+                positionMenu();
+                if (focus) (confirming ? cancel : remove).focus({preventScroll: true});
+            }
+        } finally { changingMenu = false; }
+    }
+    function closeMenu(restore = false) {
+        const origin = menuOrigin();
+        menuState = conversationMenu(conversations, menuState, 'close'); updateMenu();
+        if (restore && origin && !origin.hidden) origin.focus({preventScroll: true});
+    }
+    function openMenu(session) {
+        if (menuState?.session === session) { closeMenu(); return; }
+        if (deleting.has(session)) return;
+        menuState = conversationMenu(conversations, menuState, 'open', session); updateMenu(true);
+    }
     function renderConversations() {
-        const visible = hasConversations(conversations);
+        const previous = menuState;
+        const lostFocus = previous && inMenu(document.activeElement);
+        menuState = conversationMenu(conversations, menuState);
+        // After the final deletion, keep New chat reachable as the keyboard destination.
+        const visible = hasConversations(conversations) || conversations.supported === true && deleted.size > 0;
         element.dataset.conversations = String(visible); sidebar.hidden = tools.hidden = !visible;
         if (!visible) drawer(false);
         newChat.disabled = creating; chatsDot.hidden = !conversations.conversations.some(row => row.running > 0);
         const keep = new Set(conversations.conversations.map(row => row.id));
-        for (const [id, node] of listNodes) if (!keep.has(id)) { node.button.remove(); listNodes.delete(id); }
+        for (const [id, node] of listNodes) if (!keep.has(id)) { node.row.remove(); listNodes.delete(id); }
         conversations.conversations.forEach((row, index) => {
             let node = listNodes.get(row.id);
             if (!node) {
+                const container = el('div', 'fv-chat-conversation-row');
                 const button = press('fv-chat-conversation', null, () => chooseChat(row.id)), dot = el('i', 'fv-chat-running'), title = el('span');
                 button.dataset.session = row.id; dot.setAttribute('aria-hidden', 'true'); button.append(dot, title);
-                listNodes.set(row.id, node = {button, dot, title});
+                const more = press('fv-chat-more', null, () => openMenu(row.id));
+                more.title = t('More', '更多'); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-controls', menu.id);
+                more.append(glyph('M5 12h.01M12 12h.01M19 12h.01', 3.5));
+                more.addEventListener('focusout', leaveMenu); container.append(button, more);
+                listNodes.set(row.id, node = {row: container, button, dot, title, more});
             }
             node.title.textContent = row.title; node.button.title = row.title; node.dot.hidden = row.running <= 0;
+            node.more.setAttribute('aria-label', t(`More: ${row.title}`, `更多：${row.title}`));
+            node.more.hidden = !canDeleteConversation(row);
             if (row.id === conversations.current) node.button.setAttribute('aria-current', 'true'); else node.button.removeAttribute('aria-current');
-            if (list.children[index] !== node.button) list.insertBefore(node.button, list.children[index] || null);
+            if (list.children[index] !== node.row) list.insertBefore(node.row, list.children[index] || null);
         });
+        updateMenu();
+        if (lostFocus && !menuState) (listNodes.get(previous.session)?.button || (visible ? newChat : input)).focus({preventScroll: true});
+    }
+    async function deleteChat(session) {
+        if (!menuState || deleting.has(session) || menuState.session !== session || menuState.stage !== 'confirm' || !active()) return;
+        const ids = conversations.conversations.map(row => row.id), index = ids.indexOf(session);
+        const neighbor = ids[index + 1] || ids[index - 1];
+        deleting.add(session);
+        // A disabled focused button can lose native focus. Keep it on the origin while awaiting the request.
+        menuOrigin()?.focus({preventScroll: true}); updateMenu();
+        try {
+            const response = await agentPost(api, '/freevideo/agent/chat/delete', {session});
+            if (stopped) return;
+            const data = await response.json().catch(() => ({}));
+            if (stopped) return;
+            if (response.ok || response.status === 404 && data.error?.code === 'not_found') {
+                const current = conversations.current === session;
+                deleted.add(session); conversations = removeConversation(conversations, session, data.here);
+                if (menuState?.session === session) closeMenu();
+                if (current) {
+                    selectedSession = undefined; selection++; focusSession = null; away = null;
+                    const agent = data.agent || state.agent;
+                    resetChat(); state.agent = agent; input.value = ''; grow(); render(); report(); void poll();
+                }
+                renderConversations();
+                (listNodes.get(neighbor)?.button || listNodes.values().next().value?.button || newChat).focus({preventScroll: true});
+                void readConversations(true);
+            } else if (response.status === 409) {
+                if (menuState?.session === session) closeMenu();
+                if (data.error?.code === 'not_connected') { state = {...state, agent: {connected: false, name: null}}; render(); report(); }
+                else void readConversations(true);
+            }
+        } catch { /* Keep the row available for another try, without interrupting the conversation. */ }
+        finally {
+            deleting.delete(session);
+            if (menuState?.session === session) closeMenu();
+            if (!stopped) renderConversations();
+        }
     }
     function chooseChat(session, focus = false) {
+        closeMenu();
         selectedSession = session; selection++; pinned = true; away = null;
         conversations = selectConversation(conversations, session); renderConversations();
         input.value = ''; grow(); drawer(false);
@@ -199,6 +311,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         render(); void readConversations(true); void poll();
     }
     async function startChat() {
+        closeMenu();
         if (creating || !active() || conversations.supported !== true) return;
         creating = true; renderConversations(); render();
         try {
@@ -223,6 +336,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const data = response.ok ? await response.json() : null;
             if (stopped) return;
             conversations = mergeConversations(conversations, data, response.status);
+            // A list read started before a deletion must not put the deleted row back.
+            conversations = {...conversations, conversations: conversations.conversations.filter(row => !deleted.has(row.id))};
             renderConversations();
             if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; selection++; void poll(); }
         } catch { /* List failures do not interrupt reading or sending. */ }
@@ -230,19 +345,33 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (listAgain) { listAgain = false; void readConversations(true); }
     }
     const outside = event => {
+        if (menuState && !inMenu(event.target)) closeMenu();
         if (chats.getAttribute('aria-expanded') === 'true' && !sidebar.contains(event.target) && !chats.contains(event.target)) drawer(false, true);
     };
     const keys = event => {
+        if (event.key === 'Escape' && menuState) {
+            event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); return;
+        }
+        // Confirmation always cycles its two choices. In the drawer, the open menu owns Tab in both stages.
+        if (menuState && (event.key === 'Tab' && (narrow() || menuState.stage === 'confirm')
+            || menuState.stage === 'confirm' && ['ArrowLeft', 'ArrowRight'].includes(event.key))) {
+            event.preventDefault(); event.stopPropagation();
+            const buttons = (menuState.stage === 'confirm' ? [yes, cancel] : [remove]).filter(button => !button.disabled);
+            const at = buttons.indexOf(document.activeElement), back = event.shiftKey || event.key === 'ArrowLeft';
+            buttons[(at + (back ? -1 : 1) + buttons.length) % buttons.length]?.focus({preventScroll: true}); return;
+        }
         if (chats.getAttribute('aria-expanded') !== 'true') return;
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); drawer(false, true); }
         else if (event.key === 'Tab' && narrow()) {
-            const buttons = [...sidebar.querySelectorAll('button')].filter(button => !button.disabled);
+            const buttons = [...sidebar.querySelectorAll('button')].filter(button => !button.disabled && !button.hidden && !menu.contains(button) && !button.closest('[hidden]'));
             if (!buttons.length) return;
             if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
             else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
         }
     };
-    const resize = () => { if (!narrow()) drawer(false); };
+    const resize = () => { closeMenu(); if (!narrow()) drawer(false); };
+    const listScroll = () => closeMenu();
+    list.addEventListener('scroll', listScroll);
     document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', keys, true);
     window.addEventListener('resize', resize);
     // Whether the reader is at the newest entry. It holds while the conversation is out of sight, which forgets where it was scrolled.
@@ -625,8 +754,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             await Promise.allSettled(ids.map(id => agentPost(api, '/freevideo/agent/activity/cancel', {id})));
             poll();
         },
-        stop() { stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
+        stop() { closeMenu(); stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
             document.removeEventListener('visibilitychange', visible); document.removeEventListener('pointerdown', outside, true);
-            document.removeEventListener('keydown', keys, true); window.removeEventListener('resize', resize);
+            document.removeEventListener('keydown', keys, true); window.removeEventListener('resize', resize); list.removeEventListener('scroll', listScroll);
             log.querySelectorAll('video').forEach(video => video.pause()); }};
 }

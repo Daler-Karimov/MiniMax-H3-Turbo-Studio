@@ -455,6 +455,8 @@ class Jobs:
         # Optional executor hook: called as parent_allowed(row['parent']) before a
         # child with a parent may start. A False answer records the job as cancelled.
         self.parent_allowed = None
+        # Optional: called as session_open(sid) while work for a conversation is committed; raises if it is gone.
+        self.session_open = None
         from .projects import Projects
         # The page keeps its projects under ComfyUI's output folder; loading may already poll project jobs.
         self.projects = Projects(port.output_root)
@@ -765,6 +767,8 @@ class Jobs:
             if receipt:
                 receipt['jobs'] = [r['id'] for r in rows]
                 rows[0]['receipts'] = [receipt]
+            if self.session_open is not None and rows and rows[0].get('session'):
+                self.session_open(rows[0]['session'])  # Deleting a conversation checks for work under this same lock.
             self.save_batch(rows)
             self.jobs.update({r['id']: r for r in rows})
             return rows, False

@@ -22,6 +22,8 @@ class SessionError(JobError):
     def view(self):
         if self.code == 'invalid_request':
             return errors.validation(self.details['details'])
+        if self.code == 'not_found':
+            return errors.build(self.code, kind='session')
         return super().view()
 
 
@@ -65,6 +67,7 @@ class Sessions:
         self._chosen = set()
         self._waiters = {}
         self._partial = set()
+        self._closing = set()  # Being deleted: no new work may start in them.
         self.root.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -167,6 +170,42 @@ class Sessions:
             if by == 'user':
                 self._chosen.add(sid)
             return deepcopy(self._meta[sid])
+
+    def require_open(self, sid) -> None:
+        """not_found unless the conversation exists and is not being deleted; work calls this as it is committed."""
+        with self.lock:
+            self._get(sid)
+            if sid in self._closing:
+                raise SessionError('not_found', 'Session does not exist')
+
+    def begin_delete(self, sid) -> None:
+        """Refuse new work in the conversation until delete() or end_delete(); the caller then checks for work in it."""
+        with self.lock:
+            self._get(sid)
+            self._closing.add(sid)
+
+    def end_delete(self, sid) -> None:
+        with self.lock:
+            self._closing.discard(sid)
+
+    def delete(self, sid) -> None:
+        """Forget a conversation and remove its file. A wait in it ends empty; anything later says not_found."""
+        with self.lock:
+            self._get(sid)
+            self._path(sid).unlink(missing_ok=True)
+            self._closing.discard(sid)
+            waiters = self._waiters.pop(sid, ())
+            for kept in (self._meta, self._ids, self._clients, self._initial_seq, self._user_seq, self._acted, self._said):
+                kept.pop(sid, None)
+            self._chosen.discard(sid)
+            self._partial.discard(sid)
+            for key in [key for key in self._readers if key[0] == sid]:
+                del self._readers[key]
+        for loop, signal in waiters:
+            try:
+                loop.call_soon_threadsafe(signal.set)
+            except RuntimeError:
+                pass  # A closed client loop no longer needs notification.
 
     def list(self, *, limit=50, before=None) -> dict:
         _check(schema.session_schema('list'), dict(limit=limit, **({'before': before} if before is not None else {})))
@@ -281,6 +320,8 @@ class Sessions:
 
         def read():
             with self.lock:
+                if sid not in self._meta:
+                    return [], None  # Deleted while waiting.
                 rows = self._events(sid, cursor, self.max_events)
                 found = [row for row in rows if (types is None or row['type'] in types)
                          and (by is None or row['by'] == by)]
@@ -311,7 +352,7 @@ class Sessions:
                 # after the scan schedule set() on the loop and cannot lose a wakeup.
                 signal.clear()
                 found, cursor = await offload(read)
-                if found:
+                if found or cursor is None:
                     return found
                 if leave is not None and await offload(leave):
                     return []
