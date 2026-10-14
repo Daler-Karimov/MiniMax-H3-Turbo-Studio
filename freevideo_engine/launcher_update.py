@@ -3,6 +3,7 @@
 Executables live in a versioned user cache. The original EXE stays intact and
 forwards to a newer, explicitly approved download on subsequent starts.
 """
+import errno
 import hashlib
 from email.utils import parsedate_to_datetime
 import json
@@ -82,6 +83,8 @@ def retry_after(error):
 def failure_kind(error):
     if isinstance(error, UpdateUnavailable):
         return error.kind
+    if isinstance(error, OSError) and error.errno == errno.ENOSPC:
+        return 'disk'
     if isinstance(error, urllib.error.HTTPError):
         headers = {str(k).lower(): v for k, v in (error.headers or {}).items()}
         if error.code == 429 or (error.code == 403 and
@@ -625,9 +628,11 @@ class UpdateClient:
                 self.failures = 0
             except Exception as error:
                 self.failures += 1
-                row = dict(status='cancelled' if self.cancelled.is_set() else 'error',
-                           error_code=failure_kind(error), candidate=selected or self.available)
-                if (not self.cancelled.is_set() and row['error_code'] not in ('invalid', 'disk')
+                stopped = self.cancelled.is_set()
+                row = dict(status='cancelled' if stopped else 'error', candidate=selected or self.available)
+                if not stopped:
+                    row['error_code'] = failure_kind(error)
+                if (not stopped and row['error_code'] not in ('invalid', 'disk')
                         and (operation == 'check' or self.failures <= MAX_DOWNLOAD_RETRIES)):
                     delay = max(min(MAX_RETRY_SECONDS, RETRY_SECONDS * 2**min(self.failures - 1, 4)),
                                 retry_after(error))

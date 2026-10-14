@@ -15,7 +15,7 @@ from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url,
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text
 from .launcher_settings import Store, default_language
-from .launcher_copy import size_text
+from .launcher_copy import ACTION_COPY, size_text
 from .launcher_terminal import Tail
 from .model_status import FAMILIES, NAMES
 from .model_guidance import (package_instructions, video_instructions, runtime_packages_supported, download_view,
@@ -66,6 +66,12 @@ class Session:
     # The source whose earlier copies were removed once ComfyUI ran it.
     old_versions_retired = None
     archives_busy = False
+    action_notice = ''
+    pending_update = None
+    pending_check = None
+    upgrade = image_installer = None
+    model_switch = None
+    language = 'en'
 
     def __init__(self, source=None, *, controller=None, store=None, updater=None, smoke=False):
         from .offline_packages import Importer
@@ -106,6 +112,11 @@ class Session:
         self.token = ''
         self.error = ''
         self.notice = ''
+        self.action_notice = ''
+        self.pending_update = None
+        self.pending_action = None
+        self.pending_imports = []
+        self.pending_check = None
         self.report = dict(status='idle', path='', error='')
         self.compatibility = dict(available=False, level=0, automatic=False)
         self.probe = Probe()
@@ -176,6 +187,19 @@ class Session:
     def t(self, en, zh):
         return zh if self.language.startswith('zh') else en
 
+    def task_busy(self):
+        """Work that must finish before another installation operation starts."""
+        return bool(self.controller.busy or self.importer.busy or self.cleaner.busy
+                    or self.archives_busy or self.closing or self.upgrade and self.upgrade.active
+                    or self.model_switch or self.engine_updating
+                    or self.image_installer and self.image_installer.busy)
+
+    def can_manage(self):
+        return not (self.task_busy() or self.update_intent)
+
+    def explain_busy(self):
+        self.action_notice = 'busy'
+
     def engine_root(self):
         if self.form['engine'].strip():
             return Path(plain(resolved(Path(self.form['engine']).expanduser())))
@@ -213,8 +237,8 @@ class Session:
             self.persist()
 
     def edit(self, key, value):
-        if self.image_installer and self.image_installer.busy and key in (
-                'engine', 'comfy', 'destination', 'new_comfy', 'offline_runtime'):
+        if key in ('engine', 'comfy', 'destination', 'new_comfy', 'offline_runtime') and not self.can_manage():
+            self.explain_busy()
             return
         if key == 'language':
             self.language = str(value); self.persist(); return
@@ -223,7 +247,10 @@ class Session:
                 raise ValueError(self.t('Pause installation before changing the token.', '请先暂停安装，再修改 Token。'))
             from .hf_auth import validate
             self.token = validate(str(value)); return
-        if key not in self.form or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
+        if key not in self.form:
+            return
+        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
+            self.explain_busy()
             return
         if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model'):
             value = bool(value)
@@ -275,7 +302,10 @@ class Session:
 
     def use_disk(self, folder):
         """Move a new installation to another disk, then show the location page to confirm it."""
-        if not self.form['new_comfy'] or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
+        if not self.can_manage():
+            self.explain_busy()
+            return
+        if not self.form['new_comfy']:
             return
         self.edit('destination', str(folder))
         self.page = 'comfy'
@@ -327,7 +357,8 @@ class Session:
             self.download_error = self.t(*DOWNLOAD_COPY['error_' + error.key]).format(reason=reason)
 
     def use_downloaded_folder(self, folder):
-        if self.controller.busy or self.importer.busy or self.cleaner.busy:
+        if not self.can_manage():
+            self.explain_busy()
             return
         self.add_folder(folder)
         # Even a folder already in the list may have received new downloads.
@@ -367,9 +398,11 @@ class Session:
 
 
     def import_packages(self, paths):
-        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
-            return
         if not paths:
+            return
+        if self.task_busy() or self.update_intent or self.pending_update:
+            self.pending_imports = list(dict.fromkeys(self.pending_imports + list(paths)))
+            self.action_notice = 'import_queued'
             return
         self.repair_request = None
         destination = (Path(plain(resolved(Path(self.form['destination']).expanduser()))) if self.form['new_comfy']
@@ -423,7 +456,17 @@ class Session:
         self.page = 'launcher'
         self.persist()
 
-    def action(self, name, accepted=False):
+    def action(self, name, accepted=False, *, retry=None):
+        if name == 'stop':
+            self.pending_action = None
+            if self.action_notice == 'setup_queued':
+                self.action_notice = ''
+        setup_action = (name == 'primary' and self.page != 'launcher'
+                        or name == 'retry' and self.retry_kind() != 'launch')
+        if setup_action and self.task_busy():
+            self.pending_action = (name, accepted, self.page, self.retry_kind() if name == 'retry' else None)
+            self.action_notice = 'setup_queued'
+            return
         if self.cleaner.busy or self.archives_busy:
             return
         if self.image_installer and self.image_installer.busy and (
@@ -466,7 +509,7 @@ class Session:
             self.started = time.monotonic()
             return
         if name == 'retry':
-            kind = self.retry_kind()
+            kind = retry or self.retry_kind()
             if kind == 'import':
                 _, paths, destination = self.import_retry
                 self.importer.start(paths, destination)
@@ -604,10 +647,8 @@ class Session:
         return ''
 
     def cleanup_downloads(self, remove=False):
-        if self.image_installer and self.image_installer.busy:
-            return
-        if (self.controller.busy or self.importer.busy or self.archives_busy or self.closing or self.upgrade.active or self.model_switch
-                or self.update_intent or self.engine_updating or self.updater and self.updater.busy):
+        if not self.can_manage() or self.updater and self.updater.busy:
+            self.explain_busy()
             return
         self.cleaner.start(self.engine_root(), remove=remove)
 
@@ -721,7 +762,8 @@ class Session:
         the previous model. An old model left after the switch is released here
         too, when the user asks.
         """
-        if self.image_installer and self.image_installer.busy:
+        if not self.can_manage():
+            self.explain_busy()
             return
         state = self.upgrade.state
         if (state.get('status') not in ('available', 'failed', 'releasable') or self.upgrade.busy or self.model_switch
@@ -990,6 +1032,10 @@ class Session:
         return ''
 
     def dismiss_update(self):
+        self.pending_update = None
+        self.bridge_pending = False
+        if self.action_notice == 'update_queued':
+            self.action_notice = ''
         key = self.update_key()
         if key:
             self.update_snoozed = dict(self.update_snoozed, **{key: time.monotonic() + SNOOZE_SECONDS})
@@ -1005,20 +1051,31 @@ class Session:
         self.update_snoozed = {k: v for k, v in self.update_snoozed.items() if k != key}
 
     def check_update(self, token=''):
-        if self.updater and not self.updater.busy:
-            if token.strip():
-                self.updater.token = token.strip()
-            self.update_checked = time.monotonic()
-            self.updater.run('check')
+        if not self.updater:
+            return
+        self.action_notice = 'checking_update'
+        if self.updater.busy:
+            self.pending_check = token
+            return
+        self.pending_check = None
+        if token.strip():
+            self.updater.token = token.strip()
+        self.update_checked = time.monotonic()
+        self.updater.run('check')
 
     def update(self, token='', source='launcher'):
         """One explicit update: the newest launcher if one is known, otherwise
         the engine bundled with this launcher. Downloading, waiting for running
         ComfyUI jobs and restarting continue from tick()."""
-        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing:
-            if source == 'browser':
-                self.bridge_pending = True
+        if self.engine_updating or self.update_restarting:
             return
+        if self.task_busy() or self.updater and self.updater.busy:
+            self.pending_update = (token, source)
+            self.action_notice = 'update_queued'
+            return
+        self.pending_update = None
+        if self.action_notice == 'update_queued':
+            self.action_notice = ''
         self.repair_request = None
         if self.updater and token.strip():
             self.updater.token = token.strip()
@@ -1095,7 +1152,7 @@ class Session:
             return False
 
     def _restart_when_idle(self):
-        if self.archives_busy:
+        if self.task_busy():
             return
         row = self.updater.state
         if row.get('status') != 'ready' or self.update_restarting:
@@ -1122,7 +1179,7 @@ class Session:
         self.closing = True
 
     def _update_engine_when_idle(self):
-        if self.controller.busy or self.importer.busy or self.archives_busy or self.upgrade.active or self.model_switch:
+        if self.task_busy():
             return
         busy = self._queue_busy()
         self.update_waiting = bool(busy)
@@ -1149,7 +1206,13 @@ class Session:
         updater = self.updater
         if updater:
             updater.poll(allow_download=not (self.controller.busy or self.importer.busy or self.cleaner.busy))
-        if (updater and self.update_intent is None and not updater.busy and now - self.update_checked >= CHECK_SECONDS
+        if (updater and self.pending_check is not None and not updater.busy and not self.closing
+                and not self.update_intent and not self.pending_update):
+            self.check_update(self.pending_check)
+        if (self.action_notice == 'checking_update' and self.pending_check is None
+                and updater and not updater.busy and updater.state.get('status') != 'checking'):
+            self.action_notice = ''
+        if (updater and self.update_intent is None and not self.pending_update and not updater.busy and now - self.update_checked >= CHECK_SECONDS
                 and not updater.retry
                 and updater.state.get('status') in ('idle', 'current', 'available', 'error', 'cancelled')):
             self.update_checked = now
@@ -1162,11 +1225,14 @@ class Session:
             request = take_request(self.bridge)
             if request and request['action'] == 'cancel':
                 self.bridge_pending = False
-                if self.update_intent:
+                if self.update_intent or self.pending_update:
                     self.dismiss_update()
             elif request or (self.bridge_pending and not self.controller.busy):
                 self.bridge_pending = False
                 self.update(source='browser')
+        if self.pending_update and not self.task_busy() and not (updater and updater.busy):
+            token, source = self.pending_update
+            self.update(token, source)
         row = updater.state if updater else {}
         if self.update_intent == 'check' and updater and not updater.busy:
             self.update_intent = None
@@ -1299,7 +1365,9 @@ class Session:
                     installed=self.installed_version(), phase=self.update_phase(), key=key,
                     channel=self.updater.current.get('channel') if self.updater else None,
                     track=self.updater.current.get('track', 'stable') if self.updater else 'stable',
-                    manual=bool(self.updater and self.updater.current.get('packaging') in ('onedir', 'app')))
+                    manual=bool(self.updater and self.updater.current.get('packaging') in ('onedir', 'app')),
+                    check_requested=self.pending_check is not None or row.get('status') == 'checking',
+                    check_text=self.t(*ACTION_COPY['checking_update']))
         # Versions between the one in use and the update, so skipped notes are not lost.
         from .release_notes import since
         current = view['current_release'] or {}
@@ -1538,6 +1606,23 @@ class Session:
             self.tail.select(selected)
             self.tail.read(final=not self.controller.terminal_running(selected))
         self._tick_updates()
+        if self.action_notice == 'busy' and self.can_manage() and not (self.updater and self.updater.busy):
+            self.action_notice = ''
+        if self.pending_imports and not self.task_busy() and not self.update_intent and not self.pending_update:
+            paths, self.pending_imports = self.pending_imports, []
+            if self.action_notice == 'import_queued':
+                self.action_notice = ''
+            self.import_packages(paths)
+        if self.pending_action and not self.task_busy() and not self.update_intent and not self.pending_update:
+            name, accepted, page, retry = self.pending_action
+            self.pending_action = None
+            if self.action_notice == 'setup_queued':
+                self.action_notice = ''
+            self.page = page
+            if retry:
+                Session.action(self, name, accepted, retry=retry)
+            else:
+                self.action(name, accepted)
 
     def _tick_page_check(self, row):
         """Show a page that failed to load FreeVideo, or never reported, in the failure card."""
@@ -1935,10 +2020,11 @@ class Session:
         return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__, image_pack=image_pack,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
             page=self.page, status=row.get('status', 'idle'), busy=busy,
+            action_notice=self.t(*ACTION_COPY[self.action_notice]) if self.action_notice else '',
+            setup_pending=bool(self.pending_action), setup_wait_text=self.t(*ACTION_COPY['setup_queued']),
+            can_manage=self.can_manage(), busy_reason=self.t(*ACTION_COPY['busy']),
             cleanup=cleanup,
-            can_cleanup=not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
-                or self.update_intent or self.engine_updating or self.updater and self.updater.busy
-                or self.upgrade.active or self.model_switch or image_pack['busy']),
+            can_cleanup=self.can_manage() and not (self.updater and self.updater.busy),
             model_upgrade=dict(model_upgrade, switching=bool(self.model_switch)),
             offline=dict(progress_view(self.importer.state, zh), runtime=bool(self.form['offline_runtime']),
                 runtime_supported=runtime_packages_supported(),

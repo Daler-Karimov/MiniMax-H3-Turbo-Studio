@@ -13,6 +13,7 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
+const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好；要重装请先点「检测并预览」'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
 const failureText = value => {
     const text = String(value || ''), matches = [...text.matchAll(/MODEL_MISMATCH_REPAIR: ([^\r\n]+)/g)];
@@ -260,8 +261,9 @@ export async function openSetup() {
     const controls = () => {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
         cancel.disabled = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
-        const why = busy || (ready && !planId) ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击「检测并预览」更新安装计划。")
+        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击「检测并预览」更新安装计划。")
             : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击「检测并预览」。")
+            : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
             : !planId ? t("Click Detect & review first. Install / repair becomes available once the plan is ready.", "请先点击「检测并预览」，生成安装计划后即可安装。")
             : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击「安装／修复」。") : "";
         blocked.textContent = why; blocked.hidden = !why;

@@ -12,8 +12,8 @@ let configured = performance.now();
 
 // ComfyUI restores the previous session's workflow and tabs after every
 // extension's setup, so that restore can bring another workflow to the front
-// over ours. Once startup is quiet, bring ours back unless the user has
-// already moved on. Never awaited from setup: ComfyUI restores only after
+// over ours. Once startup is quiet, bring our tab back into view even if a
+// click or key arrived during startup. Never awaited from setup: ComfyUI restores only after
 // setup returns.
 async function keepInFront(workflow, opened) {
     let touched = false;
@@ -23,8 +23,11 @@ async function keepInFront(workflow, opened) {
         const begin = performance.now();
         while (performance.now() - begin < 15000
             && (app.extensionManager?.spinner || performance.now() - configured < 600)) await sleep(100);
-        if (studioWorkflow(app.graph) || touched) return;
+        // An already visible FreeVideo graph may contain edits; keep that copy.
+        if (studioWorkflow(app.graph)) return;
         const store = app.extensionManager?.workflow;
+        // The user kept working in our own tab: its edits stay, even without the generate node.
+        if (touched && opened && store?.activeWorkflow === opened) return;
         // Our own tab when ComfyUI still has it; a new one otherwise.
         const target = opened && store?.getWorkflowByPath?.(opened.path) === opened ? opened : 'FreeVideo';
         await app.loadGraphData(structuredClone(workflow), true, true, target);

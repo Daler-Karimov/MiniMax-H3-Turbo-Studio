@@ -20,6 +20,7 @@ from .setup_progress import number, progress_text
 
 
 FIREWALL_HINT = ('If Windows asks about the firewall the first time, choose Allow.', 'Windows 首次询问防火墙权限时，请选择“允许”。')
+BROWSER_STARTING = ('Still starting. Your browser will open automatically when ready.', '还在启动，好了会自动打开')
 
 
 class Launcher:
@@ -392,7 +393,11 @@ class Launcher:
         self.refresh()
 
     def update_engine(self):
-        if self.controller.busy or not self.launch_selection:
+        if not self.launch_selection:
+            from .launcher_copy import ACTION_COPY
+            self.status.set(self.t(*ACTION_COPY['installation_missing']))
+            return
+        if self.controller.busy:
             return
         self.remember_installation(self.launch_selection)
         self.wizard_step = 2
@@ -484,6 +489,13 @@ class Launcher:
 
     def open_browser(self):
         if self.controller.state.get('status') != 'open':
+            # The controller can change state before the next GUI refresh.
+            # A click on the previous enabled button still gets a response.
+            if self.controller.busy and self.controller.state.get('action') in ('launch', 'connect', 'install'):
+                self.browser_attempted = False
+                self.status.set(self.t(*BROWSER_STARTING))
+            else:
+                self.refresh()
             return
         from .windows_ux import open_browser
         self.browser_attempted = True
@@ -539,7 +551,7 @@ class Launcher:
                         ('Start ComfyUI and open the FreeVideo workflow.', '启动 ComfyUI 并打开 FreeVideo 工作流。')]
         if self.wizard_step == 3:
             descriptions[3] = {
-                'running': ('Starting ComfyUI…', '正在启动 ComfyUI…'),
+                'running': BROWSER_STARTING,
                 'open': ('ComfyUI is ready. Open FreeVideo in your browser.', 'ComfyUI 已就绪，可在浏览器中打开 FreeVideo。'),
                 'failed': ('Could not start. Details below.', '启动未完成，原因见下方。'),
                 'restart-required': ('Restart your running ComfyUI, then connect again.', '请重启正在运行的 ComfyUI，然后重新连接。'),
@@ -602,7 +614,7 @@ class Launcher:
             self.browser_controls.pack(fill='x', pady=(16, 0))
         else:
             self.browser_controls.pack_forget()
-        self.browser_button.state(['disabled'] if busy else ['!disabled'])
+        self.browser_button.state(['disabled'] if busy or state != 'open' else ['!disabled'])
         self.shortcut_button.state(['!disabled'] if not busy and self.controller.selection and
             self.controller.selection.get('ready') else ['disabled'])
         shortcut = row.get('shortcut', {})

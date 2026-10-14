@@ -6,6 +6,23 @@ from .model_repair import PROGRESS as MODEL_REPAIR_PROGRESS
 from .model_status import NAMES
 
 
+ACTION_COPY = {
+    'download_missing': ('The download folder no longer exists. Export the list again.',
+                         '下载目录已不存在，请重新导出清单'),
+    'installation_missing': ('There is no installation information yet. Complete installation first.',
+                             '还没有安装信息，请先完成安装'),
+    'checking_update': ('Checking for updates. Please wait.', '正在检查更新，请稍候'),
+    'busy': ('The background task is busy. You can do this when it finishes.',
+             '后台正在忙，完成后可以操作'),
+    'import_queued': ('Saved. Importing will start when the current task finishes.',
+                      '已记下，处理完当前任务后自动导入'),
+    'setup_queued': ('Models are being prepared in the background. Setup will continue when they are ready.',
+                     '后台正在准备模型，好了会接着继续'),
+    'update_queued': ('Another task is running. Updating will start when it finishes.',
+                      '正在做别的事，完成后会自动更新'),
+}
+
+
 SOURCES = {
     'auto': ('Automatic', '自动选择'), 'official': ('Hugging Face', 'Hugging Face'),
     'hf-mirror': ('HF Mirror', 'HF 镜像'), 'modelscope': ('ModelScope', '魔搭'),
