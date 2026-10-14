@@ -980,8 +980,8 @@ def progress_message(event):
         done, total = event.get('completed_steps', 8), event.get('total', 10)
         return dict(label='Upscaling before the second pass', phase='sampling', stage='latent_upscale',
                     done=done, total=total, display_fraction=done / total, timing_phase='sampling',
-                    estimated_step_seconds=None, step_elapsed_seconds=0., remaining_seconds=None,
-                    uniform_remaining_steps=False)
+                    estimated_step_seconds=None, step_elapsed_seconds=event.get('step_elapsed_seconds', 0.),
+                    remaining_seconds=None, uniform_remaining_steps=False)
     if name == 'ram_budget_warning':
         # Kept in resource logs and diagnostics, not in generation progress:
         # crossing a soft estimate while memory is available needs no action.

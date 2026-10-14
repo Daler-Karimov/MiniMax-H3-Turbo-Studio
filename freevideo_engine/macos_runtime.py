@@ -53,11 +53,12 @@ def upscale_latents(video, sampling, base, backend, checkpoint=None):
     import torch
     from .latent_upscale import upscale
     from .two_pass import UPSCALER, crop_latents
-    print(json.dumps(dict(event='latent_upscale', completed_steps=sampling['base_steps'],
-                          total=sampling['total_steps'])), flush=True)
+    from .sampling_progress import elapsed_reports
+    event = dict(event='latent_upscale', completed_steps=sampling['base_steps'], total=sampling['total_steps'])
+    print(json.dumps(event), flush=True)
     checkpoint = checkpoint or Path(base).parent / 'latent_upscaler' / Path(UPSCALER['file']).name
     tick = time.monotonic()
-    with torch.no_grad():
+    with torch.no_grad(), elapsed_reports(lambda report: print(json.dumps(report), flush=True), event):
         backend.empty_cache()
         lifted, stats = upscale(video.to('mps'), checkpoint,
             sampling['upscale_target']['width'], sampling['upscale_target']['height'], memory_saving=True)

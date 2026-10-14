@@ -802,9 +802,12 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             }
             tick(); return;
         }
-        if (!heartbeat && (previousProgress === null || progressFields.some(key => message[key] !== previousProgress[key])))
+        // The upscale before the second pass has no counters; its seconds in
+        // progress are the engine's proof of life.
+        const counted = message.stage === 'latent_upscale' ? [...progressFields, 'step_elapsed_seconds'] : progressFields;
+        if (!heartbeat && (previousProgress === null || counted.some(key => message[key] !== previousProgress[key])))
             lastProgressAt = previousProgress === null ? receivedAt : Math.max(lastProgressAt, receivedAt);
-        if (!heartbeat) previousProgress = Object.fromEntries(progressFields.map(key => [key, message[key]]));
+        if (!heartbeat) previousProgress = Object.fromEntries(counted.map(key => [key, message[key]]));
         if (message.stage === 'latent_upscale' || message.stage === 'first_pass_reused'
             || message.phase === 'refinement' || message.retry?.reuse_first_pass === true
             || (message.phase === 'sampling' && samplingPlan.enabled && !samplingPlan.preview

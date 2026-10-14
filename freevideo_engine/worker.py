@@ -417,67 +417,71 @@ def generate(request, resident=None):
                             save(request['metrics'], metrics)
                             print(json.dumps(dict(event='latent_upscale', completed_steps=sampling_plan['base_steps'],
                                                   total=sampling_plan['total_steps'])), flush=True)
-                            tick = time.perf_counter()
-                            if live_budget is not None:
-                                refresh_budget('upscale')
-                            need = upscale_workspace(sampling_plan['upscale_target']) if sampling_plan['upscaler_sha256'] else 0
-                            # Its weights go straight to the GPU. Charging 2 GiB of
-                            # host RAM evicted the second pass's own engine on
-                            # tight-RAM machines, which then reloaded every block.
-                            from .two_pass import UPSCALER_HOST_BYTES
-                            if need and resident is not None and not resident.ram_fits(UPSCALER_HOST_BYTES):
-                                resident.make_room('latent_upscaler', need, ram_need=UPSCALER_HOST_BYTES)
-                            torch.cuda.empty_cache()
-                            def upscale_available():
-                                free, _ = torch.cuda.mem_get_info()
-                                budget = metrics['device_memory'].get('effective_allocator_limit_bytes') or request['gpu_budget_bytes']
-                                return min(free - request.get('gpu_reserve_bytes', 0), budget - torch.cuda.memory_allocated())
-                            available = upscale_available()
-                            # Prefer buffer reuse before discarding useful host weights.
-                            # The estimate selects this path, not permission to run.
-                            # Actual allocation remains bounded by the worker's CUDA
-                            # allocator limit. Keep the completed first-pass latents.
-                            memory_saving = available < need
-                            torch.cuda.reset_peak_memory_stats()
-                            lift_canvas = sampling_plan['upscale_target']
-                            retry_upscale = False
-                            upscale_failures = []
-                            metrics['latent_upscale'] = dict(estimated_workspace_bytes=need,
-                                available_workspace_bytes=max(0, available), attempted_below_estimate=memory_saving,
-                                buffer_reuse=memory_saving, allocation_retries=0, allocation_failures=upscale_failures)
-                            save(request['metrics'], metrics)
-                            try:
-                                kwargs = dict(memory_saving=True) if memory_saving else {}
-                                lifted_video, lifted = upscale(latents, request.get('upscaler_checkpoint'),
-                                    lift_canvas['width'], lift_canvas['height'], **kwargs)
-                            except Exception as error:
-                                from .adaptive import classify_failure
-                                if classify_failure(error)['kind'] != 'gpu_oom' or (released(engine) and memory_saving):
-                                    raise
-                                from .diagnostic_resources import error_details
-                                upscale_failures.append(error_details(error))
-                                retry_upscale = True
-                            if retry_upscale:
-                                # Leave the failed call's traceback before retrying so
-                                # its tensors no longer occupy the allocator. Do not
-                                # sample again or change the temporal normalization.
-                                if not released(engine):
-                                    if resident is not None:
-                                        resident.drop('engine', 'Latent upscale allocation needs additional workspace')
-                                    else:
-                                        engine.close()
-                                if resident is not None:
+                            from .sampling_progress import elapsed_reports
+                            with elapsed_reports(lambda event: print(json.dumps(event), flush=True),
+                                                 dict(event='latent_upscale', completed_steps=sampling_plan['base_steps'],
+                                                      total=sampling_plan['total_steps'])):
+                                tick = time.perf_counter()
+                                if live_budget is not None:
+                                    refresh_budget('upscale')
+                                need = upscale_workspace(sampling_plan['upscale_target']) if sampling_plan['upscaler_sha256'] else 0
+                                # Its weights go straight to the GPU. Charging 2 GiB of
+                                # host RAM evicted the second pass's own engine on
+                                # tight-RAM machines, which then reloaded every block.
+                                from .two_pass import UPSCALER_HOST_BYTES
+                                if need and resident is not None and not resident.ram_fits(UPSCALER_HOST_BYTES):
                                     resident.make_room('latent_upscaler', need, ram_need=UPSCALER_HOST_BYTES)
-                                import gc
-                                gc.collect()
                                 torch.cuda.empty_cache()
-                                metrics['latent_upscale'].update(buffer_reuse=True, allocation_retries=1)
+                                def upscale_available():
+                                    free, _ = torch.cuda.mem_get_info()
+                                    budget = metrics['device_memory'].get('effective_allocator_limit_bytes') or request['gpu_budget_bytes']
+                                    return min(free - request.get('gpu_reserve_bytes', 0), budget - torch.cuda.memory_allocated())
+                                available = upscale_available()
+                                # Prefer buffer reuse before discarding useful host weights.
+                                # The estimate selects this path, not permission to run.
+                                # Actual allocation remains bounded by the worker's CUDA
+                                # allocator limit. Keep the completed first-pass latents.
+                                memory_saving = available < need
+                                torch.cuda.reset_peak_memory_stats()
+                                lift_canvas = sampling_plan['upscale_target']
+                                retry_upscale = False
+                                upscale_failures = []
+                                metrics['latent_upscale'] = dict(estimated_workspace_bytes=need,
+                                    available_workspace_bytes=max(0, available), attempted_below_estimate=memory_saving,
+                                    buffer_reuse=memory_saving, allocation_retries=0, allocation_failures=upscale_failures)
                                 save(request['metrics'], metrics)
-                                lifted_video, lifted = upscale(latents, request.get('upscaler_checkpoint'),
-                                    lift_canvas['width'], lift_canvas['height'], memory_saving=True)
-                            latents = lifted_video
-                            del lifted_video
-                            latents = crop_latents(latents, sampling_plan)
+                                try:
+                                    kwargs = dict(memory_saving=True) if memory_saving else {}
+                                    lifted_video, lifted = upscale(latents, request.get('upscaler_checkpoint'),
+                                        lift_canvas['width'], lift_canvas['height'], **kwargs)
+                                except Exception as error:
+                                    from .adaptive import classify_failure
+                                    if classify_failure(error)['kind'] != 'gpu_oom' or (released(engine) and memory_saving):
+                                        raise
+                                    from .diagnostic_resources import error_details
+                                    upscale_failures.append(error_details(error))
+                                    retry_upscale = True
+                                if retry_upscale:
+                                    # Leave the failed call's traceback before retrying so
+                                    # its tensors no longer occupy the allocator. Do not
+                                    # sample again or change the temporal normalization.
+                                    if not released(engine):
+                                        if resident is not None:
+                                            resident.drop('engine', 'Latent upscale allocation needs additional workspace')
+                                        else:
+                                            engine.close()
+                                    if resident is not None:
+                                        resident.make_room('latent_upscaler', need, ram_need=UPSCALER_HOST_BYTES)
+                                    import gc
+                                    gc.collect()
+                                    torch.cuda.empty_cache()
+                                    metrics['latent_upscale'].update(buffer_reuse=True, allocation_retries=1)
+                                    save(request['metrics'], metrics)
+                                    lifted_video, lifted = upscale(latents, request.get('upscaler_checkpoint'),
+                                        lift_canvas['width'], lift_canvas['height'], memory_saving=True)
+                                latents = lifted_video
+                                del lifted_video
+                                latents = crop_latents(latents, sampling_plan)
                             lifted.update(stage_seconds=time.perf_counter() - tick,
                                 crop=dict(sampling_plan['crop']),
                                 estimated_workspace_bytes=need,

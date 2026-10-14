@@ -6,11 +6,29 @@ completion measurements.
 """
 from contextlib import contextmanager
 import json
+import threading
 import time
 
 
 def emit_event(event):
     print(json.dumps(event), flush=True)
+
+
+@contextmanager
+def elapsed_reports(emit, fields, *, interval=3., clock=time.perf_counter):
+    """Report `step_elapsed_seconds` every `interval` seconds while a stage with
+    no internal counters (the latent upscale) runs in the calling thread."""
+    started, stopped = clock(), threading.Event()
+    def report():
+        while not stopped.wait(interval):
+            emit(dict(fields, step_elapsed_seconds=clock() - started))
+    thread = threading.Thread(target=report, name='stage-elapsed-reports', daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1.)
 
 
 def _bounded(value, low=0., high=1.):
@@ -35,6 +53,9 @@ class SamplingProgress:
         self.step_started = self.started
         self.completed = []
         self.last_layer_event = float('-inf')
+        # When the current step entered its first layer. Input preparation and
+        # model reacquisition before it are not layer time.
+        self.first_layer_at = None
 
     def _step_estimate(self):
         # The first step includes input preparation and kernel compilation. A
@@ -73,14 +94,20 @@ class SamplingProgress:
         if len(self.completed) >= self.steps:
             return
         now = self.clock()
+        if index == 1:
+            self.first_layer_at = now
         if index == 1 or now-self.last_layer_event >= 1.:
             self.last_layer_event = now
             estimate = self._visual_step_estimate()
             # A layer event is emitted before that layer runs. Once the next
-            # layer is entered, the elapsed time covers the preceding layers;
-            # use that fraction as an early, continuously corrected ruler.
-            if estimate is None and index > 1 and self.blocks > 0:
-                elapsed = now - self.step_started
+            # layer is entered, the time since the first layer was entered is
+            # the measured duration of the preceding layers; use that fraction
+            # as an early, continuously corrected ruler. Nothing is shown
+            # before the first layer has really run: time spent preparing the
+            # step's inputs would otherwise inflate the first estimate many
+            # times over.
+            if estimate is None and index > 1 and self.blocks > 0 and self.first_layer_at is not None:
+                elapsed = now - self.first_layer_at
                 fraction = (index - 1) / self.blocks
                 if elapsed > 0 and fraction > 0:
                     estimate = elapsed / fraction
@@ -104,6 +131,7 @@ class SamplingProgress:
                    # elapsed time into the next one.
                    next_step_elapsed_seconds=0.)
         self.step_started = self.clock()
+        self.first_layer_at = None
 
     @contextmanager
     def layers(self, blocks):
