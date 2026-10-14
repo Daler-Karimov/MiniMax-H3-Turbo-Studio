@@ -320,7 +320,9 @@ def build(app):
     grid = ttk.Frame(app.pages[2]); grid.pack(fill='x', pady=(0, b.space(3)))
     grid.columnconfigure((0, 1, 2), weight=1, uniform='models')
     app.model_cards = {}
-    for index, name in enumerate(FAMILIES):
+    # Optional pack controls live in the Qt launcher; keep this legacy setup
+    # grid limited to the families setup itself provisions.
+    for index, name in enumerate(name for name in FAMILIES if name != 'image'):
         card = ModelCard(grid, app, name)
         card.grid(row=0, column=index, sticky='nsew',
                   padx=(0 if index == 0 else b.space(2), 0 if index == 2 else b.space(2)))

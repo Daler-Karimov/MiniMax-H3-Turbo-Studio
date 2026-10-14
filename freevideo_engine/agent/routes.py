@@ -203,6 +203,7 @@ def capabilities(port, jobs):
         kinds={'generate': 'Video from a prompt and optional keyframes or references',
                'assemble': 'Join finished clips into one video (cut or crossfade)',
                'vlm': 'Ask the local vision-language model about images or sampled video frames',
+               'image': 'Generate a picture from text or change input pictures with the local image model',
                'enhance': 'Rewrite a rough idea into a full H3 prompt with the local VLM',
                'export': 'Render a saved revision of an editing project to a video',
                'listen': 'Listen to the sound of an editing project for subtitle lines and times',
@@ -233,6 +234,8 @@ def plan(port, value, jobs=None):
     if jobs is not None:
         problems += parts_problems(spec, jobs.port.chain_runner(), work=jobs.continued_work(spec),
                                    planned=jobs.planned_parts(spec))
+    else:
+        problems += parts_problems(spec, None)
     if problems:
         raise specs.SpecError(problems)
     if jobs is not None:
@@ -724,6 +727,12 @@ def register():
                          width=size[0], height=size[1],
                          thumbnail='/freevideo/library/thumbnail?id=' + quote(work, safe='') if work else None,
                          play='/freevideo/agent/chat/video?id=' + quote(work, safe='') if work else None)
+            picture = view.get('result') or {}
+            if row['kind'] == 'image' and picture.get('file'):
+                # ComfyUI's own view of the input file, which the page can show without the agent's token.
+                folder, _, leaf = picture['file'].rpartition('/')
+                value.update(width=picture.get('width'), height=picture.get('height'),
+                             thumbnail='/view?filename=%s&subfolder=%s&type=input' % (quote(leaf, safe=''), quote(folder, safe='')))
         return value
 
     def agent_state():

@@ -34,6 +34,7 @@ SOURCES = {
                    'modelscope': 'https://www.modelscope.cn'},
     'edge-models': {'official': 'https://huggingface.co', 'hf-mirror': 'https://hf-mirror.com',
                     'modelscope': 'https://modelscope.ai'},
+    'image-models': {'official': 'https://huggingface.co', 'modelscope': 'https://www.modelscope.cn'},
     'github': {'official': 'https://github.com', 'ghfast': 'https://ghfast.top/https://github.com'},
     'cuda': {'official': 'https://developer.download.nvidia.com/compute/cuda/redist',
              'nvidia-cn': 'https://developer.download.nvidia.cn/compute/cuda/redist'},
@@ -96,11 +97,15 @@ def modelscope_mapping(row, spec=None):
 
 
 def model_family(row, spec=None):
+    if row.get('family') == 'image':
+        return 'image-models'
     mirror = modelscope_mapping(row, spec)
     return mirror['family'] if mirror else 'models'
 
 
 def model_url(row, name, env=None, *, spec=None):
+    if row.get('family') == 'image':
+        return next(s['url'] for s in row['sources'] if s['id'] == name)
     if name == 'modelscope':
         mirror = modelscope_mapping(row, spec)
         if not mirror:
@@ -114,9 +119,13 @@ def model_url(row, name, env=None, *, spec=None):
 def model_urls(network, row, env=None, *, spec=None):
     family = model_family(row, spec)
     # Plans made before ModelScope support keep their existing HF ordering.
-    if family not in network.get('sources', {}):
+    if family != 'image-models' and family not in network.get('sources', {}):
         family = 'models'
     names = ['official'] if network.get('mode') == 'official' or row.get('official_only') else ordered(network, family)
+    if family == 'image-models' and network.get('mode') != 'official' and not row.get('official_only'):
+        available = {s['id'] for s in row['sources']}
+        names = [n for n in names if n in available]
+        names += [s['id'] for s in row['sources'] if s['id'] not in names]
     return [(name, model_url(row, name, env, spec=spec)) for name in names]
 
 
@@ -282,6 +291,9 @@ def probe(family, name, spec, versions, timeout, env, *, measure_speed=False):
             settings = spec['models']
             url = model_url({'repo': settings['encoder_repo'], 'revision': settings['encoder_revision'],
                              'file': settings['encoder_file']}, name, env, spec=spec)
+        elif family == 'image-models':
+            from .image_gen.image_pack import rows
+            url = model_url(rows()[0], name, env)
         elif family in ('vdn-models', 'edge-models'):
             settings = spec['models']
             mirror = settings[family.split('-')[0] + '_modelscope']
@@ -320,7 +332,7 @@ def probe(family, name, spec, versions, timeout, env, *, measure_speed=False):
             component = versions['cuda_toolkits']['13.0']['components']['cuda_cudart']
             url = base + '/' + component['relative_path']
         headers = ()
-        if (family in ('models', 'vdn-models', 'edge-models') and name == 'official'
+        if (family in ('models', 'vdn-models', 'edge-models', 'image-models') and name == 'official'
                 and urlsplit(url).scheme == 'https' and urlsplit(url).netloc == 'huggingface.co'):
             token = env.get('HF_TOKEN') or env.get('HUGGING_FACE_HUB_TOKEN')
             if token:
@@ -376,7 +388,7 @@ def plan(spec, versions, layout='unified', *, mode='auto', timeout=5, offline=Fa
         raise ValueError('Unknown download connection mode')
     proxy_configured = proxy.configured(env)
     git_keys = [] if offline or model_only else proxy.git_proxy_keys(env)
-    families = ['pypi', 'models', 'vdn-models', 'github', 'git', 'cuda']
+    families = ['pypi', 'models', 'vdn-models', 'image-models', 'github', 'git', 'cuda']
     if spec['models'].get('edge_modelscope'):
         families.insert(3, 'edge-models')
     if versions.get('target_system') in ('Windows', 'Darwin'):
@@ -387,7 +399,7 @@ def plan(spec, versions, layout='unified', *, mode='auto', timeout=5, offline=Fa
         if family not in families:
             families.append(family)
     if model_only:
-        families=[family for family in families if family in ('models','vdn-models','edge-models')]
+        families=[family for family in families if family in ('models','vdn-models','edge-models','image-models')]
     selections, jobs = {}, []
     for family in families:
         group = 'torch' if family.startswith('torch-') else 'github' if family == 'git' else family
@@ -764,7 +776,7 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
     """Resume across ranked sources; hash before accepting, retain rejected bytes."""
     network = network or {}
     path = Path(path)
-    model = category in ('models', 'vdn-models', 'edge-models')
+    model = category in ('models', 'vdn-models', 'edge-models', 'image-models')
     stall_seconds = stall_seconds if stall_seconds is not None else 120 if model else 20
 
     def matches(candidate, source='local'):
@@ -780,7 +792,7 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 check()
             if model:
                 report(done, total)
-        return hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models'),
+        return hash_file(candidate, algorithm, git_blob, discard_cache=category in ('models', 'vdn-models', 'image-models'),
                          progress=verification if model or check else None) == expected
     if path.is_file():
         if matches(path):

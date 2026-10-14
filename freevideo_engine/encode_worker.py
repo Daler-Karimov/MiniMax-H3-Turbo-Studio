@@ -321,12 +321,18 @@ def _encode(args, request, resident, trace):
     normalized = None
     media_kwargs = {}
     task = 't2va'
+    early_reference = None
     if request.get('media'):
-        from .media_request import task_for
+        from .media_request import task_for, reference_stages
         from .media_encoding import prepare
-        task = task_for(request['media'])
+        stages = reference_stages(request['media'])
+        early = [dict(reference_index=i, early_steps=row['early_steps'])
+                 for i, row in enumerate(request['media'].get('references', [])) if 'early_steps' in row]
+        if early:
+            early_reference = dict(version=1, early_steps=early, conditions=[])
+        task = task_for(stages[0][1])
         if task != 't2va':
-            normalized, media_kwargs = prepare(request['media'], request['geometry'], Path(request['output']).parent / 'media')
+            normalized, media_kwargs = prepare(stages[0][1], request['geometry'], Path(request['output']).parent / 'media')
             # Saved with the conditioning, so a reused input cache still reports them.
             loading['reference_trims'] = [row['trimmed'] for row in normalized if row.get('trimmed')]
     if keyframes is not None:
@@ -516,6 +522,26 @@ def _encode(args, request, resident, trace):
             encoded, attempts = encode_with_recovery(clip, tokens, memory, torch, phase, max_attempts=4,
                                                      attempt=attempt)
         loading['encoder_attempts'] = attempts
+        if early_reference is not None:
+            # Reuse this loaded Qwen instance, its precision and recovery policy.
+            # Re-tokenize: removing visual rows alone does not remove VL features.
+            from .media_encoding import reference_options
+            extra_started = time.perf_counter()
+            for step, stage_media in stages[1:]:
+                tokens = clip.tokenize(prompt, **reference_options(normalized, media_kwargs, step))
+                size = input_size(tokens)
+                current.clear()
+                with readonly_pinning(torch, memory):
+                    stage_encoded, stage_attempts = encode_with_recovery(
+                        clip, tokens, memory, torch, phase, max_attempts=4, attempt=attempt)
+                stage_task = task_for(stage_media)
+                stage_value = to_cache(stage_encoded, prompt, task=stage_task)
+                stage_value['task'] = stage_task
+                early_reference['conditions'].append(dict(start_step=step, value=stage_value))
+                loading.setdefault('early_reference_attempts', []).append(dict(start_step=step, attempts=stage_attempts))
+                del stage_encoded
+            torch.cuda.synchronize()
+            loading['early_reference_extra_encode_seconds'] = time.perf_counter() - extra_started if stages[1:] else 0.
         # Finish async forward work at the existing conditioning boundary, so
         # it is not attributed to packing/saving on the host.
         torch.cuda.synchronize()
@@ -532,6 +558,8 @@ def _encode(args, request, resident, trace):
     task = 'fl2va' if images is not None else task
     value = to_cache(encoded, prompt, task=task)
     value['task'] = task
+    if early_reference is not None:
+        value['early_reference'] = early_reference
     torch.cuda.synchronize()
     prompt_encode_seconds = time.perf_counter() - encode_started
     # Keyframe and reference-media encoding read the drive themselves.
@@ -586,6 +614,10 @@ def _encode(args, request, resident, trace):
         info = encode_latents(normalized, value, request['base'], request['geometry'], resident=resident)
         keyframe_metrics.update(media_vae_encode_seconds=time.perf_counter() - tick, conditioning_info=info)
         task = info['task']
+    elif early_reference is not None:
+        from .media_conditioning import describe
+        keyframe_metrics['conditioning_info'] = describe(value, **{
+            k: request['geometry'][k] for k in ('width', 'height', 'frames')})
     phase('encoder_save')
     output = Path(request['output'])
     output.parent.mkdir(parents=True, exist_ok=True)

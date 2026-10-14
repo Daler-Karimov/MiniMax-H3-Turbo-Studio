@@ -15,6 +15,8 @@ PREFIX = '/freevideo/agent/v1'
 QUALITY = {'light': (True, 8, 3), 'medium': (False, 12, 3), 'high': (False, 16, 3), 'max': (False, 20, 3)}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),
            '21:9': (21, 9), '2:3': (2, 3), '3:2': (3, 2)}
+IMAGE_ASPECTS = {'1:1': (1024, 1024), '16:9': (1344, 768), '9:16': (768, 1344),
+                 '4:3': (1152, 896), '3:4': (896, 1152)}
 MAX_UPLOAD_BYTES = 2 * 1024 ** 3
 MAX_JSON_UPLOAD_BYTES = 96 * 1024 ** 2
 MAX_BODY_BYTES = 1024 * 1024
@@ -194,6 +196,34 @@ def vlm(*, local=False):
         ('kind', 'questions'), description='x-job-kind also checks the sum of images and sampled video frames across questions (at most 24).', **{'x-job-kind': 'vlm'})
 
 
+def image(*, local=False):
+    return obj(dict(kind={'const': 'image', 'type': 'string'},
+        prompt=dict(type='string', minLength=1, maxLength=2000),
+        width=number(256, 2048, integer=True), height=number(256, 2048, integer=True),
+        aspect=enum(IMAGE_ASPECTS, description='Instead of width and height; 1:1 when all three are omitted.'),
+        seed=nullable(number(-2**63, 2**64 - 1, integer=True)),
+        images=array({'oneOf': [FILE, obj(dict(file=FILE), ('file',))]}, high=4, description='Pictures to change '
+            'or combine: input files, such as result.file of an earlier picture job. The prompt calls them image 1, image 2.'),
+        people=array(obj(dict(image=FILE, name=string(40), x=number(0, 1), height=number(.05, 1), feet=number(0, 1)),
+                         ('image',)), 1, 3, description='Makes a first frame with people standing where you say. image is '
+            "a full-body picture on a plain backdrop, such as a cast card's front picture. From 0 to 1: x is the person's "
+            'centre across the width (default 0.5), height their size (0.62) and feet where they stand down the height '
+            '(0.9). The prompt describes the scene, or scene_image shows it. Not together with images.'),
+        scene_image=FILE,
+        **common()),
+        ('kind', 'prompt'), allOf=[{'if': {'required': ['width']}, 'then': {'required': ['height']}},
+               {'if': {'required': ['height']}, 'then': {'required': ['width']}},
+               {'if': {'required': ['aspect']},
+                'then': {'not': {'anyOf': [{'required': ['width']}, {'required': ['height']}]}}}],
+        **{'x-job-kind': 'image'})
+
+
+def image_result():
+    return obj(dict(file=FILE, url=string(), width=number(256, 2048, integer=True),
+        height=number(256, 2048, integer=True), seed=number(-2**63, 2**64 - 1, integer=True),
+        thumbnail=string()), ('file', 'url', 'width', 'height', 'thumbnail'))
+
+
 def enhance(*, local=False):
     return obj(dict(kind={'const': 'enhance', 'type': 'string'}, text=string(12000),
         seconds=number(1, 60, default=10), media=nullable(generation_media(local=local, enhance=True)), **common()),
@@ -235,7 +265,8 @@ def image_edit(*, local=False):
         **{'x-job-kind': 'image_edit'})
 
 
-KINDS = dict(generate=generate, assemble=assemble, vlm=vlm, enhance=enhance, export=export, listen=listen, image_edit=image_edit)
+KINDS = dict(generate=generate, assemble=assemble, vlm=vlm, enhance=enhance, image=image,
+             export=export, listen=listen, image_edit=image_edit)
 
 
 def job_schema(*, local=False, refs=False):
@@ -444,7 +475,8 @@ def cast_schema(name, *, local=False):
     if name == 'delete':
         return obj(dict(revision=number(1, integer=True), ref=REF))
     if name == 'generate':
-        return obj(dict(face=dict(type='boolean', default=False, description='Also make one face close-up.'),
+        return obj(dict(face=dict(type='boolean', default=False, description='Also make one face close-up (video; the image model always does).'),
+                        source=enum(('image', 'video'), description='Defaults to image when the local image model is ready, otherwise video.'),
                         replace=dict(type='boolean', default=False,
                                      description='Replace pictures the user did not add; default fills empty slots.'),
                         revision=number(1, integer=True), ref=REF))
@@ -452,6 +484,24 @@ def cast_schema(name, *, local=False):
         return obj(dict(q=string(200), kind=enum(('character', 'setting')), origin=enum(('user', 'agent', 'builtin')),
                         production=PRODUCTION, limit=number(1, 200, integer=True, default=50)))
     return EMPTY
+
+
+def cast_view():
+    picture = obj(dict(media=obj(dict(file=FILE, url=string(2048)), ('file', 'url')),
+                       by=enum(('user', 'agent', 'builtin')), from_job=JOB, generated={'type': 'boolean'},
+                       label=enum(LABELS), label_guess={'type': 'boolean'}), ('media', 'by', 'label'))
+    generating = obj(dict(job=JOB, face_job=nullable(JOB), jobs=array(JOB, 1, 5),
+        source=enum(('image', 'video')), replace={'type': 'boolean'}, at=string(),
+        by=enum(('user', 'agent', 'builtin'))), ('job', 'face_job', 'replace', 'at', 'by'))
+    generated = obj(dict(job=JOB, face_job=nullable(JOB), source=enum(('image', 'video')),
+        seed=number(0, 2**53 - 1, integer=True), prompt_version=number(1, integer=True)),
+        ('job', 'face_job', 'seed', 'prompt_version'))
+    return dict(obj(dict(id=CAST, kind=enum(('character', 'setting')), name=string(120),
+        description=nullable(string(1000)), revision=number(1, integer=True),
+        images=array(picture, 0, 6), candidates=array(picture, 0, 6),
+        generating=nullable(generating), generated=nullable(generated),
+        generate_error=nullable(obj(dict(code=string(), job=JOB, message=string()), ('code', 'job', 'message')))),
+        ('id', 'kind', 'name', 'revision', 'images', 'candidates', 'generating')), additionalProperties=True)
 
 
 # Image editing sessions: the image editor's version 2 document (web/image_editor_engine.js),
@@ -1017,6 +1067,11 @@ def cross_issues(schema, value, path):
         if flags['clip'] and item.get('end') is not None and item['end'] <= item.get('start', 0):
             bad('end', 'later than start', item['end'])
     kind = schema.get('x-job-kind')
+    if kind == 'image':
+        if value.get('people') and value.get('images'):
+            bad('images', 'omitted when people is supplied', value['images'])
+        if value.get('scene_image') and not value.get('people'):
+            bad('scene_image', 'omitted unless people is supplied', value['scene_image'])
     if kind == 'generate':
         if value.get('continue_from') and value.get('media'):
             bad('media', 'omitted when continue_from is supplied', value['media'])
@@ -1159,12 +1214,12 @@ def schemas():
     return dict(api_version=API_VERSION, job=dict(job_schema(), **{'$schema': S, '$defs': {
         k: f() for k, f in KINDS.items()}}), batch=batch_schema(), production=drama_schema('start'),
         drama={name: drama_schema(name) for name in DRAMA_OPERATIONS}, production_view=production_response(),
-        cast={name: cast_schema(name) for name in CAST_OPERATIONS},
+        cast={name: cast_schema(name) for name in CAST_OPERATIONS}, cast_view=cast_view(),
         projects={name: project_schema(name) for name in PROJECT_OPERATIONS},
         images={name: image_schema(name) for name in IMAGE_OPERATIONS},
         sessions=dict(event=session_event(stored=True), meta=session_view(),
                       **{name: session_schema(name) for name in SESSION_OPERATIONS}),
-        confirmations=confirm_settings())
+        confirmations=confirm_settings(), image_result=image_result())
 
 
 def openapi():
@@ -1208,6 +1263,12 @@ def openapi():
             response_schema = production_response()
         elif suffix == '/confirmations':
             response_schema = obj(confirm_settings()['properties'], ('start', 'reshoot_seconds'))
+        elif suffix in ('/cast', '/freevideo/agent/cast') and method == 'POST' or (
+                suffix in ('/cast/{id}', '/freevideo/agent/cast/{id}') and method in ('GET', 'PATCH')):
+            response_schema = {'$ref': '#/components/schemas/CastCard'}
+        elif suffix in ('/cast/{id}/generate', '/freevideo/agent/cast/{id}/generate'):
+            response_schema = obj(dict(job=JOB, jobs=array(JOB, 1, 5),
+                                       card={'$ref': '#/components/schemas/CastCard'}), ('job', 'jobs', 'card'))
         elif suffix.startswith('/sessions'):
             response_schema = (obj(dict(events=array(session_event(stored=True), 0, 500),
                 last_seq=number(0, integer=True), stopped={'type': 'boolean'}), ('events', 'last_seq', 'stopped'))
@@ -1237,12 +1298,16 @@ def openapi():
         status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
         chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
         spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
+        waiting_for=array(string()), notice=string(),
         error={'$ref': '#/components/schemas/Error'})}
+    job_view['allOf'] = [{'if': {'required': ['kind'], 'properties': {'kind': {'const': 'image'}}},
+                         'then': {'properties': {'result': image_result()}}}]
     return dict(openapi='3.1.0', info=dict(title='FreeVideo Agent API', version=str(API_VERSION)), paths=paths,
         components=dict(securitySchemes={'bearer': {'type': 'http', 'scheme': 'bearer'},
             'page': {'type': 'apiKey', 'in': 'cookie', 'name': 'freevideo_agent_page'}}, schemas={
             'Session': session_view(), 'SessionEvent': session_event(stored=True),
-            'JobSpec': schemas()['job'], 'Batch': batch_schema(), 'Job': job_view,
+            'JobSpec': schemas()['job'], 'ImageResult': image_result(), 'CastCard': cast_view(),
+            'Batch': batch_schema(), 'Job': job_view,
             # One job answers the way a submission does: the same job is also under 'job'.
             'JobAnswer': dict(job_view, properties=dict(job_view['properties'], job={'$ref': '#/components/schemas/Job'})),
             'Submitted': obj(dict(job={'$ref': '#/components/schemas/Job'},
@@ -1274,7 +1339,7 @@ TOOL_ENDPOINTS.update({IMAGE_TOOLS[name]: (method, suffix)
 TOOL_ENDPOINTS.update({SESSION_TOOLS[name]: SESSION_OPERATIONS[name][:2]
                        for name in SESSION_TOOLS if name != 'post'})
 TOOL_KINDS = dict(freevideo_generate='generate', freevideo_assemble='assemble',
-                  freevideo_ask='vlm', freevideo_enhance_prompt='enhance')
+                  freevideo_ask='vlm', freevideo_enhance_prompt='enhance', freevideo_generate_image='image')
 
 
 SESSION_ARGUMENT = dict(type='string', pattern='^s[0-9a-f]{12}$',
@@ -1381,6 +1446,8 @@ def _tool_schema(name):
         kind = TOOL_KINDS.get(name, 'generate')
         value = KINDS[kind](local=True)
         value['properties'].pop('kind')
+        if kind == 'image':
+            value.pop('allOf')  # Said in the field descriptions instead; the job is still checked when submitted.
         value['required'] = [k for k in value.get('required', []) if k != 'kind']
         if name != 'freevideo_plan':
             value['properties']['wait'] = dict(CLIENT_WAIT, default=0 if kind == 'generate' else 25)

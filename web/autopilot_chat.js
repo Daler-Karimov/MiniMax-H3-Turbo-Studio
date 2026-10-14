@@ -22,7 +22,7 @@ const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Polishing', '润色中
 
 export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
-export const jobName = (job, t) => job.label || t('Video', '视频');
+export const jobName = (job, t) => job.label || (job.kind === 'image' ? t('Picture', '图片') : t('Video', '视频'));
 export const jobFraction = job => Math.max(0, Math.min(1, Number(job.progress?.fraction) || 0));
 // What a job's last progress stands for `age` seconds after it was made, by the creation panel's rule.
 export function jobEstimate(job, age) {
@@ -219,7 +219,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         try {
             const response = await agentGet(api, '/freevideo/agent/chat/list', {signal: closed.signal});
             if (stopped) return;
-            conversations = mergeConversations(conversations, response.ok ? await response.json() : null, response.status);
+            // The body is awaited first: a conversation chosen meanwhile must stay the current one.
+            const data = response.ok ? await response.json() : null;
+            if (stopped) return;
+            conversations = mergeConversations(conversations, data, response.status);
             renderConversations();
             if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; selection++; void poll(); }
         } catch { /* List failures do not interrupt reading or sending. */ }
@@ -371,7 +374,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         let mode = null, apply = null;
         return {element: item, update(job, {latest, retry}) {
             // Jobs without a picture (a check, a prompt) are one quiet line while they run, and nothing after.
-            const next = VIDEOS.includes(job.kind || 'generate') ? jobMode(job) + (jobMode(job) === 'done' ? `:${job.play}:${job.thumbnail}:${job.work}` : '')
+            // A picture takes seconds: the same quiet line while it is made, then the picture.
+            const card = VIDEOS.includes(job.kind || 'generate') || (job.kind === 'image' && !WORKING.includes(job.status));
+            const next = card ? jobMode(job) + (jobMode(job) === 'done' ? `:${job.play}:${job.thumbnail}:${job.work}` : '')
                 : WORKING.includes(job.status) ? 'quiet' : 'none';
             if (next !== mode) {
                 mode = next; item.dataset.job = job.id; item.dataset.mode = next.split(':')[0]; item.hidden = next === 'none';
@@ -496,8 +501,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             away = job ? {session: row.id, job, ids: jobs.map(job => job.id)} : null;
         } catch { /* The last reading stays until the next one. */ }
     }
+    let reportedJob = null;
     function report() {
         const current = (state.current ? state.jobs[state.current] : away?.job) || null;
+        // A job that starts or ends changes a dot in the list, so the list is read again right away.
+        if ((current?.id || null) !== reportedJob) { reportedJob = current?.id || null; void readConversations(true); }
         changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, left: current ? leftOf(current) : null, active: state.active,
             any: state.items.size > 0 || pending.length > 0});
     }

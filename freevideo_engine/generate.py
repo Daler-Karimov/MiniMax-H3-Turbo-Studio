@@ -718,6 +718,8 @@ def _run(args):
                     if type(count) is not int or count < 0:
                         raise ValueError('Invalid reference token count')
                     canvas[name] = count
+                if 'early_reference' in info:
+                    canvas['early_reference'] = info['early_reference']
                 profile['engine']['task'] = info['task']
             if not condition.is_file():
                 raise FileNotFoundError(condition)

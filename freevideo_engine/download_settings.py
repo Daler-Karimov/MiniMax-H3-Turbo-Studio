@@ -10,7 +10,7 @@ from .long_paths import io_path, plain
 from .proxy import MODES
 
 CHOICES = ('auto', 'official', 'hf-mirror', 'modelscope')
-FAMILIES = ('edge-models', 'vdn-models', 'models')
+FAMILIES = ('edge-models', 'vdn-models', 'models', 'image-models')
 
 
 def speed_text(row, zh=False):

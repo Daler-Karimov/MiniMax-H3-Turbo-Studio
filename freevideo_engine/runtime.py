@@ -44,6 +44,11 @@ def _load_safetensors(path):
         return {name: handle.get_tensor(name) for name in handle.keys()}
 
 
+def refined_text_memo_capacity(canvas):
+    """Stage prompts of an early-reference canvas plus the top-level prompt and one spare."""
+    return len(((canvas or {}).get('early_reference') or {}).get('conditions') or []) + 2
+
+
 class Engine:
     @torch.no_grad()
     def __init__(self, cache, *, base=None, checkpoint=None,
@@ -127,7 +132,8 @@ class Engine:
         self.stream_refiner_count = 0
         self.cache_refined_text = cache_refined_text
         self.refiner_released = False
-        self.previous_refined_text = None
+        self.refined_text_memo = {}
+        self.refined_text_memo_capacity = refined_text_memo_capacity(self.canvas)
         started = time.perf_counter()
         manifest = json.loads((self.cache / 'manifest.json').read_text(encoding='utf-8'))
         online_lora = manifest.get('online_lora', {})
@@ -582,15 +588,38 @@ class Engine:
                                     offset=progress_offset, total=progress_total)
         progress.start()
         continuation_offset = 0
+        early_receipt = None
+        condition_schedule = None
+        sampling_kwargs = {}
+        if self.task == 't2va' and (self.canvas or {}).get('early_reference'):
+            # A zero-step proxy may leave an ordinary text-only request. Keep
+            # that sampler and its exact RNG path, but still report the cutoff.
+            early_receipt = dict(self.canvas['early_reference'], steps=[dict(step=i,
+                condition='base', condition_start_step=0, reference_video_rows=0, reference_audio_rows=0,
+                text_rows=self.canvas['early_reference']['conditions'][0]['text_tokens']) for i in range(active_steps)])
         if self.task.startswith('ref2va'):
             from .media_conditioning import describe
             value = torch.load(conditioning, map_location='cpu', weights_only=True)
             info = describe(value, width, height, frames)
             if info['task'] != self.task:
                 raise ValueError('Reference modalities changed the precomputed schedule')
-            conditions = value['references']
+            if 'early_reference' in info:
+                from .media_conditioning import condition_at
+                early_receipt = dict(info['early_reference'], steps=[])
+                if value['early_reference']['conditions']:
+                    sampling_kwargs['timestep_task'] = self.task
+                if refining:
+                    value = condition_at(value)
+                    row = info['early_reference']['conditions'][-1]
+                    early_receipt['steps'] = [dict(step=i, condition='base', condition_start_step=row['start_step'],
+                        reference_video_rows=row['reference_video_tokens'], reference_audio_rows=row['reference_audio_tokens'],
+                        text_rows=row['text_tokens']) for i in range(active_steps)]
+                else:
+                    condition_schedule = [dict(stage) for stage in value['early_reference']['conditions']]
+                    sampling_kwargs.update(condition_schedule=condition_schedule, condition_trace=early_receipt['steps'])
+            conditions = value.get('references') or None
             if continuation is not None:
-                if len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None:
+                if conditions is None or len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None:
                     raise ValueError('Continuation anchor requires exactly one image reference without audio')
                 # Ref2VA packs independent-size references before generated
                 # video rows in both passes. Their latents do not need the
@@ -761,10 +790,6 @@ class Engine:
         self.device_backend.synchronize()
         started = time.perf_counter()
         refinement = None
-        if self.cache_refined_text:
-            refinement = self._prepare_refined_text(prompt)
-        if active_steps == 1:
-            trigger_prefetch()
         checkpoint_seconds = 0.
         # A budget cut inside a step (Windows): see step_pressure. The watch is
         # the innermost context, so a narrowed group is put back before the
@@ -777,6 +802,25 @@ class Engine:
             from .step_pressure import LayerWatch
             watch = LayerWatch(self, source, pass_cache=pass_cache)
         try:
+            if self.cache_refined_text:
+                if condition_schedule:
+                    # An engine serves several requests; size the memo for this
+                    # request's stage prompts plus the top-level prompt.
+                    self.refined_text_memo_capacity = max(self.refined_text_memo_capacity, len(condition_schedule) + 2)
+                    for stage in condition_schedule:
+                        # Prepare the final subset too, even when K >= steps:
+                        # refinement always uses it. Keep host refiner weights
+                        # until every distinct prompt has been prepared.
+                        if stage['start_step'] >= self.steps and stage is not condition_schedule[-1]:
+                            continue
+                        self._prepare_refined_text(stage['value']['prompt_embeds'].to(self.device_backend.device, torch.bfloat16),
+                                                   release_weights=False)
+                        # Share the memo's CPU storage; another device-to-host
+                        # copy here would double every stage's retained text.
+                        stage['refined_text'] = next(reversed(self.refined_text_memo.values()))
+                refinement = self._prepare_refined_text(prompt)
+            if active_steps == 1:
+                trigger_prefetch()
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
                     self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
                     self.transformer, continuation, seed, self.device_backend.device,
@@ -784,7 +828,7 @@ class Engine:
                     (watch.layers(self.transformer.transformer_blocks) if watch is not None else nullcontext()):
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
-                                                conditions=conditions)
+                                                conditions=conditions, **sampling_kwargs)
                 if prefix is not None:
                     latents, audio = prefix.finish(latents, audio)
                 stats = offloader.stats()
@@ -819,6 +863,8 @@ class Engine:
                         start_index=1 if refine_schedule else self.steps - refine_steps, restart_seed=seed,
                         schedule=refine_schedule or 'original-tail',
                         audio_policy='first_pass_preserved_with_audio_clock_conditioning')
+                if early_receipt is not None:
+                    sampled['early_reference'] = early_receipt
                 # The final latents must be durable before exiting the weight
                 # offloader: its cleanup can fail after all NFE have completed.
                 if sampling_complete_callback is not None:
@@ -827,6 +873,10 @@ class Engine:
                     checkpoint_seconds = time.perf_counter() - tick
         finally:
             self.transformer._freevideo_refined_text = None
+            if condition_schedule and self.cache_refined_text and not self.stream_refiner_count:
+                # Also release a partially prepared batch when refinement fails.
+                self.transformer.token_refiner.refiner_blocks.to('meta')
+                self.refiner_released = True
         self.device_backend.synchronize()
         elapsed = time.perf_counter() - started - checkpoint_seconds
         self.device_backend.empty_cache()
@@ -838,16 +888,18 @@ class Engine:
         return latents, audio, sampled
 
     @torch.no_grad()
-    def _prepare_refined_text(self, prompt):
+    def _prepare_refined_text(self, prompt, *, release_weights=True):
         """The upstream text refiner has no timestep or video input.
 
-        Compute it once for this request and discard its 0.77 GB of weights.
-        Restore only those tensors from the immutable cache for a later prompt.
-        The cached tensor is cleared even when sampling fails.
+        Keep a bounded LRU of CPU results for the stage and top-level prompts.
+        A batch retains host weights until its last prompt, then discards them.
+        Sampling clears the active device tensor even when preparation fails.
         """
         from .fp8 import input_dtype
         started = time.perf_counter()
         refiner = self.transformer.token_refiner.refiner_blocks
+        if prompt.ndim not in (2, 3) or (prompt.ndim == 3 and prompt.shape[0] != 1):
+            raise ValueError('Expected one text prompt for refinement')
         cpu = prompt.detach().to('cpu').contiguous()
         cache_key = str(cpu.dtype) + str(list(cpu.shape)) + hashlib.sha256(cpu.view(torch.uint8).numpy().tobytes()).hexdigest()
         del cpu
@@ -856,9 +908,23 @@ class Engine:
         # reuses the first pass's tensor instead of reloading the refiner
         # weights to compute the same values again.
         memo = (cache_key, tuple(self.config.get(k) for k in ('attention', 'linear_compute', 'fp8_gemm', 'inference_kernels')))
-        if self.previous_refined_text is not None and self.previous_refined_text[0] == memo:
-            text = self.previous_refined_text[1].to(self.device_backend.device)
+        def remember(text):
+            self.refined_text_memo[memo] = text.detach().cpu()
+            while len(self.refined_text_memo) > self.refined_text_memo_capacity:
+                del self.refined_text_memo[next(iter(self.refined_text_memo))]
+
+        def release():
+            if release_weights:
+                if not self.stream_refiner_count:
+                    refiner.to('meta')
+                self.refiner_released = True
+
+        if memo in self.refined_text_memo:
+            cpu_text = self.refined_text_memo.pop(memo)
+            self.refined_text_memo[memo] = cpu_text
+            text = cpu_text.to(self.device_backend.device)
             self.transformer._freevideo_refined_text = text
+            release()
             return dict(seconds=time.perf_counter() - started, shape=list(text.shape), cache_hit=False,
                         previous_pass=True, refiner_weights_released=self.refiner_released)
         cache, note = None, None
@@ -879,13 +945,11 @@ class Engine:
                     expected_shape = [1, prompt.shape[-2], self.transformer.context_embedder.out_features]
                     if (isinstance(text, torch.Tensor) and list(text.shape) == expected_shape
                             and str(text.dtype) == entry['metrics'].get('dtype') and bool(torch.isfinite(text).all())):
-                        if not self.stream_refiner_count:
-                            refiner.to('meta')
-                        self.refiner_released = True
+                        release()
                         self.transformer._freevideo_refined_text = text
-                        self.previous_refined_text = (memo, text.detach().cpu())
+                        remember(text)
                         return dict(seconds=time.perf_counter() - started, shape=list(text.shape), cache_hit=True,
-                                    refiner_weights_released=True, cache_receipt=str(cache.receipt(cache_key)))
+                                    refiner_weights_released=self.refiner_released, cache_receipt=str(cache.receipt(cache_key)))
                     del text
             except (OSError, ValueError, KeyError, RuntimeError) as error:
                 note = str(error)
@@ -898,11 +962,10 @@ class Engine:
                                _load_safetensors(self.cache / self.online_lora_root).items()})
             refiner.load_state_dict(values, strict=True, assign=True)
             del values
+            self.refiner_released = False
         # load_prompt returns [tokens, width]; generate_latents adds the batch
         # dimension before the original transformer call.
         prompt = prompt.unsqueeze(0) if prompt.ndim == 2 else prompt
-        if prompt.ndim != 3 or prompt.shape[0] != 1:
-            raise ValueError('Expected one text prompt for refinement')
         text = self.transformer.context_embedder(prompt.to(input_dtype(self.transformer.context_embedder)))
         with self.device_backend.make_offloader(refiner, prefetch=False,
                             weight_source=self.stream_weight_source if self.stream_refiner_count else None) as loader:
@@ -910,27 +973,26 @@ class Engine:
             stats = loader.stats()
         del loader
         self.device_backend.synchronize()
-        if not self.stream_refiner_count:
-            refiner.to('meta')
-        self.refiner_released = True
+        release()
         self.transformer._freevideo_refined_text = text
-        self.previous_refined_text = (memo, text.detach().cpu())
+        remember(text)
         saved = False
         if cache is not None:
             try:
                 import uuid
                 cache.root.mkdir(parents=True, exist_ok=True)
                 temporary = cache.root / ('refined-' + uuid.uuid4().hex + '.partial')
-                torch.save(self.previous_refined_text[1], temporary)
+                torch.save(self.refined_text_memo[memo], temporary)
                 saved = cache.put(cache_key, temporary, dict(success=True, shape=list(text.shape), dtype=str(text.dtype)), move=True)
                 note = cache.note or note
             except (OSError, ValueError) as error:
                 note = str(error)
-        gc.collect()
-        self.device_backend.empty_cache()
-        empty_host_cache(torch)
+        if release_weights:
+            gc.collect()
+            self.device_backend.empty_cache()
+            empty_host_cache(torch)
         return {'seconds': time.perf_counter() - started, 'shape': list(text.shape),
-                'refiner_weights_released': True, 'offload': stats, 'cache_hit': False, 'cache_saved': saved, 'cache_note': note}
+                'refiner_weights_released': self.refiner_released, 'offload': stats, 'cache_hit': False, 'cache_saved': saved, 'cache_note': note}
 
     def device_tensors(self):
         """The registered tensors this engine keeps on the GPU, or None.
@@ -1000,7 +1062,7 @@ class Engine:
         if self.schedule_hook is not None:
             self.schedule_hook.remove()
         self.transformer = None
-        self.previous_refined_text = None
+        self.refined_text_memo.clear()
         self.offload_layers = []
         if self.stream_weight_source is not None:
             self.stream_weight_source.release_host_views()

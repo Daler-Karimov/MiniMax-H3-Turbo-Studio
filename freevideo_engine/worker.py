@@ -194,7 +194,7 @@ def generate(request, resident=None):
                     metrics.setdefault('decoder_residency', dict(planned_resident_blocks=planned))
                     metrics['decoder_residency'].update(resident_blocks=fit, allocator_limit_bytes=int(limit))
         resume = request.get('resume_decode') is not None
-        if not resume and options.get('task', 't2va') != 't2va':
+        if not resume and (options.get('task', 't2va') != 't2va' or request.get('geometry', {}).get('early_reference')):
             from .media_conditioning import describe
             canvas = request.get('geometry', {})
             value = torch.load(request['conditioning'], map_location='cpu', weights_only=True)

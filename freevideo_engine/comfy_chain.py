@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import ssl
 from urllib import error, request
 
-from .chain_runner import ChainBusy, ChainRunner, ChainTooLong
+from .chain_runner import ChainBusy, ChainPartTooShort, ChainRunner, ChainTooLong
 from . import chain_plan, chain_store
 
 RUNNER = None
@@ -225,9 +225,10 @@ def register(host_factory=None):
     host = host_factory(server) if fake else ComfyHost(server)
     if fake:
         logging.warning('[FreeVideo] Test background chain host is enabled')
-    # Only the test host may lift the limit on parts, never the package.
+    # Only the test host may lift the limits on parts, never the package.
     runner = ChainRunner(Path(root) / 'chains', host, estimate=None,
-                         max_parts=getattr(host, 'max_parts', None) if fake else None)
+                         max_parts=getattr(host, 'max_parts', None) if fake else None,
+                         min_part_frames=getattr(host, 'min_part_frames', None) if fake else None)
     if fake:
         host.runner = runner
     RUNNER = runner
@@ -275,6 +276,9 @@ def register(host_factory=None):
         except ChainTooLong as failure:
             return response({'error': str(failure), 'error_zh': failure.message_zh, 'code': failure.code,
                              'parts': failure.parts, 'max_parts': failure.limit}, 400)
+        except ChainPartTooShort as failure:
+            return response({'error': str(failure), 'error_zh': failure.message_zh, 'code': failure.code,
+                             'min_seconds': failure.limit}, 400)
         except chain_plan.PlanError as failure:
             return response({'error': str(failure), 'code': failure.code}, 400)
         except ValueError as failure:

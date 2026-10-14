@@ -130,6 +130,11 @@ class FreeVideoGenerate(io.ComfyNode):
         from .resident_process import OWNER
         from .prompt_vlm.service import stop_prestart_for_generation
         stop_prestart_for_generation(PromptServer.instance)
+        try:   # the image option must never keep a video from starting
+            from .image_gen.service import stop_prestart_for_generation as stop_image_for_generation
+            stop_image_for_generation(PromptServer.instance)
+        except Exception as error:
+            logging.warning('[FreeVideo] Could not stop image generation before the video: %s', error)
         prewarm = {}
         result_reused = [False]
         result_report = [None]

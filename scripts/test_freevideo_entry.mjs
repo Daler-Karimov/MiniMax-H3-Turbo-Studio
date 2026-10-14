@@ -32,7 +32,8 @@ test('main browser entry registers both views and preserves node hooks', async t
         graph: {extra: {freevideo_studio: true}, _nodes: [], getNodeById() {}},
     };
     const api = Object.assign(events, {apiURL: value => value});
-    const document = {head: new Element('head'), createElement: tag => new Element(tag)};
+    const document = {head: new Element('head'), createElement: tag => new Element(tag),
+        createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
         app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs,
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
@@ -95,6 +96,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { regenerateResult, upscaleResult } from './studio_queue.js';", 'const {regenerateResult,upscaleResult} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
             .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
+            .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
         await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const extension = extensions.find(row => row.name === 'FreeVideo.UnifiedMedia');

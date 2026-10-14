@@ -231,6 +231,9 @@ def cached_conditioning(state, prompt, destination):
 
 
 def compatible_profile(entry, base, canvas, tokens):
+    # Tuning entries have no per-step reference schedule or capacity evidence.
+    if canvas.get('early_reference') is not None:
+        return False
     if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
         return False
     reference_context = {key: canvas.get(key, 0) for key in ('reference_video_tokens', 'reference_audio_tokens')}

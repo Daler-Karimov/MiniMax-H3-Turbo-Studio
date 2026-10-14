@@ -134,10 +134,12 @@ def create_ui(session, *, show=True):
                     # The card says what to do; the details keep the cause.
                     from .failure_details import launcher_failure
                     zh = session.language.startswith('zh')
-                    self.value = dict(self.value, error=session.error, failure=launcher_failure(session.error, zh=zh))
+                    value = dict(self.value, error=session.error, failure=launcher_failure(session.error, zh=zh))
                 else:
-                    self.value = dict(self.value, error=session.error)
-                self.changed.emit()
+                    value = dict(self.value, error=session.error)
+                if value != self.value:
+                    self.value = value
+                    self.changed.emit()
 
         @Slot(str, 'QVariant')
         def edit(self, key, value):
@@ -158,6 +160,10 @@ def create_ui(session, *, show=True):
         @Slot()
         def upgradeModel(self):
             self.invoke(session.upgrade_model)
+
+        @Slot(str)
+        def imagePackAction(self, action):
+            self.invoke(session.image_pack_action, action)
 
         @Slot()
         def cancelModelUpgrade(self):

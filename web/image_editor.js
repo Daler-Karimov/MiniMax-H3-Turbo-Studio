@@ -3,10 +3,12 @@
 // FreeVideo's own look. The original file is never changed: saving renders a
 // new image and keeps the document, so the next visit starts from the original
 // with every layer and step in place. Closing frees every canvas it made.
-import {BLENDS, emptyAdjust, migrate, orientedSize, orientMatrix, canvasRect, layerMatrix, scaleSelection,
+import {BLENDS, emptyAdjust, migrate, blankDocument, orientedSize, orientMatrix, canvasRect, layerMatrix, scaleSelection,
     rasterKinds, measureText, Renderer} from './image_editor_engine.js';
 import * as commands from './image_commands.js';
 import {FONT_KEYS, fontStack, fontLoaded, loadFont, loadFonts} from './fonts.js';
+import {api} from '../../scripts/api.js';
+import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio} from './image_generation.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./image_editor.css', import.meta.url).href;
@@ -18,6 +20,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const SVG = (body, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 // Line icons on a 24-unit grid; eyedropper, hand, crop, link and unlink follow Lucide (ISC, see THIRD_PARTY_NOTICES.md).
 export const ICONS = {
+    generate: '<path d="M12 3c1.2 5.8 3.2 7.8 9 9-5.8 1.2-7.8 3.2-9 9-1.2-5.8-3.2-7.8-9-9 5.8-1.2 7.8-3.2 9-9z"/>',
     move: '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
     crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/>',
     marquee: '<rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="2.6 2.4"/>',
@@ -123,15 +126,21 @@ const strip = d => JSON.stringify({...d, active: null, layers: d.layers.map(l =>
  *   source: original image file; resolve(file) → URL; upload(file) → {file};
  *   target: {width, height} of the video, if known; library: [{file, label}] other media images.
  */
-export async function openImageEditor({source, name, target = null, edit = null, role = 'reference', t, resolve,
-                                       upload = null, library = [], tool: startTool = null}) {
-    const baseImage = await loadImage(resolve(source));
+export async function openImageEditor({source = null, name = source || '', target = null, edit = null, role = 'reference', t, resolve,
+                                       upload = null, library = [], tool: startTool = null, imageGenClient = null}) {
+    const hasOriginal = !!source && (!edit || edit.version !== 2 || edit.layers.some(l => l.id === 'base'));
+    const baseImage = hasOriginal ? await loadImage(resolve(source)) : null;
     const renderer = new Renderer(resolve);
     const fresh = !edit;
-    const original = () => { const d = migrate(null, source, baseImage); d.layers[0].name = t('Original', '原图'); return d; };
+    const blankSizeForRatio = ratio => blankCanvasSize(ratio, null);
+    const blankSize = edit || (target?.width > 0 && target?.height > 0 ? target : blankSizeForRatio('16:9'));
+    const original = () => {
+        if (!hasOriginal) return blankDocument(blankSize, edit?.ratio || blankCanvasRatio(target));
+        const d = migrate(null, source, baseImage); d.layers[0].name = t('Original', '原图'); return d;
+    };
     let doc = edit ? migrate(edit, source, baseImage) : original();
     doc = {...doc, layers: doc.layers.map(l => l.id === 'base' ? {...l, name: t('Original', '原图')} : l)};
-    if (fresh && target && role !== 'reference') {
+    if (fresh && hasOriginal && target && role !== 'reference') {
         // A keyframe becomes the first or last frame of the video: start from its shape.
         doc = commands.setRatio(doc, 'video', target);
     }
@@ -164,7 +173,10 @@ export async function openImageEditor({source, name, target = null, edit = null,
         move: {auto: true},
     };
     const extension = /\.jpe?g$/i.test(name) ? 'jpg' : 'png';
-    const stem = name.split('/').pop().replace(/\.[^.]+$/, '').replace(/-edit$/, '');
+    // A picture started from nothing gets a readable name of its own, not "<something>-edit".
+    const stamp = () => { const d = new Date(), two = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`; };
+    const stem = name ? name.split('/').pop().replace(/\.[^.]+$/, '').replace(/-edit$/, '') : `ai-${stamp()}`;
 
     // ----- frame --------------------------------------------------------------
     const dialog = el('dialog', null, 'fv-image-editor');
@@ -211,9 +223,13 @@ export async function openImageEditor({source, name, target = null, edit = null,
     const filePicker = el('input'); filePicker.type = 'file'; filePicker.accept = 'image/*'; filePicker.hidden = true;
     dialog.append(header, main, confirmBar, status, filePicker);
     document.body.append(dialog);
+    const generation = createImageGeneration({client: imageGenClient || createImageGenClient(api.fetchApi.bind(api)),
+        renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio});
 
     // ----- tools ----------------------------------------------------------------
     const TOOLS = [
+        ['generate', t('Generate with AI', 'AI 生成'), null], null,
         ['move', t('Move', '移动'), 'V'], ['crop', t('Crop and canvas', '裁剪与画布'), 'C'], null,
         ['marquee', t('Marquee', '选框'), 'M'], ['lasso', t('Lasso', '套索'), 'L'], ['wand', t('Magic wand', '魔棒'), 'W'], null,
         ['brush', t('Brush', '画笔'), 'B'], ['eraser', t('Eraser', '橡皮擦'), 'E'], ['heal', t('Spot healing', '污点修复'), 'J'],
@@ -224,7 +240,8 @@ export async function openImageEditor({source, name, target = null, edit = null,
     for (const entry of TOOLS) {
         if (!entry) { toolbar.append(el('span', null, 'fv-ie-tool-gap')); continue; }
         const [id, label, key] = entry;
-        const b = iconButton(id === 'marquee' ? 'marquee' : id, `${label} (${key})`, () => select(id), 'fv-ie-tool');
+        if (id === 'generate' && !imageGenerationSupported()) continue;
+        const b = iconButton(id === 'marquee' ? 'marquee' : id, key ? `${label} (${key})` : label, () => select(id), 'fv-ie-tool');
         b.dataset.tool = id; toolButtons[id] = b; toolbar.append(b);
     }
     const colors = el('div', null, 'fv-ie-colors');
@@ -288,7 +305,8 @@ export async function openImageEditor({source, name, target = null, edit = null,
             antsEdge = null;
             if (opts.clone.source) opts.clone.source = [opts.clone.source[0] * sx, opts.clone.source[1] * sy];
         }
-        if (maskTarget && !active().mask) maskTarget = false;
+        if (maskTarget && !active()?.mask) maskTarget = false;
+        if (!doc.layers.length && tool !== 'hand') tool = 'generate';
         refresh(true);
     }
     const changed = () => history.length > 1 && strip(doc) !== strip(initial);
@@ -445,18 +463,26 @@ export async function openImageEditor({source, name, target = null, edit = null,
     // ----- tool options ---------------------------------------------------------------
     function controls() {
         undo.disabled = history.length < 2; redo.disabled = !future.length;
+        save.disabled = !doc.layers.length;
         const c = doc.crop; sizeLabel.textContent = `${Math.round(c.w)} × ${Math.round(c.h)}`;
         zoomLabel.textContent = Math.round(layout.k * 100) + '%';
-        for (const [id, b] of Object.entries(toolButtons)) b.setAttribute('aria-pressed', String(id === tool));
+        for (const [id, b] of Object.entries(toolButtons)) {
+            b.disabled = !doc.layers.length && !['generate', 'hand'].includes(id);
+            b.setAttribute('aria-pressed', String(id === tool));
+        }
         stage.dataset.tool = tool;
     }
     function select(id) {
+        if (!doc.layers.length && !['generate', 'hand'].includes(id)) return;
+        if (id === 'generate' && !imageGenerationSupported()) return;
         commitText();
         gesture?.cancel?.(); gesture = null;
         tool = id; renderOptions(); controls(); draw(); showHint(); keepFocus();
+        if (id === 'generate') void generation.selected();
     }
     function showHint() {
         const layer = active();
+        if (!layer) { hint.textContent = ''; hint.hidden = true; return; }
         let text = '';
         if (['eraser', 'heal', 'clone', 'blur'].includes(tool) && !rasterKinds.has(layer.kind)) text = t('Pick an image or paint layer to work on its pixels.', '请选择图片图层或绘画图层再处理像素。');
         else if (tool === 'clone' && !opts.clone.source) text = t('Alt-click to set the source, then paint.', '先按住 Alt 点击设置取样点，再涂抹。');
@@ -469,7 +495,12 @@ export async function openImageEditor({source, name, target = null, edit = null,
         original: t('Original', '原图比例'), free: t('Free', '自由'),
     })[id] || id;
     function renderOptions() {
+        generation.unmount();
         clearPanel(optionsBar);
+        optionsBar.classList.remove('fv-ie-generation');
+        delete optionsBar.dataset.running; delete optionsBar.dataset.message; delete optionsBar.dataset.empty;
+        if (tool === 'generate') { generation.mount(optionsBar); return; }
+        if (!doc.layers.length) return;
         const add = (...nodes) => optionsBar.append(...nodes);
         const label = text => el('span', text, 'fv-ie-opt-label');
         const sep = () => el('span', null, 'fv-ie-sep');
@@ -579,6 +610,7 @@ export async function openImageEditor({source, name, target = null, edit = null,
     function renderProps() {
         clearPanel(props);
         const layer = active();
+        if (!layer) return;
         const head = el('div', null, 'fv-ie-section-head');
         head.append(el('h3', layer.kind === 'text' ? t('Text', '文字') : layer.kind === 'shape' ? t('Shape', '形状') : t('Adjust', '调整')),
             el('span', layer.name || '', 'fv-ie-props-name'));
@@ -698,7 +730,7 @@ export async function openImageEditor({source, name, target = null, edit = null,
     }
     function renderLayers() {
         clearPanel(layersBox);
-        const layer = active(), index = doc.layers.findIndex(l => l.id === layer.id);
+        const layer = active(), index = doc.layers.findIndex(l => l.id === layer?.id);
         const head = el('div', null, 'fv-ie-section-head');
         head.append(el('h3', t('Layers', '图层')));
         const tools = el('div', null, 'fv-ie-layer-tools');
@@ -715,11 +747,14 @@ export async function openImageEditor({source, name, target = null, edit = null,
         addMenu.append(summary, menu);
         const del = iconButton('trash', t('Delete layer', '删除图层'), () => deleteLayer());
         const up = iconButton('up', t('Move up', '上移'), () => moveLayer(1)), down = iconButton('down', t('Move down', '下移'), () => moveLayer(-1));
-        const maskButton = iconButton('mask', layer.mask ? t('Delete mask', '删除蒙版') : t('Add mask', '添加蒙版'), () => toggleMask(), 'fv-ie-icon' + (layer.mask ? ' fv-ie-active' : ''));
-        del.disabled = !!layer.locked; up.disabled = index < 1 || index >= doc.layers.length - 1; down.disabled = index <= 1;
-        maskButton.disabled = !rasterKinds.has(layer.kind);
+        const maskButton = iconButton('mask', layer?.mask ? t('Delete mask', '删除蒙版') : t('Add mask', '添加蒙版'), () => toggleMask(), 'fv-ie-icon' + (layer?.mask ? ' fv-ie-active' : ''));
+        const first = doc.layers[0]?.id === 'base' ? 1 : 0;
+        del.disabled = !layer || layer.locked || doc.layers.length === 1;
+        up.disabled = index < first || index >= doc.layers.length - 1; down.disabled = index <= first;
+        maskButton.disabled = !rasterKinds.has(layer?.kind);
+        const copy = iconButton('copy', t('Duplicate layer', '复制图层'), () => duplicateLayer()); copy.disabled = !layer;
         tools.append(iconButton('plus', t('New paint layer', '新建绘画图层'), () => addPaintLayer()), addMenu, maskButton,
-            iconButton('copy', t('Duplicate layer', '复制图层'), () => duplicateLayer()), up, down, del);
+            copy, up, down, del);
         head.append(tools);
         const list = el('ol', null, 'fv-ie-layer-list'); list.setAttribute('aria-label', t('Layers', '图层'));
         for (const l of [...doc.layers].reverse()) {
@@ -800,20 +835,23 @@ export async function openImageEditor({source, name, target = null, edit = null,
     };
     function duplicateLayer() {
         const layer = active();
+        if (!layer) return;
         commitInserted(commands.duplicateLayer(doc, layer.id, t(`${layer.name} copy`, `${layer.name} 副本`)));
     }
     function deleteLayer() {
-        const layer = active(); if (layer.locked) return;
+        const layer = active(); if (!layer || layer.locked || doc.layers.length === 1) return;
         maskTarget = false;
         commit(commands.deleteLayer(doc, layer.id));
     }
     function moveLayer(delta) {
         const index = doc.layers.findIndex(l => l.id === doc.active), to = index + delta;
-        if (index < 1 || to < 1 || to >= doc.layers.length) return;
+        const first = doc.layers[0]?.id === 'base' ? 1 : 0;
+        if (index < first || to < first || to >= doc.layers.length) return;
         commit(commands.moveLayer(doc, doc.active, delta));
     }
     function toggleMask() {
         const layer = active();
+        if (!layer) return;
         if (!layer.mask && !rasterKinds.has(layer.kind)) return;
         const next = commands.toggleMask(doc, layer.id, selection);
         maskTarget = next.maskTarget;
@@ -822,6 +860,11 @@ export async function openImageEditor({source, name, target = null, edit = null,
     }
 
     // ----- canvas: shape, orientation, size ----------------------------------------------
+    function setBlankCanvasRatio(ratio) {
+        if (doc.layers.length || generation.state().running) return;
+        const next = blankDocument(blankSizeForRatio(ratio), ratio);
+        followSize(doc, next); deselectQuiet(); commit(next);
+    }
     function aspectOf(id, r = rect()) {
         if (id === 'video') return target ? target.width / target.height : null;
         if (id === 'original') return r.w / r.h;
@@ -969,6 +1012,7 @@ export async function openImageEditor({source, name, target = null, edit = null,
     }
     function pixelLayer() {
         const layer = active();
+        if (!layer) return null;
         if (!rasterKinds.has(layer.kind)) { message(t('Pick an image or paint layer first.', '请先选择图片图层或绘画图层。')); return null; }
         return layer;
     }
@@ -1055,6 +1099,7 @@ export async function openImageEditor({source, name, target = null, edit = null,
         return null;
     }
     function startGesture(event, p) {
+        if (!doc.layers.length || tool === 'generate') return null;
         const o = toO(...p), d = toD(o), layer = active();
         const mode = event.shiftKey ? 'add' : event.altKey ? 'subtract' : null;
         if (tool === 'crop') return cropGesture(event, o);
@@ -1409,12 +1454,15 @@ export async function openImageEditor({source, name, target = null, edit = null,
     let messageTimer = null;
     function message(text) { status.textContent = text; clearTimeout(messageTimer); if (text) messageTimer = setTimeout(() => { status.textContent = ''; }, 5000); }
     async function leave() {
+        void generation.cancel();
         if (healing) await healing;
         commitText();
         if (changed()) { confirmBar.hidden = false; confirmBar.querySelector('.fv-ie-danger').focus(); return; }
         close(null);
     }
     async function finish() {
+        if (!doc.layers.length) return;
+        void generation.cancel();
         if (healing) await healing;
         commitText();
         if (strip(doc) === strip(original())) { close(fresh ? null : {restore: true}); return; }
@@ -1422,13 +1470,14 @@ export async function openImageEditor({source, name, target = null, edit = null,
         save.disabled = cancel.disabled = true; message(t('Saving the edited image…', '正在保存编辑后的图片…'));
         try {
             const {blob, width, height} = await renderer.export(doc, extension === 'jpg' ? 'image/jpeg' : 'image/png');
-            close({blob, name: `${stem}-edit.${extension}`, edit: doc, width, height});
+            close({blob, name: name ? `${stem}-edit.${extension}` : `${stem}.${extension}`, edit: doc, width, height});
         } catch {
             message(t('The image could not be rendered. Try a smaller canvas or reload the page.', '图片生成失败，请缩小画布或刷新页面后重试。'));
             save.disabled = cancel.disabled = false;
         }
     }
     function close(value) {
+        void generation.dispose();
         clearInterval(antsTimer); clearTimeout(messageTimer);
         observer.disconnect();
         dialog.removeEventListener('keydown', keys); dialog.removeEventListener('keyup', keyup);
@@ -1444,7 +1493,8 @@ export async function openImageEditor({source, name, target = null, edit = null,
 
     // A read-only view of the editor for automation and tests.
     dialog.freevideoEditor = {
-        state: () => ({doc, selection, tool, fg, bg, zoom: layout.k, maskTarget, history: history.length, future: future.length, healing: !!healing}),
+        state: () => ({doc, selection, tool, fg, bg, zoom: layout.k, maskTarget, history: history.length, future: future.length, healing: !!healing,
+            generation: {...generation.state(), info: generation.state().info ? {installed: generation.state().info.installed} : null, job: undefined}}),
         pictureBox: () => { const b = stage.getBoundingClientRect(), r = rect(), [x, y] = fromO(r.x, r.y); return {x: b.left + x, y: b.top + y, width: r.w * layout.k, height: r.h * layout.k}; },
     };
 
@@ -1454,8 +1504,8 @@ export async function openImageEditor({source, name, target = null, edit = null,
     dialog.showModal();
     computeLayout();
     renderPanels();
-    select(startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
-    save.focus();
+    select(!doc.layers.length ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
+    (save.disabled ? stage : save).focus();
     // The other fonts load in the background, so switching to one is immediate.
     loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(() => {});
     return result;

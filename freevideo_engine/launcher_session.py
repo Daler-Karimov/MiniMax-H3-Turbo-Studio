@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import __version__
 from . import disk_space
-from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout
+from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout, queue_busy
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text
 from .launcher_settings import Store, default_language
@@ -85,7 +85,8 @@ class Session:
         self.form = dict(comfy='', destination=str(home / 'FreeVideo'), engine='', python='',
                          url='http://127.0.0.1:8188', models='', model_dirs=[], model_method='auto', environment_method='auto',
                          separate=False, repair=False, new_comfy=True, offline_runtime='', offline_models=[],
-                         imported_archives=[], kept_archives=[], sampling_caches=not saved.get('installation'))
+                         imported_archives=[], kept_archives=[], sampling_caches=not saved.get('installation'),
+                         image_model=False)
         self.form['lan_access'] = False
         self.form.update({k: v for k, v in saved.items() if k in self.form})
         if 'environment_method' not in saved and self.form['offline_runtime']:
@@ -111,6 +112,7 @@ class Session:
         self.tail = Tail()
         self.log_source = None
         self.model_groups = []
+        self.image_installer = None
         self.download_export = self.download_error = self.download_error_key = ''
         self._download_view = None
         self.browser_attempted = False
@@ -211,6 +213,9 @@ class Session:
             self.persist()
 
     def edit(self, key, value):
+        if self.image_installer and self.image_installer.busy and key in (
+                'engine', 'comfy', 'destination', 'new_comfy', 'offline_runtime'):
+            return
         if key == 'language':
             self.language = str(value); self.persist(); return
         if key == 'token':
@@ -220,7 +225,7 @@ class Session:
             self.token = validate(str(value)); return
         if key not in self.form or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
             return
-        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access'):
+        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model'):
             value = bool(value)
         if key == 'url':
             value = local_url(str(value))
@@ -415,6 +420,11 @@ class Session:
     def action(self, name, accepted=False):
         if self.cleaner.busy or self.archives_busy:
             return
+        if self.image_installer and self.image_installer.busy and (
+                name == 'setup' or name == 'update-engine'
+                or name == 'retry' and self.retry_kind() != 'launch'
+                or name == 'primary' and self.page != 'launcher'):
+            return
         # The model download holds the setup lease; launching and opening
         # FreeVideo continue, anything that would start setup waits for it.
         # Retrying a failed start only launches again.
@@ -554,7 +564,8 @@ class Session:
         """An installed engine this launcher can check and reinstall again."""
         return (bool(self.selected) and getattr(self.controller, 'fixed_environment', False) is not True
                 and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
-                         or self.engine_updating or self.upgrade.active or self.model_switch))
+                         or self.engine_updating or self.upgrade.active or self.model_switch
+                         or self.image_installer and self.image_installer.busy))
 
     def repair_unavailable(self):
         """Why Repair is missing: it appears once a task ends, never in an offline
@@ -587,10 +598,112 @@ class Session:
         return ''
 
     def cleanup_downloads(self, remove=False):
+        if self.image_installer and self.image_installer.busy:
+            return
         if (self.controller.busy or self.importer.busy or self.archives_busy or self.closing or self.upgrade.active or self.model_switch
                 or self.update_intent or self.engine_updating or self.updater and self.updater.busy):
             return
         self.cleaner.start(self.engine_root(), remove=remove)
+
+    def _image_location(self):
+        engine = Path(self.installation_engine() or self.engine_root())
+        try:
+            machine = json.loads(io_path(engine / 'machine.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            machine = {}
+        if not isinstance(machine, dict):
+            machine = {}
+        root = Path(os.environ.get('FREEVIDEO_MODEL_ROOT') or machine.get('model_root') or engine / 'models')
+        return root.expanduser(), engine
+
+    def image_pack_action(self, action):
+        from .image_gen import image_pack
+        if action == 'cancel':
+            if self.image_installer:
+                self.image_installer.cancel()
+            return
+        if (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy
+                or self.closing or self.engine_updating or self.update_intent or self.upgrade.active or self.model_switch
+                or self.updater and self.updater.busy):
+            return
+        root, engine = self._image_location()
+        if self.image_installer and self.image_installer.busy:
+            return
+        # An install is the quiet kind: it stops while a video is generating and carries on afterwards.
+        self.image_installer = image_pack.Installer(root, engine_root=engine, busy=self.generating)
+        self.image_installer.start(action, background=action == 'install')
+
+    def generating(self):
+        """Whether the opened ComfyUI is running or holding a job (read from the download thread)."""
+        url = (self.controller.selection or self.selected or {}).get('url') or self.form['url']
+        return queue_busy(url)
+
+    def image_disk_fits(self, total):
+        """Whether the chosen installation location has room for the image model."""
+        from .image_gen import image_pack
+        folder = self.form['destination'] if self.form['new_comfy'] else self.form['comfy']
+        try:
+            return disk_space.free_bytes(Path(folder).expanduser()) >= total + image_pack.RESERVE
+        except (OSError, ValueError):
+            return True
+
+    def image_pack_view(self):
+        from .image_gen import image_pack
+        if not self.installation_engine():
+            total = sum(r['bytes'] for r in image_pack.rows())
+            return dict(installable=False, ready=False, state='missing', visible=False, busy=False,
+                        downloaded_bytes=0, verified_bytes=0, total_bytes=total, bytes=total,
+                        title=self.t(*NAMES['image']), detail=self.t('Not installed', '未安装'),
+                        install={}, can_act=False, removable_bytes=0, repairable=False)
+        root, engine = self._image_location()
+        try:
+            value = image_pack.status(root)
+            removable = image_pack.removal_plan(root)['bytes']
+        except (OSError, ValueError, image_pack.PackError):
+            value = dict(installable=False, ready=False, state='invalid', downloaded_bytes=0, verified_bytes=0,
+                         total_bytes=sum(r['bytes'] for r in image_pack.rows()), bytes=0)
+            removable = 0
+        installer = self.image_installer
+        active = installer.state() if installer and installer.root == root and installer.engine_root == engine else {}
+        busy = bool(installer and installer.busy)
+        labels = {'missing': ('Not installed', '未安装'), 'partial': ('Paused', '已暂停'),
+                  'ready': ('Ready', '已就绪'), 'invalid': ('Needs repair', '需要修复')}
+        detail = self.t(*labels[value['state']])
+        # Repair only answers a pack that is ready or known to be damaged; half a download just continues.
+        repairable = value['state'] in ('ready', 'invalid')
+        if active.get('state') == 'running':
+            labels = {'install': ('Downloading', '正在下载'), 'repair': ('Repairing', '正在修复'),
+                      'remove': ('Removing', '正在删除'), 'verify': ('Checking', '正在校验')}
+            detail = self.t(*labels[active['action']])
+        elif active.get('state') == 'paused_for_generation':
+            detail = self.t('Paused while generating', '生成时暂停')
+        elif active.get('state') == 'cancelled':
+            detail = self.t('Paused', '已暂停')
+        elif active.get('state') == 'failed':
+            labels = {'disk_space': ('Not enough disk space', '磁盘空间不足'),
+                      'needs_repair': ('Needs repair', '需要修复'), 'busy': ('In use', '正在使用'),
+                      'unsafe_path': ('Needs repair', '需要修复'), 'busy_video': ('Paused while generating', '生成时暂停'),
+                      'offline': ('No network', '网络不可用'), 'source_failed': ('Download failed', '下载失败')}
+            detail = self.t(*labels.get(active.get('reason'), ('Stopped', '未完成')))
+            repairable = repairable or active.get('reason') in ('needs_repair', 'unsafe_path')
+        blocked = (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy
+                   or self.closing or self.engine_updating or self.update_intent or self.upgrade.active or self.model_switch
+                   or self.updater and self.updater.busy)
+        return dict(value, visible=bool(self.installation_engine()), title=self.t(*NAMES['image']),
+                    detail=detail, busy=busy, install=active, can_act=not (blocked or busy), removable_bytes=removable,
+                    repairable=repairable)
+
+    def start_image_model_after_install(self):
+        """The installer's "also install the image model": once ComfyUI opens, the download runs in the background."""
+        if (not self.form['image_model'] or sys.platform == 'darwin' or not self.installation_engine()
+                or self.controller.state.get('status') != 'open' or self.controller.busy):
+            return
+        if self.image_installer and self.image_installer.busy:
+            return
+        self.image_pack_action('install')
+        if self.image_installer and self.image_installer.busy:
+            self.form['image_model'] = False
+            self.persist()
 
     def upgrade_model(self):
         """The user's one consent: download int8 beside the current model, switch, then release the old one.
@@ -602,6 +715,8 @@ class Session:
         the previous model. An old model left after the switch is released here
         too, when the user asks.
         """
+        if self.image_installer and self.image_installer.busy:
+            return
         state = self.upgrade.state
         if (state.get('status') not in ('available', 'failed', 'releasable') or self.upgrade.busy or self.model_switch
                 or self.closing or self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.engine_updating):
@@ -1229,6 +1344,10 @@ class Session:
             if self.updater:
                 self.updater.cancelled.set()
             self.upgrade.close()
+            if self.image_installer:
+                self.image_installer.cancel()
+                if self.image_installer.thread:
+                    self.image_installer.thread.join(5)
             self.controller.close()
             from .launcher_bridge import remove
             remove(self.bridge)
@@ -1344,6 +1463,7 @@ class Session:
             elif imported['status'] == 'prepared':
                 self.activate_offline(imported['ready_root'])
 
+        self.start_image_model_after_install()
         row = self.controller.state
         busy = self.controller.busy
         selection = getattr(self.controller, 'selection', None)
@@ -1633,6 +1753,7 @@ class Session:
         from .launcher_copy import display, progress_view, source_name
         zh = self.language.startswith('zh')
         row = self.controller.state
+        busy = self.controller.busy or self.importer.busy or self.cleaner.busy
         task = row.get('task', {})
         port_from = int(row['moved_from']) if row.get('status') == 'open' and 'moved_from' in row else 0
         port_to = (urlsplit(row.get('selection', {}).get('url') or row['url']).port or 80) if port_from else 0
@@ -1670,10 +1791,12 @@ class Session:
         before_models = (row.get('action') == 'install' and row.get('status') == 'running'
                          and not (row.get('task', {}).get('model_groups') or row.get('model_groups')))
         for name in FAMILIES:
+            if name == 'image' and name not in by_id:
+                continue  # Optional weights have their own receipt; video ready cannot make them ready.
             if name == 'sampling' and name not in by_id and not self.form['sampling_caches']:
                 continue
             item = dict(by_id.get(name, {}))
-            state = 'ready' if ready else item.get('state', 'waiting')
+            state = 'ready' if ready and name != 'image' else item.get('state', 'waiting')
             if state == 'pending':
                 # Part of the group is ready; the rest (often small config files) waits for a download slot.
                 state = 'queued'
@@ -1696,6 +1819,13 @@ class Session:
                 detail=self.t(*shown), done=done, total=total,
                 found=item.get('existing_bytes', 0), download=item.get('download_bytes', 0),
                 rate='%.1f MiB/s' % (item['bytes_per_second']/2**20) if item.get('bytes_per_second') else ''))
+        image_pack = self.image_pack_view()
+        image_pack['enough_disk'] = self.image_disk_fits(image_pack['total_bytes'])
+        if image_pack['visible'] and 'image' not in by_id:
+            models.append(dict(id='image', title=image_pack['title'], state=image_pack['state'],
+                               detail=image_pack['detail'], done=image_pack['downloaded_bytes'],
+                               total=image_pack['total_bytes'], found=image_pack['verified_bytes'],
+                               download=image_pack['bytes'], rate=''))
         # A model download names its group, so it shows the group's download, as in the plan and the rows below.
         groups = {self.t(*NAMES[group['id']]): group for group in self.model_groups
                   if group.get('id') in NAMES and group.get('download_bytes')}
@@ -1740,6 +1870,7 @@ class Session:
         for group, entries in probe.get('sources', {}).items():
             for entry in entries:
                 names = {'edge-models': ('Video model', '视频模型'), 'vdn-models': ('Decoder', '解码器'),
+                         'image-models': NAMES['image'],
                          'models': ('Text encoder', '文本编码器'), 'pypi': ('Python packages', 'Python 依赖'),
                          'github': ('Tools', '安装工具'), 'git': ('Git', 'Git'), 'cuda': ('CUDA', 'CUDA')}
                 if group.startswith('torch-'):
@@ -1795,13 +1926,13 @@ class Session:
             notice=downloads['copy']['exported'].format(folder=self.download_export) if self.download_export else '')
         if inspection_read_error:
             download_state.update(error=self.t(*DOWNLOAD_COPY['error_read']), needs_check=True)
-        return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__,
+        return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__, image_pack=image_pack,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
-            page=self.page, status=row.get('status', 'idle'), busy=self.controller.busy or self.importer.busy or self.cleaner.busy,
+            page=self.page, status=row.get('status', 'idle'), busy=busy,
             cleanup=cleanup,
             can_cleanup=not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
                 or self.update_intent or self.engine_updating or self.updater and self.updater.busy
-                or self.upgrade.active or self.model_switch),
+                or self.upgrade.active or self.model_switch or image_pack['busy']),
             model_upgrade=dict(model_upgrade, switching=bool(self.model_switch)),
             offline=dict(progress_view(self.importer.state, zh), runtime=bool(self.form['offline_runtime']),
                 runtime_supported=runtime_packages_supported(),
@@ -1815,7 +1946,9 @@ class Session:
             report=dict(self.report),
             models=models, overall=overall, progress=progress, detail='' if file_text else clean(progress.get('detail', '')),
             progress_text=file_text, remaining_seconds=remaining,
-            elapsed=duration(time.monotonic()-self.started) if self.started else '', summary=' · '.join(estimate),
+            # The elapsed row is only shown while working. An idle clock would
+            # keep publishing changed snapshots after a launch has failed.
+            elapsed=duration(time.monotonic()-self.started) if self.started and busy else '', summary=' · '.join(estimate),
             failure=failure,
             source=source, source_name=source_name(source, zh), proxy_mode=preferences['proxy_mode'],
             probe=probe, speeds=speeds, token_set=bool(self.token),

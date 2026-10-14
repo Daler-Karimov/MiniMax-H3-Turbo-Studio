@@ -539,12 +539,18 @@ def feasible_alternatives(hardware, canvas, **options):
     by this same planner, never estimated separately.
     """
     from .geometry import geometry
-    keep = {key: canvas[key] for key in ('task', 'steps', 'reference_video_tokens', 'reference_audio_tokens')
+    keep = {key: canvas[key] for key in ('task', 'steps', 'reference_video_tokens', 'reference_audio_tokens', 'early_reference')
             if key in canvas}
 
     def fits(width, height, frames):
         try:
-            choose(hardware, **dict(options, canvas=dict(geometry(width, height, frames=frames), **keep)))
+            candidate = dict(geometry(width, height, frames=frames), **keep)
+            if canvas.get('early_reference') is not None and canvas.get('sampling_plan'):
+                from .two_pass import plan
+                sampling = canvas['sampling_plan']
+                candidate['sampling_plan'] = plan(candidate, sampling['enabled'], canvas.get('task', 't2va'),
+                    base_steps=sampling['base_steps'], refine_steps=sampling['refine_steps'] or 3)
+            choose(hardware, **dict(options, canvas=candidate))
             return True
         except (ResourceBudgetError, ValueError):
             return False
@@ -739,7 +745,8 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
             if type(count) is not int or count < 0:
                 raise ValueError('Reference token counts must be nonnegative integers')
             reference_rows += count
-    effective_tokens = canvas['video_tokens'] + reference_rows if canvas is not None else None
+    from .two_pass import placement_tokens
+    effective_tokens = placement_tokens(canvas) if canvas is not None else None
     compatibility = hardware.cuda_compatibility()
     if compatibility['error']:
         raise ValueError(compatibility['error'])
@@ -1483,6 +1490,11 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
     decoder_offload = gpu_budget < 20 * GiB
     if reference_rows:
         notes.append('Reference conditioning adds %d packed rows; activation placement scales with total rows. This is a starting estimate, not a verified reference-capacity result.' % reference_rows)
+    if canvas is not None and canvas.get('early_reference') is not None:
+        from .two_pass import stage_tokens
+        rows = stage_tokens(canvas)
+        notes.append('Early reference placement: first pass %d rows, refinement %s rows; fixed engine covers %d rows.'
+                     % (rows['first'], rows['refinement'], rows['engine']))
     # A full floating video plus its RGB copy grows with output geometry.
     # The temporal streaming path uses the original decoder tiles and blend;
     # completed uint8 frames go to the retained disk artifact immediately.

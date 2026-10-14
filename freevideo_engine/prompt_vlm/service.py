@@ -350,6 +350,16 @@ class Service:
             from .. import processes
             processes.stop(process, grace=5)
 
+    @staticmethod
+    def release_idle_image_worker():
+        # An image worker that is only waiting out its idle time still holds the engine lease.
+        try:
+            from server import PromptServer
+            from ..image_gen.service import release_idle_worker
+            release_idle_worker(PromptServer.instance)
+        except Exception:
+            pass
+
     def work(self, root, machine, action, value):
         from ..locking import runtime_lock
         from ..monitoring import save
@@ -357,6 +367,7 @@ class Service:
         try:
             from ..background_compile import COMPILE
             COMPILE.stop()
+            self.release_idle_image_worker()
             if action in ('rewrite', 'ask'):
                 from ..resident_process import OWNER
                 if OWNER.active:

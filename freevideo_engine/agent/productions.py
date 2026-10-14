@@ -22,7 +22,7 @@ import time
 import uuid
 
 from . import drama, production, schema, spec, errors, operation_receipts
-from .jobs import DONE, JobError, iso
+from .jobs import DONE, JobError, iso, parts_problems
 from .forecast import generation_estimate
 
 MAX_GENERATION = 4  # Generations are zero-based: original 0, reshoots 1 through 4.
@@ -306,6 +306,16 @@ class Productions:
                     problems.append(dict(row, path=new, field=prefix + row.get('field', old),
                         message=row['message'].replace(old, new, 1), next=row['next'].replace(old, new, 1)))
                 continue
+            if continued or shot['continues']:
+                # The same length rule as at submission, with this computer's single-run limit rather than the
+                # 15 s default: a shot that cannot be cut into parts of at least 10 s is refused here instead of
+                # starting a film in which that shot never gets a job. A shot not yet submitted carries no parent.
+                try:
+                    pinned = spec.normalize(dict(item, continue_from=dict(from_job=placeholder)), port=self.jobs.port)
+                except spec.SpecError:
+                    pinned = None  # Its other problems are reported where they are found.
+                if pinned is not None:
+                    problems.extend(parts_problems(pinned, None, prefix))
             for dependency in normalized['depends_on']:
                 if not (continued and dependency == placeholder) and dependency not in self.jobs.jobs:
                     problems.append(schema.diagnostic(prefix + '/first', 'a job that exists on this server', dependency))

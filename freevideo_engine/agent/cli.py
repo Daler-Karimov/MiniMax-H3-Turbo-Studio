@@ -76,6 +76,9 @@ def build_parser():
     schema.cli_arguments(command, schema.contracts()['GET', '/jobs']['query'])
     command = commands.add_parser('upload', help='Copy a local media file into FreeVideo inputs')
     command.add_argument('path')
+    command = commands.add_parser('generate-image', help='Generate or change a picture with the local image model')
+    schema.cli_arguments(command, schema.image(), exclude=('kind',))
+    command.add_argument('--wait', action='store_true', help='Wait for the picture and print the result')
     command = commands.add_parser('drama', help='Plan, start, review and finish a durable film')
     drama = command.add_subparsers(dest='operation', required=True)
     for name, (method, path, summary) in schema.DRAMA_OPERATIONS.items():
@@ -196,6 +199,12 @@ def main(argv=None):
             if args.wait:
                 jobs = [client.wait(job['id'], on_progress=progress) for job in jobs]
             result = jobs[0] if len(jobs) == 1 and args.command == 'submit' else {'jobs': jobs}
+        elif args.command == 'generate-image':
+            value = dict(kind='image', **{k: values[k] for k in schema.image()['properties'] if k in values})
+            schema.validate_job(value)
+            result = client.submit(value)
+            if args.wait:
+                result = client.wait(result['id'], on_progress=progress)
         elif args.command == 'job':
             result = client.job(args.id, **({'wait': values['wait']} if 'wait' in values else {}))
         elif args.command == 'wait':

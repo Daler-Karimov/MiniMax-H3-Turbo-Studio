@@ -1185,10 +1185,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     continuation = None
 
     def check_ending():
-        try:
-            from .continuation_tail import check
-        except ImportError:
-            return
+        from .continuation_tail import check
         from .two_pass import sampling_canvas
         check(continue_from, sampling_canvas(canvas)[0])
 

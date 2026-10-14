@@ -181,6 +181,20 @@ def steps(sampling_plan=None):
 
 def same_strategy(left, right):
     """Do not mix mixed-resolution timings with ordinary full-resolution steps."""
+    def reference_schedule(value):
+        # Worker receipts add step traces and describe subsets at the smaller
+        # canvas. Neither changes the reference schedule's identity.
+        source = value.get('geometry') or value
+        schedule = source.get('early_reference', value.get('early_reference'))
+        if schedule is None:
+            return None
+        return dict(early_steps=schedule.get('early_steps'), conditions=[
+            {key: row.get(key) for key in ('start_step', 'task', 'text_tokens',
+                                         'reference_video_tokens', 'reference_audio_tokens')}
+            for row in schedule.get('conditions', [])])
+
+    if reference_schedule(left) != reference_schedule(right):
+        return False
     a, b = left.get('sampling_plan'), right.get('sampling_plan')
     try:
         if steps(a) != steps(b):
@@ -189,6 +203,59 @@ def same_strategy(left, right):
         return False
     # Until a two-resolution cost model is calibrated, use exact-plan evidence.
     return a == b if (a or {}).get('enabled') or (b or {}).get('enabled') else True
+
+
+def stage_tokens(canvas):
+    """Video/reference activation rows for an encoded early-reference schedule.
+
+    Counts are the scalar metadata from media_conditioning.describe, never
+    conditioning tensors. Ordinary requests retain their historical envelope.
+    The loaded engine must cover both passes; pass-local caching cannot shrink
+    its resident prefix during the first steps.
+    """
+    fields = ('reference_video_tokens', 'reference_audio_tokens')
+
+    def references(row):
+        counts = [row.get(name, 0) for name in fields]
+        if any(type(n) is not int or n < 0 for n in counts):
+            raise ValueError('Reference token counts must be nonnegative integers')
+        return sum(counts)
+
+    maximum = references(canvas)
+    full = canvas['video_tokens'] + maximum
+    schedule = canvas.get('early_reference')
+    if schedule is None:
+        return dict(first=full, refinement=full, engine=full)
+    conditions = schedule.get('conditions') if isinstance(schedule, dict) else None
+    if not isinstance(conditions, list) or not conditions or any(not isinstance(row, dict) for row in conditions):
+        raise ValueError('Early reference planning requires described condition counts')
+    starts = [row.get('start_step') for row in conditions]
+    if (any(type(n) is not int or n < 0 for n in starts) or starts[0] != 0
+            or starts != sorted(set(starts))):
+        raise ValueError('Invalid early reference planning boundaries')
+    counts = [references(row) for row in conditions]
+    if any(max(row.get(name, 0) for row in conditions) > canvas.get(name, 0) for name in fields):
+        raise ValueError('Early reference counts exceed the request allowance')
+    sampling = canvas.get('sampling_plan') or {}
+    first = canvas['video_tokens']
+    refinement = None
+    if sampling.get('enabled'):
+        steps(sampling)
+        expected = plan(canvas, task=canvas.get('task', 't2va'),
+                        base_steps=sampling['base_steps'], refine_steps=sampling['refine_steps'])
+        if any(sampling.get(key) != expected[key] for key in ('first', 'second')):
+            raise ValueError('Early reference sampling geometry disagrees with the request')
+        from .geometry import geometry
+        first = geometry(**sampling['first'])['video_tokens']
+        # Permanent image/video/audio references still participate in refinement.
+        refinement = canvas['video_tokens'] + counts[-1]
+    first += maximum
+    return dict(first=first, refinement=refinement, engine=max(first, refinement or 0))
+
+
+def placement_tokens(canvas):
+    """Shared activation envelope for fixed GPU and host placement."""
+    return stage_tokens(canvas)['engine']
 
 
 def checkpoint_path():

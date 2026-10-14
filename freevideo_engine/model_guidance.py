@@ -17,6 +17,9 @@ from . import network
 from .long_paths import io_path, plain_errors
 from .model_status import FAMILIES, NAMES, family
 
+# The download list covers the install plan; the image pack has its own launcher controls.
+LIST_FAMILIES = tuple(name for name in FAMILIES if name != 'image')
+
 # Iris can replace the third-party download copy here, including export guidance.
 DOWNLOAD_COPY = {
     'title': ('Download list', '下载清单'),
@@ -136,7 +139,7 @@ def download_view(plan, zh=False, *, decimal_sizes=False):
     copy = download_copy(zh)
     rows = plan.get('download_files', [])
     groups = []
-    for group in FAMILIES:
+    for group in LIST_FAMILIES:
         files = [dict(row, name=row['file'], size=size(row['bytes'])) for row in rows if row['group'] == group]
         amount = sum(row['bytes'] for row in files)
         groups.append(dict(id=group, title=copy[group], files=files, count=len(files), bytes=amount,
@@ -346,7 +349,7 @@ def links(plan=None):
     return {group: [(row['file'] + ' · ' + source, row[key])
                     for row in (plan or {}).get('download_files', []) if row['group'] == group
                     for source, key in (('Hugging Face', 'hf_url'), ('ModelScope', 'modelscope_url')) if row[key]]
-            for group in FAMILIES}
+            for group in LIST_FAMILIES}
 
 
 @plain_errors
