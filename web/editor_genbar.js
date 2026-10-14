@@ -84,10 +84,13 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);
-        cancel.hidden = !busy || opening; resume.hidden = !stopped;
+        // A cancel already accepted is not offered again; the bar says it is stopping until the run ends.
+        const cancelling = status?.state === 'cancelling' && !held;
+        cancel.hidden = !busy || opening || cancelling; resume.hidden = !stopped;
         const waiting = status?.state === 'queued' && !(status.blocks || []).some(block => ['queued', 'running'].includes(block.state) && block.prompt_id);
         if (opening) hint.textContent = t('Starting…', '正在开始…');
         else if (held || waiting) hint.textContent = t('Queued', '排队中');
+        else if (cancelling) hint.textContent = t('Stopping…', '正在停止…');
         else if (running) {
             const blocks = status?.blocks || [], done = blocks.filter(block => block.state === 'done').length;
             const number = Math.min(blocks.length || 1, Math.max(done, status?.chainProgress?.index || 0) + 1), count = blocks.length || 1;
@@ -178,7 +181,11 @@ export function editorBlockStates(job, messages = [], resolve = null) {
     if (resolve) return resolve(job, messages);
     const states = {pending: 'waiting', queued: 'waiting', running: 'generating', done: 'done',
         failed: 'failed', cancelled: 'stopped', interrupted: 'stopped'};
+    // A part that never started in a run that was stopped or failed is stopped too, not still queued.
+    // Once a cancel is accepted (cancelling), such a part can only end cancelled, so it reads stopped at once.
+    const ended = ['failed', 'cancelled', 'interrupted', 'cancelling'].includes(job.state);
     return Object.fromEntries((job.blocks || []).map(block => {
+        if (ended && ['pending', 'queued'].includes(block.state)) return [block.id, {state: 'stopped', fraction: 0, remainingSeconds: null}];
         const live = messages.find(message => message.chain?.id === job.id && message.chain?.block === block.id);
         const running = block.state === 'running' || block.state === 'queued';
         const fraction = block.state === 'done' ? 1 : running && live
