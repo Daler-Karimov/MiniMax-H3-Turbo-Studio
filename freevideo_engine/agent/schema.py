@@ -444,7 +444,7 @@ def drama_schema(name):
     if name == 'get':
         return obj(dict(since=number(1, integer=True), wait=WAIT))
     if name == 'sheet':
-        return obj(dict(frames=number(2, 24, integer=True, default=6)))
+        return obj(dict(frames=number(2, 24, integer=True, description='Frames per take; default one per second of the take (6 to 24)')))
     if name == 'choose':
         return obj(dict(take=number(1, integer=True), reason=string(20000), cascade={'type': 'boolean'}, ref=REF), ('take',))
     if name == 'reshoot':

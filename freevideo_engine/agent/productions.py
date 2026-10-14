@@ -25,6 +25,8 @@ from . import drama, production, schema, spec, errors, operation_receipts
 from .jobs import DONE, JobError, iso, parts_problems
 from .forecast import generation_estimate
 
+SHEET_LEAST, SHEET_MOST = 6, 24  # frames per take when the caller gives no count: one per second
+
 MAX_GENERATION = 4  # Generations are zero-based: original 0, reshoots 1 through 4.
 MAX_CHILDREN = 60   # Includes assembly, rejected submissions and resumed attempts.
 MAX_WAITERS = 32    # Long GET waits served at once; more callers receive the current state.
@@ -924,25 +926,31 @@ class Productions:
                       if isinstance(p, dict) and isinstance(p.get('card'), str)}
         return {i: cast.snapshot(i) if cast is not None else None for i in identities}
 
-    def sheet(self, identity, shot, *, frames=6):
-        """Return bytes in process; HTTP converts these to inline image content."""
+    def sheet(self, identity, shot, *, frames=None):
+        """Return bytes in process; HTTP converts these to inline image content.
+
+        Without a count each take shows one frame per second: H3 may caption a spoken line for only a
+        second or so, which a sparser sheet steps over.
+        """
         from . import media
-        schema.validate(schema.drama_schema('sheet'), dict(frames=frames))
+        if frames is not None:
+            schema.validate(schema.drama_schema('sheet'), dict(frames=frames))
         with self.changed:
             record = self._record(identity)
             row = _domain(production._shot, record['state'], shot)
-            takes = [(t['take'], t['library_id']) for t in row['takes']
+            takes = [(t['take'], t['library_id'], t.get('seconds')) for t in row['takes']
                      if t['state'] == 'succeeded' and not t['stale']]
             parent = production._parent(record['state'], row)
             previous = parent['library_id'] if parent else None
         result = dict(takes=[], previous=None)
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.jobs.cpu, tempfile.TemporaryDirectory(dir=self.directory) as folder:
-            for number, library in takes:
+            for number, library, seconds in takes:
                 if not library:
                     raise JobError('no_video', 'Take has no saved video')
                 output = Path(folder) / ('take-%d.jpg' % number)  # media never overwrites a finished file
-                media.contact_sheet(self.jobs.port.library_video(library), output, count=frames, columns=min(4, frames))
+                count = frames or min(SHEET_MOST, max(SHEET_LEAST, math.ceil(seconds or 0)))
+                media.contact_sheet(self.jobs.port.library_video(library), output, count=count, columns=min(4, count))
                 result['takes'].append(dict(take=number, image=output.read_bytes()))
             if previous:
                 output = Path(folder) / 'previous.png'
