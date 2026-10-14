@@ -37,3 +37,18 @@ export async function agentPost(api, path, body) {
         sessions.delete(api);
     }
 }
+
+// UI actions retry once, including HTTP refusals. Callers keep the same
+// idempotency id/body and show the result where the user clicked.
+export async function retryAgentPost(api, path, body, {retry = async () => body, accept = () => true} = {}) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        let response = null;
+        try {
+            response = await agentPost(api, path, body);
+            if (response?.ok && await accept(response)) return response;
+        } catch { /* Retry below, including an unreadable response body. */ }
+        if (attempt) return response?.ok ? null : response;
+        body = await retry(response);
+        if (!body) return response;
+    }
+}

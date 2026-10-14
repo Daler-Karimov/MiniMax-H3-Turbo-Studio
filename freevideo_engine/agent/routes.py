@@ -586,6 +586,12 @@ def register():
         for key in ('drama', 'project', 'image'):
             if isinstance(value.get(key), str):
                 refs[key] = value[key]
+        identity = value.get('id')
+        if isinstance(identity, str):
+            if identity.startswith('d') and 'shots' in value:
+                refs['drama'] = identity
+            elif identity.startswith('c') and value.get('kind') in ('character', 'setting'):
+                refs['cast'] = identity
         return refs
 
     async def session_after(request, response):
@@ -726,6 +732,9 @@ def register():
             value['waiting_for'] = len(view['waiting_for'])
         if view.get('error'):
             value['error'] = view['error']
+        report_id = (view.get('error') or {}).get('report_id') or (view.get('result') or {}).get('report_id')
+        if isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+            value['report_id'] = report_id
         video = (view.get('result') or {}).get('video') or {}
         if video.get('url'):
             value['video'] = video['url']
@@ -792,7 +801,8 @@ def register():
         if fold is None:
             while len(chat['folds']) >= 8:
                 chat['folds'].pop(next(iter(chat['folds'])))
-            fold = chat['folds'][sid] = dict(seq=0, items=[], jobs={}, asked={}, sent={}, ids={}, names={}, said=None)
+            # Message IDs persist in session events and rebuild deduplication when a fold is evicted.
+            fold = chat['folds'][sid] = dict(seq=0, items=[], jobs={}, entities={}, asked={}, sent={}, ids={}, names={}, said=None)
         while store.get(sid)['last_seq'] > fold['seq']:
             rows = store.events(sid, after=fold['seq'], limit=500)
             if not rows:
@@ -810,11 +820,18 @@ def register():
                             while len(fold['sent']) > 500:
                                 fold['ids'].pop(fold['sent'].pop(next(iter(fold['sent']))), None)
                 elif row['type'] == 'step' and row['state'] == 'done':
-                    job = (row.get('refs') or {}).get('job')
+                    refs = row.get('refs') or {}
+                    job = refs.get('job')
+                    entity = next(((refs[key], kind) for key, kind in (('drama', 'production'), ('cast', 'cast')) if refs.get(key)), None)
+                    new_entity = entity and entity[0] not in fold['entities']
+                    if new_entity:
+                        fold['entities'][entity[0]] = entity[1]
                     if job and job not in fold['jobs']:
                         fold['jobs'][job] = row['seq']
                         fold['names'][job] = chat_name(fold['said'])
-                        fold['items'].append(dict(base, type='job', job=job))
+                        fold['items'].append(dict(base, type='job', job=job, **({'entity': entity[0]} if new_entity else {})))
+                    elif new_entity:
+                        fold['items'].append(dict(base, type=entity[1], entity=entity[0]))
                 elif row['type'] == 'confirm':
                     if row['state'] == 'asked':
                         item = dict(base, id=row['id'], question=row.get('question'),
@@ -854,7 +871,7 @@ def register():
             store = work_sessions()
             sid = chat_session(store, wanted)
             rows = jobs.rows()
-            value = dict(agent=agent_state(), session=sid, here=chat_session(store), last_seq=0, read_seq=0, items=[], jobs={}, confirms={}, current=None,
+            value = dict(agent=agent_state(), session=sid, here=chat_session(store), last_seq=0, read_seq=0, items=[], jobs={}, failures={}, confirms={}, current=None,
                          active=sum(1 for r in rows if r['status'] in ACTIVE))
             if sid is None:
                 return value
@@ -883,6 +900,24 @@ def register():
             shown = {r['id']: r for r in mine if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800}
             shown.update((i['job'], known[i['job']]) for i in items if i['type'] == 'job')
             value['jobs'] = {identity: chat_card(row, fold) for identity, row in shown.items()}
+            for identity, kind in fold['entities'].items():
+                try:
+                    entity = jobs.productions.get(identity, compact=False) if kind == 'production' else jobs.cast.get(identity)
+                except JobError:
+                    continue  # A deleted card is no longer part of this conversation.
+                error, task = None, None
+                if kind == 'cast':
+                    error = entity.get('generate_error')
+                    task = (error or {}).get('job')
+                else:
+                    from .productions import failure
+                    error, task = failure(entity)
+                if error:
+                    task_view = jobs.view(known[task], detail=False) if task in known else {}
+                    report_id = ((task_view.get('error') or {}).get('report_id')
+                                 or (task_view.get('result') or {}).get('report_id'))
+                    value['failures'][identity] = dict(id=identity, kind=kind, status='failed',
+                        label=entity.get('title') or entity.get('name'), error=errors.with_reason(error), report_id=report_id)
             value['current'] = current['id'] if current else None
             if current and current['id'] not in value['jobs']:
                 value['jobs'][current['id']] = chat_card(current, fold)

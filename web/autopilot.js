@@ -68,7 +68,9 @@ export function openAutopilotView(node, {studio = null} = {}) {
         const job = talking ? last.current : null;
         now.hidden = !job; line.dataset.on = String(!!job);
         halt.disabled = !!last.stopping;
-        halt.title = last.stopping ? t('Stopping', '正在停止') : t('Stop all', '全部停止'); halt.setAttribute('aria-label', halt.title);
+        halt.setAttribute('aria-busy', String(!!last.stopping));
+        halt.textContent = last.stopping ? t('Stopping…', '正在停止…') : '';
+        halt.title = last.stopping ? t('Stopping…', '正在停止…') : t('Stop all', '全部停止'); halt.setAttribute('aria-label', halt.title);
         if (job) {
             const fraction = last.fraction || 0, running = job.status === 'running';
             currentId = job.id; name.textContent = jobName(job, t); more.textContent = last.active > 1 ? `+${last.active - 1}` : '';

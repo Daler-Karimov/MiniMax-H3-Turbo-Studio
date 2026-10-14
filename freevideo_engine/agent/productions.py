@@ -140,7 +140,22 @@ def _safe_error(error):
     rows = [_safe_row(row) for row in details] if isinstance(details, list) and details else []
     if rows and all(rows):
         result.update(details=rows, message='; '.join(row['message'] for row in rows))
-    return result
+    return dict(result, error_zh=errors.failure_reason(error))
+
+
+def failure(view):
+    """The current failure, excluding old takes superseded by a usable take."""
+    if view.get('stalled'):
+        return view['stalled'], None
+    join = view.get('join') or {}
+    if join.get('state') in ('failed', 'interrupted') and join.get('error'):
+        return join['error'], join.get('task')
+    for shot in view.get('shots', []):
+        if shot['state'] == 'failed':
+            take = next((t for t in reversed(shot['takes']) if t.get('error') and not t['stale']), {})
+            if take:
+                return take['error'], take.get('task')
+    return None, None
 
 
 class Productions:
@@ -194,7 +209,7 @@ class Productions:
 
     def _stalled(self, error):
         code = error.code if isinstance(getattr(error, 'code', None), str) and error.code in errors.ERRORS else 'internal_error'
-        return dict(code=code, message=errors.ERRORS[code][2], at=iso(self.jobs.clock()))
+        return errors.with_reason(dict(code=code, message=errors.ERRORS[code][2], at=iso(self.jobs.clock())))
 
     def _save(self, record):
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -588,7 +603,7 @@ class Productions:
         value = production.view(record['state'])
         tasks = record.get('tasks', {})
         def contextual(error, join=False):
-            error = deepcopy(error)
+            error = errors.with_reason(deepcopy(error))
             if error and 'next' in error:
                 action = self._context_next(record, join)
                 if action:
@@ -604,9 +619,11 @@ class Productions:
             ref = record['state']['current_join']
             join = next(j for j in record['state']['joins'] if j['ref'] == ref)
             value['join'].update(ref=ref, task=tasks.get(ref), error=contextual(join['error'], True))
-        value['stalled'] = deepcopy(record.get('stalled'))
+        value['stalled'] = errors.with_reason(deepcopy(record.get('stalled')))
         value['progress'] = self._progress(record)
         value['over_budget'] = self._elapsed_budget(value['progress'])
+        error, _ = failure(value)
+        value['error_zh'] = errors.failure_reason(error) if error else None
         return value
 
     def get(self, identity, *, since=None, wait=0, compact=True):
@@ -625,9 +642,15 @@ class Productions:
         changed = record['state']['revision'] != since
         if not changed and compact:
             progress = self._progress(record)
-            return dict(id=identity, revision=since, changed=False, status=record['state']['status'],
+            value = dict(id=identity, revision=since, changed=False, status=record['state']['status'],
                         paused=deepcopy(record['state'].get('paused')), fraction=progress['fraction'],
                         elapsed_seconds=progress['elapsed_seconds'])
+            state = record['state']
+            join = next((j for j in state['joins'] if j['ref'] == state['current_join']), None)
+            error, _ = failure(dict(stalled=record.get('stalled'), join=join, shots=state['shots']))
+            if error:
+                value['error_zh'] = errors.failure_reason(error)
+            return value
         return dict(self._view(record), changed=changed)
 
     async def get_async(self, identity, *, since=None, wait=0, compact=True):
@@ -676,7 +699,7 @@ class Productions:
                 shot = next((s for s in view['shots'] if s['chosen'] is None), view['shots'][-1])
                 result.append(dict(id=view['id'], title=view['title'], status=view['status'], revision=view['revision'],
                     shot=shot['index'], shots=len(view['shots']), next=view['todo'][0] if view['todo'] else None,
-                    paused=view['paused'], stalled=view['stalled'], session=record.get('session')))
+                    paused=view['paused'], stalled=view['stalled'], session=record.get('session'), error_zh=view['error_zh']))
             return result
 
     def _mutate(self, action, identity, *, by, ref=None, client=None, **values):

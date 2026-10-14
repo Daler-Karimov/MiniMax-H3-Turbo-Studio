@@ -510,7 +510,7 @@ def cast_view():
         description=nullable(string(1000)), revision=number(1, integer=True),
         images=array(picture, 0, 6), candidates=array(picture, 0, 6),
         generating=nullable(generating), generated=nullable(generated),
-        generate_error=nullable(obj(dict(code=string(), job=JOB, message=string()), ('code', 'job', 'message')))),
+        generate_error=nullable(obj(dict(code=string(), job=JOB, message=string(), error_zh=string()), ('code', 'job', 'message')))),
         ('id', 'kind', 'name', 'revision', 'images', 'candidates', 'generating')), additionalProperties=True)
 
 
@@ -1332,7 +1332,8 @@ def openapi():
                 report_id={'type': ['string', 'null'], 'pattern': '^[0-9a-f]{32}$',
                            'description': 'Image diagnostic report ID, or null when no report exists.'},
                 request_id=string(), docs=string(), retry_after_seconds=number(0), card={'type': 'object'}, job=JOB,
-                project={'type': 'object'}, current_revision=number(1, integer=True)),
+                project={'type': 'object'}, current_revision=number(1, integer=True),
+                error_zh=string()),
                 ('code', 'message', 'details', 'retryable', 'request_id', 'docs'))}))
 
 

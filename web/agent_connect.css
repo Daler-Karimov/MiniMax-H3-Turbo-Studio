@@ -30,6 +30,8 @@
 .fv-studio .fv-autopilot-now-stop{flex:none;width:30px;height:30px;padding:0}
 .fv-autopilot-now-stop::after{content:"";width:18px;height:18px;border-radius:5px;background:#1b2a3a radial-gradient(circle,var(--fv-danger) 0 0) center/7px 7px no-repeat}
 .fv-studio .fv-autopilot-now-stop:hover::after{background-color:var(--fv-danger-subtle)}
+.fv-studio .fv-autopilot-now-stop[aria-busy=true]{width:auto;padding:0 8px;font-size:12px;color:var(--fv-muted);opacity:1}
+.fv-autopilot-now-stop[aria-busy=true]::after{display:none}
 .fv-autopilot-line{position:absolute;left:0;bottom:-1px;height:2px;border-radius:0 2px 2px 0;background:linear-gradient(90deg,var(--fv-accent),var(--fv-accent-hover));transition:width .6s var(--fv-ease),opacity .4s;pointer-events:none}
 .fv-autopilot-line[data-on=false]{opacity:0}
 @media(max-width:1050px){.fv-autopilot-now-go>em{display:none}.fv-autopilot-now-name{max-width:120px}}

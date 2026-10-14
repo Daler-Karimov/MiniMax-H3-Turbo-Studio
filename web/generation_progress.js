@@ -1,5 +1,5 @@
 // One whole-video estimate and the same five rows in Studio and the node view.
-import { saveReport } from './report_issue.js';
+import { saveReport, reportIssue, showReportTip } from './report_issue.js';
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./generation_progress.css', import.meta.url).href;
 document.head.append(css);
@@ -349,6 +349,59 @@ export function estimatedFraction(state, overall, stateAge, overallAge) {
     return candidate;
 }
 
+// The video's report download, also used by Agent failure cards. A task that
+// failed before creating an engine report supplies the shared redacted summary.
+export function createDiagnosticReportControl(t, {api = null, fallback = null, tip = false, version = null,
+    label = () => t('Download report', '下载报告')} = {}) {
+    if (tip) {
+        const href = new URL('./result_actions.css', import.meta.url).href;
+        if (![...document.head.querySelectorAll('link')].some(link => link.href === href)) {
+            const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
+        }
+    }
+    const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
+    let reportId = null, revision = 0;
+    report.textContent = label();
+    function updateReport(message) {
+        if (message.new_request === true || message.overall?.reset === true || message.reset === true && !message.phase) {
+            reportId = null; revision++; report.hidden = true;
+        }
+        if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
+            if (reportId !== message.report_id) { revision++; report.disabled = false; report.textContent = label(); }
+            reportId = message.report_id;
+        }
+        report.hidden = !reportId && !fallback;
+        return reportId;
+    }
+    async function fetchReport() {
+        if (reportId) {
+            const path = `/freevideo/report/${reportId}`;
+            const response = await (api ? api.fetchApi(path) : fetch(path));
+            if (!response.ok) throw new Error('Report unavailable');
+            return response.blob();
+        }
+        if (fallback) return fallback();
+        throw new Error('Report unavailable');
+    }
+    async function downloadReport() { saveReport(await fetchReport()); }
+    report.onclick = async () => {
+        if (report.disabled || report.hidden) return;
+        const current = revision;
+        report.disabled = true; report.textContent = t('Preparing report…', '正在整理报告…');
+        try {
+            await downloadReport();
+            if (current === revision) {
+                report.textContent = label();
+                if (tip && report.isConnected) showReportTip(report.parentElement, report, t, {mode: 'downloaded',
+                    submit: () => reportIssue(fetchReport, typeof version === 'function' ? version() : version, {save: false})});
+            }
+        } catch {
+            if (current === revision) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
+        } finally { if (current === revision) report.disabled = false; }
+    };
+    return {report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null};
+}
+
 export function createGenerationProgress(t, now = () => Date.now(), {compact = false, api = null, onLayout = null} = {}) {
     const element = el('section', 'fv-generation-progress'); element.hidden = true;
     if (compact) element.classList.add('fv-generation-compact');
@@ -422,42 +475,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     const fraction = value => Math.min(1, Math.max(0, value));
     const newRequest = message => message.new_request === true || message.overall?.reset === true
         || (message.reset === true && !message.phase);
-    const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
-    let reportId = null;
-    const reportLabel = () => t('Download report', '下载报告');
-    report.textContent = reportLabel();
-    function updateReport(message) {
-        if (newRequest(message)) { reportId = null; report.hidden = true; }
-        if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
-            if (reportId !== message.report_id) { report.disabled = false; report.textContent = reportLabel(); }
-            reportId = message.report_id; report.hidden = false;
-        }
-        // The saved video's request record is different from the redacted
-        // diagnostic download. Keep this token available after completion;
-        // only a new request clears it.
-        return reportId;
-    }
-    // The redacted diagnostic export; throws when it is unavailable.
-    async function fetchReport() {
-        const id = reportId;
-        if (!id) throw new Error('Report unavailable');
-        const path = `/freevideo/report/${id}`;
-        const response = await (api ? api.fetchApi(path) : fetch(path));
-        if (!response.ok) throw new Error('Report unavailable');
-        return response.blob();
-    }
-    async function downloadReport() { saveReport(await fetchReport()); }
-    report.onclick = async () => {
-        if (!reportId || report.disabled) return;
-        const id = reportId;
-        report.disabled = true; report.textContent = t('Preparing report…', '正在整理报告…');
-        try {
-            await downloadReport();
-            if (id === reportId) report.textContent = reportLabel();
-        } catch {
-            if (id === reportId) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
-        } finally { if (id === reportId) report.disabled = false; }
-    };
+    const diagnostic = createDiagnosticReportControl(t, {api});
+    const {report, updateReport, fetchReport, downloadReport} = diagnostic;
     const hasCount = value => Number.isInteger(value.total) && value.total > 0 && Number.isInteger(value.done)
         && value.done >= 0 && value.done <= value.total;
 
@@ -513,7 +532,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         const threshold = Math.max(floor, valid(typical) ? 2 * typical : 0);
         const shown = !ended && age >= threshold;
         const wasShown = !stall.hidden;
-        const hasReport = reportId !== null;
+        const hasReport = diagnostic.hasReport();
         // The separate notice never adds another clock or blocks the run.
         if (shown && (stall.hidden || hasReport !== stallHasReport)) {
             const first = t('No progress for a while. Generation is still running, so you can keep waiting.',
@@ -987,6 +1006,6 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             mini_fraction: visible && !mini.hidden && miniMode === 'determinate' ? miniShown : null,
             mini_shimmer: visible && !mini.hidden && miniShimmer};
     }
-    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null, update, hide, dispose: hide,
+    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: diagnostic.hasReport, update, hide, dispose: hide,
         noticeCount: () => trims.size, stallShown: () => !stall.hidden, percentShown: () => !heading.hidden, snapshot};
 }

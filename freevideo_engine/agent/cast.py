@@ -98,6 +98,7 @@ def view(card):
     if card.get('voice'):
         value['voice'] = dict(deepcopy(card['voice']), media=media_view(card['voice']['media']),
                               clip=assets.view(card['voice']['clip']['file']))
+    value['generate_error'] = errors.with_reason(value.get('generate_error'))
     return value
 
 
@@ -112,7 +113,8 @@ def row_view(card):
     return dict(id=card['id'], kind=card['kind'], name=card['name'], description=card['description'],
                 origin=card['origin'], revision=card['revision'], updated_at=card['updated_at'],
                 images=len(card['images']), voice=card['voice'] is not None,
-                generating=card.get('generating') is not None, thumbnail=thumbnail(card))
+                generating=card.get('generating') is not None, thumbnail=thumbnail(card),
+                generate_error=errors.with_reason(card.get('generate_error')))
 
 
 def _plain(item):
@@ -729,7 +731,7 @@ class Cast:
                     code = (row.get('error') or {}).get('code') if row else 'not_found'
                     code = code or (row['status'] if row else 'not_found')
                     detail = errors.image_failure(code, (row.get('error') or {}).get('report_id') if row else None)
-                    failure = failure or dict(code=code or row['status'], job=job, message=(
+                    failure = failure or dict(code=code, job=job, error_zh=detail['reason']['zh'], message=(
                         'The generation was cancelled.' if row and row['status'] == 'cancelled'
                         else detail['reason']['en']), **detail)
                     continue
@@ -764,7 +766,8 @@ class Cast:
                 face = job == generating.get('face_job')
                 if row is None or row['status'] != 'succeeded':
                     code = (row.get('error') or {}).get('code') if row else 'not_found'
-                    failure = failure or dict(code=code or row['status'], job=job, message=(
+                    failure = failure or dict(code=code or row['status'], job=job,
+                        error_zh=errors.failure_reason((row.get('error') or dict(code=code or row['status'])) if row else dict(code=code)), message=(
                         'The generation was cancelled.' if row and row['status'] == 'cancelled'
                         else 'The reference clip did not finish.'))
                     continue

@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -592,15 +593,21 @@ class Jobs:
     def finish(self, row, status, *, result=None, error=None, save=True):
         if error is not None:
             code = error.get('code', 'internal_error')
+            report_id = error.get('report_id')
             if code == 'invalid_json' and row['kind'] in ('vlm', 'enhance'):
                 code = 'vlm_invalid_json'
+            reason_zh = errors.failure_reason(dict(error, code=code))
             if code != error.get('code') or not error.get('request_id') or row['kind'] == 'image':
                 error = errors.build(code, details=error.get('details'),
                     request=row.get('request_id'), action_required=code != 'cancelled',
                     kind=row['kind'], stage='terminal', resumable=not row['spec'].get('refine_from'),
                     report_id=error.get('report_id'))
+                if row['kind'] == 'image':
+                    reason_zh = error['error_zh']
         if error is not None:
-            error = dict(error, request_id=row.get('request_id') or error['request_id'])
+            error = dict(error, request_id=row.get('request_id') or error['request_id'], error_zh=reason_zh)
+            if row['kind'] != 'image' and isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+                error['report_id'] = report_id
             if error.get('next'):
                 error['next'] = errors.recovery(error['code'], kind=row['kind'], stage='terminal',
                     resumable=not row['spec'].get('refine_from')).replace('{id}', row['id'])
@@ -1068,6 +1075,11 @@ class Jobs:
                 result['error'] = errors.build(result['error']['code'], kind='image', stage='terminal',
                     details=result['error'].get('details'), request=row.get('request_id'),
                     action_required=result['error']['code'] != 'cancelled', report_id=row['error'].get('report_id'))
+            else:
+                result['error'] = dict(result['error'], error_zh=errors.failure_reason(row['error']))
+                report_id = row['error'].get('report_id')
+                if isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+                    result['error']['report_id'] = report_id
             if result['error'].get('next'):
                 result['error'] = dict(result['error'], next=errors.recovery(result['error']['code'], kind=row['kind'],
                     stage='terminal', resumable=not row['spec'].get('refine_from')).replace('{id}', row['id']))
@@ -1696,6 +1708,10 @@ class Jobs:
                     reason = self.port.generation_error(history, chain['node'])
             except Exception as error:
                 self.log_poll_failure(row, error)
+        try:
+            report_id = (self.port.progress(chain['node']) or {}).get('report_id')
+        except Exception:
+            report_id = None
         code = reason.get('code', 'generation_failed')
         if code not in ('insufficient_memory', 'out_of_memory', 'generation_failed'):
             code = 'generation_failed'
@@ -1718,8 +1734,12 @@ class Jobs:
                        'POST /freevideo/agent/v1/jobs/%s/resume to retry unfinished work.' % row['id'])
         if code == 'insufficient_memory' and reason.get('alternatives'):
             next_action = 'Use the alternatives in details to lower size or duration, then POST /freevideo/agent/v1/jobs.'
-        return chain_error(code, errors.ERRORS[code][2], next_action, details=[detail],
-                           retryable=code != 'insufficient_memory').view()
+        failure = dict(chain_error(code, errors.ERRORS[code][2], next_action, details=[detail],
+                           retryable=code != 'insufficient_memory').view(),
+                    error_zh=errors.failure_reason(dict(code=code, message=message)))
+        if isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+            failure['report_id'] = report_id
+        return failure
 
     # Local image generation ----------------------------------------------------------------------------
     def wait_image(self, row, code, *, waiting_for=None):
@@ -1781,7 +1801,9 @@ class Jobs:
         elif phase == 'cancelled':
             self.finish(row, 'cancelled', error=dict(code='cancelled'))
         else:
-            code = state.get('error') or 'generation_failed'
+            failure = state.get('error')
+            code = failure.get('code') if isinstance(failure, dict) else failure
+            code = code or 'generation_failed'
             if not self.wait_image(row, code):
                 self.finish(row, 'failed', error=dict(code=code, report_id=state.get('report_id')))
 

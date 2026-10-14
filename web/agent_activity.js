@@ -1,4 +1,4 @@
-import {agentPost} from './agent_session.js';
+import {retryAgentPost} from './agent_session.js';
 // What agents connected to this FreeVideo are doing. Their requests share the
 // studio's queue, so people can see them, follow progress and stop them.
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./agent_activity.css', import.meta.url).href; document.head.append(css);
@@ -45,6 +45,7 @@ function phaseText(p, t) {
 function status(job, t) {
     const [en, zh] = KINDS[job.kind] || KINDS.generate;
     if (job.status === 'running') return t(en, zh);
+    if (job.status === 'cancelling') return t('Stopping', '正在停止');
     if (job.status === 'queued') return job.progress?.queue_position
         ? t(`In queue · #${job.progress.queue_position}`, `排队 · 第 ${job.progress.queue_position} 位`) : t('Queued', '排队中');
     if (job.status === 'waiting') return job.waiting_for ? t('Waiting for earlier steps', '等待前序任务') : t('Waiting for the GPU', '等待显卡');
@@ -54,7 +55,7 @@ function title(job, t) {
     const name = NAMES[job.kind] || NAMES.generate;
     return job.label || (t(name[0], name[1]) + (job.take ? ' · ' + t(`Take ${job.take}`, `第 ${job.take} 条`) : ''));
 }
-function row(job, t, api, refresh, open) {
+function row(job, t, api, refresh, open, cancellationErrors) {
     const item = el('li', 'fv-agent-job'); item.dataset.status = job.status; item.dataset.job = job.id;
     item.append(glyph((KINDS[job.kind] || KINDS.generate)[2]));
     const body = el('div', 'fv-agent-body');
@@ -75,7 +76,7 @@ function row(job, t, api, refresh, open) {
     if (job.status === 'running' && p.remaining_seconds > 0) meta.push(left(p.remaining_seconds, t));
     const reason = job.status === 'failed' && REASONS[job.error?.code];
     if (reason) meta.push(t(...reason));
-    else if (job.error?.message && job.status === 'failed') meta.push(job.error.message);
+    else if (job.status === 'failed') meta.push(t(job.error?.message || 'The task failed.', job.error?.error_zh || '处理任务时出错，未能完成结果'));
     if (job.project) meta.push(job.project);
     const foot = el('div', 'fv-agent-foot');
     const details = el('p', 'fv-agent-meta', meta.join(' · '));
@@ -85,10 +86,16 @@ function row(job, t, api, refresh, open) {
         const stop = el('button', 'fv-agent-stop', t('Stop', '停止')); stop.type = 'button';
         stop.setAttribute('aria-label', t('Stop ', '停止 ') + title(job, t));
         stop.onclick = async () => {
-            stop.disabled = true;
+            stop.disabled = true; stop.textContent = t('Stopping', '正在停止');
             try {
-                await agentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
+                const response = await retryAgentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
+                if (!response?.ok) {
+                    const message = t('Stopping failed after a retry. If still running, click again.', '停止没成功，已重试；仍在运行请再点一次');
+                    details.textContent = message;
+                    cancellationErrors.set(job.id, message);
+                } else cancellationErrors.delete(job.id);
             } finally { refresh(); }
+            stop.disabled = false; stop.textContent = t('Stop', '停止');
         };
         foot.append(stop);
     }
@@ -100,21 +107,22 @@ function row(job, t, api, refresh, open) {
         foot.append(show);
     }
     body.append(foot);
+    if (cancellationErrors.has(job.id)) details.textContent = cancellationErrors.get(job.id);
     item.append(body);
     return item;
 }
 // Running first, then the rest in the order they will run; finished ones after, newest first.
-function rows(jobs, t, api, refresh, open) {
-    const rank = {running: 0, queued: 1, waiting: 2};
+function rows(jobs, t, api, refresh, open, cancellationErrors) {
+    const rank = {running: 0, cancelling: 0, queued: 1, waiting: 2};
     const active = jobs.filter(j => j.status in rank)
         .sort((a, b) => rank[a.status] - rank[b.status] || String(a.created_at).localeCompare(String(b.created_at)));
     const done = jobs.filter(j => !(j.status in rank))
         .sort((a, b) => String(b.finished_at).localeCompare(String(a.finished_at)));
-    const items = active.map(job => row(job, t, api, refresh, open));
+    const items = active.map(job => row(job, t, api, refresh, open, cancellationErrors));
     if (done.length) {
         const divider = el('li', 'fv-agent-divider', t('Last 30 minutes', '最近 30 分钟'));
         divider.setAttribute('role', 'presentation');
-        items.push(divider, ...done.map(job => row(job, t, api, refresh, open)));
+        items.push(divider, ...done.map(job => row(job, t, api, refresh, open, cancellationErrors)));
     }
     return items;
 }
@@ -140,18 +148,20 @@ export function createAgentActivity(t, api, host, {interval = [1500, 8000], open
     panel.setAttribute('aria-label', t('Agent jobs', 'Agent 任务'));
     host.append(panel);
     let data = {active: 0, jobs: []}, timer = null, disposed = false, failures = 0;
+    const cancellationErrors = new Map();
 
     function renderPanel() {
         const header = el('header');
         header.append(el('h2', null, t('Agent jobs', 'Agent 任务')));
         const list = el('ol');
-        const key = refill(panel, list, rows(data.jobs, t, api, poll, job => { setOpen(false); open(job); }));
+        const key = refill(panel, list, rows(data.jobs, t, api, poll, job => { setOpen(false); open(job); }, cancellationErrors));
         panel.replaceChildren();
         panel.append(header, list);
         if (key) (panel.querySelector(`[data-job="${key[0]}"] .${key[1].split(' ')[0]}`) || panel).focus?.();
     }
     function render() {
         const jobs = data.jobs || [];
+        for (const job of jobs) if (!['waiting', 'queued', 'running', 'cancelling'].includes(job.status)) cancellationErrors.delete(job.id);
         element.hidden = !jobs.length;
         if (!jobs.length) { setOpen(false); return; }
         const running = jobs.find(j => j.status === 'running'), active = data.active || 0;

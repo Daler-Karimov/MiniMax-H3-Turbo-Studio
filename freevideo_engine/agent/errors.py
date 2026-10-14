@@ -248,6 +248,82 @@ def safe_details(value):
     return '[redacted]'
 
 
+# One public sentence shared by conversation cards, HTTP and MCP. Backend text
+# is classified, never echoed: it can contain prompts, filenames or credentials.
+FAILURE_REASONS_ZH = {
+    'out_of_memory': '生成时显存或内存不足',
+    'insufficient_memory': '可用显存或内存不够生成这段内容',
+    'no_memory': '可用显存或内存不够生成这张图片',
+    'ram_space': '加载模型时系统内存不足',
+    'model_missing': '需要的模型还没有安装好',
+    'pack_missing': '图片模型还没有安装好',
+    'not_ready': '生成所需的环境还没有安装好',
+    'cancelled': '生成已被停止',
+    'stopped_by_user': '生成已被停止',
+    'interrupted': '生成服务中途重启，任务被打断',
+    'worker_exit': '图片生成进程中途退出',
+    'closed': '图片生成服务已经关闭',
+    'image_unavailable': '图片生成服务还没有启动',
+    'vlm_unavailable': '读取画面的模型服务还没有启动',
+    'vlm_failed': '读取画面的模型没有完成请求',
+    'vlm_invalid_json': '模型返回的结果格式无法读取',
+    'context_length': '描述和参考图超过了模型可读取的长度',
+    'dependency_failed': '前面依赖的任务没有完成',
+    'lost': '生成服务没有保留这次任务的结果',
+    'unknown_job': '图片生成服务找不到这次任务',
+    'not_found': '找不到这次任务或素材',
+    'source_missing': '接续所需的上一段视频已经不在',
+    'chain_missing': '接续所需的生成记录已经不在',
+    'chain_unavailable': '分段生成服务还没有启动',
+    'continuation_unavailable': '当前生成方式不支持接续视频',
+    'join_failed': '片段已生成，但拼接成片时出错',
+    'invalid_output': '生成的结果无法读取或保存',
+    'storage_unavailable': '任务记录或素材无法写入磁盘',
+    'submit_interrupted': '提交生成时服务中断，尚未确认任务是否开始',
+    'timeout': '生成等待超时',
+    'invalid_media': '参考素材无法读取',
+    'clip_unreadable': '生成的角色参考视频无法读取',
+    'invalid_request': '生成参数不符合支持的范围',
+    'invalid_drama': '短剧计划中有无法使用的参数',
+    'reshoot_limit': '这个镜头已达到可生成的次数上限',
+    'production_limit': '这部短剧已达到可生成的任务数量上限',
+    'export_failed': '导出成片时出错',
+    'invalid_prompt': '图片描述为空或超过了支持的长度',
+    'invalid_dimensions': '图片尺寸超出了支持的范围',
+    'too_many_images': '参考图片数量超过了支持的范围',
+    'chain_too_long': '接续后的视频超过了支持的段数',
+    'chain_rejected': '生成服务无法使用这组参数',
+    'generation_failed': '生成过程中出错，未能完成结果',
+    'internal_error': '处理任务时出错，未能完成结果',
+}
+FAILURE_MESSAGES_ZH = {
+    'The previous video is too short to continue; it needs to be at least 2 s long.': '接续的上一段视频太短，至少需要 2 秒',
+    'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.': '上一段视频缺少可用的接续数据',
+    'The previous video cannot be read.': '接续的上一段视频无法读取',
+    'Use the same width and height as the previous video.': '接续的画面大小与上一段视频不一致',
+    'The reference video is too short; it needs to be at least about 1 s long.': '参考视频太短，至少需要约 1 秒',
+}
+
+
+def failure_reason(error):
+    if isinstance(error.get('error_zh'), str) and error['error_zh'].strip():
+        return error['error_zh']
+    lines = str(error.get('message') or '').strip().splitlines()
+    line = lines[0] if lines else ''
+    if line.startswith('FreeVideo generation failed') and len(lines) > 1:
+        line = lines[1].strip()
+    line = re.sub(r'^(?:[\w.]*Error|[\w.]*Exception):\s*', '', line)
+    if line in FAILURE_MESSAGES_ZH:
+        return FAILURE_MESSAGES_ZH[line]
+    if line.startswith(('CUDA out of memory', 'MPS backend out of memory')):
+        return FAILURE_REASONS_ZH['out_of_memory']
+    return FAILURE_REASONS_ZH.get(error.get('code'), '处理任务时出错，未能完成结果')
+
+
+def with_reason(error):
+    return dict(error, error_zh=failure_reason(error)) if error else error
+
+
 def build(code, *, details=None, request=None, validation=False, message=None, next_action=None,
           action_required=True, retry_after_seconds=None, owner=None, kind=None, stage='request', resumable=True,
           report_id=None):
@@ -270,7 +346,7 @@ def build(code, *, details=None, request=None, validation=False, message=None, n
         result['retry_after_seconds'] = retry_after_seconds or 1
         result['details'].append(dict(owner=owner if owner in ('agent', 'ui') else 'ui'))
         result['message'] += ' An Agent job is ahead.' if owner == 'agent' else ' A job in the user interface is ahead.'
-    return result
+    return with_reason(result)
 
 
 def validation(errors, code='invalid_request'):
