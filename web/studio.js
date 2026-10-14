@@ -137,6 +137,16 @@ export function promptGuide() {
     return note;
 }
 
+// The last three LoRAs chosen, kept in this browser. Names that are no longer in the folder are never offered.
+const LORA_RECENT = 'freevideo_lora_recent', LORA_RECENT_MAX = 3;
+const recentLoras = () => {
+    try { const names = JSON.parse(localStorage.getItem(LORA_RECENT) || '[]'); return Array.isArray(names) ? names.filter(n => typeof n === 'string').slice(0, LORA_RECENT_MAX) : []; }
+    catch { return []; }
+};
+const rememberLora = name => {
+    if (!name) return;
+    try { localStorage.setItem(LORA_RECENT, JSON.stringify([name, ...recentLoras().filter(n => n !== name)].slice(0, LORA_RECENT_MAX))); } catch {}
+};
 export function loraPanel(node, panel, {promptNode = null} = {}) {
     const list = el('div', null, 'fv-lora-list'), note = el('p', '', 'fv-lora-note');
     const actions = el('div', null, 'fv-lora-add'); panel.append(list, actions, note);
@@ -187,7 +197,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
         if (rendering) { renderAgain = true; return; }
         rendering = true;
         try {
-            list.replaceChildren();
+            list.replaceChildren(); clear.remove();
             const rows = read();
             syncPrompt(rows);
             rows.forEach((row, index) => {
@@ -195,8 +205,9 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = row.enabled !== false;
                 enabled.setAttribute('aria-label', t('Enable LoRA', '启用 LoRA')); enabled.onchange = () => { row.enabled = enabled.checked; write(rows); };
                 const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
-                for (const name of [...new Set([row.name, ...names])].filter(Boolean)) { const option = el('option', name); option.value = name; select.append(option); }
-                select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; write(rows); };
+                const pinned = recentLoras().filter(n => names.includes(n));
+                for (const name of [...new Set([...pinned, ...names, row.name])].filter(Boolean)) { const option = el('option', name); option.value = name; select.append(option); }
+                select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; rememberLora(row.name); write(rows); };
                 const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = row.strength ?? 1;
                 strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度')); strength.onchange = () => { if (strength.reportValidity() && strength.value !== '') { row.strength = Number(strength.value); write(rows); } };
                 const trigger = el('input', null, 'fv-lora-trigger'); trigger.type = 'text'; trigger.maxLength = 300;
@@ -236,6 +247,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 list.append(wrap);
                 loadTriggers(row.name).catch(error => { if (!disposed && trigger.isConnected) note.textContent = error.message; });
             });
+            if (rows.length > 1) actions.append(clear);
             note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
         } catch (error) {
             if (error instanceof DOMException) throw error;
@@ -248,12 +260,14 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     }
     const add = button(t('Add', '添加'), async () => {
         await refresh(); // The folder may have changed since the list was last read.
-        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '请把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); rows.push({name: names[0], strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
+        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '请把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); const next = recentLoras().find(n => names.includes(n) && !rows.some(row => row.name === n)) ?? names[0]; rememberLora(next); rows.push({name: next, strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
     });
     async function refresh() {
         try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
         catch (error) { if (!disposed) note.textContent = error.message; }
     }
+    // Only deselects: the files stay in the folder and the recent names are kept.
+    const clear = button(t('Clear', '清空'), () => { write([]); });
     actions.append(add);
     const changed = e => { if (String(e.detail) === String(node.id)) render(); };
     window.addEventListener('freevideo-loras', changed);
