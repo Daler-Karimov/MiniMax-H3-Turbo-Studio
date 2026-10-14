@@ -132,6 +132,7 @@ const icon = kind => {
     svg.setAttribute('viewBox', '0 0 20 20'); svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS(svg.namespaceURI, 'path');
     path.setAttribute('d', kind === 'video' ? 'M2 4h16v12H2z M4 13l4-5 4 4 2-2 3 4'
+        : kind === 'link' ? 'M8.5 11.5l3-3 M7.5 9.5l-1.5 1.5a3 3 0 0 0 4.2 4.2l1.5-1.5 M12.5 10.5l1.5-1.5a3 3 0 0 0-4.2-4.2l-1.5 1.5'
         : kind === 'warning' ? 'M10 2a8 8 0 1 0 0 16a8 8 0 0 0 0-16 M10 6v5 M10 14v.1'
             : 'M2 8h4l4-4v12l-4-4H2z M13 6c4 2 4 6 0 8 M13 9c1 1 1 1 0 2');
     svg.append(path); return svg;
@@ -494,10 +495,20 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 item.element.dataset.state = visual; item.element.dataset.track = track.id;
                 item.element.dataset.busy = String(busy(clip)); item.element.dataset.extend = String(clip.extend && actions.generationAvailable?.() !== false && !busy(clip));
                 // A part not generated yet is attached only to the part it continues; drawn on its own it stays a separate block.
-                const attached = (left, right) => !!left && !!right && left.start + left.frames === right.start
-                    && (right.pending === null || model.continuesBefore(state.record, right.id));
-                item.element.classList.toggle('fv-ed-joined-left', attached(track.clips[index - 1], clip));
+                // Touching blocks are one video only when the later one continues the earlier one, or both are consecutive stretches of one source;
+                // two separate shots that merely touch are drawn apart.
+                const touching = (left, right) => !!left && !!right && left.start + left.frames === right.start;
+                const sameStretch = (left, right) => !!left.source && sourceKey(left) === sourceKey(right) && left.in + left.frames === right.in;
+                const attached = (left, right) => touching(left, right) && (model.continuesBefore(state.record, right.id) || sameStretch(left, right));
+                const before = track.clips[index - 1];
+                item.element.classList.toggle('fv-ed-joined-left', attached(before, clip));
                 item.element.classList.toggle('fv-ed-joined-right', attached(clip, track.clips[index + 1]));
+                // On the picture track a continuation carries a link; a separate shot is told apart by being drawn apart.
+                const seam = track.id !== 'v1' || !touching(before, clip) ? null : model.continuesBefore(state.record, clip.id) ? 'continued' : sameStretch(before, clip) ? null : 'separate';
+                let mark = item.element.querySelector(':scope > .fv-ed-seam-mark');
+                if (seam === 'continued' && pixels(clip.frames) >= 26) {
+                    if (!mark) { mark = create('span', 'fv-ed-seam-mark'); mark.setAttribute('aria-hidden', 'true'); mark.dataset.kind = seam; mark.append(icon('link')); item.element.append(mark); }
+                } else mark?.remove();
                 const failureText = visual === 'failed' ? actions.failureText?.(clip.id) || actions.reasonText?.(clip.reason) || clip.reason || t('Generation failed', '生成时出错') : '';
                 if (visual === 'failed') item.status.replaceChildren(icon('warning'), create('span', 'fv-ed-clip-failure-reason', failureText));
                 else item.status.replaceChildren();
@@ -505,8 +516,9 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                     done: t('Complete', '完成'), failed: failureText}[visual];
                 const seconds = Math.round(clip.frames / model.FPS);
                 item.element.title = '';
-                item.element.setAttribute('aria-label', t(`${name}, clip ${index + 1}, ${seconds} s, ${status}`,
-                    `${name}，第 ${index + 1} 段，${seconds} 秒，${status}`));
+                const seamText = seam === 'continued' ? t(', continues the clip before', '，接续上一段') : seam === 'separate' ? t(', separate shot', '，独立镜头') : '';
+                item.element.setAttribute('aria-label', t(`${name}, clip ${index + 1}, ${seconds} s, ${status}${seamText}`,
+                    `${name}，第 ${index + 1} 段，${seconds} 秒，${status}${seamText}`));
                 // Pending replacements can retain their old media; state styling
                 // overlays it until the model reports that the new media is done.
                 item.media.hidden = visual !== 'done';

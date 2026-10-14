@@ -27,6 +27,8 @@
 .fv-ed-clip.fv-ed-joined-left{border-top-left-radius:0;border-bottom-left-radius:0}
 .fv-ed-clip.fv-ed-joined-left[data-state=planned],.fv-ed-clip.fv-ed-joined-left[data-state=failed]{border-left-width:0}
 .fv-ed-clip.fv-ed-joined-right{border-top-right-radius:0;border-bottom-right-radius:0;border-right:1px solid var(--fv-border)}
+.fv-ed-seam-mark{position:absolute;left:4px;bottom:4px;z-index:2;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border-radius:9px;background:color-mix(in srgb,var(--fv-bg) 78%,transparent);color:var(--fv-ink);pointer-events:none}
+.fv-ed-seam-mark svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .fv-ed-clip-media,.fv-ed-progress-fill,.fv-ed-block-progress{position:absolute;inset:0;pointer-events:none}
 .fv-ed-clip-media{background-repeat:repeat-x;background-position:left center;background-size:auto 100%}
 .fv-ed-waveform{width:100%;height:100%;display:block;stroke:color-mix(in srgb,var(--fv-accent) 55%,transparent);stroke-width:1;fill:none}
