@@ -408,7 +408,13 @@ class Session:
         from .portable_launcher import PortableController
         root = Path(plain(root))
         controller = PortableController(root, bundled=self.source)
-        controller.restore({'url': self.form['url']})
+        values = {'url': self.form['url']}
+        selected = self.selected or {}
+        # Imported environments must not inherit another installation's LAN access.
+        if (selected.get('engine') and Path(plain(resolved(selected['engine'])))
+                == Path(plain(resolved(root / 'engine')))):
+            values['installation'] = selected
+        controller.restore(values)
         self.controller.close()
         self.repair_request = None
         self.controller = controller
