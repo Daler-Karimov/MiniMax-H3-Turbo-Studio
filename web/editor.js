@@ -22,6 +22,7 @@ import {createProgressConnection} from './progress_connection.js';
 import {createSelectionActions, deletionStatus, isMultiple, isTyping, playheadIds, removableGaps, removeGaps} from './editor_select.js';
 import {isolateDialogKeys, topDialog} from './dialog_keys.js';
 import {createBlockNotes, describedTrack} from './editor_notes.js';
+import {createFirstRunGuide} from './first_run_guide.js';
 const editorStyles = Promise.all(['editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -115,6 +116,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     const top = el('header', 'fv-header fv-ed-top'), libraryHost = el('aside', 'fv-ed-library'), preview = el('section', 'fv-ed-preview'),
         transport = el('div', 'fv-ed-transport'), genHost = el('div', 'fv-ed-genbar'), tracksHost = el('div', 'fv-ed-tracks'), zoomHost = el('div', 'fv-ed-zoom');
     const adjustHost = el('aside', 'fv-ed-adjust-host');
+    tracksHost.dataset.fvGuide = 'editor-timeline';
     const button = (label, action, cls = '') => { const value = el('button', cls, label); value.type = 'button'; value.onclick = action; return value; };
     const navigation = viewSwitch('editor', () => handle.switchView('studio'), () => handle.switchView('nodes'), () => {}, () => handle.switchView('autopilot'));
     for (const control of navigation.querySelectorAll('button')) control.removeAttribute('title');
@@ -159,7 +161,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     let library = null, closing = false, closePromise = null, exportSnapshot = null, lastSeed = null, projectEpoch = 0;
     let disposed = false, suppressSave = false, savedContent = '', initializing = true, tracks = null, genbar = null, adjustPanel = null, exportStatus = null, pointerEditing = false, deferredStamp = null;
     let capability = {maxSeconds: 15, maxFollowSeconds: 15, maxRequestFrames: null, estimate: () => null}, generationBusy = false, switching = false, generationDone = null, finishGeneration = null;
-    let noticeTimer = null, stopExport = null, mostRecentJob = null;
+    let noticeTimer = null, stopExport = null, mostRecentJob = null, guide = null;
     const jobWatchers = new Map(), progress = new Map(), jobStatuses = new Map(), runProgress = new Map();
     let blockStates = null, progressObserver = null, progressConnection = null;
     function barJob(job) {
@@ -969,6 +971,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (topDialog() === element && !dismissPopup(event)) state.select(null, {history: true});
     });
     const stopKeys = isolateDialogKeys(element, (event, inside) => {
+        if (guide?.handleKey(event)) return;
         if (event.type === 'keyup') { transportControls.keyboard(event); return; }
         if (event.type !== 'keydown') return;
         if (event.isComposing || event.keyCode === 229) return;
@@ -1020,6 +1023,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         async close() {
             if (closePromise) return closePromise;
             textTools.flush();
+            guide?.suspend();
             closing = true; element.inert = true; player.pause();
             closePromise = (async () => {
                 await handle.ready;
@@ -1030,7 +1034,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
-                rememberView(); disposed = true; transportControls.dispose(); player.dispose();
+                rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
                 audio.dispose();
                 listeners.splice(0).forEach(remove => remove());
@@ -1150,5 +1154,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         for (const host of [tracksHost, toolbar]) host.classList.remove('fv-ed-pending');
         if (!closing && !disposed) { player.refresh(); updateTop(); updateTransport(); }
     });
+    if (typeof MutationObserver !== 'undefined') guide = createFirstRunGuide({dialog: element, api,
+        cn: String(language()).toLowerCase().startsWith('zh'), group: 'editor',
+        isBusy: () => initializing || !tracks || genHost.inert || pointerEditing || jobActive() || ['running', 'queued'].includes(exportStatus?.state),
+        targets: {'editor-trim': () => tracks?.guideTarget('trim'), 'editor-empty': () => tracks?.guideTarget('empty')}});
     updateTop(); return handle;
 }

@@ -1,6 +1,7 @@
 .fv-studio .fv-guide-layer{position:fixed;inset:0;z-index:40;pointer-events:none;overflow:hidden;font-family:var(--fv-font);color:var(--fv-ink)}
 .fv-studio .fv-guide-ring{position:absolute;border:2px solid var(--fv-accent);box-shadow:0 0 0 9999px rgb(0 0 0 / 42%);pointer-events:none}
 .fv-studio .fv-guide-bubble{position:absolute;pointer-events:auto;width:340px;max-width:calc(100vw - 48px);padding:20px;border-radius:14px;background:var(--fv-raised);border:1px solid var(--fv-border);box-shadow:0 16px 48px #0005}
+.fv-studio .fv-guide-layer[data-group=editor] .fv-guide-bubble{max-width:calc(100vw - 24px)}
 .fv-studio .fv-guide-message{font-size:14px;font-weight:400;line-height:1.6;text-wrap:balance;margin:0;white-space:normal;overflow-wrap:normal;color:var(--fv-ink)}
 .fv-studio .fv-guide-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px}
 .fv-studio .fv-guide-dots{display:flex;align-items:center;gap:6px;flex-shrink:0}

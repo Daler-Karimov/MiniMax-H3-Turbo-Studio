@@ -13,6 +13,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     note.setAttribute('role', 'status'); note.hidden = true;
     const input = el('input', 'fv-ed-description'); input.type = 'text'; input.value = text;
     const generate = el('button', 'fv-ed-generate'), cancel = el('button', null, t('Cancel', '取消')), resume = el('button', null, t('Continue', '继续'));
+    input.dataset.fvGuide = 'editor-describe'; generate.dataset.fvGuide = 'editor-generate';
     for (const button of [generate, cancel, resume]) button.type = 'button';
     host.append(hint, note, input, generate, cancel, resume);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});

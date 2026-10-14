@@ -424,6 +424,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         const status = create('span', 'fv-ed-clip-status');
         const left = create('span', 'fv-ed-trim-handle fv-ed-trim-start'); left.dataset.edge = 'start';
         const right = create('span', 'fv-ed-trim-handle fv-ed-trim-end'); right.dataset.edge = 'end';
+        if (!isText(clip)) right.dataset.fvGuide = 'editor-trim';
         node.append(media, fill, status, left, right);
         const item = {element: node, media, fill, status, clip, kind: track.kind, component: null, waveKey: undefined};
         if (blockProgress && !isText(clip)) {
@@ -453,6 +454,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             let row = rows.get(track.id);
             if (!row) {
                 const node = create('div', 'fv-ed-track-row'); node.dataset.track = track.id;
+                if (track.id === 'v1') node.dataset.fvGuide = 'editor-empty';
                 const empty = create('div', 'fv-ed-track-empty');
                 node.append(empty);
                 const head = create('div', 'fv-ed-track-head'); head.dataset.track = track.id;
@@ -1132,7 +1134,29 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             showInsertion(null); insertion.classList.remove('fv-ed-blocked-insertion');
         }, 700);
     }
-    return {element, keyboard, menu, dismissPopup, flashBlocked, seekPlayhead, extendClip,
+    function guideTarget(kind) {
+        const viewport = scroll.getBoundingClientRect();
+        const reveal = (left, width) => () => {
+            if (left < viewport.left + 12 || left + width > viewport.right - 12)
+                scroll.scrollLeft = Math.max(0, scroll.scrollLeft + left - viewport.left - 12);
+        };
+        if (kind === 'trim') {
+            const item = [...clips.values()].filter(item => item.clip.source && !isText(item.clip))
+                .sort((a, b) => (b.track === 'v1') - (a.track === 'v1') || b.clip.start - a.clip.start)[0];
+            if (!item) return null;
+            const node = item.element.querySelector('.fv-ed-trim-end');
+            const r = item.element.getBoundingClientRect(), left = r.right - 12;
+            return {node, rect: {left, right: left + 24, top: r.top, bottom: r.bottom, width: 24, height: r.height}, reveal: reveal(left, 24)};
+        }
+        const node = rows.get('v1')?.element;
+        if (!node) return null;
+        // Leave a small gap beyond all tracks, outside the trim hit area. At
+        // frame zero an empty project starts exactly at the timeline origin.
+        const end = model.duration(state.record), start = end ? Math.ceil(end / model.FPS + 12 / state.zoom) * model.FPS : 0;
+        const r = node.getBoundingClientRect(), left = content.getBoundingClientRect().left + pixels(start), width = 3 * state.zoom;
+        return {node, rect: {left, right: left + width, top: r.top, bottom: r.bottom, width, height: r.height}, reveal: reveal(left, width)};
+    }
+    return {element, keyboard, menu, dismissPopup, flashBlocked, seekPlayhead, extendClip, guideTarget,
         setSnapping(enabled) {
             if (typeof enabled !== 'boolean') return {ok: false, reason: 'snapping'};
             setTransportSnapping(state, enabled); cachedPoints = allPoints(gesture?.ids || []);

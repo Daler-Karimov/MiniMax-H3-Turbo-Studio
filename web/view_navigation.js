@@ -71,6 +71,8 @@ export function refreshNavigation() {
 }
 
 export function openCreativeWorkspace() {
+    // Settings replay belongs to the visible editing workspace too.
+    if (currentView === 'editor' && document.querySelector('dialog.fv-editor[open]')) return true;
     refreshNavigation();
     const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
     const node = currentView === 'studio' ? selected : focused || selected;
