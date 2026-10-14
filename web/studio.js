@@ -121,14 +121,14 @@ function saveTriggers(name, words) {
 
 export const loraWarning = () => t(
     'FreeVideo needs no acceleration LoRA.',
-    'FreeVideo无需添加加速LoRA');
+    'FreeVideo 无需添加加速 LoRA');
 
 export function promptGuide() {
     const note = el('p', null, 'fv-prompt-guide');
     const link = el('a', 'MiniMax H3 Prompt Skill ↗');
     link.href = 'https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/SKILL.md';
     link.target = '_blank'; link.rel = 'noopener noreferrer';
-    note.append(document.createTextNode(t('For better results, ask AI to rewrite your prompt using ', '让AI参考 ')),
+    note.append(document.createTextNode(t('For better results, ask AI to rewrite your prompt using ', '让 AI 参考 ')),
         link, document.createTextNode(t('. We recommend ', ' 重写提示词效果会更好。推荐使用 ')));
     const freeToken = el('a', 'FreeToken ↗');
     freeToken.href = 'https://www.flashml.ai/';

@@ -723,7 +723,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         });
         const sendable = sendingAllowed();
         input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
-        input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to keep listening', '回到 Agent 那边让它继续') : t('Message the agent…', '对 Agent 说…');
+        input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to continue', '请在 Agent 里让它继续') : t('Message the agent…', '对 Agent 说…');
         sendButton.disabled = !sendable || draftSending() || !input.value.trim();
         if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }

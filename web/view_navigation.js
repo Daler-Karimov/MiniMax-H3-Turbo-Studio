@@ -120,34 +120,6 @@ export function installNavigation(openStudio, agent = false) {
         if (created) handle?.notify(t('Created an editing project for you.', '已为你新建一个剪辑工程'));
         return handle;
     }, true), () => choose(node => openAutopilot(node), true)), createVersionInfo(cn).element, settings); toolbar.append(row);
-    let shown = false;
-    try { shown = localStorage.getItem('freevideo.view-guide') === '1'; } catch { /* Show once this session. */ }
-    if (!shown) {
-        const guide = document.createElement('div'); guide.className = 'fv-view-guide';
-        const text = document.createElement('span');
-        text.textContent = t('Switching views keeps the content of each view.', '切换视图时，各视图的内容都会保留。');
-        const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.textContent = t('Got it', '知道了');
-        dismiss.onclick = () => {
-            try { localStorage.setItem('freevideo.view-guide', '1'); } catch {}
-            // Fold the tip away rather than letting the toolbar jump.
-            const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-            if (reduce || typeof guide.animate !== 'function') { guide.remove(); return; }
-            // The tip set the toolbar's width; contract the bar in the same motion.
-            const before = toolbar.getBoundingClientRect().width;
-            guide.style.display = 'none';
-            const after = toolbar.getBoundingClientRect().width;
-            guide.style.display = '';
-            const height = guide.getBoundingClientRect().height;
-            guide.style.overflow = 'hidden'; guide.style.whiteSpace = 'nowrap';
-            const timing = {duration: 260, easing: 'cubic-bezier(.4,0,.2,1)'};
-            if (Math.abs(before - after) > 1) toolbar.animate([{width: `${before}px`}, {width: `${after}px`}], timing);
-            // The text is gone before the bar has narrowed enough to clip it.
-            guide.animate([{opacity: 1, height: `${height}px`, marginTop: '10px'}, {opacity: 0, offset: .4},
-                {opacity: 0, height: '0px', marginTop: '0px', paddingTop: '0px', paddingBottom: '0px'}],
-            {...timing, fill: 'forwards'}).finished.then(() => guide.remove(), () => guide.remove());
-        };
-        guide.append(text, dismiss); toolbar.append(guide);
-    }
     toolbar.append(createUpdateNotice(cn).element);
     document.body.append(toolbar); refreshNavigation();
     makeMovable(toolbar);

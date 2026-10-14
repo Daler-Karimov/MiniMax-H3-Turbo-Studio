@@ -291,8 +291,8 @@ function mediaPanel(node, mount = null) {
                         const off = Math.abs(Math.log((preview.naturalWidth / preview.naturalHeight) / (size.width / size.height))) > .02;
                         if (!off || !preview.isConnected) return;
                         const note = el("div", undefined, "fv-shape-note");
-                        note.append(el("span", text(`Its shape differs from the video (${size.width}×${size.height}); the edges are cropped when generating.`,
-                            `比例与视频（${size.width}×${size.height}）不同，生成时会居中裁掉多出的部分。`)),
+                        note.append(el("span", text('Different aspect ratio from the video; it will be center-cropped.',
+                            '和视频比例不同，会居中裁剪。')),
                             button(text("Adjust crop", "调整裁剪"), text("Choose what the video keeps", "选择视频保留的画面"), () => editImage(row.file, "crop")));
                         wrap.after(note);
                     }, {once: true});
