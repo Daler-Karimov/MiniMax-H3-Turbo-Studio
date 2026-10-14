@@ -162,11 +162,14 @@ def generate(*, local=False):
         first_frame_reference={'type': 'boolean', 'default': False, 'description':
             'Reduces drift over a continued video: every continuing part also sees the first frame of the whole '
             'video. It holds framing and motion close to that frame.'},
+        part_prompts=array(string(20000), 1, 5, description='One description per part of a video made in several '
+            'parts, in order, so each part plays its own share of the story. The count must equal the '
+            'chain_plan.blocks POST /plan gives for this length. Omitted: FreeVideo splits prompt into parts before the first part.'),
         takes=number(1, 8, integer=True, default=1), **common()),
         allOf=[{'if': {'required': ['refine_from'], 'properties': {'refine_from': {'type': 'string'}}},
                 'then': {'properties': {k: False for k in ('prompt', 'width', 'height', 'aspect', 'megapixels',
                     'seconds', 'seed', 'quality', 'sampling', 'media', 'loras', 'preview', 'continue_from',
-                    'first_frame_reference')}},
+                    'first_frame_reference', 'part_prompts')}},
                 'else': {'required': ['prompt']}},
                {'if': {'anyOf': [{'required': [k]} for k in ('aspect', 'megapixels')]},
                 'then': {'not': {'anyOf': [{'required': [k]} for k in ('width', 'height')]}}},

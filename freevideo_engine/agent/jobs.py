@@ -157,6 +157,24 @@ def cut_problems(spec, seconds, prefix='', *, editor=None):
     return [dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got))]
 
 
+def part_prompt_problems(spec, prefix=''):
+    """part_prompts gives one description per planned part; the chain backend refuses any other count."""
+    if spec['kind'] != 'generate' or not spec.get('part_prompts'):
+        return []
+    from ..chain_plan import PlanError, plan
+    try:
+        count = len(plan(spec['seconds'], max_frames=single_frame_limit(spec),
+                         continued=bool(spec.get('continue_from')))['blocks'])
+    except PlanError:
+        return []  # parts_problems names the length.
+    given = len(spec['part_prompts'])
+    if given == count:
+        return []
+    allowed = '%d description%s, one for each of the chain_plan.blocks POST /plan gives for %g s' % (
+        count, '' if count == 1 else 's', spec['seconds'])
+    return [schema.diagnostic(prefix + '/part_prompts', allowed, given)]
+
+
 def _continued_part_problem(seconds, chain):
     """True when a video that continues another has a part the backend refuses, or is under 10 s.
 
@@ -733,6 +751,7 @@ class Jobs:
                                                work=self.continued_work(normalized),
                                                planned=self.planned_parts(normalized, rows)))
                 problems.extend(cut_problems(normalized, normalized.get('seconds'), prefix, editor=editor))
+                problems.extend(part_prompt_problems(normalized, prefix))
                 try:
                     self.port.check(normalized)
                 except specs.SpecError as error:
@@ -1476,6 +1495,10 @@ class Jobs:
                     # Planned as a continuation, so the new video is as long as the request says.
                     payload.update(after=dict(work=self.port.output_relative(self.source_video(spec['continue_from']))),
                                    text=prompt, seed=spec['seed'])
+                if spec.get('part_prompts') and 'seconds' in payload:
+                    # Each part plays its own description, with the same LoRA trigger words the whole prompt gets.
+                    from ..lora_triggers import apply_triggers
+                    payload['texts'] = [apply_triggers(text, spec.get('loras', [])) for text in spec['part_prompts']]
                 self.start_chain(row, payload=payload)
         work = asyncio.create_task(asyncio.to_thread(prepare))
         try:

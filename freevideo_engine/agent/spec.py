@@ -191,6 +191,8 @@ def normalize(value, *, port=None):
                 result['continue_from'] = dict(value['continue_from'])
             if value['first_frame_reference']:
                 result['first_frame_reference'] = True
+            if value.get('part_prompts'):
+                result['part_prompts'] = list(value['part_prompts'])
             result['loras'] = [dict(name=row, strength=1.) if isinstance(row, str) else {'strength': 1., **row}
                                for row in value['loras']]
             if port is not None:

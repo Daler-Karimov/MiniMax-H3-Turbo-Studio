@@ -77,6 +77,9 @@ GUIDE = {
         'Multiple blocks or continue_from need two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
+        'For a video in several parts, part_prompts gives each part its own description in order (as many as '
+        'chain_plan.blocks from POST /plan), so each part continues the story instead of replaying it; '
+        'without it FreeVideo splits prompt itself. '
         'A continue_from job saves a new video that holds only the added part; to hand the user one video, '
         'insert both into a project and export it.',
         'first_frame_reference (default false) reduces drift in a continued video: each continuing part also '
