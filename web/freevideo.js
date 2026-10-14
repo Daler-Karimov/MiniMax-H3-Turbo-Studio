@@ -13,7 +13,7 @@ import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceIn
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
-import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';
+import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
 import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
 import { regenerateResult, upscaleResult } from './studio_queue.js';
 import { openImageEditor, icon } from './image_editor.js';
@@ -569,6 +569,42 @@ function resultPanel(node) {
 }
 
 let configuringGraph = false;
+let configuration = 0;
+const watchedGraphs = new WeakSet();
+function captureWorkflow(graph) {
+    if (!graph || graph !== app.graph || promptHistoryRestoring(app)) return;
+    watchPromptHistory(api, app);
+    const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
+    // Current ComfyUI and older installations expose different names.
+    (tracker?.captureCanvasState || tracker?.checkState)?.call(tracker);
+}
+function trackCreationDraft(node) {
+    trackPromptDraft(node, () => captureWorkflow(node.graph), () => app.extensionManager?.workflow?.activeWorkflow?.path);
+}
+function watchCreationGraph(graph) {
+    if (!graph || watchedGraphs.has(graph)) return;
+    watchedGraphs.add(graph);
+    const changed = graph.on_change;
+    let queued = false;
+    graph.on_change = function (...args) {
+        const result = changed?.apply(this, args);
+        if (!configuringGraph && graph === app.graph && !queued) {
+            queued = true;
+            const revision = configuration;
+            queueMicrotask(() => {
+                queued = false;
+                if (configuringGraph || graph !== app.graph || revision !== configuration || promptHistoryRestoring(app)) return;
+                // graph.change() only redraws. Capture the finished edit, including
+                // properties and the asynchronous media/LoRA panel updates.
+                captureWorkflow(graph);
+                for (const node of graph._nodes || []) {
+                    if (node.comfyClass === 'FreeVideoGenerate' || node.type === 'FreeVideoGenerate') rememberPromptDraft(api, node);
+                }
+            });
+        }
+        return result;
+    };
+}
 function syncPrompts(reset = false) {
     if (configuringGraph && reset !== true) return;
     for (const node of app.graph?._nodes || []) if (node.type === 'FreeVideoGenerate') syncReferencePrompt(node, text, reset === true);
@@ -593,7 +629,7 @@ const progressConnection = createProgressConnection(api, message => {
 
 app.registerExtension({
     name: "FreeVideo.UnifiedMedia",
-    beforeConfigureGraph() { configuringGraph = true; },
+    beforeConfigureGraph() { configuringGraph = true; configuration++; },
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
         for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api))],
@@ -601,6 +637,7 @@ app.registerExtension({
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));
+        void savePromptDraft(api); // Retry this tab's outbox after an interrupted save.
         window.FreeVideoUI = {...window.FreeVideoUI, ready: true};
         await notifyCompatibility();
     },
@@ -654,13 +691,17 @@ app.registerExtension({
                             '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；其他二采步数需小于一采步数。');
                     }
                 }
-                const prompt = this.widgets?.find(w => w.name === 'text');
-                if (prompt) {
-                    // Every edit, in the creation panel or on the node, is the draft the launcher reopens.
-                    const node = this, callback = prompt.callback;
-                    prompt.callback = function (...args) { if (!configuringGraph) rememberPromptDraft(api, node); return callback?.apply(this, args); };
-                    prompt.inputEl?.addEventListener?.('input', () => rememberPromptDraft(api, node));
+                for (const widget of this.widgets || []) {
+                    // Node and creation-panel edits use the same named draft.
+                    const node = this, callback = widget.callback;
+                    widget.callback = function (...args) {
+                        const result = callback?.apply(this, args);
+                        if (!configuringGraph) rememberPromptDraft(api, node);
+                        return result;
+                    };
+                    widget.inputEl?.addEventListener?.('input', () => { if (!configuringGraph) rememberPromptDraft(api, node); });
                 }
+                trackCreationDraft(this);
                 resultPanel(this);
                 this.addWidget('button', text('Open creative workspace', '打开创作面板'), null, () => showStudio(this), {serialize: false});
                 const removed = this.onRemoved;
@@ -673,6 +714,13 @@ app.registerExtension({
     afterConfigureGraph() {
         syncPrompts(true);
         configuringGraph = false;
+        for (const node of app.graph?._nodes || []) {
+            if (node.comfyClass !== 'FreeVideoGenerate' && node.type !== 'FreeVideoGenerate') continue;
+            trackCreationDraft(node);
+        }
+        watchCreationGraph(app.graph);
+        // The host activates the target workflow after afterConfigureGraph.
+        requestAnimationFrame(() => watchPromptHistory(api, app));
         progressConnection.reset();
         progressConnection.refresh();
         refreshNavigation();

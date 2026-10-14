@@ -10,6 +10,41 @@ const studioWorkflow = graph => (graph?._nodes || graph?.nodes || []).some(n => 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let configured = performance.now();
 
+async function existingStudioWorkflow(target, bundled) {
+    // Restored background tabs are lazy: load() reads the host's saved draft,
+    // whereas the workflow store's openWorkflow() only selects the tab record.
+    await target.load?.();
+    const saved = target.changeTracker?.activeState;
+    // Leave the current graph intact; the existing startup check reports an
+    // unopened workflow without replacing the user's project.
+    if (!saved) return null;
+    const graph = structuredClone(saved);
+    if (!graph.nodes?.some(node => node.type === 'FreeVideoGenerate')) {
+        const node = structuredClone(bundled.nodes.find(node => node.type === 'FreeVideoGenerate'));
+        node.id = Math.max(graph.last_node_id || 0, ...graph.nodes.map(node => Number(node.id) || 0)) + 1;
+        graph.last_node_id = node.id;
+        node.pos = [Math.max(0, ...graph.nodes.map(node => (node.pos?.[0] || 0) + (node.size?.[0] || 400))) + 80, 100];
+        for (const input of node.inputs || []) input.link = null;
+        for (const output of node.outputs || []) output.links = null;
+        graph.nodes.push(node);
+        // Reconnect a single unambiguous media source, leaving every existing
+        // node and link intact. Multiple media sources keep their own topology.
+        const media = graph.nodes.filter(node => node.type === 'FreeVideoMedia');
+        const input = node.inputs?.findIndex(input => input.name === 'media') ?? -1;
+        const output = media.length === 1 ? media[0].outputs?.findIndex(output => output.type === node.inputs?.[input]?.type) ?? -1 : -1;
+        if (input >= 0 && output >= 0 && graph.version === .4) {
+            graph.links ||= [];
+            const id = Math.max(graph.last_link_id || 0, ...graph.links.map(link => link[0])) + 1;
+            graph.links.push([id, media[0].id, output, node.id, input, node.inputs[input].type]);
+            (media[0].outputs[output].links ||= []).push(id);
+            node.inputs[input].link = id;
+            graph.last_link_id = id;
+        }
+    }
+    graph.extra = {...graph.extra, freevideo_studio: true};
+    return restorePromptDraft(api, graph, target.path);
+}
+
 // ComfyUI restores the previous session's workflow and tabs after every
 // extension's setup, so that restore can bring another workflow to the front
 // over ours. Once startup is quiet, bring our tab back into view even if a
@@ -17,17 +52,31 @@ let configured = performance.now();
 // setup returns.
 async function keepInFront(workflow, opened) {
     let touched = false;
-    const touch = event => { if (!event.target?.closest?.('.fv-studio, .fv-health')) touched = true; };
+    const touch = event => { if (!event.target?.closest?.('.fv-health')) touched = true; };
     addEventListener('pointerdown', touch, true); addEventListener('keydown', touch, true);
     try {
         const begin = performance.now();
         while (performance.now() - begin < 15000
             && (app.extensionManager?.spinner || performance.now() - configured < 600)) await sleep(100);
-        // An already visible FreeVideo graph may contain edits; keep that copy.
-        if (studioWorkflow(app.graph)) return;
         const store = app.extensionManager?.workflow;
+        // Opening the bundled graph before session restore overwrites the cached
+        // FreeVideo tab, including its media and connections. Reuse that project.
+        if (studioWorkflow(app.graph)) {
+            const current = app.graph.serialize(), target = store?.activeWorkflow;
+            const restored = await restorePromptDraft(api, structuredClone(current), target?.path || '__existing__');
+            if (JSON.stringify(restored) !== JSON.stringify(current))
+                await app.loadGraphData(restored, true, true, target || 'FreeVideo');
+            return;
+        }
         // The user kept working in our own tab: its edits stay, even without the generate node.
         if (touched && opened && store?.activeWorkflow === opened) return;
+        const existing = store?.getWorkflowByPath?.('workflows/FreeVideo.json')
+            || store?.openWorkflows?.find(row => studioWorkflow(row.changeTracker?.activeState));
+        if (existing) {
+            const restored = await existingStudioWorkflow(existing, workflow);
+            if (restored) await app.loadGraphData(restored, true, true, existing);
+            return;
+        }
         // Our own tab when ComfyUI still has it; a new one otherwise.
         const target = opened && store?.getWorkflowByPath?.(opened.path) === opened ? opened : 'FreeVideo';
         await app.loadGraphData(structuredClone(workflow), true, true, target);

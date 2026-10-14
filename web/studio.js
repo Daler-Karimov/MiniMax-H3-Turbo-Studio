@@ -22,7 +22,7 @@ import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
-import { rememberPromptDraft } from './prompt_draft.js';
+import { rememberPromptDraft, trackPromptDraft } from './prompt_draft.js';
 import { canvasDimensions, imageSizeSelection } from './studio_size.js';
 import { createCapabilityView } from './capability_view.js';
 import { openEditorView } from './editor_loader.js';
@@ -48,7 +48,8 @@ const linked = (node, name) => node?.inputs?.some(input => input.name === name &
 const value = (node, name) => widget(node, name)?.value;
 function set(node, name, value) {
     const w = widget(node, name); if (!w || linked(node, name)) return false;
-    w.value = value; w.callback?.(value); node.graph?.change(); node.setDirtyCanvas?.(true, true); return true;
+    w.value = value; w.callback?.(value); node.graph?.change(); node.setDirtyCanvas?.(true, true);
+    rememberPromptDraft(api, node); return true;
 }
 function upstream(node, name) {
     const input = node.inputs?.find(i => i.name === name);
@@ -344,6 +345,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const extension = createExtendState(node, name => value(node, name), (name, v) => set(node, name, v));
     if (extendFrom && !extension.enter(extendFrom)) throw new Error(extendText(t, 'unavailable'));
     const dialog = el('dialog', null, 'fv-studio'); dialog.setAttribute('aria-label', t('FreeVideo creative workspace', 'FreeVideo 创作面板'));
+    // ComfyUI's background dialogs can lock body pointer events. This native
+    // modal is above them and must remain interactive when the launcher reopens it.
+    dialog.style.pointerEvents = 'auto';
     current = {node, dialog}; const cleanup = [];
     const header = el('header', null, 'fv-header'), brand = el('div', null, 'fv-brand');
     brand.append(wordmark());
@@ -863,7 +867,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     const runbar = el('div', null, 'fv-runbar');
     let busy = false, queued = false, cancelling = false, activePrompt = null, capturing = false;
-    let runMode = 'single', queueState;
+    let runMode = ['single', 'batch', 'loop'].includes(node.properties?.freevideo_run_mode)
+        ? node.properties.freevideo_run_mode : 'single', queueState;
     if (!studioQueues.has(node)) studioQueues.set(node, createStudioQueue(api, node.id, {
         formatError: (error, snapshot) => createErrorReport(error, {stage: 'submission', snapshot, node, graph: app.graph}),
         // Direct snapshot submission still feeds the same graph result panel.
@@ -923,14 +928,23 @@ export function openStudio(node, {extendFrom = null} = {}) {
     optionsPanel.append(el('strong', t('Generation mode', '生成方式')));
     const modeButtons = [];
     for (const [id, label] of [['single', t('One video', '单次生成')], ['batch', t('Batch', '批量生成')], ['loop', t('Loop', '循环生成')]]) {
-        const b = button(label, () => { runMode = id; updateRunButton(); });
+        const b = button(label, () => {
+            runMode = id; node.properties.freevideo_run_mode = id;
+            rememberPromptDraft(api, node); updateRunButton();
+        });
         b.dataset.mode = id; modeButtons.push(b); optionsPanel.append(b);
     }
-    const count = el('input'); count.type = 'number'; count.min = '2'; count.max = '100'; count.step = '1'; count.value = '4';
+    const count = el('input'); count.type = 'number'; count.min = '2'; count.max = '100'; count.step = '1';
+    count.value = node.properties?.freevideo_batch_count ?? 4;
     count.setAttribute('aria-label', t('Number of videos', '生成数量'));
     const countField = field(t('Number of videos', '生成数量'), count); optionsPanel.append(countField);
     const modeHelp = el('p', '', 'fv-muted'); optionsPanel.append(modeHelp);
-    count.oninput = () => updateRunButton();
+    count.oninput = () => {
+        if (count.value && count.checkValidity()) {
+            node.properties.freevideo_batch_count = Number(count.value); rememberPromptDraft(api, node);
+        }
+        updateRunButton();
+    };
     runOptions.append(optionsToggle, optionsPanel);
     const generate = button('', submitDraft, 'fv-primary');
     generate.dataset.fvGuide = 'generate';
@@ -985,7 +999,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const submitting = capturing || queueState?.submitting;
         updateFirstFrame();
         const multiple = lengthControl.plan?.count > 1;
-        if (multiple) runMode = 'single';
+        // A long/continued video temporarily uses one run. Keep the user's mode
+        // preference so returning to a short video and reloading show the same choice.
+        runMode = multiple || extension.source ? 'single'
+            : ['single', 'batch', 'loop'].includes(node.properties?.freevideo_run_mode) ? node.properties.freevideo_run_mode : runMode;
         generate.disabled = submitting || chainController?.active || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
         generate.textContent = submitting ? t('Adding…', '正在添加…')
             : runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 条任务`)
@@ -1284,5 +1301,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         }
     }).catch(() => {});
     requestAnimationFrame(() => { if (dialog.open && !dialog.querySelector('.fv-guide-layer') && !document.querySelector('dialog.fv-editor[open]')) (extension.source ? prompt : generate).focus({preventScroll: true}); });
+    // Establish the baseline after UI initialization; opening a panel is not an edit.
+    trackPromptDraft(node);
     return dialog;
 }
