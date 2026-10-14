@@ -10,6 +10,23 @@ const studioWorkflow = graph => (graph?._nodes || graph?.nodes || []).some(n => 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let configured = performance.now();
 
+// ComfyUI's own session storage holds the last project's tabs and drafts under
+// several keys that differ between frontend versions; any of them naming one of
+// our nodes (the generate node may have been removed) means a project from the previous visit is waiting to be restored.
+function cachedStudioProject() {
+    for (const area of ['localStorage', 'sessionStorage']) {
+        try {
+            const store = globalThis[area];
+            for (let index = 0; index < (store?.length || 0); index++) {
+                const key = store.key(index);
+                if (key !== 'workflow' && !key?.startsWith('Comfy.')) continue;
+                if (/FreeVideo(Generate|Media)|freevideo_studio/.test(store.getItem(key) || '')) return true;
+            }
+        } catch { /* Storage blocked: open the bundled workflow right away. */ }
+    }
+    return false;
+}
+
 async function existingStudioWorkflow(target, bundled) {
     // Restored background tabs are lazy: load() reads the host's saved draft,
     // whereas the workflow store's openWorkflow() only selects the tab record.
@@ -97,18 +114,22 @@ app.registerExtension({
         url.searchParams.delete('freevideo');
         window.history.replaceState(window.history.state, '', url);
         let workflow;
+        const cached = cachedStudioProject();
         try {
             const response = await api.fetchApi('/freevideo/launcher/workflow');
             if (!response.ok) throw new Error(`FreeVideo workflow: HTTP ${response.status}`);
             // A fresh copy of the bundled workflow, with the prompt last written.
             workflow = await restorePromptDraft(api, await response.json());
-            await app.loadGraphData(structuredClone(workflow), true, true, 'FreeVideo');
+            // Opening the bundled graph now would overwrite the cached project's
+            // media and connections before ComfyUI restores them; keepInFront
+            // brings the restored tab forward instead.
+            if (!cached) await app.loadGraphData(structuredClone(workflow), true, true, 'FreeVideo');
         } catch (error) {
             console.error('FreeVideo launcher:', error);
             health({type: 'launch', error});
             return;
         }
-        const opened = app.extensionManager?.workflow?.activeWorkflow;
+        const opened = cached ? undefined : app.extensionManager?.workflow?.activeWorkflow;
         keepInFront(workflow, opened).then(() => health({type: 'launch'}), error => {
             console.error('FreeVideo launcher:', error);
             health({type: 'launch', error});
