@@ -107,9 +107,12 @@ def chain_error(code, message, next_action, *, details=None, retryable=False):
 
 
 def single_block(spec, seconds=None):
-    from ..chain_plan import plan
-    return plan(spec['seconds'] if seconds is None else seconds, max_frames=single_frame_limit(spec),
-                continued=bool(spec.get('continue_from')))['single']
+    from ..chain_plan import PlanError, plan
+    try:
+        return plan(spec['seconds'] if seconds is None else seconds, max_frames=single_frame_limit(spec),
+                    continued=bool(spec.get('continue_from')))['single']
+    except PlanError:
+        return False  # Too long for one generation and it cannot be cut into parts: parts_problems says so.
 
 
 def continuation_problems(spec, prefix='', *, editor=None):
@@ -162,13 +165,13 @@ def _continued_part_problem(seconds, chain):
     return seconds < MIN_PART_SECONDS or any(block['frames'] < MIN_PART_FRAMES for block in chain['blocks'])
 
 
-def length_problem(seconds, continued, prefix='', *, minimum=None):
-    """Suggest nearby whole-second lengths the same planner and minimum accept."""
+def length_problem(seconds, continued, prefix='', *, minimum=None, frames=None):
+    """Suggest nearby whole-second lengths the same planner, device limit (`frames`) and minimum accept."""
     from ..chain_plan import PlanError, plan
     available = []
     for candidate in range(max(1, int(seconds) - 30), int(seconds) + 31):
         try:
-            chain = plan(candidate, continued=continued)
+            chain = plan(candidate, max_frames=frames, continued=continued)
         except PlanError:
             continue
         if not continued or not _continued_part_problem(candidate, chain):
@@ -178,8 +181,11 @@ def length_problem(seconds, continued, prefix='', *, minimum=None):
     nearby = [s for s in available if s < seconds][-2:] + [s for s in available if s > seconds][:2]
     rule = ('at least %d s per continued part' % minimum if minimum is not None
             else 'a length that can be split into supported parts')
-    allowed = rule + '; available lengths: ' + ', '.join('%d s' % s for s in nearby)
+    allowed = rule + ('; available lengths: ' + ', '.join('%d s' % s for s in nearby) if nearby
+                      else '; this device makes no length near this one at this size')
     problem = schema.diagnostic(prefix + '/seconds', allowed, seconds, nearest=nearby)
+    if not nearby:
+        problem['next'] = 'Try a smaller width and height.'
     if minimum is not None:
         problem['message'] = ('Each continued part must be at least %d seconds. Make it longer. ' % minimum
                               + problem['message'])
@@ -204,9 +210,9 @@ def parts_problems(spec, runner, prefix='', *, editor=None, work=None, planned=N
         try:
             chain = plan(spec['seconds'], max_frames=frames, continued=continued)
         except PlanError:
-            return [length_problem(spec['seconds'], continued, prefix)]
+            return [length_problem(spec['seconds'], continued, prefix, frames=frames)]
         if continued and _continued_part_problem(spec['seconds'], chain):
-            return [length_problem(spec['seconds'], continued, prefix, minimum=MIN_PART_SECONDS)]
+            return [length_problem(spec['seconds'], continued, prefix, minimum=MIN_PART_SECONDS, frames=frames)]
     if runner is None:
         return []
     limit = runner.max_parts
@@ -1469,7 +1475,8 @@ class Jobs:
             except (PlanError, ChainPartTooShort) as error:
                 row['resume_pending'] = False
                 problem = length_problem(row['spec']['seconds'], bool(row['spec'].get('continue_from')),
-                                         minimum=error.limit if isinstance(error, ChainPartTooShort) else None)
+                                         minimum=error.limit if isinstance(error, ChainPartTooShort) else None,
+                                         frames=single_frame_limit(row['spec']))
                 self.finish(row, 'failed', error=errors.validation([problem]))
                 return
             except Exception:
