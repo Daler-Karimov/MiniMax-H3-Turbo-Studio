@@ -323,6 +323,17 @@ def iso(stamp):
         return None
 
 
+class _Warmed:
+    """A submit's capability source inside Jobs.lock: the studio's answer as it stands, never a wait."""
+    def __init__(self, port):
+        self.port = port
+
+    def capability_snapshot(self, query):
+        table = self.port.capability_snapshot(query)
+        # Still being worked out after the wait before the lock: the unknown limit, as a timeout gives.
+        return dict(status='unavailable') if table.get('status') == 'computing' else table
+
+
 class _ReceiptWrites:
     """Windows receipt outbox. Backoff never holds this lock or Jobs.lock.
 
@@ -657,16 +668,35 @@ class Jobs:
         payload = dict(value, **({'takes': takes} if takes != 1 else {}))
         return self.submit_request(payload, client=client, parent=parent, editor=editor)[0]
 
+    def warm_capabilities(self, inputs):
+        """Before Jobs.lock: each row waits here (length.WAIT_SECONDS at most) for a size asked for the first time."""
+        from .routes import substitute
+        names = {}
+        for raw in inputs:
+            item = substitute({k: v for k, v in raw.items() if k not in ('ref', 'takes')}, names)
+            if isinstance(raw.get('ref'), str):
+                names[raw['ref']] = specs.new_id()  # Stands in for the id this row gets under the lock.
+            try:
+                specs.normalize(item, port=self.port)
+            except Exception:
+                pass  # The locked pass reports it, in batch order.
+
     def submit_request(self, value, *, client=None, key=None, parent=None, editor=None):
         batch = isinstance(value, dict) and 'jobs' in value
         schema.validate(schema.batch_schema(local=True) if batch else schema.job_schema(local=True), value)
         schema.preflight_submission(value)
+        if key is not None or value.get('ref') is not None:
+            with self.lock:
+                _, replay = self.idempotency('submit', value, key, client)
+                if replay is not None:
+                    return replay, True
+        inputs = value['jobs'] if batch else [value]
+        self.warm_capabilities(inputs)
         with self.lock:
+            # Another submit may have committed the same key while its tables warmed.
             receipt, replay = self.idempotency('submit', value, key, client)
             if replay is not None:
                 return replay, True
-            batch = 'jobs' in value
-            inputs = value['jobs'] if batch else [value]
             names, rows, problems = {}, [], []
             for i, raw in enumerate(inputs):
                 prefix = '/jobs/%d' % i if batch else ''
@@ -679,7 +709,7 @@ class Jobs:
                 from .routes import substitute
                 item = substitute(item, names)
                 try:
-                    normalized = specs.normalize(item, port=self.port)
+                    normalized = specs.normalize(item, port=_Warmed(self.port))
                 except specs.SpecError as error:
                     problems.extend(schema.prefix_diagnostic(e, prefix) for e in error.errors)
                     continue
