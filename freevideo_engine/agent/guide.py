@@ -176,14 +176,16 @@ RULES = [
     'job, never in a tight loop. The connection dropped or FreeVideo restarted: connect again, read the job list, '
     'and continue; resend an unanswered request with the same ref, and never generate again what is already done.',
     'Do not stop to report progress. A long task is not a reason to stop or to ask whether to go on.',
-    'When a video is done, tell the user it is in "Your creations" in FreeVideo, in plain words. Do not read out job, library '
+    'When a video is done, tell the user it is in "Creations" in FreeVideo, in plain words. Do not read out job, library '
     'or project ids; give a file path only when the user asks for one. If the length differs from what was asked, '
     'say the real length in seconds and do not explain frame counts.',
     'Ask the user only when you would have to change the content or style they asked for, when the work will '
     'take clearly longer than you told them at the start, or when you would have to delete or overwrite their '
     'own works or edits.',
     'Stay inside FreeVideo. Do not touch other files on this computer. Never change back something the user '
-    'edited. When the user tells you to stop, stop: cancel what you started and start nothing new.',
+    'edited. When the user tells you to stop, stop: cancel what you started and start nothing new. '
+    'When cancelled_by is "user", the user stopped this job on the page and the page already shows it as stopped: '
+    'send no message about it, and do not retry or resume it unless they ask.',
     'Cast before you shoot. Search the cast library first. Use the card the user named, or one that clearly '
     'matches; ask if you are unsure. Create a card only when none fits: from the user\'s photos if they gave any, '
     'otherwise make its reference pictures with POST /cast/{id}/generate. '
@@ -213,12 +215,13 @@ RULES_ZH = [
     '连接中断或 FreeVideo 重启后，重新连接，读取任务列表并继续；未收到响应的请求用相同的 ref 重发，'
     '已经完成的内容不要重新生成。',
     '不要为了汇报进度而停下。任务耗时较长，不是停止工作或询问是否继续的理由。',
-    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“我的作品”里。不要念任务、作品或剪辑的编号；'
+    '视频做好后，用通俗的话告诉用户它已经放进 FreeVideo 的“作品”里。不要念任务、作品或剪辑的编号；'
     '文件路径在用户问起时再给。实际长度和要求的不一样时，只说实际约几秒，不解释帧数。',
     '只有需要改变用户要求的内容或风格、预计耗时明显超过开始时告诉用户的时间，'
     '或者需要删除或覆盖用户自己的作品或修改时，才询问用户。',
     '只在 FreeVideo 内工作，不要改动本机的其他文件，不要撤销用户做的修改。'
-    '用户要求停止时，取消你启动的任务，不再启动新任务。',
+    '用户要求停止时，取消你启动的任务，不再启动新任务。'
+    'cancelled_by 为 "user" 时，表示用户在页面上停止了该任务，页面已显示已停止：不要为此发消息；除非用户要求，否则不要重试或恢复。',
     '先选角，再拍摄。先搜索角色库，使用用户指定的卡片或明确符合要求的卡片；拿不准时询问用户。'
     '只有找不到合适卡片时才新建：用户提供了照片就用照片，否则通过 POST /cast/{id}/generate 生成参考图。'
     '开拍前用一句话告诉用户选角结果。后续镜头使用卡片当前的图片。保留你创建的卡片，方便以后拍片复用。',

@@ -67,6 +67,17 @@ def image_reference(port, relative):
         raise JobError('invalid_media', IMAGE_ERRORS['invalid_media']) from None
 
 
+USER_STOP_NEXT = ('The user stopped this job on the page, and the page already shows it as stopped. Send no message '
+                  'about it, and do not retry or resume it unless they ask. Wait for what they say next.')
+
+
+def user_stop_notice(row):
+    """What a job the user stopped on the page tells the agent. A job the agent cancelled, and one that finished
+    some other way before the stop took hold, read as before."""
+    stopped = row.get('cancelled_by') == 'user' and row.get('status') not in ('succeeded', 'failed', 'interrupted')
+    return dict(cancelled_by='user', next=USER_STOP_NEXT) if stopped else {}
+
+
 class JobError(Exception):
     def __init__(self, code, message, **details):
         super().__init__(message)
@@ -96,9 +107,12 @@ def chain_error(code, message, next_action, *, details=None, retryable=False):
 
 
 def single_block(spec, seconds=None):
-    from ..chain_plan import plan
-    return plan(spec['seconds'] if seconds is None else seconds, max_frames=single_frame_limit(spec),
-                continued=bool(spec.get('continue_from')))['single']
+    from ..chain_plan import PlanError, plan
+    try:
+        return plan(spec['seconds'] if seconds is None else seconds, max_frames=single_frame_limit(spec),
+                    continued=bool(spec.get('continue_from')))['single']
+    except PlanError:
+        return False  # Too long for one generation and it cannot be cut into parts: parts_problems says so.
 
 
 def continuation_problems(spec, prefix='', *, editor=None):
@@ -151,13 +165,13 @@ def _continued_part_problem(seconds, chain):
     return seconds < MIN_PART_SECONDS or any(block['frames'] < MIN_PART_FRAMES for block in chain['blocks'])
 
 
-def length_problem(seconds, continued, prefix='', *, minimum=None):
-    """Suggest nearby whole-second lengths the same planner and minimum accept."""
+def length_problem(seconds, continued, prefix='', *, minimum=None, frames=None):
+    """Suggest nearby whole-second lengths the same planner, device limit (`frames`) and minimum accept."""
     from ..chain_plan import PlanError, plan
     available = []
     for candidate in range(max(1, int(seconds) - 30), int(seconds) + 31):
         try:
-            chain = plan(candidate, continued=continued)
+            chain = plan(candidate, max_frames=frames, continued=continued)
         except PlanError:
             continue
         if not continued or not _continued_part_problem(candidate, chain):
@@ -167,8 +181,11 @@ def length_problem(seconds, continued, prefix='', *, minimum=None):
     nearby = [s for s in available if s < seconds][-2:] + [s for s in available if s > seconds][:2]
     rule = ('at least %d s per continued part' % minimum if minimum is not None
             else 'a length that can be split into supported parts')
-    allowed = rule + '; available lengths: ' + ', '.join('%d s' % s for s in nearby)
+    allowed = rule + ('; available lengths: ' + ', '.join('%d s' % s for s in nearby) if nearby
+                      else '; this device makes no length near this one at this size')
     problem = schema.diagnostic(prefix + '/seconds', allowed, seconds, nearest=nearby)
+    if not nearby:
+        problem['next'] = 'Try a smaller width and height.'
     if minimum is not None:
         problem['message'] = ('Each continued part must be at least %d seconds. Make it longer. ' % minimum
                               + problem['message'])
@@ -193,9 +210,9 @@ def parts_problems(spec, runner, prefix='', *, editor=None, work=None, planned=N
         try:
             chain = plan(spec['seconds'], max_frames=frames, continued=continued)
         except PlanError:
-            return [length_problem(spec['seconds'], continued, prefix)]
+            return [length_problem(spec['seconds'], continued, prefix, frames=frames)]
         if continued and _continued_part_problem(spec['seconds'], chain):
-            return [length_problem(spec['seconds'], continued, prefix, minimum=MIN_PART_SECONDS)]
+            return [length_problem(spec['seconds'], continued, prefix, minimum=MIN_PART_SECONDS, frames=frames)]
     if runner is None:
         return []
     limit = runner.max_parts
@@ -304,6 +321,17 @@ def iso(stamp):
         return None if stamp is None else time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(stamp))
     except (OSError, OverflowError, TypeError, ValueError):
         return None
+
+
+class _Warmed:
+    """A submit's capability source inside Jobs.lock: the studio's answer as it stands, never a wait."""
+    def __init__(self, port):
+        self.port = port
+
+    def capability_snapshot(self, query):
+        table = self.port.capability_snapshot(query)
+        # Still being worked out after the wait before the lock: the unknown limit, as a timeout gives.
+        return dict(status='unavailable') if table.get('status') == 'computing' else table
 
 
 class _ReceiptWrites:
@@ -578,6 +606,8 @@ class Jobs:
                 card = (row.get('parent') or {}).get('cast')
                 if card and '/resume' in error['next']:
                     error['next'] = CAST_AGAIN % card
+            if row.get('cancelled_by') == 'user' and status == 'cancelled':
+                error['next'] = USER_STOP_NEXT
         if row['status'] == status and row.get('error') == error and row.get('finished_at') is not None:
             if result is not None and row.get('result') != result:
                 row['result'] = result
@@ -638,16 +668,35 @@ class Jobs:
         payload = dict(value, **({'takes': takes} if takes != 1 else {}))
         return self.submit_request(payload, client=client, parent=parent, editor=editor)[0]
 
+    def warm_capabilities(self, inputs):
+        """Before Jobs.lock: each row waits here (length.WAIT_SECONDS at most) for a size asked for the first time."""
+        from .routes import substitute
+        names = {}
+        for raw in inputs:
+            item = substitute({k: v for k, v in raw.items() if k not in ('ref', 'takes')}, names)
+            if isinstance(raw.get('ref'), str):
+                names[raw['ref']] = specs.new_id()  # Stands in for the id this row gets under the lock.
+            try:
+                specs.normalize(item, port=self.port)
+            except Exception:
+                pass  # The locked pass reports it, in batch order.
+
     def submit_request(self, value, *, client=None, key=None, parent=None, editor=None):
         batch = isinstance(value, dict) and 'jobs' in value
         schema.validate(schema.batch_schema(local=True) if batch else schema.job_schema(local=True), value)
         schema.preflight_submission(value)
+        if key is not None or value.get('ref') is not None:
+            with self.lock:
+                _, replay = self.idempotency('submit', value, key, client)
+                if replay is not None:
+                    return replay, True
+        inputs = value['jobs'] if batch else [value]
+        self.warm_capabilities(inputs)
         with self.lock:
+            # Another submit may have committed the same key while its tables warmed.
             receipt, replay = self.idempotency('submit', value, key, client)
             if replay is not None:
                 return replay, True
-            batch = 'jobs' in value
-            inputs = value['jobs'] if batch else [value]
             names, rows, problems = {}, [], []
             for i, raw in enumerate(inputs):
                 prefix = '/jobs/%d' % i if batch else ''
@@ -660,7 +709,7 @@ class Jobs:
                 from .routes import substitute
                 item = substitute(item, names)
                 try:
-                    normalized = specs.normalize(item, port=self.port)
+                    normalized = specs.normalize(item, port=_Warmed(self.port))
                 except specs.SpecError as error:
                     problems.extend(schema.prefix_diagnostic(e, prefix) for e in error.errors)
                     continue
@@ -739,11 +788,14 @@ class Jobs:
                 and (not project or r['spec'].get('project') == project)]
         return rows[:limit]
 
-    def cancel(self, identity):
+    def cancel(self, identity, *, by=None):
         row = self.get(identity)
         with self.lock:
             if row['status'] in DONE:
                 return row
+            if by == 'user':
+                # Save before contacting an executor, including jobs still being dispatched.
+                self.touch(row, cancelled_by='user')
             if row['kind'] == 'generate' and not row['spec'].get('refine_from'):
                 row['_cancel'] = True
                 row['cancel_requested'] = True
@@ -921,6 +973,7 @@ class Jobs:
                 row.setdefault('receipts', []).append(dict(receipt, jobs=[identity]))
             row.pop('error', None)
             row.pop('_cancel', None)
+            row.pop('cancelled_by', None)
             self.touch(row, status='waiting', resume_pending=bool(row.get('chain_id')), cancel_requested=False,
                        cancelled_in_jobs=False,
                        chain_submission='linked' if row.get('chain_id') else None,
@@ -1008,6 +1061,10 @@ class Jobs:
             if result['error'].get('next'):
                 result['error'] = dict(result['error'], next=errors.recovery(result['error']['code'], kind=row['kind'],
                     stage='terminal', resumable=not row['spec'].get('refine_from')).replace('{id}', row['id']))
+        notice = user_stop_notice(row)
+        result.update(notice)
+        if notice and result.get('error'):
+            result['error'] = dict(result['error'], next=USER_STOP_NEXT)
         if detail:
             result['spec'] = {k: v for k, v in spec.items() if k not in ('depends_on',)}
             if row.get('comfy'):
@@ -1448,7 +1505,8 @@ class Jobs:
             except (PlanError, ChainPartTooShort) as error:
                 row['resume_pending'] = False
                 problem = length_problem(row['spec']['seconds'], bool(row['spec'].get('continue_from')),
-                                         minimum=error.limit if isinstance(error, ChainPartTooShort) else None)
+                                         minimum=error.limit if isinstance(error, ChainPartTooShort) else None,
+                                         frames=single_frame_limit(row['spec']))
                 self.finish(row, 'failed', error=errors.validation([problem]))
                 return
             except Exception:

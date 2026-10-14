@@ -813,7 +813,7 @@ def project_schema(name):
         'move': (dict(clip_ids=ids, frames=number(-10**7, 10**7, integer=True)), ('clip_ids', 'frames'), 'Move selected clips by a signed relative frame offset. Use clip IDs from this revision; linked partners move together.'),
         'describe': (dict(clip_ids=ids, text=dict(type='string', maxLength=8000)), ('clip_ids', 'text'), 'Set the description of selected clips. Use clip IDs from this revision and one paragraph of text.'),
         'set_ref': (dict(clip_ids=ids, ref=dict(type='string', maxLength=128, pattern=r'^[A-Za-z0-9_-]{0,128}$')), ('clip_ids', 'ref'), 'Set an outside shot reference on selected clips. Use clip IDs from this revision; an empty ref removes it.'),
-        'note': (dict(clip_ids=ids, text=dict(type='string', maxLength=120)), ('clip_ids', 'text'), 'Write the one line the user sees under selected picture clips; without it they see the start of the generation text. Do it after you add, generate or change a clip: in the user\'s language, what is in the picture, subject first ("Train through morning mist"); a short clip shows only the first few characters. Not the clip\'s position (opening, part 2) and not its progress. Up to 120 characters on one line; an empty text removes it. It never changes the description used for generation.'),
+        'note': (dict(clip_ids=ids, text=dict(type='string', maxLength=400)), ('clip_ids', 'text'), 'Write the one line the user sees under selected picture clips; without it they see the start of the generation text. Do it after you add, generate or change a clip: in the user\'s language, what is in the picture, subject first ("Train through morning mist"); a short clip shows only the first few characters. Not the clip\'s position (opening, part 2) and not its progress. Up to 120 characters on one line; an empty text removes it. It never changes the description used for generation.'),
         'use_version': (dict(clip_id=CLIP, index=number(0, 49, integer=True)), ('clip_id', 'index'), 'Restore a stored clip version. First get the clip ID and its versions array; index is zero based.'),
         'subtitles': (dict(cues=array(obj(dict(start=EDITOR_FRAME, frames=number(1, 10**7, integer=True), text=dict(type='string', minLength=1, maxLength=400)),
                                          ('start', 'frames', 'text')), 1, 500), replace=dict(type='boolean')), ('cues',),
@@ -1297,6 +1297,8 @@ def openapi():
     job_view = {'type': 'object', 'properties': dict(id=JOB, kind=enum(KINDS),
         status=enum(('waiting', 'queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted')),
         chain_id=string(), last_heartbeat_at={'type': ['string', 'null']}, poll_after_ms={'type': ['integer', 'null']},
+        cancelled_by=enum(('user',), description='Present when the user stopped this job on the page.'),
+        next=string(description='Instructions for the agent after a user stop.'),
         spec={'type': 'object'}, progress={'type': 'object'}, result={'type': 'object'},
         waiting_for=array(string()), notice=string(),
         error={'$ref': '#/components/schemas/Error'})}
