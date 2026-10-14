@@ -204,6 +204,15 @@ def spoken_lines(scene):
     return lines
 
 
+def split_source(text):
+    """Description, sound sections and spoken lines, using only the prompt's text."""
+    sound = re.search(r'(?m)^[ \t]*overall_soundscape[ \t]*:', text)
+    scene, soundscape = (text[:sound.start()], text[sound.start():]) if sound else (text, '')
+    tagged = re.findall(r'<(?:d|en|zh|ja|ko|cn)>\s*(.*?)\s*</(?:d|en|zh|ja|ko|cn)>', scene, re.S)
+    lines = [line for line in tagged if plain(line)] + spoken_lines(scene)
+    return scene, soundscape, list(dict.fromkeys(lines))
+
+
 def dialogue(text, scene):
     """Turn the user's spoken lines that came back quoted into H3 dialogue, verbatim.
 

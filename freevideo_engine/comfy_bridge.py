@@ -1155,9 +1155,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
-             continue_from=None, frames=None, first_frame_reference=False):
+             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False):
     if type(first_frame_reference) is not bool:
         raise ValueError('First-frame reference must be a boolean')
+    if type(voice_reference) is not bool:
+        raise ValueError('Voice reference must be a boolean')
     if continue_from is not None:
         from .continuation import validate_route
         validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from)
@@ -1249,6 +1251,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         command += ['--continue-from', str(continue_from)]
         if first_frame_reference:
             command.append('--first-frame-reference')
+        if voice_reference:
+            command.append('--voice-reference')
         if continuation is not None:
             from .continuation import persist_snapshot
             continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')

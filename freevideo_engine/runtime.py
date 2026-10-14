@@ -550,7 +550,9 @@ class Engine:
         refining = initial_latents is not None
         if continuation is not None:
             from .continuation import validate_route
-            validate_route(task=self.task, anchor=bool(continuation.get('anchor')))
+            # Audio references are admitted below, after inspecting the encoded modalities.
+            if self.task != 'ref2va_audio':
+                validate_route(task=self.task, anchor=bool(continuation.get('anchor')))
             if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
                 from .continuation import SIZE_MISMATCH
                 raise ValueError(SIZE_MISMATCH)
@@ -584,7 +586,7 @@ class Engine:
         progress = SamplingProgress(active_steps, len(self.transformer.transformer_blocks),
                                     offset=progress_offset, total=progress_total)
         progress.start()
-        continuation_offset = 0
+        continuation_offset = continuation_audio_offset = 0
         early_receipt = None
         condition_schedule = None
         sampling_kwargs = {}
@@ -616,12 +618,18 @@ class Engine:
                     sampling_kwargs.update(condition_schedule=condition_schedule, condition_trace=early_receipt['steps'])
             conditions = value.get('references') or None
             if continuation is not None:
-                if conditions is None or len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None:
+                sound = (not continuation.get('anchor') and self.task == 'ref2va_audio'
+                         and conditions is not None and len(conditions) == 1
+                         and conditions[0]['kind'] == 'audio' and conditions[0].get('audio_latent') is not None)
+                if not sound and (conditions is None or len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None):
                     raise ValueError('Continuation anchor requires exactly one image reference without audio')
+                if sound:
+                    validate_route(task=self.task, sound=True, media=dict(references=conditions))
                 # Ref2VA packs independent-size references before generated
                 # video rows in both passes. Their latents do not need the
                 # keyframe resize used by first/last-frame conditioning.
                 continuation_offset = info['reference_video_tokens']
+                continuation_audio_offset = info['reference_audio_tokens']
             prompt, tags = value['prompt_embeds'].to(self.device_backend.device, torch.bfloat16), value['text_token_tags']
         else:
             prompt, tags, conditions = load_prompt(str(conditioning), self.device_backend.device)
@@ -821,7 +829,8 @@ class Engine:
             with progress.layers(self.transformer.transformer_blocks), self.device_backend.make_offloader(
                     self.offload_layers, prefetch=self.prefetch, weight_source=self.stream_weight_source) as offloader, sampling(
                     self.transformer, continuation, seed, self.device_backend.device,
-                    **({'video_offset': continuation_offset} if continuation_offset else {})) as prefix, \
+                    **({'video_offset': continuation_offset} if continuation_offset else {}),
+                    **({'audio_offset': continuation_audio_offset} if continuation_audio_offset else {})) as prefix, \
                     (watch.layers(self.transformer.transformer_blocks) if watch is not None else nullcontext()):
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,

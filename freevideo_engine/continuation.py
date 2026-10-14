@@ -22,6 +22,8 @@ FIRST_FRAME_NOTE = ('The reference image is the very first frame of this whole f
                     'location, framing and colour tone as in that image throughout.')
 FIRST_FRAME_MAX_BYTES = 8 * 1024 * 1024
 FIRST_FRAME_MAX_SIDE = 4096
+FIRST_SOUND_MAX_BYTES = 4 * 1024 * 1024
+FIRST_SOUND_SECONDS = 6
 # The picture the model is given is half the side of the film's first frame, but not under this
 # on its short side: on a real six-part chain it held framing and colour as well as the full
 # picture for a third of the extra sampling time. Smaller pictures are not tested.
@@ -68,13 +70,18 @@ def validate_frames(frames):
 
 
 def validate_route(*, task='t2va', two_pass=True, preview=False, refine_from=None,
-                   media=None, backend=None, anchor=False):
+                   media=None, backend=None, anchor=False, sound=False):
     media = media or {}
     references = media.get('references')
     valid_reference = (anchor and isinstance(references, list) and len(references) == 1
                        and isinstance(references[0], dict)
                        and references[0].get('kind') == 'image')
-    if (not supported()[0] or backend not in (None, 'cuda') or task != ('ref2va' if anchor else 't2va')
+    valid_task = task == ('ref2va' if anchor else 't2va')
+    if sound:
+        valid_reference = (not anchor and isinstance(references, list) and len(references) == 1
+                           and isinstance(references[0], dict) and references[0].get('kind') == 'audio')
+        valid_task = task in ('t2va', 'ref2va', 'ref2va_audio') and valid_reference
+    if (not supported()[0] or backend not in (None, 'cuda') or not valid_task
             or not two_pass or preview or refine_from
             or any(media.get(key) for key in ('first', 'last', 'conditioning_info'))
             or (references and not valid_reference)):
@@ -196,6 +203,101 @@ def _chain_first_frame(request, video_path):
     if video_id(video_path) != request.get('source_id'):
         raise ValueError(MISSING)
     return pack_first_frame(first_frame_png(video_path))
+
+
+def pack_first_sound(raw):
+    """A bounded stereo PCM16 WAV, starting at the film's first audio sample."""
+    import io
+    import wave
+    try:
+        if not isinstance(raw, bytes) or len(raw) > FIRST_SOUND_MAX_BYTES:
+            raise ValueError('Invalid first sound')
+        with wave.open(io.BytesIO(raw), 'rb') as source:
+            rate, samples = source.getframerate(), source.getnframes()
+            if (source.getnchannels() != 2 or source.getsampwidth() != 2 or source.getcomptype() != 'NONE'
+                    or rate <= 0 or not 0 < samples <= round(FIRST_SOUND_SECONDS * rate)
+                    or len(source.readframes(samples + 1)) != samples * 4):
+                raise ValueError('Invalid first sound')
+        return dict(format='wav', rate=rate, data=base64.b64encode(raw).decode('ascii'))
+    except (ValueError, EOFError, wave.Error, OSError):
+        raise ValueError('Invalid first sound') from None
+
+
+def unpack_first_sound(value):
+    """Recheck the record's WAV, including its declared rate and decoded size."""
+    try:
+        if (value['format'] != 'wav' or type(value['rate']) is not int
+                or not isinstance(value['data'], str)
+                or len(value['data']) > (FIRST_SOUND_MAX_BYTES + 2) // 3 * 4):
+            raise ValueError('Invalid first sound')
+        raw = base64.b64decode(value['data'], validate=True)
+        if pack_first_sound(raw) != value:
+            raise ValueError('Invalid first sound')
+        return raw
+    except (KeyError, TypeError, ValueError, OSError):
+        raise ValueError('Invalid first sound') from None
+
+
+def first_sound_wav(video_path):
+    """Decode at most six seconds, at the source rate; duplicate mono without changing its gain."""
+    import io
+    import wave
+    import av
+    with av.open(str(video_path)) as container:
+        stream = container.streams.audio[0]
+        rate = stream.codec_context.sample_rate
+        if rate <= 0:
+            raise ValueError('Invalid first sound')
+        # Read one sample past the size limit to reject an oversized opening, while still
+        # accepting a short high-rate source whose actual WAV fits within the bound.
+        limit = (FIRST_SOUND_MAX_BYTES - 44) // 4
+        count = min(round(FIRST_SOUND_SECONDS * rate), limit + 1)
+        saved = 0
+        mono = len(stream.codec_context.layout.channels) == 1
+        resampler = av.AudioResampler(format='s16', layout='mono' if mono else 'stereo', rate=rate)
+        chunks = []
+        def keep(frame):
+            nonlocal count, saved
+            samples = frame.to_ndarray().reshape(-1, 1 if mono else 2)[:count]
+            if mono:
+                samples = samples.repeat(2, axis=1)
+            chunks.append(samples.astype('<i2', copy=False).tobytes())
+            count -= len(samples)
+            saved += len(samples)
+            if saved > limit:
+                raise ValueError('Invalid first sound')
+        for frame in container.decode(stream):
+            for converted in resampler.resample(frame):
+                keep(converted)
+            if count == 0:
+                break
+        if count:
+            for converted in resampler.resample(None):
+                keep(converted)
+    target = io.BytesIO()
+    with wave.open(target, 'wb') as output:
+        output.setparams((2, 2, rate, 0, 'NONE', 'not compressed'))
+        output.writeframes(b''.join(chunks))
+    return target.getvalue()
+
+
+def chain_first_sound(request, video_path=None):
+    """Carry the opening sound unchanged; only the first part may supply it from its own file."""
+    try:
+        metadata = _snapshot_value(request)['metadata']
+        if metadata.get('first_sound') is not None:
+            unpack_first_sound(metadata['first_sound'])
+            return metadata['first_sound']
+        if metadata['chain']['segment'] != 1 or video_path is None:
+            return None
+        from .continuation_store import video_id
+        if video_id(video_path) != request.get('source_id'):
+            raise ValueError(MISSING)
+        return pack_first_sound(first_sound_wav(video_path))
+    except (ValueError, MemoryError):
+        raise
+    except Exception:
+        raise ValueError('Invalid first sound') from None
 
 
 def validate_path(video_path):
@@ -375,13 +477,16 @@ class Prefix:
     update. Audio is either kept clean or re-noised at each call, and restored
     on return. Only re-noising owns an independent RNG.
     """
-    def __init__(self, transformer, data, seed, device, *, video_offset=0):
+    def __init__(self, transformer, data, seed, device, *, video_offset=0, audio_offset=0):
         import torch
         from diffusers.modular_pipelines.minimax_h3.before_denoise import patchify_video_latents
         self.audio_context = validate_audio_context(data.get('audio_context', AUDIO_CONTEXT_DEFAULT))
         if type(video_offset) is not int or video_offset < 0:
             raise ValueError('Invalid continuation reference row offset')
         self.video_offset = video_offset
+        if type(audio_offset) is not int or audio_offset < 0:
+            raise ValueError('Invalid continuation reference row offset')
+        self.audio_offset = audio_offset
         self.video = data['video'].to(device=device, dtype=torch.float32)
         self.audio = data['audio'].to(device=device, dtype=torch.float32)
         if (self.video.ndim != 5 or self.video.shape[:3] != (1, transformer.config.in_channels, LATENT_FRAMES)
@@ -400,18 +505,20 @@ class Prefix:
         import torch
         video, audio = kwargs['hidden_states'][0], kwargs['audio_hidden_states'][0]
         count, ticks = self.video_rows.shape[0], self.audio.shape[2]
-        if video.shape[0] <= self.video_offset + count or audio.shape[0] // 2 < ticks:
+        generated = audio.shape[0] - self.audio_offset
+        if video.shape[0] <= self.video_offset + count or generated // 2 < ticks:
             raise ValueError(MISSING)
         self.current_video = video
         self.restore_video()
-        audio_rows = torch.cat([torch.arange(ticks, device=audio.device) + channel * (audio.shape[0] // 2)
+        audio_rows = torch.cat([torch.arange(ticks, device=audio.device) + self.audio_offset + channel * (generated // 2)
                                 for channel in range(2)])
         row_times = kwargs['timestep'][kwargs['timestep_indices']].clone()
         if self.audio_context == 'clean':
             audio[audio_rows] = self.audio_rows
             row_times[kwargs['audio_indices'][audio_rows]] = CLEAN_T
         else:
-            audio_t = row_times[kwargs['audio_indices'][0]]
+            # The first generated row: a voice reference ahead of it stays clean.
+            audio_t = row_times[kwargs['audio_indices'][self.audio_offset]]
             # scale_noise uses H3's clean-at-one convention, not a standard DDPM clock.
             audio[audio_rows] = self.scheduler.scale_noise(self.audio_rows, audio_t, self.noise)
         row_times[kwargs['video_indices'][self.video_offset:self.video_offset + count]] = CLEAN_T
@@ -429,12 +536,13 @@ class Prefix:
 
 
 @contextmanager
-def sampling(transformer, data, seed, device, *, video_offset=0):
+def sampling(transformer, data, seed, device, *, video_offset=0, audio_offset=0):
     if data is None:
         yield None
         return
     # Keep the legacy constructor call identical for existing continuations.
-    prefix = Prefix(transformer, data, seed, device, **({'video_offset': video_offset} if video_offset else {}))
+    prefix = Prefix(transformer, data, seed, device, **({'video_offset': video_offset} if video_offset else {}),
+                    **({'audio_offset': audio_offset} if audio_offset else {}))
     handle = transformer.register_forward_pre_hook(prefix.before, with_kwargs=True, prepend=True)
     try:
         yield prefix

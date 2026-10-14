@@ -104,6 +104,8 @@ def generate(request, resident=None):
             # single-pass request does not.
             validate_route(task=request['engine_options'].get('task', 't2va'),
                            anchor=bool(continuation.get('anchor')),
+                           **(dict(sound=True, media=dict(references=[continuation['sound']]))
+                              if continuation.get('sound') else {}),
                            two_pass=bool(request.get('sampling_plan', {}).get('requested')),
                            preview=request.get('preview', False), refine_from=request.get('resume_first_pass'))
             if isinstance(getattr(torch.version, 'hip', None), str):
@@ -652,6 +654,16 @@ def generate(request, resident=None):
                             'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
                         raise
                     metrics['first_frame_kept'] = dict(saved=False, error=type(error).__name__)
+                try:
+                    from .continuation import chain_first_sound
+                    sound = chain_first_sound(continuation, continuation.get('source_video'))
+                    if sound is not None:
+                        continuation_data['metadata']['first_sound'] = sound
+                except Exception as error:
+                    if isinstance(error, MemoryError) or type(error).__name__ in (
+                            'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
+                        raise
+                    metrics['first_sound_kept'] = dict(saved=False, error=type(error).__name__)
             try:
                 from .continuation_store import save as save_continuation
                 metrics['continuation_store'] = dict(save_continuation(request['output'], continuation_data), saved=True)

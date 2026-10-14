@@ -8,6 +8,7 @@ share the exclusive GPU-work lock and monitor the actual compute process.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -364,7 +365,7 @@ def _run(args):
                 raise
         # A record of another version, other weights or another first-pass size.
         value = dict(encoded_continuation(continue_from, canvas),
-                     **{key: value[key] for key in ('audio_context', 'source_video', 'anchor') if key in value})
+                     **{key: value[key] for key in ('audio_context', 'source_video', 'anchor', 'sound') if key in value})
         return freeze_continuation(value) if continuation_directory is not None else value
 
     frames = getattr(args, 'frames', None)
@@ -374,6 +375,8 @@ def _run(args):
         raise ValueError('--continue-anchor requires --continue-from')
     # Every part of a long video is asked alike; only a part that continues another can use it.
     first_frame = None
+    voice_reference = (dict(requested=True, used=False, reason=None)
+                       if getattr(args, 'voice_reference', False) and continue_from is not None else None)
     if getattr(args, 'first_frame_reference', False) and continue_from is not None:
         if continue_anchor is not None:
             raise ValueError('Choose --first-frame-reference or --continue-anchor, not both')
@@ -446,6 +449,20 @@ def _run(args):
                 first_frame.update(used=True, width=picture_width, height=picture_height)
         if continue_anchor is not None:
             continuation['anchor'] = media['references'][0]
+        if voice_reference is not None:
+            from .prompt_vlm.rules import split_source
+            if first_frame is not None:
+                voice_reference['reason'] = 'first_frame'
+            elif continue_anchor is not None:
+                voice_reference['reason'] = 'anchor'
+            elif args.conditioning:
+                # Preencoded conditioning cannot take another reference.
+                voice_reference['reason'] = 'conditioning'
+            elif not args.prompt_file or not split_source(args.prompt_file.read_text(encoding='utf-8'))[2]:
+                voice_reference['reason'] = 'no_lines'
+            elif re.search(r'(?i)\b(?:sing|sings|singing|sang|sung|lyrics)\b|唱', args.prompt_file.read_text(encoding='utf-8')):
+                # Quoted lyrics read as lines, but on music the opening sound did not hold steady.
+                voice_reference['reason'] = 'singing'
     active_loras = [row for row in media.get('loras', []) if row['strength'] != 0]
     if media:
         inferred_task = task_for(media)
@@ -531,6 +548,8 @@ def _run(args):
             report['continue_anchor'] = continuation['anchor']
     if first_frame is not None:
         report['first_frame_reference'] = first_frame
+    if voice_reference is not None:
+        report['voice_reference'] = voice_reference
     from .support_report import code_identity, write as write_debug
     report['runtime_hardware'] = hardware.to_dict()
     report['runtime_code'] = code_identity()
@@ -565,6 +584,31 @@ def _run(args):
                 if args._lora_max_block_bytes or args._lora_root_bytes:
                     profile.setdefault('policy', {})['lora_max_block_bytes'] = args._lora_max_block_bytes
                     profile['policy']['lora_root_bytes'] = args._lora_root_bytes
+            if voice_reference is not None and voice_reference['reason'] is None:
+                # Model identity, first-pass size and LoRA admission may have switched this
+                # request to tail encoding. Decide only after those checks, before encoding media.
+                if 'tail' in continuation:
+                    voice_reference['reason'] = 'source_predates'
+                else:
+                    from .continuation import chain_first_sound, unpack_first_sound
+                    try:
+                        kept = chain_first_sound(continuation, continue_from)
+                        sound = unpack_first_sound(kept) if kept is not None else None
+                    except ValueError:
+                        sound = None
+                    if sound is None:
+                        voice_reference['reason'] = 'unreadable'
+                    else:
+                        path = destination.with_suffix('.first-sound.wav')
+                        path.write_bytes(sound)
+                        from .media_request import digest
+                        media = dict(media, version=1, references=[dict(kind='audio', path=str(path),
+                                     sha256=digest(path), bytes=path.stat().st_size)])
+                        validate_route(task=getattr(args, 'task', None) or 't2va', sound=True, two_pass=two_pass,
+                                       preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
+                        continuation['sound'] = media['references'][0]
+                        args.task = profile['engine']['task'] = task_for(media)
+                        voice_reference['used'] = True
             resource_identity = local_identity(hardware, args.cache)
             history = ResourceHistory(history_path())
             history.recover_pending()
@@ -729,7 +773,8 @@ def _run(args):
                                           staged=bool(preview or refine_source))
             report['sampling_plan'] = sampling_plan
             if continuation is not None:
-                validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
+                validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None,
+                               **(dict(sound=True, media=media) if voice_reference and voice_reference['used'] else {}))
                 continuation = usable_continuation(continuation, canvas,
                     json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8')), sampling_plan)
                 if 'tail' in continuation:
