@@ -49,7 +49,10 @@ export async function openSetup() {
     const rootLabel = node("label", t("FreeVideo installation folder", "FreeVideo 安装目录"));
     const root = node("input"); root.type = "text"; rootLabel.append(root); inputs.append(rootLabel);
     const extraLabel = node("label", t("Additional model folders (optional, one per line)", "其他模型目录（可选，每行一个）"));
-    const extra = node("textarea"); extra.rows = 2; extraLabel.append(extra); inputs.append(extraLabel);
+    const extra = node("textarea"); extra.rows = 4; extraLabel.append(extra); inputs.append(extraLabel);
+    const saveFolders = node('button', t('Save model folders', '保存模型目录'));
+    const folderStatus = node('p'); folderStatus.setAttribute('role', 'status');
+    const folderRow = node('div'); folderRow.className = 'fv-folder-save'; folderRow.append(saveFolders, folderStatus); inputs.append(folderRow);
     const libraries = node("details"); libraries.append(node("summary", t("Automatically detected model folders", "自动发现的模型目录")));
     const paths = node("pre"); libraries.append(paths); inputs.append(libraries);
     const copyLabel = node("label"); copyLabel.className = 'fv-check'; const copy = node("input"); copy.type = "checkbox";
@@ -145,8 +148,7 @@ export async function openSetup() {
     const use = node("button", t("Use existing", "使用已有安装"));
     const install = node("button", t("Install / repair", "安装／修复")); install.disabled = true;
     const cancel = node("button", t("Stop setup", "停止安装")); cancel.hidden = true;
-    const saveFolders = node('button', t('Save model folders', '保存模型目录'));
-    actions.append(saveFolders, inspect, use, install, cancel); installation.append(actions);
+    actions.append(inspect, use, install, cancel); installation.append(actions);
     // Why Install / repair is unavailable, so it never looks like a broken button.
     const blocked = note(""); blocked.classList.add("fv-setup-why"); blocked.setAttribute("aria-live", "polite"); blocked.hidden = true;
     installation.append(blocked);
@@ -160,7 +162,7 @@ export async function openSetup() {
     document.body.append(dialog); dialog.showModal();
     let savedFolders = "", savedMissing = false;
     let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false;
-    const fail = error => { installation.open = true; state.textContent = [savedFolders, failureText(error.message)].filter(Boolean).join(" · "); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
+    const fail = error => { installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
     const request = async (action, value) => {
         const response = await api.fetchApi("/freevideo/setup" + (action ? "/" + action : root.value ? '?root='+encodeURIComponent(root.value) : ""), action ? {
             method: "POST", headers: { "Content-Type": "application/json", "X-FreeVideo-Setup": token }, body: JSON.stringify(value || {}),
@@ -292,7 +294,7 @@ export async function openSetup() {
     applyToken.onclick = () => setToken(hfToken.value);
     clearToken.onclick = () => setToken('');
     for (const e of [root, extra, copy, samplingCaches]) e.oninput = () => invalidate(true);
-    extra.oninput = () => { if (savedFolders) state.textContent = ""; savedFolders = ""; savedMissing = false; invalidate(true); };
+    extra.oninput = () => { folderStatus.textContent = ""; folderStatus.className = ""; savedFolders = ""; savedMissing = false; invalidate(true); };
     accept.onchange = controls;
     function showPlan(value) {
         plan.replaceChildren();
@@ -334,7 +336,6 @@ export async function openSetup() {
         const p = task.progress || {};
         state.className = task.status === "failed" ? "fv-failure" : task.ready && !savedMissing ? "fv-ready" : "";
         state.textContent = failureText(task.error) || (task.ready ? t("Ready. Generate with your existing workflow.", "准备就绪，可使用现有工作流生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
-        state.textContent = [savedFolders, state.textContent].filter(Boolean).join(" · ");
         const phases = task.phase_progress || {}, valid = Number.isFinite(p.total) && p.total > 0 && Number.isFinite(p.done) && p.done >= 0 && p.done <= p.total;
         overall.hidden = !busy;
         overallBar.max = phases.total > 0 ? phases.total : 1; overallBar.value = phases.done || 0;
@@ -361,16 +362,21 @@ export async function openSetup() {
         const missing = result.missing_libraries || [];
         savedMissing = missing.length > 0;
         savedFolders = !missing.length ? t('Saved.', '已保存。')
-            : missing.length === 1 ? t(`Saved. This folder was not found:\n${missing[0]}`, `已保存。找不到这个目录：\n${missing[0]}`)
-            : t(`Saved. These folders were not found:\n${missing.join('\n')}`, `已保存。找不到这些目录：\n${missing.join('\n')}`);
-        state.textContent = savedFolders; state.className = savedMissing ? '' : 'fv-ready';
-        state.scrollIntoView({block: 'nearest'});
+            : missing.length === 1 ? t('Saved. This folder was not found:', '已保存。找不到这个目录：')
+            : t(`Saved. ${missing.length} folders were not found:`, `已保存。有 ${missing.length} 个目录找不到：`);
+        folderStatus.className = savedMissing ? 'fv-warn' : 'fv-ready';
+        folderStatus.replaceChildren(savedFolders);
+        if (savedMissing) {
+            // The full path is in the box above; show its start and last folder on one line.
+            const first = missing[0], path = node('span', first.length > 44 ? `${first.slice(0, 14)}…${first.slice(-26)}` : first);
+            path.className = 'fv-folder-path'; path.title = first; folderStatus.append(path);
+        }
         return result;
     }
     saveFolders.onclick = async () => {
         invalidate(true); busy = true; controls();
         try { await saveModelFolders(); }
-        catch (error) { fail(error); }
+        catch (error) { savedFolders = ''; savedMissing = false; folderStatus.textContent = failureText(error.message); folderStatus.className = 'fv-failure'; }
         finally { busy = false; controls(); }
     };
     inspect.onclick = async () => {
