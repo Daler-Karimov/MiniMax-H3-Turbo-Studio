@@ -31,7 +31,7 @@ import { frameShapes, frameSize } from './frame_sizes.js';
 import { createFirstRunGuide } from './first_run_guide.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
-import { createStudioChain, chainPosition, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261011-length';
+import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261014-parts';
 import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -43,6 +43,97 @@ const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = n
 const effortCss = document.createElement('link'); effortCss.rel = 'stylesheet'; effortCss.href = new URL('./sampling_effort.css', import.meta.url).href; document.head.append(effortCss);
 const enhanceCss = document.createElement('link'); enhanceCss.rel = 'stylesheet'; enhanceCss.href = new URL('./prompt_enhance.css', import.meta.url).href; document.head.append(enhanceCss);
 const el = (tag, label, cls) => { const e = document.createElement(tag); if (label != null) e.textContent = label; if (cls) e.className = cls; return e; };
+// One line per part of a long video, under the preview. A part that has not started opens in
+// place for editing and saves when it loses focus; the server's reply decides what stays.
+function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {}) {
+    const element = el('div', null, 'fv-chain-parts'); element.hidden = true;
+    const rows = new Map(), timers = new Map();
+    let editing = null, showing = null;
+    function tag(row, text, kind = '') { row.tag.textContent = text; row.tag.dataset.kind = kind; }
+    function draw(row) {
+        const {part} = row, writing = editing === row;
+        row.element.dataset.state = part.editable ? 'pending' : part.state;
+        row.text.textContent = part.text;
+        row.text.disabled = !part.editable;
+        if (!writing && row.editor) { row.editor.remove(); row.editor = null; row.text.hidden = false; }
+        // A note about a lost edit stays on its line until that part is done.
+        if (row.tag.dataset.kind === 'error' && part.state === 'done') row.tag.dataset.kind = '';
+        if (timers.has(part.id) || row.tag.dataset.kind === 'error') return;
+        tag(row, part.state === 'done' ? t('Done', '已完成') : part.editable || !['queued', 'running', 'pending'].includes(part.state) ? '' : t('Generating', '生成中'));
+    }
+    function flash(row, text, kind) {
+        clearTimeout(timers.get(row.part.id)); tag(row, text, kind);
+        if (kind === 'saved') timers.set(row.part.id, setTimeout(() => { timers.delete(row.part.id); tag(row, ''); draw(row); }, 2000));
+    }
+    async function finish(row, keep) {
+        if (editing !== row) return;
+        const before = row.part.text, value = row.editor.value;
+        editing = null;
+        if (!keep || !value.trim() || value === before) { draw(row); return; }
+        row.part = {...row.part, text: value}; row.saving = value; draw(row);
+        try {
+            await save(row.part.id, value);
+            row.saving = null;
+            if (rows.get(row.part.id) === row) flash(row, t('Saved', '已保存'), 'saved');
+        } catch (error) {
+            row.saving = null;
+            if (rows.get(row.part.id) !== row) return;
+            row.part = {...row.part, text: before}; draw(row);
+            flash(row, error.status === 409 ? t('This part has started. Your edit was not saved.', '这一段已开始，修改未保存')
+                : t('Your edit was not saved.', '修改未保存'), 'error');
+        }
+    }
+    function open(row) {
+        if (!row.part.editable || editing === row) return;
+        if (editing) finish(editing, true);
+        editing = row; clearTimeout(timers.get(row.part.id)); timers.delete(row.part.id); tag(row, '');
+        const editor = row.editor = el('textarea', null, 'fv-chain-part-editor');
+        editor.maxLength = 20000; editor.value = row.part.text;
+        editor.setAttribute('aria-label', t(`Part ${row.part.index + 1} description`, `第 ${row.part.index + 1} 段描述`));
+        editor.addEventListener('blur', () => finish(row, true));
+        editor.addEventListener('keydown', event => {
+            // Escape leaves the edit, never the studio.
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(row, false); row.text.focus(); }
+        });
+        row.text.hidden = true; row.text.after(editor); editor.focus();
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+        editor.scrollIntoView({block: 'nearest'});
+    }
+    function clear() {
+        if (!element.hidden) onHide();
+        element.hidden = true; element.replaceChildren(); rows.clear(); editing = null; showing = null;
+        for (const id of timers.values()) clearTimeout(id); timers.clear();
+    }
+    return {element, clear, update(chain, active) {
+        // The list belongs to one generation: it shows once the descriptions are written and closes when that ends.
+        if (!active || !chain?.split || chainSplit(chain).writing) { if (!active || showing !== chain?.id) clear(); return; }
+        if (showing !== chain.id) clear();
+        showing = chain.id;
+        const first = element.hidden; element.hidden = false;
+        chainParts(chain).forEach((part, index) => {
+            part.state = chain.blocks[index].state === 'pending' && chain.blocks[index].prompt_id != null ? 'queued' : chain.blocks[index].state;
+            let row = rows.get(part.id);
+            if (!row) {
+                row = {element: el('div', null, 'fv-chain-part'), tag: el('span', null, 'fv-chain-part-tag')};
+                row.text = el('button', null, 'fv-chain-part-text'); row.text.type = 'button';
+                row.element.onclick = () => open(row);
+                row.element.append(el('span', t(`Part ${index + 1}`, `第 ${index + 1} 段`), 'fv-chain-part-name'), row.text, row.tag);
+                rows.set(part.id, row); element.append(row.element);
+            }
+            if (editing === row && !part.editable) {
+                // The part began while it was open: the words typed so far cannot reach it.
+                const changed = row.editor.value !== row.part.text;
+                editing = null; row.part = part; draw(row);
+                if (changed) flash(row, t('This part has started. Your edit was not saved.', '这一段已开始，修改未保存'), 'error');
+                return;
+            }
+            if (editing === row) { row.part = {...part, text: row.part.text}; return; }
+            // A poll answered before the save shows the words being saved, not the older ones.
+            row.part = row.saving != null ? {...part, text: row.saving} : part; draw(row);
+        });
+        if (first) onShow();
+    }};
+}
 const button = (label, action, cls = '') => { const e = el('button', label, cls); e.type = 'button'; e.onclick = action; return e; };
 const widget = (node, name) => node?.widgets?.find(w => w.name === name);
 const linked = (node, name) => node?.inputs?.some(input => input.name === name && input.link != null);
@@ -733,6 +824,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
             extend: (saved, options) => openExtendEditor(saved, node, {studio: dialog, ...options})});
     })); previewHead.append(previewTools); output.append(previewHead);
     const previewSpace = el('div', null, 'fv-preview-space'); output.append(previewSpace);
+    // The preview keeps the size it has once the list is in; an opened part grows the column, which scrolls.
+    const partList = createChainPartList(t, (block, text) => chainController.setText(block, text), {
+        onShow: () => { previewSpace.style.flex = `0 0 ${previewSpace.getBoundingClientRect().height}px`; },
+        onHide: () => { previewSpace.style.flex = ''; }});
+    output.append(partList.element);
+    cleanup.push(() => partList.clear());
     const stage = el('div', null, 'fv-stage');
     stage.setAttribute('aria-label', t('Video preview', '视频预览'));
     const stageMedia = el('div', null, 'fv-stage-media');
@@ -940,6 +1037,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 lastQueueError = null; status.textContent = ''; status.dataset.error = 'false';
             }
             chainWasActive = active;
+            partList.update(chain, active);
             busy = active || Boolean(queueState?.running || queueState?.pending.length); queued = chain?.state === 'queued';
             chainLine.hidden = !active;
             chainLine.textContent = outcome?.joining ? t('Joining the parts.', '正在接合各段。')
