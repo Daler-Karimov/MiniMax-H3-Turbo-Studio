@@ -218,6 +218,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (disposed) return;
         generationAsked = true; genHost.hidden = !ready; element.dataset.generationReady = String(ready);
         settleGenbar(); if (ready) { offerInitial?.(); extendEntry?.(); void startHeld(); }
+        // Parts queued while waiting for the answer never start here; they go back to drafts with the reason.
+        else if (store.generationGone && held.length) {
+            for (const entry of held.splice(0)) markHeld(entry.ids, false);
+            rememberView(); notify(t('Restart FreeVideo to generate.', '请重新启动 FreeVideo 后再生成。'));
+        }
         tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
         updateTransport(); adjustPanel?.update();
     }});
@@ -233,6 +238,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (pointerEditing) { deferredStamp = value; return; }
             if (!value.nameSuffix && state.record.id === value.id && state.record.revision === value.revision) return;
             suppressSave = true; try { state.adopt(value); } finally { suppressSave = false; }
+            // A queued part kept under a new edit's first key moves to its saved one.
+            if (held.length) rememberView();
         },
     }, {onStatus: () => {
         if (!queue.dirty) { discardOnSwitch = false; saveWarning.hidden = true; }
@@ -325,6 +332,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         }, {checkpoint: true});
         held.push({ids, text}); markHeld(ids, true);
         if (shown) state.select({kind: 'clip', ids});
+        rememberView();
     }
     async function startHeld() {
         if (startingHeld || disposed || closing || generationBusy || !store.generationAvailable) return;
@@ -332,10 +340,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         try {
             while (held.length && !disposed) {
                 const entry = held[0], clips = entry.ids.map(id => model.find(state.record, id)).filter(clip => clip && clip.pending && !generating(clip));
-                if (!clips.length) { held.shift(); markHeld(entry.ids, false); continue; }
+                if (!clips.length) { held.shift(); markHeld(entry.ids, false); rememberView(); continue; }
                 const selection = {kind: 'clip', ids: clips.map(clip => clip.id)}, before = partBefore(Math.min(...clips.map(clip => clip.start)));
                 if (generating(before)) break;
-                held.shift(); markHeld(entry.ids, false);
+                held.shift(); markHeld(entry.ids, false); rememberView();
                 if (before && !before.source && before.pending) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
                 try { await actions.generate({text: entry.text, selection}); }
                 catch (value) { const reason = error(value); if (reason && !['chain_too_long', 'chain_part_too_short'].includes(reason.reason)) genbar?.say(t('This part did not start. Choose "Generate" again.', '这一段没有开始，请再点一次“生成”。')); }
@@ -427,10 +435,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!viewReady) return;
         const key = state.record.id || viewKey;
         const value = {selection: state.selection, text: genbar.getText(), playhead: state.playhead,
-            zoom: state.zoom, scrollLeft: tracks?.getScrollLeft() || 0};
+            zoom: state.zoom, scrollLeft: tracks ? tracks.getScrollLeft() : editorViews.get(key)?.scrollLeft || 0};
         editorViews.set(key, value);
         try {
-            localStorage.setItem(viewPrefix + key, JSON.stringify({selection: value.selection, text: value.text}));
+            // Queued parts stay queued across a reload; they are only planned drafts until sent.
+            const waiting = held.map(entry => ({ids: entry.ids, text: entry.text}));
+            value.held = waiting;
+            localStorage.setItem(viewPrefix + key, JSON.stringify({selection: value.selection, text: value.text, ...(waiting.length ? {held: waiting} : {})}));
             if (state.record.id) localStorage.setItem('fv-editor-last', key);
         } catch {}
         // An untouched edit belongs to this tab until it has a saved identity.
@@ -488,7 +499,14 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         offerInitial();
         genbar?.setText(typeof remembered?.text === 'string' ? remembered.text : '');
         tracks?.setScrollLeft(remembered?.scrollLeft);
-        viewReady = true; updateTransport();
+        // Only parts still waiting as drafts come back; one that has since been sent or changed is left alone.
+        for (const entry of Array.isArray(remembered?.held) && !store.generationGone ? remembered.held : []) {
+            if (!Array.isArray(entry?.ids) || typeof entry.text !== 'string') continue;
+            const clips = entry.ids.map(id => model.find(state.record, id));
+            if (!clips.length || clips.some(clip => !clip || clip.source || clip.pending !== 'draft' || clip.job) || entry.ids.some(isHeld)) continue;
+            held.push({ids: [...entry.ids], text: entry.text}); markHeld(entry.ids, true);
+        }
+        viewReady = true; updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
     }
     async function switchProject(id) {
         if (switching) return; switching = true; updateTop();
@@ -701,12 +719,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return {text, say: [said, used, busyBefore ? t('Queued. It starts after the part now generating.', '已排队，正在生成的那段完成后自动开始。') : null].filter(Boolean).join(' ') || null, queued: busyBefore};
         },
         selectionRunning: () => busySelection(state.selection),
+        // A choice over existing clips that Generate would move to an empty spot.
+        selectionMovable: () => !actions.supportedSelection() && !!emptySpot(state.selection),
         selectionSending() { const range = selectionRange(state.selection); return !!range && ([...sendingRanges].some(other => overlaps(other, range)) || [...sending].some(id => { const clip = model.find(state.record, id); return clip && overlaps(clip, range); })); },
         selectionHeld() { const ids = selectionClips(state.selection).map(clip => clip.id); return ids.length > 0 && ids.every(isHeld); },
         // Takes the selected parts out of the line; they stay as drafts.
         unhold() {
             const ids = selectionClips(state.selection).map(clip => clip.id);
             for (let i = held.length - 1; i >= 0; i--) if (held[i].ids.some(id => ids.includes(id))) { markHeld(held[i].ids, false); held.splice(i, 1); }
+            rememberView();
         },
         async cancel() {
             const range = selectionRange(state.selection);
@@ -981,6 +1002,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (deferredStamp) {
             const value = deferredStamp; deferredStamp = null;
             suppressSave = true; try { state.adopt(value); } finally { suppressSave = false; }
+            if (held.length) rememberView();
         }
     };
     listen('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } });

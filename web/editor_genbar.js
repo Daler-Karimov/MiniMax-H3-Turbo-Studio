@@ -48,8 +48,10 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         const stopped = ['failed', 'cancelled', 'interrupted'].includes(status?.state);
         host.dataset.mode = busy ? 'running' : selected ? 'selected' : 'idle';
         hint.hidden = !busy && !other; input.hidden = generate.hidden = busy;
-        input.disabled = !selected || busy;
-        input.placeholder = selected ? t('Describe this part', '描述这一段')
+        // A choice that will move to an empty spot can still be described first.
+        const writable = selected || !previewSelection && !!selection && !!actions.selectionMovable?.();
+        input.disabled = !writable || busy;
+        input.placeholder = writable ? t('Describe this part', '描述这一段')
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);

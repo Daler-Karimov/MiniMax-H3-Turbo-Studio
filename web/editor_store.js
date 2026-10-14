@@ -216,6 +216,8 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
     const store = {
         sources, cache,
         get generationAvailable() { return standIn ? standIn.generationAvailable ?? true : generationAvailable; },
+        // The server said for certain it cannot generate (not just a missed answer that is asked again).
+        get generationGone() { return !standIn && generationGone; },
         generationReady() {
             if (standIn) return standIn.generationReady
                 ? Promise.resolve(standIn.generationReady(ready => { if (!disposed) onGenerationReady(ready); }))
