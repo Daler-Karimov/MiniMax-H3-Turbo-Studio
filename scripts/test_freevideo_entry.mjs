@@ -3,7 +3,8 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
 import {regenerateResult, upscaleResult, createSecondPassQueue} from '../web/studio_queue.js';
-import {referenceInputs} from '../web/prompt_references.js';
+import {referenceInputs, mediaRows} from '../web/prompt_references.js';
+import {expandCast} from '../web/cast_mention.js';
 import {cleanOptionalPrompt, cleanOptionalWidgets} from '../web/optional_inputs.js';
 
 class Element {
@@ -37,7 +38,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets,
         createCastLibrary: options => {
             const cast = {element: new Element('cast'), options, destroyed: false, destroy() { this.destroyed = true; }};
             casts.push(cast); return cast;
@@ -97,7 +98,8 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
             .replace("import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';", 'const {startDoneNotify,askDesktopPermission} = globalThis.__freevideoEntryTest; const DESKTOP_SETTING = "FreeVideo.DoneNotify.Desktop";')
-            .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs} = globalThis.__freevideoEntryTest;')
+            .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs,mediaRows} = globalThis.__freevideoEntryTest;')
+            .replace("import { expandCast } from './cast_mention.js';", 'const {expandCast} = globalThis.__freevideoEntryTest;')
             .replace("import { outputDownloadURL } from './output_download.js';", 'const {outputDownloadURL} = globalThis.__freevideoEntryTest;')
             .replace("import { shareButton } from './share.js';", 'const {shareButton} = globalThis.__freevideoEntryTest;')
             .replace("import { reportFileName } from './report_issue.js';", 'const {reportFileName} = globalThis.__freevideoEntryTest;')

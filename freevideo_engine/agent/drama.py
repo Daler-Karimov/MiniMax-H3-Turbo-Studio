@@ -265,7 +265,9 @@ def prompt(play, shot):
 def subject_definitions(subjects):
     """The prompt prefix tying cast cards to their reference tags; the one place its wording lives.
 
-    subjects: [{'name', 'description', 'pictures': (first, last) or None, 'audio': number or None}]."""
+    subjects: [{'name', 'description', 'pictures': (first, last), a list of such pairs, or None, 'audio': number or None}].
+    The page writes the same prompt from the same wording (web/cast_mention.js); tests/fixtures/subject_definitions.json
+    holds the cases both sides must reproduce exactly."""
     parts = []
     for number, subject in enumerate(subjects, 1):
         text = '<Subject %d> is %s' % (number, subject['name'])
@@ -273,9 +275,12 @@ def subject_definitions(subjects):
         text += (': %s.' % description) if description else '.'
         tags = []
         if subject.get('pictures'):
-            first, last = subject['pictures']
-            pictures = '<Picture %d>' % first if first == last else '<Picture %d> to <Picture %d>' % (first, last)
-            tags.append('%s show%s its appearance' % (pictures, 's' if first == last else ''))
+            # One (first, last) pair, or several when the person's pictures are not side by side.
+            ranges = [subject['pictures']] if isinstance(subject['pictures'][0], int) else subject['pictures']
+            pictures = ', '.join('<Picture %d>' % a if a == b else '<Picture %d> to <Picture %d>' % (a, b)
+                                 for a, b in ranges)
+            single = len(ranges) == 1 and ranges[0][0] == ranges[0][1]
+            tags.append('%s show%s its appearance' % (pictures, 's' if single else ''))
         if subject.get('audio'):
             tags.append('<Audio %d> is its voice' % subject['audio'])
         if tags:

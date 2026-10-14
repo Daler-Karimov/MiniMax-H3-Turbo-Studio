@@ -17,8 +17,11 @@ import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed } from './studio_queue.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
+import { castInRows, expandCast, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
+import { attachMentionOverlay } from './cast_overlay.js';
+import { openCastLibrary } from './cast_source.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
@@ -497,7 +500,46 @@ export function openStudio(node, {extendFrom = null} = {}) {
     placeholder();
     prompt.disabled = linked(node, 'text'); prompt.oninput = () => { set(node, 'text', prompt.value); placeholder(); };
     const promptEditor = el('div', null, 'fv-prompt-editor'); promptEditor.append(prompt);
+    // Library characters offered in the @ list; a mention puts the character's pictures in the media list.
+    let castLibrary = null;
+    const castAssets = () => { const owner = upstream(node, 'media'); const field = owner && widget(owner, 'assets'); return field ? {owner, field} : null; };
+    // The library's own upload of a picture goes to the same streaming upload the media panel uses.
+    const castUpload = async file => {
+        const body = new FormData(); body.append('file', file);
+        const response = await api.fetchApi('/freevideo/media/upload', {method: 'POST', body});
+        const result = await response.json(); if (!response.ok) throw new Error(result.error || response.statusText);
+        return result;
+    };
+    const castBlocked = reason => ({frames: t('Not available with first and last frames', '首尾帧不能和角色同时使用'),
+        people: t('Up to 3 characters', '最多 3 个角色'), full: t('Up to 32 references', '参考素材最多 32 个'),
+        extend: t('Not available when continuing a video', '接着生成时不能使用角色')}[reason] || '');
+    function castChoices() {
+        if (!castLibrary || linked(node, 'text') || !castAssets()) return [];
+        const rows = mediaRows(node);
+        return castLibrary.list().filter(card => card.name).map(card => {
+            const state = extension.source ? {ok: false, reason: 'extend'}
+                : mentionState(rows, card, Math.min(MAX_PICTURES_EACH, Number(card.images) || 0));
+            return {id: card.id, name: card.name, thumb: card.thumbnail?.file ? view(card.thumbnail.file) : card.thumbnail?.url || '',
+                blocked: state.ok ? '' : castBlocked(state.reason)};
+        });
+    }
+    // The name goes into the text at once; the card's pictures follow when the full card has been read.
+    function mentionCharacter(person) {
+        if (!castLibrary || extension.source) return false;
+        if (castInRows(mediaRows(node)).some(entry => entry.id === person.id)) return true;
+        if (!mentionState(mediaRows(node), {id: person.id}, 1).ok) return false;
+        castLibrary.get(person.id).then(card => {
+            if (disposed) return;
+            const rows = mediaRows(node), target = castAssets();
+            if (!target || !mentionState(rows, card).ok) return;
+            target.field.value = JSON.stringify(withCharacter(rows, card));
+            target.owner.graph?.change?.();
+            window.dispatchEvent(new CustomEvent('freevideo-media', {detail: target.owner.id}));
+        }).catch(() => { if (!disposed) { status.dataset.error = 'true'; status.textContent = t('Could not add the character\'s pictures', '无法加入角色的图片'); } });
+        return true;
+    }
     const references = attachReferencePicker(prompt, {items: () => referenceItems(node), t, view, host: dialog,
+        characters: castChoices, onCharacter: mentionCharacter,
         addMedia: () => { mediaDetails.open = true; mediaDetails.scrollIntoView({block: 'nearest', behavior: 'smooth'}); mediaMount.querySelector('button')?.focus(); }});
     const mention = button('@', () => references.open(), 'fv-reference-trigger');
     mention.setAttribute('aria-label', t('Reference media (@)', '引用素材（@）'));
@@ -506,7 +548,22 @@ export function openStudio(node, {extendFrom = null} = {}) {
     cleanup.push(() => references.dispose());
     const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd)});
     cleanup.push(() => terms.dispose());
+    const castOverlay = attachMentionOverlay(prompt, {people: () => castInRows(mediaRows(node))});
+    // The library's entry row rings the characters this prompt uses.
+    let castShown = '';
+    const announceCast = () => {
+        const ids = mentionedIds(prompt.value, mediaRows(node));
+        if (ids.join() !== castShown) { castShown = ids.join(); window.dispatchEvent(new CustomEvent('freevideo-cast-mentioned', {detail: ids})); }
+    };
+    prompt.addEventListener('input', announceCast);
+    const castChanged = event => { if (String(event.detail) === String(mediaNode?.id)) { castOverlay.refresh(); references.refresh(); announceCast(); } };
+    window.addEventListener('freevideo-media', castChanged);
+    node.freevideoCastOff = () => Boolean(extension.source);
+    cleanup.push(() => { castLibrary?.destroy?.(); castLibrary = null; window.removeEventListener('freevideo-media', castChanged); prompt.removeEventListener('input', announceCast); castOverlay.dispose(); delete node.freevideoCastOff; });
+    openCastLibrary({api, text: t, viewURL: view, uploadOne: castUpload, onChange: () => { castOverlay.refresh(); references.refresh(); }})
+        .then(library => { if (disposed) library?.destroy?.(); else castLibrary = library; });
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
+        prepare: text => expandCast(text, mediaRows(node), {active: !extension.source}).text,
         onReport: row => { node.freevideoReportId = row.report_id; progress.updateReport(row); },
         onChange: () => rememberPromptDraft(api, node),
         setText: text => { set(node, 'text', text || (untouched() ? starter : '')); placeholder(); }, context: () => {
@@ -515,7 +572,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         return {seconds: Number(value(node, 'seconds')), media: items.map(row => ({file: row.file, role: row.role || 'reference'}))};
     }});
     cleanup.push(() => enhancer.dispose());
-    const promptChanged = e => { if (String(e.detail) === String(node.id)) { if (prompt.value !== shown(value(node, 'text'))) prompt.value = shown(value(node, 'text')); prompt.disabled = linked(node, 'text'); mention.disabled = prompt.disabled; placeholder(); references.refresh(); enhancer.sync(); } };
+    const promptChanged = e => { if (String(e.detail) === String(node.id)) { if (prompt.value !== shown(value(node, 'text'))) prompt.value = shown(value(node, 'text')); prompt.disabled = linked(node, 'text'); mention.disabled = prompt.disabled; placeholder(); castOverlay.refresh(); references.refresh(); announceCast(); enhancer.sync(); } };
     window.addEventListener('freevideo-reference-prompt', promptChanged);
     cleanup.push(() => window.removeEventListener('freevideo-reference-prompt', promptChanged));
     const promptSection = section(t('Describe your scene', '描述画面'));

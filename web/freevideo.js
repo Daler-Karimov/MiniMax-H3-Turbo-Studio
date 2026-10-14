@@ -10,7 +10,8 @@ import { startUpdateChecks } from './updates.js';
 import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';
+import { expandCast } from './cast_mention.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
@@ -265,7 +266,7 @@ function mediaPanel(node, mount = null) {
             const top = el("div", undefined, "fv-row");
             const enabled = el("input"); enabled.type = "checkbox"; enabled.checked = row.enabled !== false;
             enabled.setAttribute("aria-label", text("Use media", "使用素材")); enabled.onchange = () => { rows[index].enabled = enabled.checked; update(rows); };
-            const label = el("span", (row.source || row.file).split("/").pop(), "fv-file"); label.title = row.file;
+            const label = el("span", row.cast?.name || (row.source || row.file).split("/").pop(), "fv-file"); label.title = row.file;
             const select = el("select"); select.setAttribute("aria-label", text("Media role", "素材用途"));
             const kind = mediaKind(row.file);
             for (const [value, title] of (kind === "image" ? [["reference", text("Reference", "参考")], ["first", text("First frame", "首帧")], ["last", text("Last frame", "尾帧")]] : [["reference", text("Reference", "参考")]])) {
@@ -678,6 +679,9 @@ app.registerExtension({
                     force.type = 'hidden'; force.computeSize = () => [0, -4]; force.draw = () => {};
                     force.value = false; force.serializeValue = () => false;
                 }
+                // Characters mentioned with @ travel as <Subject N> plus their definitions; the draft keeps the typed names.
+                const prompt = this.widgets?.find(w => w.name === 'text');
+                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
                     quality.label = text('Two-pass acceleration', '二次采样加速');
