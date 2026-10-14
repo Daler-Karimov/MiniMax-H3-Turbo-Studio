@@ -266,11 +266,10 @@ def _schedule(state, shot, count, by, note=None, *, automatic=False):
         job.pop('media', None)
         if job['project'] is None:
             job.pop('project')
-        if not shot['continues']:
-            if source.get('first') is not None:
-                job['media'] = {'first': deepcopy(source['first'])}
-            elif 'references' in source:
-                job['media'] = {'references': deepcopy(source['references'])}
+        if source.get('first') is not None and not shot['continues']:
+            job['media'] = {'first': deepcopy(source['first'])}
+        elif source.get('references'):
+            job['media'] = {'references': deepcopy(source['references'])}
         jobs.append(dict(take=None, job=None, generation=None, seed=None, state='queued', automatic=automatic,
                          stale=False, continues_take=None, note=note, by=by, library_id=None, seconds=None,
                          cancel_requested=False, error=None, spec=job))

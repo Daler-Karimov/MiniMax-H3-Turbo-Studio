@@ -9,6 +9,8 @@ from .length import single_frame_limit
 QUALITY, ASPECTS = contract.QUALITY, contract.ASPECTS
 KINDS = tuple(contract.KINDS)
 FRAMES = ('first', 'last')
+# A part that continues a video carries at most this many reference pictures, and no other reference media.
+CONTINUED_PICTURES = 3
 MAX_SEED = contract.generate()['properties']['seed']['maximum']
 JOB_ID = re.compile(contract.JOB['pattern'].strip('^$'))
 LIBRARY_ID = re.compile(contract.SAVED['pattern'].strip('^$'))
@@ -140,6 +142,19 @@ def generation_media(value):
     if value.get('references'):
         result['references'] = [media_item(v, '/media/references/%d' % i) for i, v in enumerate(value['references'])]
     return result
+
+
+def still_picture(item):
+    """A reference that is one picture: a frame of a video, or a picture file."""
+    if isinstance(item, str):
+        item = {'file': item}
+    if not isinstance(item, dict):
+        return False
+    if 'frame' in item:
+        return True
+    from ..comfy_assets import EXTENSIONS
+    source = item.get('file') or item.get('path')
+    return isinstance(source, str) and source.lower().endswith(tuple(EXTENSIONS['image']))
 
 
 def task(media):

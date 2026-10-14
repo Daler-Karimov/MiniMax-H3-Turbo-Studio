@@ -136,9 +136,14 @@ def continuation_problems(spec, prefix='', *, editor=None):
         problems.append(dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got)))
     if spec['preview']:
         problems.append(schema.diagnostic(prefix + '/preview', 'false' + why, True))
-    if spec['media']:
-        problems.append(schema.diagnostic(prefix + '/media', 'none' + why + ' (continue_from carries the previous video)',
+    others = [key for key, value in spec['media'].items() if key != 'references' and value]
+    pictures = spec['media'].get('references') or []
+    if others:
+        problems.append(schema.diagnostic(prefix + '/media', 'only references' + why + ' (continue_from carries the previous video)',
                                           None))
+    elif len(pictures) > specs.CONTINUED_PICTURES or not all(specs.still_picture(item) for item in pictures):
+        problems.append(schema.diagnostic(prefix + '/media/references', 'at most %d pictures%s' % (specs.CONTINUED_PICTURES, why),
+                                          len(pictures)))
     return problems
 
 

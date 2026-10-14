@@ -57,7 +57,7 @@ SLUG = string(64, pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 REF = string(128, pattern=r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
              description='Idempotency key; reuse only with the same request content. Batch row refs also name dependencies.')
 FILE = string(1024, pattern=r'^(?!/)(?!.*(?:\\|:))(?!.*(?:^|/)\.\.(?:/|$)).+$')
-FRAME = {'oneOf': [enum(('first', 'last')), number(0)]}
+FRAME = {'oneOf': [enum(('first', 'last')), number(0, 86400)]}  # Seconds into the video; the bound keeps it a float.
 WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 25 seconds without rejecting larger values.', **{'x-clamp': 25})
 CLIENT_WAIT = number(0, 25, default=25)
 # Waiting for the user's words is longer: a person types slowly, and each wait is one tool call.
@@ -859,8 +859,8 @@ def drama_route_table():
 CAST_REFERENCE = {'enum': [None, 'cards', 'partial', 'missing', 'inherited', 'own'],
                   'description': 'How the shot carries cast cards: cards; partial (cast_omitted did not fit at all, or '
                                  'cast_voice_omitted came without their voice); missing '
-                                 '(a card was deleted, cast_missing shoot from text); inherited (continues the '
-                                 'previous shot); own (the shot names its own first frame or references); null.'}
+                                 '(a card was deleted, cast_missing shoot from text); inherited (a film made before continuing '
+                                 'shots carried cards); own (the shot names its own first frame or references); null.'}
 
 
 def production_response():
@@ -1087,8 +1087,9 @@ def cross_issues(schema, value, path):
         if value.get('scene_image') and not value.get('people'):
             bad('scene_image', 'omitted unless people is supplied', value['scene_image'])
     if kind == 'generate':
-        if value.get('continue_from') and value.get('media'):
-            bad('media', 'omitted when continue_from is supplied', value['media'])
+        if value.get('continue_from') and isinstance(value.get('media'), dict) and any(
+                v is not None for k, v in value['media'].items() if k != 'references'):
+            bad('media', 'only references when continue_from is supplied', value['media'])
         if value.get('refine_from') is None:
             custom = value.get('sampling', {})
             two, base, refine = QUALITY[value.get('quality', 'light')]
