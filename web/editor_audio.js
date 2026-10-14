@@ -217,7 +217,7 @@ export function attachAudioTracks(element, {state, t = en => en, actions = {}}) 
     const lockedText = t('This track is locked', '这条轨道已锁定');
     function notify() { return {ok: false, reason: 'locked'}; }
     function render() {
-        element.style.setProperty('--fv-ed-head-width', '148px');
+        element.dataset.trackSwitches = 'true';
         for (const track of state.record.tracks) {
             if (!['video', 'audio'].includes(track.kind)) continue;
             const head = [...element.querySelectorAll('.fv-ed-track-head')].find(node => node.dataset.track === track.id);

@@ -1,4 +1,5 @@
 import {createEditorText} from './editor_text.js';
+import {createToolbarMore} from './editor_toolbar_more.js';
 import {isText} from './editor_text_model.js';
 import {viewSwitch, viewChanged} from './view_navigation.js';
 import {wordmark} from './wordmark.js';
@@ -994,6 +995,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     const transportControls = createEditorTransport({element, preview, transport, toolbar, editTools, zoomHost, state, player, t, notify});
     toolbar.append(adjust.toggleButton);
     const textTools = createEditorText({element, state, t, actions, adjust, player, toolbar, exportBox, tracksHost});
+    const toolbarMore = createToolbarMore({toolbar, t, keep: '.fv-ed-undo, .fv-ed-split, .fv-ed-delete, .fv-ed-adjust-toggle, .fv-ed-zoom'});
     actions.speech.ability().then(value => { if (!disposed) textTools.speech(value); }).catch(() => {});
     const audio = createAudioIntegration({state, player, t, error, adjust, library: libraryHost, store});
     registerEditorShortcuts(AUDIO_SHORTCUTS, speedShortcuts);
@@ -1070,6 +1072,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (tracks?.dismissPopup(event)) return true;
         if (pictureEdit.keyboard(event)) return true;
         if (adjust.dismiss(event)) return true;
+        if (toolbarMore.dismiss(event)) return true;
         if (menu.hidden) return false;
         event.preventDefault(); event.stopPropagation();
         if (!menu.hidden) { menu.hidden = true; title.setAttribute('aria-expanded', 'false'); title.focus(); }
@@ -1171,7 +1174,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
-                rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); player.dispose();
+                rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); toolbarMore.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
                 audio.dispose();
                 listeners.splice(0).forEach(remove => remove());

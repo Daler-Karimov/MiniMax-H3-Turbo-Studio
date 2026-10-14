@@ -145,6 +145,17 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     const heads = create('div', 'fv-ed-track-heads');
     const addAudio = create('button', 'fv-ed-add-audio', t('+ Audio track', '＋ 声音轨'));
     addAudio.type = 'button'; heads.append(addAudio);
+    // Narrow heads show only the track's icon; a press opens that track's switches beside it.
+    // Pointer down, not click: the track view captures the pointer, so the click lands on the view.
+    heads.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        const head = event.target.closest('.fv-ed-track-head'), controls = head?.querySelector('[class$=-track-controls]');
+        if (!controls || controls.contains(event.target) || (head.dataset.open !== 'true' && controls.getClientRects().length)) return;
+        const open = head.dataset.open !== 'true';
+        for (const other of heads.querySelectorAll('.fv-ed-track-head[data-open]')) delete other.dataset.open;
+        if (open) head.dataset.open = 'true';
+    });
+    const closeHeads = event => { if (!event.target.closest?.('.fv-ed-track-head[data-open]')) for (const head of heads.querySelectorAll('.fv-ed-track-head[data-open]')) delete head.dataset.open; };
     const scroll = create('div', 'fv-ed-track-scroll');
     const content = create('div', 'fv-ed-track-content');
     const ruler = create('div', 'fv-ed-ruler');
@@ -537,6 +548,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         heads.append(addAudio);
         addAudio.style.top = `${top}px`; addAudio.disabled = tracks.find(track => track.id === 'a2')?.clips.some(busy) || false;
         addAudio.textContent = twoAudio ? t('− Audio track', '－ 声音轨') : t('+ Audio track', '＋ 声音轨');
+        addAudio.dataset.sign = addAudio.textContent.slice(0, 1); // Phone widths show the sign alone.
         addAudio.title = '';
         addAudio.setAttribute('aria-label', addAudio.textContent);
         content.style.height = `${top - 6}px`; playhead.style.height = `${top - 24}px`;
@@ -922,6 +934,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         if (!autoFrame) autoFrame = requestAnimationFrame(autoScroll);
     }
     function dismissPopup(event) {
+        const head = heads.querySelector('.fv-ed-track-head[data-open]');
+        if (head) { event.preventDefault(); event.stopPropagation(); delete head.dataset.open; return true; }
         if (popover.hidden) return false;
         event.preventDefault(); event.stopPropagation(); popover.hidden = true; return true;
     }
@@ -1122,6 +1136,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         clearSourcePreview();
         draggedSource = sourcePayload(event.dataTransfer?.getData(SOURCE_TYPE)); dropPreviewKey = '';
     });
+    on(document, 'pointerdown', closeHeads, true);
     on(document, 'dragend', () => { clearSourcePreview(); draggedSource = null; dropPreviewKey = ''; showInsertion(null); showGuide(null); });
     on(scroll, 'dragleave', event => { if (!scroll.contains(event.relatedTarget)) { clearSourcePreview(); dropPreviewKey = ''; showInsertion(null); showGuide(null); } });
     on(zoomOut, 'click', () => zoom(state.zoom / 1.25)); on(zoomIn, 'click', () => zoom(state.zoom * 1.25));

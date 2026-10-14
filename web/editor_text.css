@@ -40,7 +40,3 @@
 .fv-ed-track-head[data-text-track=true]>svg{display:none}
 
 .fv-ed-text-notice{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;cursor:pointer}
-@media(max-width:480px){
- .fv-editor .fv-ed-toolbar>.fv-ed-text-buttons{grid-column:1/-1;grid-row:4;justify-self:start}
- .fv-editor .fv-ed-toolbar>.fv-ed-adjust-toggle{grid-column:1/-1;grid-row:4;justify-self:end;width:auto}
-}

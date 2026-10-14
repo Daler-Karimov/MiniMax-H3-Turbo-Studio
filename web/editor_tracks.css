@@ -1,4 +1,6 @@
 .fv-ed-track-view{position:relative;box-sizing:border-box;height:236px;min-width:0;overflow:hidden;background:var(--fv-bg);color:var(--fv-ink);font:13px/1.4 var(--fv-font,system-ui);--fv-ed-head-width:104px}
+/* Audio switches widen the heads; kept here because the audio stylesheet loads after the first draw. */
+.fv-ed-track-view[data-track-switches=true]{--fv-ed-head-width:148px}
 .fv-ed-track-view *{box-sizing:border-box}
 .fv-ed-track-view button,.fv-ed-track-view input{font:inherit;color:inherit}
 .fv-ed-track-view button{appearance:none}
@@ -75,7 +77,7 @@
 .fv-ed-clip-popover button+button{margin-left:6px}
 .fv-ed-clip-popover{max-height:calc(100% - 16px);overflow:auto}
 .fv-ed-track-view [hidden]{display:none!important}
-@media(max-width:520px){.fv-ed-track-view{--fv-ed-head-width:32px}.fv-ed-track-head span{display:none}.fv-ed-track-zoom{right:8px}.fv-ed-clip-status{left:5px;font-size:11px}}
+@media(max-width:520px){.fv-ed-track-view{--fv-ed-head-width:32px}.fv-ed-track-head>span:first-of-type{display:none}.fv-ed-track-zoom{right:8px}.fv-ed-clip-status{left:5px;font-size:11px}}
 @media(forced-colors:active){.fv-ed-clip,.fv-ed-selection,.fv-ed-gesture-preview{border-color:Highlight}.fv-ed-playhead,.fv-ed-snap-line{background:CanvasText}}
 
 /* Gesture affordances; track slots and heads are owned by the track layout. */
