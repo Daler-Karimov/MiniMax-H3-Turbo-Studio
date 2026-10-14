@@ -29,6 +29,11 @@ FAMILY = 'image-models'
 BACKGROUND_RESERVE = 2 * 2**30
 GENERATION_POLL_SECONDS = .25
 GENERATION_RESUME_SECONDS = 10.
+# Asking ComfyUI whether it is busy can take seconds (a closed port on Windows
+# refuses only after about 2 s), and hashing checks once per 4 MiB block. Ask at
+# most every 2 s, and a slow answer waits four times its own cost before the next.
+GENERATION_PROBE_SECONDS = 2.
+GENERATION_PROBE_COST_FACTOR = 4
 SPEED_WINDOW_SECONDS = 10.
 STATUS_INTERVAL_SECONDS = .25
 OFFLINE_TRANSFER_REASONS = frozenset(('curl-5', 'curl-6', 'curl-7'))
@@ -50,10 +55,18 @@ class _Background:
         self.installer, self.stop = installer, stop
         self.resume_at = None
         self.paused = False
+        self.probed_at, self.probe_gap, self.busy_seen = None, 0., False
 
     def generating(self):
-        if self.installer.generation_busy and self.installer.generation_busy():
-            return True
+        if self.installer.generation_busy:
+            if self.probed_at is None or time.monotonic() - self.probed_at >= self.probe_gap:
+                began = time.monotonic()
+                self.busy_seen = bool(self.installer.generation_busy())
+                self.probed_at = time.monotonic()
+                self.probe_gap = max(GENERATION_PROBE_SECONDS,
+                                     GENERATION_PROBE_COST_FACTOR * (self.probed_at - began))
+            if self.busy_seen:
+                return True
         # Probe the existing lease exclusively, without borrowing an inherited
         # descriptor. This also detects shared device work. Release immediately:
         # downloads never hold engine.lock or delay a generation acquiring it.
