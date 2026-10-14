@@ -730,7 +730,10 @@ def register():
             if not isinstance(value, dict):
                 raise ValueError('invalid_request')
             name = request.match_info['action']
-            if name == 'status':
+            if name == 'cast-views':
+                from .cast_views import page_views
+                result = page_views(value.get('description'))
+            elif name == 'status':
                 result = service.status(value.get('job'))
             elif name == 'cancel':
                 result = service.cancel(value.get('job'))

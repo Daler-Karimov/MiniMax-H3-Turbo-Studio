@@ -96,3 +96,15 @@ def photo_prompt():
             'feet. Turn the head and body to face us. Neutral pose with the arms relaxed, %s. Keep exactly '
             'the same person, face, hair and clothes as in image 1. Preserve all existing accessories; '
             'add no new accessories.' % BACKDROP)
+
+
+def page_views(description):
+    """What the page needs to make the pictures of a new character itself: each view's prompt and size.
+
+    The page runs the pictures one by one so each shows when it is done; the prompts stay here, so a
+    card made from a description and these pictures are made from the same words."""
+    if not isinstance(description, str) or not description.strip() or len(description) > 1000:
+        raise ValueError('invalid_prompt')
+    card = dict(name=description.strip()[:120], description=description.strip(), kind='character')
+    return dict(views=[dict(view=view, prompt=view_prompt(card, view), width=SIZES[view][0],
+                            height=SIZES[view][1], from_front=uses_front(view)) for view in VIEWS])

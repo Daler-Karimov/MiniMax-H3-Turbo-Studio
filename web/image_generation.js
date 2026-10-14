@@ -81,6 +81,8 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
                 ...(phase === 'cancelled' ? {error: 'cancelled'} : {})};
         },
         cancel: job => post('cancel', {[p.job]: job}),
+        // The prompts and sizes of a new character's five pictures (the Agent's cards use the same ones).
+        castViews: async description => (await post('cast-views', {description})).views,
         async upload(file) {
             // ComfyUI's existing image upload stores this at input/<unique name>.
             // FreeVideo's media upload uses subdirectories the image worker rejects.
@@ -189,7 +191,7 @@ export function renderImageFailure(host, {error, report_id} = {}, t,
     bar.append(anchor); card.append(bar);
     return card;
 }
-function imagePackUnavailableMessage(info, t) {
+export function imagePackUnavailableMessage(info, t) {
     return info?.[IMAGE_GEN_PROTOCOL.downloading]
         ? t('Downloading. Available when finished.', '正在下载，完成后可用。') : imagePackMessage(info, t);
 }
