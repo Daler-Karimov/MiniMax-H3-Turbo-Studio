@@ -592,7 +592,9 @@ def plan(args, *, local_progress=None, stage=None):
     local_reuse = None
     local_folder = getattr(args, 'reuse_models', None)
     local_manifest = getattr(args, 'reuse_models_manifest', None)
-    if local_folder or local_manifest:
+    from .launcher_settings import saved_model_libraries
+    saved_libraries = saved_model_libraries()
+    if local_folder or local_manifest or saved_libraries:
         from .local_models import scan, scan_many, can_link, key as local_key
         previous_reuse = None
         approved = getattr(args, 'approved_plan', None)
@@ -606,6 +608,12 @@ def plan(args, *, local_progress=None, stage=None):
             if not isinstance(libraries, dict) or libraries.get('version') != 1 or not isinstance(libraries.get('roots'), list):
                 raise ValueError('Invalid model library manifest')
             directories = ([str(local_folder)] if local_folder else []) + libraries['roots']
+            from .local_models import library_roots
+            directories = library_roots(library_roots(directories) + saved_libraries, keep_first=True)
+            scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
+        elif saved_libraries:
+            from .local_models import library_roots
+            directories = library_roots(([str(local_folder)] if local_folder else []) + saved_libraries, keep_first=True)
             scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
         else:
             scan_library = lambda: scan(local_folder, needed, prior=previous_reuse, callback=local_progress)

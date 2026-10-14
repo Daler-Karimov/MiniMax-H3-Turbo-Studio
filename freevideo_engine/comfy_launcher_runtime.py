@@ -975,7 +975,8 @@ class Controller:
             extra = values.get('model_dirs', [])
             if not isinstance(extra, list) or any(not isinstance(p, str) for p in extra):
                 raise ValueError('Model folders must be a list of directory paths')
-            extra = extra + ([values['models']] if values.get('models') else [])
+            from .launcher_settings import extra_model_directories
+            extra = extra + ([values['models']] if values.get('models') else []) + extra_model_directories()
             # A saved folder that no longer exists (for example a removed offline
             # package) has nothing to reuse; it must not stop the installation.
             extra = [p for p in dict.fromkeys(extra) if p.strip() and io_path(Path(p).expanduser()).is_dir()]
