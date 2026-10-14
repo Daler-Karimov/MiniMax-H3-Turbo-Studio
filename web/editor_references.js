@@ -1,8 +1,11 @@
 // Reference pictures for a new part, kept small inside the generation bar: thumbnails and one "+".
+// A part that continues the one before keeps its reference pictures (people stay the same) but not its first or last frame.
 // `source` is the media rows of the creative panel (editor_media_references.js); `size()` is the video's shape.
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 const MAX = 32;
+// The engine keeps the first three references of a part that continues.
+const CONTINUE_MAX = 3;
 export function createEditorReferences({t, source, size = () => null, error = () => {}, notify = () => {}}) {
     const root = el('div', 'fv-ed-refs'), chips = el('div', 'fv-ed-ref-chips');
     const add = el('button', 'fv-ed-ref-add'); add.type = 'button';
@@ -12,12 +15,16 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     const menu = el('div', 'fv-ed-ref-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
     const picker = el('input'); picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true; picker.hidden = true;
     root.append(add, chips, menu, picker);
-    let shown = false, busy = false, working = false, opener = null, disposed = false, entries = [], waited = false;
+    let shown = false, continuing = false, busy = false, working = false, opener = null, disposed = false, entries = [], waited = false;
     const active = () => source.rows().map((row, index) => ({row, index})).filter(({row}) => row.enabled !== false);
     const isImage = file => IMAGE.test(file || '');
+    // The pictures this part uses: all of them, or the first reference images of a part that continues
+    // (sound or video references do not count there, as the engine skips them).
+    const used = () => continuing ? active().filter(({row}) => (row.role || 'reference') === 'reference' && isImage(row.file)).slice(0, CONTINUE_MAX) : active();
+    const full = () => continuing ? used().length >= CONTINUE_MAX : active().length >= MAX;
     // On hover without a full stop; in the notice line with one.
     const waitText = () => t('Available after generation finishes', '生成完成后可改');
-    const fullText = () => t('Up to 32 images', '最多 32\u00a0张');
+    const fullText = () => continuing ? t('Up to 3 images when continuing', '接续时最多 3\u00a0张') : t('Up to 32 images', '最多 32\u00a0张');
     const sentence = text => text + t('.', '。');
     const label = role => role === 'first' ? t('First frame', '首帧') : role === 'last' ? t('Last frame', '尾帧') : t('Reference', '参考');
     function close(focus = true) {
@@ -58,7 +65,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
         working = true; update();
         try {
             for (const file of files) {
-                if (active().length >= MAX) break;
+                if (full()) break;
                 const result = await source.upload(file);
                 write([...source.rows(), {file: result.file, role: 'reference', enabled: true}]);
             }
@@ -93,6 +100,11 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     }
     function chipMenu(entry) {
         entries = [];
+        const remove = () => item(t('Remove', '移除'), () => {
+            const rows = source.rows();
+            if (rows[entry.index]?.file === entry.row.file) { rows[entry.index] = {...rows[entry.index], enabled: false}; write(rows); }
+        });
+        if (continuing) return [remove()];
         const roles = ['reference', 'first', 'last'].map(role => {
             const b = item(label(role), () => {
                 const rows = source.rows();
@@ -104,25 +116,23 @@ export function createEditorReferences({t, source, size = () => null, error = ()
             b.setAttribute('aria-checked', String((entry.row.role || 'reference') === role)); return b;
         });
         const separator = el('div'); separator.setAttribute('role', 'separator');
-        return [...roles, separator, item(t('Remove', '移除'), () => {
-            const rows = source.rows();
-            if (rows[entry.index]?.file === entry.row.file) { rows[entry.index] = {...rows[entry.index], enabled: false}; write(rows); }
-        })];
+        return [...roles, separator, remove()];
     }
     // The line said on a click while a part is made; it goes away with the busy state it describes.
     const wait = () => { waited = true; notify(sentence(waitText())); };
     function update(isBusy = busy, visible = shown) {
         if (waited && busy && !isBusy) { waited = false; notify(''); }
-        busy = isBusy; shown = visible;
+        const was = continuing;
+        busy = isBusy; shown = visible; continuing = shown === 'continues';
         root.hidden = !shown || !source.available();
-        if ((root.hidden || busy) && !menu.hidden) close(false);
-        // The panel holds at most MAX pictures: a full list greys the plus out rather than ignoring a click.
-        const full = active().length >= MAX;
+        if ((root.hidden || busy || was !== continuing) && !menu.hidden) close(false);
+        // The panel holds at most MAX pictures, a continuing part uses three: a full list greys the plus out rather than ignoring a click.
+        const isFull = full();
         // While a part is being made the controls stay clickable and say why they do nothing.
         add.disabled = working;
-        add.setAttribute('aria-disabled', String(busy || full));
-        add.title = busy ? waitText() : full ? fullText() : t('Reference image', '参考图');
-        chips.replaceChildren(...active().map(entry => {
+        add.setAttribute('aria-disabled', String(busy || isFull));
+        add.title = busy ? waitText() : isFull ? fullText() : t('Reference image', '参考图');
+        chips.replaceChildren(...used().map(entry => {
             const chip = el('button', 'fv-ed-ref-chip'); chip.type = 'button'; chip.disabled = working; chip.setAttribute('aria-disabled', String(busy));
             chip.dataset.role = entry.row.role || 'reference';
             chip.title = busy ? waitText() : label(entry.row.role); chip.setAttribute('aria-haspopup', 'menu');
@@ -134,7 +144,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     }
     add.onclick = () => {
         if (busy) { wait(); return; }
-        if (active().length >= MAX) { notify(sentence(fullText())); return; }
+        if (full()) { notify(sentence(fullText())); return; }
         if (!menu.hidden && opener === add) close(); else open(add, addMenu()); };
     picker.onchange = () => addFiles(Array.from(picker.files));
     // Keys stay in the menu: Escape closes it only, and the arrows move through it.

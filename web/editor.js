@@ -319,9 +319,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const start = Math.min(...clips.map(clip => clip.start));
         return {start, frames: Math.max(...clips.map(clip => clip.start + clip.frames)) - start};
     }
-    // Whether the part about to be made starts fresh instead of continuing footage: only then can pictures guide it.
-    function startsFresh() {
-        const range = selectionRange(); if (!range) return false;
+    // How the part about to be made starts: 'fresh' (pictures can guide it), 'continues' (from the footage before it) or null.
+    function partStart() {
+        const range = selectionRange(); if (!range) return null;
         try {
             const selected = selectionClips();
             const planned = selected.length && selected.every(clip => clip.pending && !clip.source)
@@ -329,8 +329,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 : model.planRange(state.record, {...range, target: 'both', text: 'x', maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds});
             const ids = planned.tracks[0].clips.filter(clip => clip.start >= range.start && clip.start < range.start + range.frames
                 && clip.pending && !['queued', 'running'].includes(clip.pending)).map(clip => clip.id);
-            return ids.length > 0 && model.generationBefore(model.prepare(planned, ids), ids).some(before => before == null);
-        } catch (value) { if (value instanceof model.EditError) return false; throw value; }
+            if (!ids.length) return null;
+            return model.generationBefore(model.prepare(planned, ids), ids).some(before => before == null) ? 'fresh' : 'continues';
+        } catch (value) { if (value instanceof model.EditError) return null; throw value; }
     }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
     // Parts pressed while they cannot be sent yet: the engine is still starting, or they continue a part
@@ -473,7 +474,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!value.node || !value.prompt?.[value.node]) throw new Error('missing_node');
         const inputs = value.prompt[value.node].inputs;
         Object.assign(inputs, state.record.settings || {}, capability.generationSize || generationSize(state.record));
-        // The media panel's pictures guide a part that starts fresh (generate() drops them when every part continues footage);
+        // The media panel's pictures guide every part (the engine keeps only the references for a part that continues);
         // without a panel to show them they stay out of the request.
         if (!panel.references?.available()) delete inputs.media;
         delete inputs.continue_from; delete inputs.continue_to;
@@ -730,9 +731,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return before || model.rangeParts(state.record, {...range, ...capability}).length > 1;
         },
-        // Pictures that guide a new part: the creative panel's media rows, shown while the part starts fresh.
+        // Pictures that guide a new part: the creative panel's media rows; a part that continues shows only its references.
         references: panel.references ? {source: panel.references, notify, size: () => capability.generationSize || generationSize(state.record),
-            visible: () => store.generationAvailable && actions.supportedSelection() && startsFresh()} : null,
+            visible: () => store.generationAvailable && actions.supportedSelection() ? partStart() : null} : null,
         setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
@@ -768,8 +769,6 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 submittedSelection = shown && state.selection === selection ? state.select({kind: 'clip', ids}) : state.selection; await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
-                // Pictures guide parts that start fresh; a request whose parts all continue footage carries none.
-                if (!request.blocks.some(block => !block.after)) delete frozen.prompt[frozen.node].inputs.media;
                 const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
                 // Parts made at another size than the edit's have that size's limit.
