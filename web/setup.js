@@ -144,7 +144,7 @@ export async function openSetup() {
     const inspect = node("button", t("Detect & review", "检测并预览")); inspect.className = "fv-primary";
     const use = node("button", t("Use existing", "使用已有安装"));
     const install = node("button", t("Install / repair", "安装／修复")); install.disabled = true;
-    const cancel = node("button", t("Stop setup", "停止安装")); cancel.disabled = true;
+    const cancel = node("button", t("Stop setup", "停止安装")); cancel.hidden = true;
     const saveFolders = node('button', t('Save model folders', '保存模型目录'));
     actions.append(saveFolders, inspect, use, install, cancel); installation.append(actions);
     // Why Install / repair is unavailable, so it never looks like a broken button.
@@ -268,7 +268,7 @@ export async function openSetup() {
     };
     const controls = () => {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
-        cancel.disabled = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
+        cancel.hidden = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
         const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击“检测并预览”更新安装计划。")
             : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击“检测并预览”。")
             : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
