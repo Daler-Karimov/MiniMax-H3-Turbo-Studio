@@ -89,9 +89,11 @@ class Service:
         return self._busy
 
     def info(self):
-        _, machine = self.installation()
+        engine_root, machine = self.installation()
         spec = image_pack.catalog()
-        return dict(ready=image_pack.ready(machine['model_root']), model=spec['repo'],
+        ready = image_pack.ready(machine['model_root'])
+        return dict(ready=ready, model=spec['repo'],
+                    downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
                     max_images=MAX_IMAGES)
 

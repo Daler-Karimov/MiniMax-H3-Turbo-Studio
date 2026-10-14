@@ -8,6 +8,7 @@ or an optional busy callback. The CLI writes atomic, read-only status snapshots.
 """
 from collections import deque
 from contextlib import ExitStack, contextmanager
+import errno
 import json
 import logging
 from pathlib import Path, PurePosixPath
@@ -261,6 +262,32 @@ def status(root=None):
 
 def ready(root=None):
     return status(root)['ready']
+
+
+def downloading(root=None, engine_root=None) -> bool:
+    """Probe the existing pack lease without creating files or waiting."""
+    try:
+        path = _path(base(root), 'pack.lock')
+        # install() holds this lease through transfers and generation pauses.
+        # A separate descriptor also detects a holder in this process.
+        with path.open('rb') as stream:
+            if sys.platform == 'win32':
+                import msvcrt
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBRLCK, 1)
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    return True
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+        return False
+    except Exception:
+        return False
 
 
 @contextmanager

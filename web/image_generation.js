@@ -5,7 +5,7 @@ import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.j
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
-    installed: 'ready', phase: 'phase', bytes: 'bytes',
+    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading',
     token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', seed: 'seed',
     stage: 'stage', fraction: 'fraction', file: 'file', error: 'error', name: 'name', subfolder: 'subfolder',
     states: {starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
@@ -100,11 +100,15 @@ export function imagePackMessage(info, t) {
     return t(`Download "${name}" in the launcher first, ${size}.`, `先在启动器里下载“${name}”，${size}。`);
 }
 export function imageGenError(code, info, t) {
-    if (code === 'pack_missing') return imagePackMessage(info, t);
+    if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);
     if (code === 'busy_video') return t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。');
     if (code === 'no_memory') return t('Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
         '显存不足。在“图像大小…”里缩小后再试。');
     return t('The image could not be generated. Try again.', '没有生成成功，请再试一次。');
+}
+function imagePackUnavailableMessage(info, t) {
+    return info?.[IMAGE_GEN_PROTOCOL.downloading]
+        ? t('Downloading. Available when finished.', '正在下载，完成后可用。') : imagePackMessage(info, t);
 }
 
 // The service accepts 256..2048 on each side; a larger canvas is generated at its
@@ -368,7 +372,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         action.classList.toggle('fv-ie-primary', !state.running);
         action.disabled = !state.running && (disabled || !prompt.trim()); action.hidden = !!missing;
         const percent = Math.floor(state.fraction * 100) + '%';
-        note.textContent = missing ? imagePackMessage(state.info, t) : state.error ? imageGenError(state.error, state.info, t)
+        note.textContent = missing ? imagePackUnavailableMessage(state.info, t) : state.error ? imageGenError(state.error, state.info, t)
             : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent : '';
         note.hidden = !note.textContent;
         bar.dataset.running = String(state.running); bar.dataset.message = String(!!missing || !!state.error);
