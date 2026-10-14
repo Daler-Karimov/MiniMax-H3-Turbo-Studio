@@ -279,6 +279,7 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
 export function createImageGeneration({client, renderer, t, getDoc, getSelection, commit, el, button, segmented,
     library = [], resolve = file => file, icon = () => '', onRatioChange}) {
     let mode = 'edit', prompt = '', mounted = null, references = [];
+    let promptRequired = false, attentionTimer = null;
     const copies = new Map();
     // A reference is sent no larger than the largest picture the service makes.
     async function referencePNG(file) {
@@ -304,7 +305,27 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
     });
     const limit = () => referenceLimit(session.state().info);
     const chosen = () => mode === 'edit' ? references.slice(0, limit() - 1) : [];
-    const start = () => session.start({mode, prompt, references: chosen()});
+    function clearAttention() {
+        clearTimeout(attentionTimer); attentionTimer = null;
+        mounted?.input.classList.remove('fv-ie-active');
+    }
+    function start() {
+        // The button is only marked unavailable, so a click while the service is being checked is turned away here.
+        const now = session.state();
+        if (now.checking || !now.info?.installed) return;
+        if (!prompt.trim()) {
+            promptRequired = true; update();
+            if (mounted) {
+                const {input} = mounted;
+                clearAttention(); input.focus(); input.classList.add('fv-ie-active');
+                attentionTimer = setTimeout(() => {
+                    input.classList.remove('fv-ie-active'); attentionTimer = null;
+                }, 300);
+            }
+            return;
+        }
+        return session.start({mode, prompt, references: chosen()});
+    }
     function drawEdited(canvas) {
         try {
             const doc = getDoc(), layer = generationContext(doc, null, 'edit').layer;
@@ -370,12 +391,16 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         input.setAttribute('aria-label', input.placeholder);
         action.textContent = state.running ? t('Stop', '停止') : t('Generate', '生成');
         action.classList.toggle('fv-ie-primary', !state.running);
-        action.disabled = !state.running && (disabled || !prompt.trim()); action.hidden = !!missing;
+        action.setAttribute('aria-disabled', String(!state.running && (disabled || !prompt.trim())));
+        action.title = !state.running && !prompt.trim() ? t('Write a short description first', '请先写一句画面描述') : '';
+        action.hidden = !!missing;
         const percent = Math.floor(state.fraction * 100) + '%';
-        note.textContent = missing ? imagePackUnavailableMessage(state.info, t) : state.error ? imageGenError(state.error, state.info, t)
+        note.textContent = missing ? imagePackUnavailableMessage(state.info, t)
+            : promptRequired ? t('Write a short description first.', '请先写一句画面描述。')
+            : state.error ? imageGenError(state.error, state.info, t)
             : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent : '';
         note.hidden = !note.textContent;
-        bar.dataset.running = String(state.running); bar.dataset.message = String(!!missing || !!state.error);
+        bar.dataset.running = String(state.running); bar.dataset.message = String(!!missing || promptRequired || !!state.error);
         meter.hidden = !state.running; meter.setAttribute('aria-valuenow', String(Math.floor(state.fraction * 100)));
         fill.style.width = state.fraction * 100 + '%';
     }
@@ -412,8 +437,15 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         if (ratio) bar.append(ratio);
         bar.append(field, note, action, meter);
         mounted = {bar, input, action, note, meter, fill, group, refs, ratio};
-        const grow = () => { input.style.height = '0px'; input.style.height = Math.min(80, Math.max(32, input.scrollHeight + 2)) + 'px'; };
-        input.oninput = () => { prompt = input.value; session.clearError(); grow(); };
+        const grow = () => {
+            input.style.height = '0px';
+            input.style.height = (prompt.trim() ? Math.min(80, Math.max(32, input.scrollHeight + 2)) : 32) + 'px';
+        };
+        input.oninput = () => {
+            prompt = input.value;
+            if (prompt.trim()) promptRequired = false;
+            clearAttention(); session.clearError(); grow();
+        };
         input.onkeydown = event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault(); void start();
@@ -421,6 +453,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         };
         grow(); update();
     }
-    return {mount, unmount() { mounted = null; }, selected: () => session.check(), cancel: session.cancel,
-        dispose: session.dispose, state: session.state};
+    return {mount, unmount() { clearAttention(); promptRequired = false; mounted = null; },
+        selected: () => session.check(), cancel: session.cancel,
+        dispose() { clearAttention(); return session.dispose(); }, state: session.state};
 }

@@ -11,7 +11,7 @@
 .fv-image-editor [hidden]{display:none!important}
 .fv-image-editor :focus-visible{outline:2px solid var(--fv-accent);outline-offset:2px}
 .fv-image-editor button{font:inherit;color:var(--fv-ink);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-.fv-image-editor button:disabled{opacity:.38;cursor:default}
+.fv-image-editor button:disabled,.fv-image-editor button[aria-disabled=true]{opacity:.38;cursor:default}
 .fv-image-editor input,.fv-image-editor select,.fv-image-editor textarea{font:inherit;color:var(--fv-ink)}
 
 /* Header: name and size, zoom in the middle, history and leave on the right. */
@@ -29,9 +29,9 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
 .fv-ie-button{min-height:var(--fv-h-sm);padding:5px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-raised);font-weight:var(--fv-medium);white-space:nowrap}
-.fv-ie-button:hover:not(:disabled){background:var(--fv-hover)}
+.fv-ie-button:hover:not(:disabled):not([aria-disabled=true]){background:var(--fv-hover)}
 .fv-ie-primary{background:var(--fv-accent);border-color:var(--fv-accent);color:#08131f;min-width:84px}
-.fv-ie-primary:hover:not(:disabled){background:var(--fv-accent-hover)}
+.fv-ie-primary:hover:not(:disabled):not([aria-disabled=true]){background:var(--fv-accent-hover)}
 .fv-ie-danger{color:var(--fv-danger);border-color:color-mix(in srgb,var(--fv-danger) 60%,transparent)}
 .fv-ie-quiet{background:transparent}
 .fv-ie-active{background:var(--fv-selected)!important;border-color:var(--fv-accent)!important;color:var(--fv-accent)!important}
