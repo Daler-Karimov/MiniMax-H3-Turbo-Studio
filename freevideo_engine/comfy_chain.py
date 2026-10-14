@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import ssl
+import time
 from urllib import error, request
 
 from .chain_runner import ChainBusy, ChainPartTooShort, ChainRunner, ChainTooLong
@@ -177,6 +178,54 @@ class ComfyHost:
         return join_outputs([block['output'] for block in blocks], record['id'], cancelled,
                             frames=frames, replace=record.get('output'), **kept)
 
+    def split_texts(self, value, cancelled):
+        """One description per part from the local prompt model: (parts, None) or (None, reason)."""
+        service = getattr(self.server, '_freevideo_prompt_vlm', None)
+        if service is None:
+            return None, 'unavailable'
+        # A rewrite or a single video the user started a moment ago finishes first; busy is said only after
+        # ten minutes of waiting. Up to ten minutes waiting plus fifteen splitting hold the runner thread; there
+        # is one active chain, so nothing else waits behind it.
+        waiting = time.monotonic() + 600
+        while True:
+            try:
+                job = service.start('split', value)['job']
+            except ValueError as failure:
+                if str(failure) != 'busy' or time.monotonic() > waiting or cancelled():
+                    return None, {'model_missing': 'model_missing', 'busy': 'busy'}.get(str(failure), 'failed')
+                time.sleep(2)
+                continue
+            parts, reason = self._split_job(service, job, cancelled)
+            if reason != 'busy' or time.monotonic() > waiting or cancelled():
+                return parts, reason
+            time.sleep(2)
+
+    def _split_job(self, service, job, cancelled):
+        deadline = time.monotonic() + 900
+        while True:
+            try:
+                row = service.status(job)
+            except ValueError:
+                return None, 'failed'
+            phase = row.get('phase')
+            if phase == 'complete':
+                return row.get('parts'), None
+            if phase in ('failed', 'cancelled'):
+                error = row.get('error')
+                return None, ('memory' if error in ('ram_space', 'disk_space') else 'busy' if error == 'busy'
+                              else 'unusable' if error == 'split_failed' else 'failed')
+            if cancelled() or time.monotonic() > deadline:
+                service.cancel(job)
+                stopping = time.monotonic() + 30
+                try:
+                    while (time.monotonic() < stopping
+                           and service.status(job).get('phase') not in ('complete', 'failed', 'cancelled')):
+                        time.sleep(.2)
+                except ValueError:
+                    pass
+                return None, 'failed'
+            time.sleep(.5)
+
     def lead(self, output, previous):
         """A finished block's seam sound, read while its record is still in the shared store."""
         from .comfy_continuation import audio_lead_in
@@ -331,6 +380,19 @@ def register(host_factory=None):
             return response({'chain': runner.cancel(request.match_info['id'])})
         except KeyError:
             return response({'error': 'Unknown chain'}, 404)
+
+    @server.routes.post('/freevideo/chain/{id}/blocks/{block}/text')
+    async def text(request):
+        try:
+            value = await body(request)
+            return response({'chain': runner.set_text(request.match_info['id'], request.match_info['block'],
+                                                      value.get('text') if isinstance(value, dict) else None)})
+        except KeyError:
+            return response({'error': 'Unknown chain or part'}, 404)
+        except ChainBusy as failure:
+            return response({'error': str(failure)}, 409)
+        except ValueError as failure:
+            return response({'error': str(failure)}, 400)
 
     @server.routes.post('/freevideo/chain/{id}/resume')
     async def resume(request):

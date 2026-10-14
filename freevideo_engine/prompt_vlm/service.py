@@ -262,7 +262,7 @@ class Service:
 
     def start(self, action, value):
         received_epoch = time.time()
-        if action not in ('install', 'rewrite', 'ask'):
+        if action not in ('install', 'rewrite', 'ask', 'split'):
             raise ValueError('invalid_request')
         if self.busy():
             raise ValueError('busy')
@@ -274,6 +274,10 @@ class Service:
             if not assets.ready(root):
                 raise ValueError('model_missing')
             value = self.ask_images(rules.ask_request(value))
+        elif action == 'split':
+            if not assets.ready(root):
+                raise ValueError('model_missing')
+            value = rules.split_request(value)
         else:
             if not assets.ready(root):
                 raise ValueError('model_missing')
@@ -290,7 +294,7 @@ class Service:
         with self.mutex:
             if self.busy():
                 raise ValueError('busy')
-            if action in ('rewrite', 'ask'):
+            if action != 'install':
                 self.prestart_ticket += 1  # Invalidate pending imports before the worker starts.
             self.key = secrets.token_urlsafe(24)
             self.stop.clear()
@@ -326,6 +330,7 @@ class Service:
             if self.result_expires and time.monotonic() > self.result_expires:
                 self.state.pop('text', None)
                 self.state.pop('answers', None)
+                self.state.pop('parts', None)
                 self.state.update(phase='failed', error='expired')
             row = dict(self.state)
             # The browser may immediately queue video work or the next rewrite.
@@ -334,6 +339,7 @@ class Service:
                 row['phase'] = 'finishing'
                 row.pop('text', None)
                 row.pop('answers', None)
+                row.pop('parts', None)
             return row
 
     def cancel(self, key):
@@ -368,7 +374,7 @@ class Service:
             from ..background_compile import COMPILE
             COMPILE.stop()
             self.release_idle_image_worker()
-            if action in ('rewrite', 'ask'):
+            if action != 'install':
                 from ..resident_process import OWNER
                 if OWNER.active:
                     raise BlockingIOError('busy')
@@ -388,13 +394,14 @@ class Service:
         except BlockingIOError:
             self.progress(dict(phase='failed', error='busy'))
         except Exception as error:
-            known = {'disk_space', 'ram_space', 'rewrite_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
+            known = {'disk_space', 'ram_space', 'rewrite_failed', 'split_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
             self.progress(dict(phase='failed', error=str(error) if str(error) in known
                                else 'download_failed' if action == 'install'
-                               else 'ask_failed' if action == 'ask' else 'rewrite_failed',
+                               else 'ask_failed' if action == 'ask' else 'split_failed' if action == 'split'
+                               else 'rewrite_failed',
                                exception=type(error).__name__))
         finally:
-            if action in ('rewrite', 'ask'):
+            if action != 'install':
                 self.stop_prestart(self.prewarm_state.get('reason', 'none'))
             if self.stop.is_set():
                 self.progress(dict(phase='cancelled'))
@@ -564,6 +571,8 @@ class Service:
             if result.get('phase') == 'complete':
                 if value.get('mode') == 'ask':
                     rules.validate_answers(result.get('answers'), value)
+                elif value.get('mode') == 'split':
+                    rules.validate_parts(result.get('parts'), value)
                 else:
                     rules.validate_output(result.get('text'), value)
             self.progress(dict(result, worker_returncode=child.returncode))
