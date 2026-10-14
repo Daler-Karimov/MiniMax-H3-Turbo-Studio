@@ -21,6 +21,10 @@ class StreamedStack:
         self.layers = list(layers)
         if not self.layers:
             raise ValueError('StreamedStack needs at least one layer')
+        # Host bytes of every layer, pinned or not: the weights hold this much of
+        # the host whichever storage they ended up on.
+        self.host_bytes = sum(tensor.numel() * tensor.element_size() for layer in self.layers
+                              for tensor in list(layer.parameters()) + list(layer.buffers()))
         # Pinning is an optimization: a host that refuses it costs transfer
         # speed, not the request (pin_layer_weights keeps the unpinned layers
         # on their ordinary storage and the offloader stages them).

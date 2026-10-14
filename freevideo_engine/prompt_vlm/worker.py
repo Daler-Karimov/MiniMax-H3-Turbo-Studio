@@ -103,6 +103,31 @@ def available_memory():
     return available
 
 
+class Cancelled(BaseException):
+    """Raised by a stop signal between Python operations, never inside a GPU call."""
+
+
+def stop_on_signal():
+    """Stop like a finished run: no hard exit while weights or tokens are on their way to the GPU."""
+    import signal
+    names = [signal.SIGTERM, signal.SIGINT] + ([signal.SIGBREAK] if os.name == 'nt' else [])
+    def stop(*_):
+        for name in names:
+            signal.signal(name, signal.SIG_IGN)
+        raise Cancelled()
+    for name in names:
+        signal.signal(name, stop)
+
+
+def settle():
+    torch = sys.modules.get('torch')
+    if torch is not None and torch.cuda.is_initialized():
+        try:
+            torch.cuda.synchronize()
+        except (RuntimeError, OSError):
+            pass
+
+
 def emit(**value):
     print(json.dumps(value, ensure_ascii=True), flush=True)
 
@@ -480,6 +505,7 @@ def main():
     value = {}
     prestarting = os.environ.get(PRESTART_ENV) == '1'
     requested = False
+    stop_on_signal()
     try:
         if prestarting:
             started = time.monotonic()
@@ -503,6 +529,10 @@ def main():
         else:
             value = json.loads(sys.stdin.buffer.read(1024 * 1024))
         run(Path(sys.argv[1]), value, stats=stats)
+    except Cancelled:
+        settle()
+        emit(phase='cancelled')
+        return 0
     except Exception as error:
         if not prestarting or requested:
             gpu_snapshot(stats)

@@ -65,6 +65,7 @@
 
 /* Text, plans and measurements. */
 .fv-setup p{margin:8px 0}
+.fv-setup [role=status]{overflow-wrap:anywhere;white-space:pre-line}
 .fv-setup .fv-muted{color:var(--fv-muted);font-size:var(--fv-micro);white-space:pre-wrap}
 .fv-setup .fv-model-repair-path{overflow-wrap:anywhere}
 .fv-setup progress{display:block;width:100%;height:6px;margin:6px 0}

@@ -242,7 +242,7 @@ def validate(record):
                 raise ValueError('Duplicate versions')
             clip = dict(id=identity, start=int(raw['start']), frames=int(raw['frames']), length=int(raw['length']),
                         source=source, link=link, text=raw.get('text', ''), part=raw.get('part'), pending=pending,
-                        reason=raw.get('reason'), job=raw.get('job'), extend=raw.get('extend', source is not None and source['kind'] != 'import'),
+                        reason=raw.get('reason'), job=raw.get('job'), extend=raw.get('extend', source is not None),
                         versions=history, **{'in': int(raw['in'])})
             clip.update(speed_fields)
             clip.update(clip_fields(raw, kind))
@@ -646,6 +646,9 @@ def sources(root, keys):
             if source['kind'] in ('work', 'generated'):
                 relative = path.relative_to(Path(root).resolve()).as_posix()
                 info['path'] = relative
+            elif path.suffix == '.mp4':
+                # An imported video is continued from its upright 24 fps copy; it is still shown through the import.
+                info['path'] = path.relative_to(Path(root).resolve()).as_posix()
             if path.stat().st_size == 0:
                 raise ValueError('Empty media')
             if source['kind'] == 'work':

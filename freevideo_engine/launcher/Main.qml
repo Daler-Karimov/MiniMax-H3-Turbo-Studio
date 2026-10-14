@@ -1181,8 +1181,9 @@ ApplicationWindow {
                                 }
                             }
                         }
+                        // Mac generation shares unified memory and has no compatibility levels.
                         FGroup {
-                            Layout.fillWidth: true; title: t("Compatibility", "兼容性")
+                            Layout.fillWidth: true; title: t("Compatibility", "兼容性"); visible: Qt.platform.os !== "osx"
                             RowLayout {
                                 Layout.fillWidth: true
                                 FText { text: t("Level", "档位"); Layout.fillWidth: true }

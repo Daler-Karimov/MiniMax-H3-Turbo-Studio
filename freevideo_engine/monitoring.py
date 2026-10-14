@@ -12,7 +12,7 @@ from .system import windows
 from .long_paths import io_path, plain_data
 
 
-def save(path, value, *, staging=None):
+def save(path, value, *, staging=None, plain_paths=True):
     path = io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Unique, closed staging file; Windows readers/antivirus may briefly hold
@@ -23,7 +23,7 @@ def save(path, value, *, staging=None):
             prefix=path.name + '.' if staging is None else staging, suffix='.tmp',
             dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
-        stream.write(json.dumps(plain_data(value), ensure_ascii=False, indent=2) + '\n')
+        stream.write(json.dumps(plain_data(value) if plain_paths else value, ensure_ascii=False, indent=2) + '\n')
     for attempt in range(8):
         try:
             temporary.replace(path)

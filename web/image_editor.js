@@ -117,7 +117,7 @@ function loadImage(src) {
         const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error('load')); image.src = src;
     });
 }
-const strip = d => JSON.stringify({...d, active: null, layers: d.layers.map(l => ({...l, name: ''}))});
+const strip = d => JSON.stringify({...d, active: null});
 
 /**
  * Open the editor over everything else.
@@ -139,13 +139,13 @@ export async function openImageEditor({source = null, name = source || '', targe
         const d = migrate(null, source, baseImage); d.layers[0].name = t('Original', '原图'); return d;
     };
     let doc = edit ? migrate(edit, source, baseImage) : original();
-    doc = {...doc, layers: doc.layers.map(l => l.id === 'base' ? {...l, name: t('Original', '原图')} : l)};
+    doc = {...doc, layers: doc.layers.map(l => l.id === 'base' && (!l.name || ['Original', '原图'].includes(l.name)) ? {...l, name: t('Original', '原图')} : l)};
     if (fresh && hasOriginal && target && role !== 'reference') {
         // A keyframe becomes the first or last frame of the video: start from its shape.
         doc = commands.setRatio(doc, 'video', target);
     }
     // Text draws with the fonts that ship with FreeVideo; the text tool starts in bold sans.
-    await Promise.all([renderer.preload(doc), loadFont('sans', 700)]);
+    await Promise.all([renderer.preload(doc), loadFont('sans', 700).catch(error => console.warn('FreeVideo image editor font unavailable; using fallback fonts.', error))]);
     // A text box measured with other fonts (or by another renderer) fits its text again,
     // keeping its place and scale. It is part of opening, not a change to undo or save.
     doc = {...doc, layers: doc.layers.map(l => {
@@ -156,6 +156,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         return {...l, ...size, w: size.nw * sx, h: size.nh * sy};
     })};
     const initial = doc;
+    const savedState = strip(initial);
     let history = [doc], future = [];
     let selection = null;            // {parts, feather, invert}; not part of the saved document
     let maskTarget = false;          // painting goes to the active layer's mask
@@ -297,7 +298,10 @@ export async function openImageEditor({source = null, name = source || '', targe
     // A step being dragged: drawn, not yet in the history.
     function preview(next) { doc = next; refresh(false); }
     function step(direction) {
-        if (direction < 0 ? history.length <= 1 : !future.length) return;
+        if (direction < 0 ? history.length <= 1 : !future.length) {
+            message(direction < 0 ? t('Nothing to undo.', '没有可撤销的步骤。') : t('Nothing to redo.', '没有可重做的步骤。'));
+            return;
+        }
         const next = (direction < 0 ? commands.undoStep : commands.redoStep)({history, future, doc, selection});
         ({history, future, doc, selection} = next);
         const {sx, sy} = next.scale;
@@ -309,8 +313,21 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (!doc.layers.length && tool !== 'hand') tool = 'generate';
         refresh(true);
     }
-    const changed = () => history.length > 1 && strip(doc) !== strip(initial);
+    // Compare with the saved document, even after its step leaves the bounded
+    // undo history. Active layer choice is not an edit; names and previews are.
+    const changed = () => strip(doc) !== savedState;
+    let unloadWarning = false;
+    function beforeUnload(event) {
+        event.preventDefault(); event.returnValue = '';
+    }
+    function syncUnloadWarning() {
+        const dirty = changed();
+        if (dirty === unloadWarning) return;
+        unloadWarning = dirty;
+        window[dirty ? 'addEventListener' : 'removeEventListener']('beforeunload', beforeUnload);
+    }
     async function refresh(panels) {
+        syncUnloadWarning();
         if (doc.layers.some(l => l.src && !renderer.loaded(l.src))) await renderer.preload(doc);
         computeLayout(); draw(); controls();
         if (panels === 'layers') renderLayers();
@@ -473,13 +490,14 @@ export async function openImageEditor({source = null, name = source || '', targe
         stage.dataset.tool = tool;
     }
     function select(id) {
-        if (!doc.layers.length && !['generate', 'hand'].includes(id)) return;
+        if (!doc.layers.length && !['generate', 'hand'].includes(id)) { message(emptyCanvasReason()); return; }
         if (id === 'generate' && !imageGenerationSupported()) return;
         commitText();
         gesture?.cancel?.(); gesture = null;
         tool = id; renderOptions(); controls(); draw(); showHint(); keepFocus();
         if (id === 'generate') void generation.selected();
     }
+    function emptyCanvasReason() { return t('The canvas is empty. Add or generate an image first.', '画布是空的，请先添加或生成一张图片。'); }
     function showHint() {
         const layer = active();
         if (!layer) { hint.textContent = ''; hint.hidden = true; return; }
@@ -667,7 +685,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             v => setTextFont(layer.id, {font: v}), t('Font', '字体'));
         font.group.id = 'fv-ie-font'; font.group.classList.add('fv-ie-fonts');
         for (const b of font.group.children) b.style.fontFamily = fontStack(b.dataset.value);
-        loadFonts(FONT_KEYS.map(k => [k, 400])).catch(() => {});
+        loadFonts(FONT_KEYS.map(k => [k, 400])).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
         const size = el('input'); size.type = 'number'; size.min = '6'; size.max = '2000'; size.value = String(Math.round(layer.text.size)); size.id = 'fv-ie-font-size';
         size.onchange = () => commit(updateText(layer.id, {size: clamp(Number(size.value) || 12, 6, 2000)}));
         const color = el('input'); color.type = 'color'; color.value = layer.text.color; color.id = 'fv-ie-text-color';
@@ -697,7 +715,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (!fontLoaded(next.font, next.weight)) {
             message(t('Preparing the font…', '正在准备字体…'));
             try { await loadFont(next.font, next.weight); }
-            catch { message(t('The font could not be loaded. Reload the page and try again.', '字体加载失败，请刷新页面后重试。')); renderProps(); return; }
+            catch (error) { console.warn('FreeVideo image editor font unavailable; using fallback fonts.', error); }
             message('');
         }
         if (dialog.open && doc.layers.some(l => l.id === id)) commit(updateText(id, patch));
@@ -728,8 +746,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         }
         return box;
     }
-    function renderLayers() {
-        clearPanel(layersBox);
+    function renderLayerHead() {
         const layer = active(), index = doc.layers.findIndex(l => l.id === layer?.id);
         const head = el('div', null, 'fv-ie-section-head');
         head.append(el('h3', t('Layers', '图层')));
@@ -756,16 +773,24 @@ export async function openImageEditor({source = null, name = source || '', targe
         tools.append(iconButton('plus', t('New paint layer', '新建绘画图层'), () => addPaintLayer()), addMenu, maskButton,
             copy, up, down, del);
         head.append(tools);
+        return head;
+    }
+    function renderLayers() {
+        clearPanel(layersBox);
+        let head = renderLayerHead();
         const list = el('ol', null, 'fv-ie-layer-list'); list.setAttribute('aria-label', t('Layers', '图层'));
         for (const l of [...doc.layers].reverse()) {
             const row = el('li', null, 'fv-ie-layer'); row.dataset.id = l.id;
+            // Flush a focused text preview before its blur handler can replace
+            // the clicked name, so double-click also works just after typing.
+            row.onpointerdown = () => commitText(false);
             row.setAttribute('aria-selected', String(l.id === doc.active));
             const eye = iconButton(l.visible ? 'eye' : 'eyeOff', l.visible ? t('Hide layer', '隐藏图层') : t('Show layer', '显示图层'),
                 e => { e.stopPropagation(); commit(commands.setLayer(doc, l.id, {visible: !l.visible})); }, 'fv-ie-eye');
             const thumb = el('canvas', null, 'fv-ie-thumb'); thumb.width = 48; thumb.height = 34; drawThumb(thumb, l);
             const name = el('span', l.name || t('Layer', '图层'), 'fv-ie-layer-name');
             name.title = t('Double-click to rename', '双击重命名');
-            name.ondblclick = e => { e.stopPropagation(); renameLayer(l, name); };
+            name.ondblclick = e => { e.stopPropagation(); renameLayer(doc.layers.find(layer => layer.id === l.id), name); };
             row.append(eye, thumb);
             if (l.mask) {
                 const m = el('canvas', null, 'fv-ie-thumb fv-ie-mask-thumb'); m.width = 48; m.height = 34; drawMaskThumb(m, l);
@@ -777,7 +802,19 @@ export async function openImageEditor({source = null, name = source || '', targe
             row.append(name);
             if (l.locked) { const lk = el('span', null, 'fv-ie-lock'); lk.innerHTML = SVG(ICONS.lock, 14); lk.title = t('Locked', '已锁定'); row.append(lk); }
             else if (l.opacity < 1) row.append(el('span', Math.round(l.opacity * 100) + '%', 'fv-ie-layer-opacity'));
-            row.onclick = () => { setActive(l.id); maskTarget = false; renderPanels(); renderOptions(); };
+            row.onclick = () => {
+                setActive(l.id); maskTarget = false;
+                // Preserve the name node across the first click of a physical
+                // double-click, including when it selects a different layer.
+                for (const item of list.children) {
+                    item.setAttribute('aria-selected', String(item.dataset.id === doc.active));
+                    drawThumb(item.querySelector('.fv-ie-thumb'), doc.layers.find(layer => layer.id === item.dataset.id));
+                    item.querySelector('.fv-ie-mask-thumb')?.classList.remove('fv-ie-target');
+                    item.querySelector('.fv-ie-thumb')?.classList.toggle('fv-ie-target', item.dataset.id === doc.active && !!l.mask);
+                }
+                const nextHead = renderLayerHead(); head.replaceWith(nextHead); head = nextHead;
+                renderProps(); renderOptions();
+            };
             list.append(row);
         }
         layersBox.append(head, list);
@@ -808,7 +845,19 @@ export async function openImageEditor({source = null, name = source || '', targe
         const input = el('input', null, 'fv-ie-rename'); input.value = layer.name; input.setAttribute('aria-label', t('Layer name', '图层名称'));
         node.replaceWith(input); input.focus(); input.select();
         let done = false;
-        const finishRename = keep => { if (done) return; done = true; if (keep && input.value.trim() && input.value.trim() !== layer.name) commit(commands.renameLayer(doc, layer.id, input.value.trim())); else renderLayers(); };
+        const finishRename = keep => {
+            if (done) return; done = true;
+            if (keep && !input.value.trim()) message(t('The name was empty, so it was not changed.', '名称为空，已保留原名。'));
+            const name = keep && input.value.trim() ? input.value.trim() : layer.name;
+            // Blur may come from clicking another layer. Keep that clicked row
+            // in place too, so its single-click still selects it.
+            if (name !== layer.name) commit(commands.renameLayer(doc, layer.id, name), false);
+            node.textContent = name || t('Layer', '图层'); input.replaceWith(node);
+            if (doc.active === layer.id) {
+                const label = props.querySelector('.fv-ie-props-name'); if (label) label.textContent = name;
+            }
+            keepFocus();
+        };
         input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') finishRename(true); if (e.key === 'Escape') { e.preventDefault(); finishRename(false); } };
         input.onblur = () => finishRename(true);
         input.onclick = e => e.stopPropagation();
@@ -880,19 +929,37 @@ export async function openImageEditor({source = null, name = source || '', targe
         const [ow, oh] = orientedSize(doc), e = doc.extend, inputs = {};
         const grid = el('div', null, 'fv-ie-pad-grid');
         for (const [key, text] of [['t', t('Top', '上')], ['b', t('Bottom', '下')], ['l', t('Left', '左')], ['r', t('Right', '右')]]) {
-            const input = el('input'); input.type = 'number'; input.min = '0'; input.max = '20000'; input.value = String(Math.round(e[key])); input.id = `fv-ie-pad-${key}`;
+            const input = el('input'); input.type = 'number'; input.min = '-20000'; input.max = '20000'; input.step = '1'; input.value = String(Math.round(e[key])); input.id = `fv-ie-pad-${key}`;
             grid.append(field(text + ' (px)', input)); inputs[key] = input;
         }
         const color = el('input'); color.type = 'color'; color.value = e.color || bg; color.id = 'fv-ie-pad-color';
         const buttons = el('div', null, 'fv-ie-row fv-ie-end');
-        buttons.append(button(t('Cancel', '取消'), null, () => box.remove()), button(t('Apply', '应用'), null, () => {
-            const extend = {l: +inputs.l.value || 0, t: +inputs.t.value || 0, r: +inputs.r.value || 0, b: +inputs.b.value || 0, color: color.value};
-            const next = commands.setCanvas(doc, extend); box.remove();
-            commit(next);
-        }, 'fv-ie-button fv-ie-primary'));
-        box.append(el('h3', t('Canvas size', '画布大小')), el('p', t(`The picture is ${ow} × ${oh} px. Add space on each side:`, `画面 ${ow} × ${oh} 像素，在四周补充空间：`), 'fv-ie-opt-note'),
+        const advice = t(`The picture is ${ow} × ${oh} px. Add space on each side:`, `画面 ${ow} × ${oh} 像素，在四周补充空间：`);
+        const reason = t('Use whole numbers. The new width and height must be 1 to 20000 px.', '请填整数，调整后的宽和高须在 1 到 20000 像素之间。');
+        const note = el('p', advice, 'fv-ie-opt-note');
+        const values = () => Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, input.value.trim() ? Number(input.value) : NaN]));
+        function update() {
+            const v = values(), w = ow + v.l + v.r, h = oh + v.t + v.b;
+            const valid = Object.values(v).every(n => Number.isInteger(n) && n >= -20000 && n <= 20000)
+                && w >= 1 && w <= 20000 && h >= 1 && h <= 20000;
+            ok.disabled = !valid;
+            note.textContent = valid ? advice : reason; note.classList.toggle('fv-ie-note-warn', !valid);
+            return valid;
+        }
+        function apply() {
+            if (!update()) { message(reason); return; }
+            const next = commands.setCanvas(doc, {...values(), color: color.value});
+            box.remove(); stage.focus(); commit(next);
+        }
+        const ok = button(t('Apply', '应用'), null, apply, 'fv-ie-button fv-ie-primary');
+        buttons.append(button(t('Cancel', '取消'), null, () => { box.remove(); stage.focus(); }), ok);
+        for (const input of Object.values(inputs)) input.oninput = update;
+        box.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && event.target.tagName === 'INPUT') { event.preventDefault(); event.stopPropagation(); apply(); }
+        });
+        box.append(el('h3', t('Canvas size', '画布大小')), note,
             grid, field(t('Fill color', '补边颜色'), color), buttons);
-        stage.append(box); inputs.t.focus();
+        update(); stage.append(box); inputs.t.focus();
     }
 
     // A selection and the clone source are kept in document pixels: when a step changes the
@@ -982,7 +1049,8 @@ export async function openImageEditor({source = null, name = source || '', targe
             ok.disabled = !allowed;
         }
         function apply() {
-            if (ok.disabled) return;
+            update();
+            if (ok.disabled) { message(result.textContent); return; }
             const next = commands.resizeImage(doc, number(width), number(height), keep || same, measureText);
             followSize(doc, next);
             box.remove(); stage.focus();
@@ -1032,6 +1100,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (layer) commit(pixelCommand(doc, layer.id, d => commands.fillSelection(d, layer.id, color, selection)));
     }
     function clearSelection() {
+        if (!selection) { message(t('Nothing is selected.', '还没有选区。')); return; }
         const layer = pixelLayer();
         if (layer && selection) commit(pixelCommand(doc, layer.id, d => commands.clearSelection(d, layer.id, selection)));
     }
@@ -1117,14 +1186,14 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (tool === 'wand') {
             const src = rasterKinds.has(layer.kind) ? layer : doc.layers[0];
             const [u, v] = toLocal(src, d);
-            if (u < 0 || v < 0 || u > 1 || v > 1) return null;
+            if (u < 0 || v < 0 || u > 1 || v > 1) { message(t('Click on an image layer.', '请点在图片图层上。')); return null; }
             addPart({shape: 'wand', layer: src.id, u, v, tolerance: opts.wand.tolerance, contiguous: opts.wand.contiguous, upto: src.ops.length}, mode || opts.wand.mode);
             return null;
         }
         if (tool === 'eyedropper') {
             const {canvas: pic, scale} = picture(), r = rect();
             const x = Math.floor((o[0] - r.x) * scale), y = Math.floor((o[1] - r.y) * scale);
-            if (x < 0 || y < 0 || x >= pic.width || y >= pic.height) return null;
+            if (x < 0 || y < 0 || x >= pic.width || y >= pic.height) { message(t('Click on the canvas to pick a color.', '请点在画布上取色。')); return null; }
             const px = pic.getContext('2d', {willReadFrequently: true}).getImageData(x, y, 1, 1).data;
             if (px[3] < 16) { message(t('Nothing to pick here: this part is transparent.', '这里是透明的，没有可吸取的颜色。')); return null; }
             const hex = '#' + [px[0], px[1], px[2]].map(v => v.toString(16).padStart(2, '0')).join('');
@@ -1261,7 +1330,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         const kind = opts.shape.type;
         return {...dragBox(o, (a, b) => {
             const width = opts.shape.width, dx = b[0] - a[0], dy = b[1] - a[1];
-            if (Math.hypot(dx, dy) * layout.k < 4) return;
+            if (Math.hypot(dx, dy) * layout.k < 4) { message(t('Drag to draw a shape.', '请拖动画出形状。')); return; }
             const shape = {type: kind, fill: kind === 'line' ? null : fg, stroke: kind === 'line' ? fg : null, width, radius: 0};
             commitInserted(commands.addShapeLayer(doc, {from: a, to: b, shape,
                 name: {rect: t('Rectangle', '矩形'), ellipse: t('Ellipse', '椭圆'), line: t('Line', '直线')}[kind]}));
@@ -1316,8 +1385,9 @@ export async function openImageEditor({source = null, name = source || '', targe
             const hit = hitLayer(p);
             if (hit && hit.id !== layer.id) { setActive(hit.id); maskTarget = false; renderPanels(); layer = hit; }
         }
-        if (layer.locked) { showHint(); return null; }
+        if (layer.locked && !(layer.id === 'base' && doc.layers.length === 1)) { transformBase(); return null; }
         const l0 = {...layer};
+        let copied = false;
         const frame = new DOMMatrix().translateSelf(l0.cx, l0.cy).rotateSelf(l0.rotation);
         const local = q => { const r = frame.inverse().transformPoint(new DOMPoint(q[0], q[1])); return [r.x, r.y]; };
         // A handle names a corner or edge of the box as drawn; find its side in the layer's own axes.
@@ -1349,6 +1419,12 @@ export async function openImageEditor({source = null, name = source || '', targe
                     const c = frame.transformPoint(new DOMPoint(sx ? sx * (w - l0.w) / 2 : 0, sy ? sy * (h - l0.h) / 2 : 0));
                     patch = {w, h, cx: c.x, cy: c.y};
                 }
+                // A click alone does not create a copy. Copy and move form one
+                // undo step, and cancellation goes back to the locked original.
+                if (layer.locked && !copied) {
+                    if (Object.entries(patch).every(([key, value]) => value === l0[key])) return;
+                    doc = transformBase(); layer = active(); copied = true; maskTarget = false;
+                }
                 preview(replaceLayer(layer.id, patch));
             },
             up() { if (doc !== history[history.length - 1]) commit(doc); },
@@ -1356,8 +1432,20 @@ export async function openImageEditor({source = null, name = source || '', targe
         };
     }
     function transformLayer(fn) {
-        const layer = active(); if (layer.locked) { showHint(); return; }
-        commit(replaceLayer(layer.id, fn(layer)));
+        const base = transformBase(); if (!base) return;
+        const layer = base.layers.find(l => l.id === base.active);
+        maskTarget = false;
+        commit({...base, layers: base.layers.map(l => l.id === layer.id ? {...l, ...fn(layer)} : l)});
+    }
+    function transformBase() {
+        const layer = active(); if (!layer) return null;
+        if (!layer.locked) return doc;
+        if (layer.id !== 'base' || doc.layers.length !== 1) {
+            message(t('This layer is locked. Choose another layer, or duplicate it first.', '这一层已锁定，请选择其他图层，或复制后再改。'));
+            return null;
+        }
+        message(t('Copied the original. Changes go on the copy.', '已复制原图，改动在副本上。'));
+        return commands.duplicateLayer(doc, layer.id, t(`${layer.name} copy`, `${layer.name} 副本`));
     }
     function cover(layer) {
         const r = rect(), centre = toD([r.x + r.w / 2, r.y + r.h / 2]);
@@ -1461,7 +1549,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         close(null);
     }
     async function finish() {
-        if (!doc.layers.length) return;
+        if (!doc.layers.length) { message(emptyCanvasReason()); return; }
         void generation.cancel();
         if (healing) await healing;
         commitText();
@@ -1477,6 +1565,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         }
     }
     function close(value) {
+        window.removeEventListener('beforeunload', beforeUnload); unloadWarning = false;
         void generation.dispose();
         clearInterval(antsTimer); clearTimeout(messageTimer);
         observer.disconnect();
@@ -1507,6 +1596,6 @@ export async function openImageEditor({source = null, name = source || '', targe
     select(!doc.layers.length ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
     (save.disabled ? stage : save).focus();
     // The other fonts load in the background, so switching to one is immediate.
-    loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(() => {});
+    loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
     return result;
 }

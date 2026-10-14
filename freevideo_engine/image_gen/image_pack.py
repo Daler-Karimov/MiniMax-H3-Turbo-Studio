@@ -9,6 +9,7 @@ or an optional busy callback. The CLI writes atomic, read-only status snapshots.
 from collections import deque
 from contextlib import ExitStack, contextmanager
 import json
+import logging
 from pathlib import Path, PurePosixPath
 import re
 import signal
@@ -28,6 +29,11 @@ FAMILY = 'image-models'
 BACKGROUND_RESERVE = 2 * 2**30
 GENERATION_POLL_SECONDS = .25
 GENERATION_RESUME_SECONDS = 10.
+# Asking ComfyUI whether it is busy can take seconds (a closed port on Windows
+# refuses only after about 2 s), and hashing checks once per 4 MiB block. Ask at
+# most every 2 s, and a slow answer waits four times its own cost before the next.
+GENERATION_PROBE_SECONDS = 2.
+GENERATION_PROBE_COST_FACTOR = 4
 SPEED_WINDOW_SECONDS = 10.
 STATUS_INTERVAL_SECONDS = .25
 OFFLINE_TRANSFER_REASONS = frozenset(('curl-5', 'curl-6', 'curl-7'))
@@ -49,10 +55,18 @@ class _Background:
         self.installer, self.stop = installer, stop
         self.resume_at = None
         self.paused = False
+        self.probed_at, self.probe_gap, self.busy_seen = None, 0., False
 
     def generating(self):
-        if self.installer.generation_busy and self.installer.generation_busy():
-            return True
+        if self.installer.generation_busy:
+            if self.probed_at is None or time.monotonic() - self.probed_at >= self.probe_gap:
+                began = time.monotonic()
+                self.busy_seen = bool(self.installer.generation_busy())
+                self.probed_at = time.monotonic()
+                self.probe_gap = max(GENERATION_PROBE_SECONDS,
+                                     GENERATION_PROBE_COST_FACTOR * (self.probed_at - began))
+            if self.busy_seen:
+                return True
         # Probe the existing lease exclusively, without borrowing an inherited
         # descriptor. This also detects shared device work. Release immediately:
         # downloads never hold engine.lock or delay a generation acquiring it.
@@ -122,7 +136,9 @@ def validate_catalog(spec):
                     or not re.fullmatch('[0-9a-f]{64}', row['sha256'])
                     or row['component'] not in ('dit', 'text_encoder', 'vae', 'text_encoder_config', 'processor')):
                 raise PackError('invalid_catalog')
-            if {s['id'] for s in row['sources']} != {'official', 'modelscope'} or len(row['sources']) != 2:
+            ids = [s['id'] for s in row['sources']]
+            if (len(set(ids)) != len(ids) or not {'official', 'modelscope'} <= set(ids)
+                    or not set(ids) <= {'official', 'modelscope', 'hf-mirror'}):
                 raise PackError('invalid_catalog')
             for source in row['sources']:
                 url = urlsplit(source['url'])
@@ -185,12 +201,34 @@ def _owned_intact(path, stamp):
         stamp.get(k) == v for k, v in provision.file_identity(path, stamp).items())
 
 
+# The notice written next to the weights. The text lives here; licenses/NOTICE.txt carries the same words
+# for people reading the source and is never needed at run time.
+NOTICE_TEXT = (b'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi '
+               b'Laboratory Technology Co., Ltd. All Rights Reserved.\n')
+
+
 def _notice():
-    return (Path(__file__).parent / 'licenses' / 'NOTICE.txt').read_bytes()
+    return NOTICE_TEXT
 
 
 def _notice_ready(path):
-    return path.is_file() and path.stat().st_size == len(_notice()) and path.read_bytes() == _notice()
+    """Informational only: a missing or different notice never makes the pack unusable."""
+    try:
+        return path.is_file() and path.read_bytes() == NOTICE_TEXT
+    except OSError:
+        return False
+
+
+def _write_notice(folder, owned):
+    """Put the notice into the model folder when possible; a failure is logged and the install goes on."""
+    notice = _path(folder, 'NOTICE.txt')
+    try:
+        if notice.exists():
+            return   # present (ours or the user's own text): left as it is
+        notice.write_bytes(NOTICE_TEXT)
+        _own(folder, owned, notice)
+    except Exception as error:
+        logging.warning('[FreeVideo] Could not write the image model notice: %s', error)
 
 
 def status(root=None):
@@ -213,7 +251,7 @@ def status(root=None):
     notice = _path(folder, 'NOTICE.txt')
     notice_ready = _notice_ready(notice)
     total = sum(r['bytes'] for r in files)
-    available = not missing and notice_ready
+    available = not missing
     return dict(installable=True, ready=available, total_bytes=total, verified_bytes=verified_bytes,
                 downloaded_bytes=downloaded, bytes=sum(r['bytes'] for r in files if not r['ready']),
                 remaining_bytes=sum(r['bytes'] - r['downloaded_bytes'] for r in files if not r['ready']),
@@ -281,9 +319,9 @@ def _download_plan(engine_root=None):
     # that measured ranking until an image-specific probe is available.
     if FAMILY not in plan['sources']:
         inherited = plan['sources'].get('vdn-models', [])
-        plan['sources'][FAMILY] = [dict(r) for r in inherited if r['id'] in ('official', 'modelscope')]
+        plan['sources'][FAMILY] = [dict(r) for r in inherited if r['id'] in ('official', 'modelscope', 'hf-mirror')]
     known = {r['id'] for r in plan['sources'][FAMILY]}
-    plan['sources'][FAMILY] += [dict(id=s) for s in ('official', 'modelscope') if s not in known]
+    plan['sources'][FAMILY] += [dict(id=s) for s in ('official', 'hf-mirror', 'modelscope') if s not in known]
     return plan
 
 
@@ -309,7 +347,7 @@ def _transfer(plan, row, path, progress, check, background=None):
             background.wait()
         settings = current(plan)
         # An explicit choice supersedes affinity to the old partial's source.
-        plan['manual_source_switch'] = settings['source'] in ('official', 'modelscope')
+        plan['manual_source_switch'] = settings['source'] in ('official', 'hf-mirror', 'modelscope')
         def resource_check():
             check()
             latest = current(plan)
@@ -363,13 +401,7 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
             plan = _download_plan(engine_root)
             plan.update(quiet=True, resource_check=check)
             owned = _read(folder, OWNERSHIP)
-            notice = _path(folder, 'NOTICE.txt')
-            if notice.exists() and not _notice_ready(notice):
-                # Preserve an unexpected text rather than overwriting it.
-                model_repair.rename_noreplace(notice, notice.with_name('NOTICE.txt.replaced-' + str(time.time_ns())))
-            if not notice.exists():
-                notice.write_bytes(_notice())
-                _own(folder, owned, notice)
+            _write_notice(folder, owned)
             done = 0
             pending_prefixes = 0
             if _background is not None:

@@ -434,12 +434,14 @@ FF_STASH_WIDTH = 14336  # BF16 SwiGLU output channels kept for the per-tensor FP
 # blocks, against 7.14 and 7.82 from the envelope, so the plan held sixteen
 # and eighteen blocks where the budget held about twenty-five and streamed
 # the rest from disk on every step. Each figure carries one GiB of margin.
-# The curve joins the envelope at its lowest anchor (896 square, 243
-# frames) and never exceeds it. It rests on one card.
+# It rests on one card and holds only up to its last measured point. Joined
+# straight to the envelope's anchor, a 16 GB Windows laptop's 44370-token
+# refinement held three more blocks than the envelope gave, filled the card
+# beside other programs, and Windows moved memory to system RAM: each step
+# took five times as long. Above 16320 tokens the envelope applies.
 SMALL_CANVAS_INT8_WORKSPACE = (
     (4320, 3.48),
     (16320, 4.46),
-    (56448, 6.5 + 6. * 56448 / 72576 + BLOCK_BYTES / GiB - 56448 * FF_STASH_WIDTH * 2 / GiB),
 )
 
 
@@ -458,12 +460,12 @@ def windows_gpu_output_workspace(video_tokens, *, prefetch=False, ff_stash=True,
     estimate, not a fitted throughput model or proof of capacity elsewhere.
     The OS growth reserve has already been subtracted from the budget.
 
-    small_canvas=True counts resident blocks below the anchors from the
-    measured int8 curve (SMALL_CANVAS_INT8_WORKSPACE) instead of the envelope.
+    small_canvas=True counts resident blocks up to the last measured point
+    from the int8 curve (SMALL_CANVAS_INT8_WORKSPACE) instead of the envelope.
     Head-group choices keep using the envelope.
     """
     tokens = 72576 if video_tokens is None else video_tokens
-    if small_canvas and not ff_stash and tokens < SMALL_CANVAS_INT8_WORKSPACE[-1][0]:
+    if small_canvas and not ff_stash and tokens <= SMALL_CANVAS_INT8_WORKSPACE[-1][0]:
         for (low, at_low), (high, at_high) in zip(SMALL_CANVAS_INT8_WORKSPACE, SMALL_CANVAS_INT8_WORKSPACE[1:]):
             if tokens <= high:
                 at = at_low + (at_high - at_low) * max(0, tokens - low) / (high - low)

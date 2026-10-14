@@ -448,6 +448,7 @@ class Service:
         if env.get(resident_process.ENV) and Path(env[resident_process.ENV]).is_file():
             try:
                 resident_process.release_idle_cache(env, descriptor)
+                resident_process.OWNER.record(action='released', reason='prompt_model')
             except resident_process.SessionRestarted:
                 pass  # That worker already exited, which is the release we need.
             env.pop(resident_process.ENV, None)
@@ -570,8 +571,9 @@ class Service:
             releasing = result_received_at[0] if result_received_at else time.monotonic()
             if child.poll() is None:
                 # Killing only the Linux supervisor bypasses its descendant
-                # cleanup. Stop the owned group/Windows Job and wait instead.
-                processes.stop(child, grace=5)
+                # cleanup. Stop the owned group/Windows Job and wait instead;
+                # the worker finishes its current GPU operation and exits.
+                processes.stop(child, grace=15)
             child.wait()
             writer.join(timeout=5)
             session.close()

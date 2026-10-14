@@ -5,6 +5,7 @@ import csv
 from contextlib import ExitStack, contextmanager
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import platform
@@ -49,8 +50,8 @@ def _permission_limited_memory_sample(row):
     different security context even though the install process and the system
     memory counters remain readable.  In that case the process-tree number is
     incomplete, but the global emergency floor is still a valid safety guard.
-    Require a real sampled process count so synthetic/no-sample rows and a
-    failed process snapshot continue to fail closed.
+    Require a real sampled process count to distinguish denied child queries
+    from a failed process snapshot.
     """
     if type(row.get('processes')) is not int or row['processes'] <= 0:
         return False
@@ -469,8 +470,13 @@ def prepare_end(ui, success=True):
             ui.end(PREPARE_KEY, success=success)
 
 
+def missing_sage_tools(snapshot):
+    return ([] if snapshot.get('compiler') else ['g++']) + ([] if snapshot.get('make', True) else ['make'])
+
+
 def plan(args, *, local_progress=None, stage=None):
     root = args.root.expanduser().resolve()
+    warnings = []
     saved = json.loads((root / 'machine.json').read_text(encoding='utf-8')) if (root / 'machine.json').is_file() else {}
     storage = getattr(args, 'storage', None) or saved.get('storage', 'compact')
     layout = select_layout(getattr(args, 'environment', None), saved)
@@ -513,13 +519,15 @@ def plan(args, *, local_progress=None, stage=None):
         # A missing or too old Git is replaced by FreeVideo's own.
         if not windows_target:
             # ./setup.sh installs these before planning; the desktop launcher names the command instead.
-            missing = ([] if snapshot.get('compiler') else ['g++']) + ([] if snapshot.get('make', True) else ['make'])
+            missing = missing_sage_tools(snapshot)
             if missing:
                 from .system import linux_tools_command
                 command = linux_tools_command(missing)
-                errors.append('Missing %s, needed to build GPU acceleration for this GPU. %s, then check again.' % (
+                warnings.append('Missing %s, needed to build GPU acceleration for this GPU. %s, then check again.' % (
                     ' and '.join(missing), 'In a terminal, run: ' + command if command else
                     'Ask your administrator to install them'))
+                logging.getLogger(__name__).warning('%s Skipping Sage2 source compilation; '
+                    'continuing with cudnn/torch-flash attention.', warnings[-1])
         if offline_installation(root):
             # Its sources carry no Git history and its Python is the package's.
             errors.append('This folder holds an installation from offline packages; automatic installation does not change it. '
@@ -584,7 +592,9 @@ def plan(args, *, local_progress=None, stage=None):
     local_reuse = None
     local_folder = getattr(args, 'reuse_models', None)
     local_manifest = getattr(args, 'reuse_models_manifest', None)
-    if local_folder or local_manifest:
+    from .launcher_settings import saved_model_libraries
+    saved_libraries = saved_model_libraries()
+    if local_folder or local_manifest or saved_libraries:
         from .local_models import scan, scan_many, can_link, key as local_key
         previous_reuse = None
         approved = getattr(args, 'approved_plan', None)
@@ -598,6 +608,12 @@ def plan(args, *, local_progress=None, stage=None):
             if not isinstance(libraries, dict) or libraries.get('version') != 1 or not isinstance(libraries.get('roots'), list):
                 raise ValueError('Invalid model library manifest')
             directories = ([str(local_folder)] if local_folder else []) + libraries['roots']
+            from .local_models import library_roots
+            directories = library_roots(library_roots(directories) + saved_libraries, keep_first=True)
+            scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
+        elif saved_libraries:
+            from .local_models import library_roots
+            directories = library_roots(([str(local_folder)] if local_folder else []) + saved_libraries, keep_first=True)
             scan_library = lambda: scan_many(directories, needed, prior=previous_reuse, callback=local_progress)
         else:
             scan_library = lambda: scan(local_folder, needed, prior=previous_reuse, callback=local_progress)
@@ -765,7 +781,7 @@ def plan(args, *, local_progress=None, stage=None):
                                            '4–8 GiB working set plus reclaimable source file cache; measured by setup'),
             'test_artifacts_estimate_gib': '5–8 GiB for the standard five-case suite; all outputs retained',
             'first_generation_note': 'Portable AdaLN tables follow model weights and the exact schedule, across GPUs and Torch/CUDA versions. New schedules or modulation-changing LoRAs require preparation. Existing environments stay on disk when switching.',
-            'estimates_are_not_capacity_guarantees': True, 'errors': errors,
+            'estimates_are_not_capacity_guarantees': True, 'errors': errors, 'warnings': warnings,
             'steps': ['Install isolated uv/Python and ' + ('one shared CUDA environment' if layout == 'unified' else 'two CUDA environments'),
                       'Clone the VDN, patched Diffusers and native H3 text-encoder library versions FreeVideo tests',
                       'Install verified Windows Triton / Sage2 wheels' if windows_target else 'Install a local CUDA compiler and build Sage2 for the detected GPU only',
@@ -1254,34 +1270,39 @@ class Installer:
                         try:
                             row = memory.sample(os.getpid())
                         except OSError as error:
-                            if self.system != 'Windows':
-                                raise
                             # The process snapshot itself can fail, too. Still
-                            # obtain fresh physical/commit headroom; never reuse
-                            # the previous reading or invent process usage.
+                            # obtain fresh system headroom without inventing process usage.
                             system = system_memory()
                             row = dict(guard_bytes=None,
                                 system_available_bytes=system['available_bytes'],
                                 system_physical_available_bytes=system['physical_available_bytes'],
                                 system_commit_available_bytes=system['commit_available_bytes'],
                                 memory_read_errors=[dict(error=str(error), winerror=getattr(error, 'winerror', None))])
+                            if self.system == 'Linux':
+                                from .hardware import cgroup_memory
+                                group = cgroup_memory()
+                                available = group['available_bytes']
+                                reclaimable = group.get('reclaimable_available_bytes', available)
+                                row.update(cgroup_memory=group,
+                                    effective_available_bytes=min(system['available_bytes'],
+                                        available) if available is not None else system['available_bytes'],
+                                    inference_available_bytes=min(system['available_bytes'],
+                                        reclaimable) if reclaimable is not None else system['available_bytes'])
                         used = memory_sample(row)
                         if used is None:
                             unreadable += 1
                             failures += 1
-                            # A live worker can have descendants for which
-                            # Windows returns ERROR_ACCESS_DENIED (5). Keep
-                            # the sample and continue under the global RAM/
-                            # commit floor; abort only when the whole process
-                            # snapshot is unavailable or the root cannot be
-                            # sampled. This avoids killing installs merely
-                            # because a helper has a stricter token.
-                            degraded = (self.system == 'Windows' and
-                                        _permission_limited_memory_sample(row))
+                            # Unreadable process usage does not prove exhaustion;
+                            # retain the samples and keep checking the system floor.
+                            denied = self.system == 'Windows' and _permission_limited_memory_sample(row)
+                            degraded = denied or self.system != 'Windows' or unreadable >= 3
                             if degraded:
                                 self.state['resource_warning'] = (
                                     'Some Windows child processes denied memory queries (WinError 5); '
-                                    'continuing with the global RAM/commit floor.')
+                                    'continuing with the global RAM/commit floor.' if denied else
+                                    'Process-tree memory is unavailable; continuing with the global RAM/commit floor.')
+                                if self.state.get('monitor_status') != 'degraded':
+                                    self.ui.write(self.state['resource_warning'] + '\n')
                             row = dict(row, monitor_status='degraded' if degraded else 'retrying',
                                        consecutive_unreadable=unreadable)
                         else:
@@ -1290,6 +1311,7 @@ class Installer:
                             row = dict(row, monitor_status='recovered' if unreadable else 'complete',
                                        consecutive_unreadable=0)
                             unreadable = 0
+                        self.state['monitor_status'] = row['monitor_status']
                         pressure = setup_memory_pressure(row, self.resources['ram_budget_bytes'], self.system)
                         row['installation_guard'] = pressure
                         stream.write(json.dumps(dict(row, elapsed_seconds=time.monotonic()-self.started, epoch_seconds=time.time())) + '\n')
@@ -1306,15 +1328,6 @@ class Installer:
                             break
                         if available < pressure['planning_reserve_bytes']:
                             self.state['memory_headroom_warning'] = pressure
-                        if (used is None and (self.system != 'Windows' or unreadable >= 3)
-                                and row.get('monitor_status') != 'degraded'):
-                            details = json.dumps(dict(
-                                unreadable_memory_pids=row.get('unreadable_memory_pids', row.get('unreadable_pss_pids', [])),
-                                memory_read_errors=row.get('memory_read_errors', []),
-                                available_bytes=available), ensure_ascii=False)
-                            raise RuntimeError('Cannot read process-tree memory after %d consecutive samples. '
-                                'Download progress is retained; retry installation to resume. '
-                                'RAM sample: %s; full samples: %s' % (unreadable, details, self.run_dir / 'ram.jsonl'))
                         self.monitor_stop.wait(1)
             except BaseException as error:
                 self.state['resource_guard'] = 'Installation RAM monitoring failed: ' + repr(error)
@@ -1674,6 +1687,11 @@ class Installer:
     def install_sage(self, uv, python):
         if self.system == 'Windows':
             return self.install_sage_windows(uv, python)
+        missing = missing_sage_tools(self.plan['inventory'])
+        if missing:
+            self.ui.write('Missing %s; skipping Sage2 source compilation and continuing with '
+                          'cudnn/torch-flash attention.\n' % ' and '.join(missing))
+            return None
         code = ('import json,platform,sys,torch; print(json.dumps(dict('
                 'python="cp"+str(sys.version_info.major)+str(sys.version_info.minor), '
                 'torch=str(torch.__version__),cuda=torch.version.cuda,cxx11_abi=torch.compiled_with_cxx11_abi(), '
@@ -1958,6 +1976,8 @@ class Installer:
 
     def record_kernel_validation(self, results, kernel_report):
         sage_manifest = results['sage']
+        if sage_manifest is None:
+            return
         sage_record = json.loads(sage_manifest.read_text(encoding='utf-8'))
         kernels = json.loads(kernel_report.read_text(encoding='utf-8'))
         sage_record['kernel_validation'] = ('Small Sage2 kernels passed on ' + self.plan['inventory']['selected_gpu']['uuid']

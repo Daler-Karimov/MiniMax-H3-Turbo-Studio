@@ -144,7 +144,8 @@ export async function openSetup() {
     const use = node("button", t("Use existing installation", "使用已有安装"));
     const install = node("button", t("Install / repair", "安装／修复")); install.disabled = true;
     const cancel = node("button", t("Stop setup", "停止安装")); cancel.disabled = true;
-    actions.append(inspect, use, install, cancel); installation.append(actions);
+    const saveFolders = node('button', t('Save model folders', '保存模型目录'));
+    actions.append(saveFolders, inspect, use, install, cancel); installation.append(actions);
     // Why Install / repair is unavailable, so it never looks like a broken button.
     const blocked = note(""); blocked.classList.add("fv-setup-why"); blocked.setAttribute("aria-live", "polite"); blocked.hidden = true;
     installation.append(blocked);
@@ -156,8 +157,9 @@ export async function openSetup() {
     const motions = [...dialog.querySelectorAll('details')].map(animateDetails);
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     document.body.append(dialog); dialog.showModal();
+    let savedFolders = "", savedMissing = false;
     let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false;
-    const fail = error => { installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
+    const fail = error => { installation.open = true; state.textContent = [savedFolders, failureText(error.message)].filter(Boolean).join(" · "); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
     const request = async (action, value) => {
         const response = await api.fetchApi("/freevideo/setup" + (action ? "/" + action : root.value ? '?root='+encodeURIComponent(root.value) : ""), action ? {
             method: "POST", headers: { "Content-Type": "application/json", "X-FreeVideo-Setup": token }, body: JSON.stringify(value || {}),
@@ -169,6 +171,8 @@ export async function openSetup() {
         const unified = value && Object.hasOwn(value, 'ram_reserve_gib');
         reserveField = unified ? 'ram_reserve_gib' : 'gpu_reserve_gib';
         reserveSummary.textContent = unified ? t('Reserved unified memory', '预留统一内存') : t('Reserved VRAM', '预留显存');
+        // Mac generation shares unified memory and has no compatibility levels.
+        compatibility.hidden = unified;
         reserveLabel.firstChild.textContent = reserveSummary.textContent;
         reserve.min = unified ? '1' : '0.2';
         reserveAuto.checked = value?.[reserveField] == null;
@@ -254,7 +258,7 @@ export async function openSetup() {
         catch(error) { probeButton.disabled=false; fail(error); }
     };
     const controls = () => {
-        for (const e of [root, extra, copy, samplingCaches, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
+        for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
         cancel.disabled = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
         const why = busy || (ready && !planId) ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击「检测并预览」更新安装计划。")
             : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击「检测并预览」。")
@@ -278,6 +282,7 @@ export async function openSetup() {
     applyToken.onclick = () => setToken(hfToken.value);
     clearToken.onclick = () => setToken('');
     for (const e of [root, extra, copy, samplingCaches]) e.oninput = () => invalidate(true);
+    extra.oninput = () => { if (savedFolders) state.textContent = ""; savedFolders = ""; savedMissing = false; invalidate(true); };
     accept.onchange = controls;
     function showPlan(value) {
         plan.replaceChildren();
@@ -316,8 +321,9 @@ export async function openSetup() {
         }
         acceptLabel.hidden = busy || !planId;
         const p = task.progress || {};
-        state.className = task.status === "failed" ? "fv-failure" : task.ready ? "fv-ready" : "";
+        state.className = task.status === "failed" ? "fv-failure" : task.ready && !savedMissing ? "fv-ready" : "";
         state.textContent = failureText(task.error) || (task.ready ? t("Ready. Generate with your existing workflow.", "准备就绪，可使用现有工作流生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
+        state.textContent = [savedFolders, state.textContent].filter(Boolean).join(" · ");
         const phases = task.phase_progress || {}, valid = Number.isFinite(p.total) && p.total > 0 && Number.isFinite(p.done) && p.done >= 0 && p.done <= p.total;
         overall.hidden = !busy;
         overallBar.max = phases.total > 0 ? phases.total : 1; overallBar.value = phases.done || 0;
@@ -338,9 +344,27 @@ export async function openSetup() {
         catch (error) { fail(error); }
         if (dialog.open && (busy || probeBusy)) pollTimer = setTimeout(poll, 750);
     }
+    async function saveModelFolders() {
+        const result = await request('model-directories', {extra_libraries: extra.value.split("\n")});
+        extra.value = result.extra_libraries.join("\n");
+        const missing = result.missing_libraries || [];
+        savedMissing = missing.length > 0;
+        savedFolders = !missing.length ? t('Saved.', '已保存。')
+            : missing.length === 1 ? t(`Saved. This folder was not found:\n${missing[0]}`, `已保存。找不到这个目录：\n${missing[0]}`)
+            : t(`Saved. These folders were not found:\n${missing.join('\n')}`, `已保存。找不到这些目录：\n${missing.join('\n')}`);
+        state.textContent = savedFolders; state.className = savedMissing ? '' : 'fv-ready';
+        state.scrollIntoView({block: 'nearest'});
+        return result;
+    }
+    saveFolders.onclick = async () => {
+        invalidate(true); busy = true; controls();
+        try { await saveModelFolders(); }
+        catch (error) { fail(error); }
+        finally { busy = false; controls(); }
+    };
     inspect.onclick = async () => {
         invalidate(); busy = true; controls();
-        try { render(await request("inspect", {root: root.value, extra_libraries: extra.value.split("\n").map(s => s.trim()).filter(Boolean), copy: copy.checked, sampling_caches: samplingCaches.checked})); poll(); }
+        try { await saveModelFolders(); render(await request("inspect", {root: root.value, extra_libraries: extra.value.split("\n").map(s => s.trim()).filter(Boolean), copy: copy.checked, sampling_caches: samplingCaches.checked})); poll(); }
         catch (error) { busy = false; controls(); fail(error); }
     };
     install.onclick = async () => {
@@ -355,6 +379,7 @@ export async function openSetup() {
     dialog.onclose = () => { clearTimeout(pollTimer); for (const dispose of motions) dispose(); dialog.remove(); if (current === dialog) current = undefined; };
     try {
         const info = await request(); token = info.discovery.token; root.value = info.discovery.root;
+        extra.value = (info.discovery.extra_libraries || []).join("\n");
         showDownloads(info.discovery.downloads);
         showResources(info.discovery.resources);
         samplingText.textContent = t('Prepare all quality levels (optional)', '提前下载全部质量档位（可选）')

@@ -233,6 +233,8 @@ class FreeVideoGenerate(io.ComfyNode):
                 preview['freevideo_summary'][0]['continuation']['requested_frames'] = options['frames']
             preview['freevideo_summary'][0]['result_cache_hit'] = result_reused[0]
         except BaseException as error:
+            from .resident_process import OWNER
+            OWNER.finished()
             cancelled = isinstance(error, KeyboardInterrupt) or type(error).__name__ in ('InterruptProcessingException', 'CancelledError')
             phase = 'cancelled' if cancelled else 'failed'
             publish(PromptServer.instance, node_id, {'label': 'Generation cancelled' if cancelled else 'Generation stopped',
@@ -244,11 +246,32 @@ class FreeVideoGenerate(io.ComfyNode):
         from .encoder_prewarm import warm_target
         target = warm_target(measured)
         from .resident_process import OWNER
+        server = PromptServer.instance
+        def busy():
+            return server is not None and server.prompt_queue.get_tasks_remaining() > 0
+        # Keep the models only while the next part is on its way; otherwise give
+        # the memory back now and let the file cache make the next load quick.
+        try:
+            # The running prompt is this one; only prompts still waiting are a next part.
+            queued = server is not None and bool(server.prompt_queue.get_current_queue()[1])
+        except (AttributeError, TypeError, ValueError, IndexError):
+            queued = False
+        try:
+            # Agent videos wait in the agent's own list until the running one ends.
+            queued = queued or any(row['kind'] == 'generate' and row['status'] == 'waiting'
+                                   for row in server._freevideo_agent.active())
+        except (AttributeError, TypeError, KeyError):
+            pass
+        next_part = 'queued' if queued else ('continuing' if chain is not None and chain.get('index', 0) + 1 < chain.get('count', 0)
+                                               or chain is None and options.get('continue_from') else None)
+        try:
+            gpu = comfy_bridge.installation()[1].get('gpu_uuid')
+        except (OSError, ValueError, KeyError, TypeError):
+            gpu = None
+        OWNER.finished(next_part=next_part, gpu=gpu,
+                       agent=server is not None and str(getattr(server, 'client_id', '') or '').startswith('agent:'))
         if target and not result_reused[0]:
-            server = PromptServer.instance
             client = server.client_id if server is not None else None
-            def busy():
-                return server is not None and server.prompt_queue.get_tasks_remaining() > 0
             def warmed(value):
                 if server is not None:
                     server.send_sync('freevideo_prewarm', dict(value, node=node_id), sid=client)
@@ -258,12 +281,8 @@ class FreeVideoGenerate(io.ComfyNode):
                     IDLE.schedule(path, output.with_suffix('.prewarm.json'),
                                   ram_budget=measured.get('profile', {}).get('inference_ram_budget_gb', 0) * 1e9,
                                   busy=busy, notify=warmed, purpose='upscale')
-                elif OWNER.process is not None:
-                    root, machine = comfy_bridge.installation()
-                    environment = comfy_bridge.engine_environment(root, comfy_bridge.source_root())
-                    environment.update(FREEVIDEO_HOME=str(root), PYTHONPATH=str(comfy_bridge.source_root()))
-                    OWNER.warm_encoder(output, machine['python'], environment, busy=busy, notify=warmed)
                 else:
+                    # File cache only: a kept worker must not grow on the card while it waits.
                     IDLE.schedule(path, output.with_suffix('.prewarm.json'),
                                   ram_budget=measured.get('profile', {}).get('inference_ram_budget_gb', 0) * 1e9,
                                   busy=busy, notify=warmed)

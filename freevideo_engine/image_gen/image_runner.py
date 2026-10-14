@@ -126,7 +126,7 @@ class ImageRunner:
 
         self.shape = image_policy.ImageShape.measure(
             list(self.transformer.transformer_blocks), list(language.layers),
-            total_weight_bytes=self.dit_stack.pinned_bytes + self.te_stack.pinned_bytes)
+            total_weight_bytes=self.dit_stack.host_bytes + self.te_stack.host_bytes)
         self.generator = QwenImageGenerator(
             None, placement=_Placement(self), device=self.device, transformer=self.transformer, vae=self.vae,
             text_encoder=text, processor=processor, sample_sigmas=None, vae_tile=True)
@@ -160,8 +160,16 @@ class ImageRunner:
             scale = (resolution * resolution / (image.width * image.height)) ** 0.5
             reference_pixels += round(image.width * scale) * round(image.height * scale)
         try:
-            from ..offload import live_pin_capacity
-            host_available = live_pin_capacity() + self.dit_stack.pinned_bytes + self.te_stack.pinned_bytes
+            # The weights are loaded by now, so what is left to find is the request's
+            # working memory. Credit what the weights already hold, locked or not, and
+            # read free RAM itself: the locked-page budget (half of RAM on Windows)
+            # and its headroom only limit pinning, which happened at load. Gating on
+            # them refused every request on a 28 GB Windows machine, the second one
+            # after a first had just been made at the same size.
+            from ..system import system_memory
+            memory = system_memory()
+            free = memory.get('physical_available_bytes') or memory['available_bytes']
+            host_available = free + self.dit_stack.host_bytes + self.te_stack.host_bytes
         except Exception:
             host_available = None
         return image_policy.plan_image(
@@ -176,6 +184,7 @@ class ImageRunner:
         self.dit_stack.set_resident(plan.dit_resident_layers)
         self.te_stack.set_resident(plan.te_resident_layers)
         self.generator.vae_tile = plan.vae_tiling
+        self.generator.vae_tile_size = plan.vae_tile_size
         return self.generator.generate(prompt, width=width, height=height, seed=seed,
                                        reference_images=reference_images, progress=progress, cancel=cancel)
 

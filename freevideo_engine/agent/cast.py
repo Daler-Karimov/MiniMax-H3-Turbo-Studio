@@ -129,14 +129,23 @@ def _check(record, stem):
             or type(card['revision']) is not int or card['revision'] < 1
             or not isinstance(card['name'], str) or not isinstance(card['description'], (str, type(None)))):
         raise ValueError('Invalid card identity')
-    if set(card['edited_by_user']) != set(EDITABLE) or not all(type(v) is bool for v in card['edited_by_user'].values()):
+    marks = card.get('edited_by_user', {})
+    if not isinstance(marks, dict):
         raise ValueError('Invalid edit marks')
+    normalized = {k: marks.get(k, False) for k in EDITABLE}
+    if not all(type(v) is bool for v in normalized.values()):
+        raise ValueError('Invalid edit marks')
+    if marks != normalized:
+        logging.getLogger(__name__).warning('Normalized edit marks on a readable cast card')
+    card['edited_by_user'] = normalized
+    unknown_labels = False
     for key, limit in (('images', MAX_IMAGES), ('candidates', MAX_CANDIDATES)):
         if not isinstance(card[key], list) or len(card[key]) > limit:
             raise ValueError('Invalid pictures')
         for row in card[key]:
-            if row['label'] not in LABELS or not isinstance(row['media']['file'], str):
+            if not isinstance(row['label'], str) or not isinstance(row['media']['file'], str):
                 raise ValueError('Invalid picture')
+            unknown_labels |= row['label'] not in LABELS
     if card['voice'] is not None:
         if not isinstance(card['voice']['clip']['file'], str) or not (
                 isinstance(card['voice']['media'].get('file'), str) or isinstance(card['voice']['media'].get('library'), str)):
@@ -145,6 +154,8 @@ def _check(record, stem):
         raise ValueError('Invalid film list')
     record['receipts'] = operation_receipts.load(record['receipts'])
     json.dumps(record, allow_nan=False)
+    if unknown_labels:
+        logging.getLogger(__name__).warning('Kept unknown picture labels on a readable cast card')
 
 
 def _revision(body, header):
@@ -363,7 +374,19 @@ class Cast:
 
     def update(self, identity, value, *, by='builtin', ref=None, revision=None, local=False, client=None):
         shape = schema.cast_schema('update', local=local)
-        schema.validate(shape, value)
+        shape['properties']['images']['items']['properties']['label'] = schema.enum(LABELS)
+        checked = deepcopy(value)
+        with self.changed:
+            record = self.records.get(identity) if isinstance(identity, str) else None
+            if record is not None and isinstance(checked, dict) and isinstance(checked.get('images'), list):
+                known = {(row['media']['file'], row['label']) for key in ('images', 'candidates')
+                         for row in record['card'][key] if row['label'] not in LABELS}
+                for row in checked['images']:
+                    if isinstance(row, dict) and isinstance(row.get('label'), str):
+                        if (_plain(row.get('media')), row['label']) in known:
+                            # Let callers return a saved label unchanged; new labels still use the request schema.
+                            row.pop('label')
+        schema.validate(shape, checked)
         ref = ref if ref is not None else value.get('ref')
         value = {k: v for k, v in value.items() if k != 'ref'}
         expected = _revision(value.pop('revision', None), revision)

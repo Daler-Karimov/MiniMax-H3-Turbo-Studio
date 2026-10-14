@@ -158,6 +158,7 @@ class QwenImageGenerator:
         self.text_encoder = text_encoder
         self._closed = False
         self.vae_tile = vae_tile
+        self.vae_tile_size = None   # None: the decoder's own profile
         if not isinstance(reference_resolution, int) or reference_resolution < 32:
             raise ValueError("reference_resolution must be at least 32")
         self.reference_resolution = reference_resolution
@@ -358,6 +359,9 @@ class QwenImageGenerator:
             kwargs = {"return_dict": False}
             if self.vae_tile:
                 kwargs["tile"] = True
+                if self.vae_tile_size:
+                    kwargs["tile_size"] = int(self.vae_tile_size)
+                    kwargs["tile_stride"] = int(self.vae_tile_size) // 2
             pixels = _sample(self.vae.decode(latents, **kwargs))[:, :, 0]
             check_cancel()
             array = (pixels / 2 + 0.5).clamp(0, 1).float().cpu().permute(0, 2, 3, 1).numpy()[0]

@@ -522,6 +522,11 @@ class ChainRunner:
                     block_inputs[key] = (source['output'] or '') if source is not None else ''
                 for name in getattr(self.host, 'continuation_inputs', ()):
                     prompt[node]['inputs'].pop(name, None)
+                # A part that continues footage takes no keyframes or references of its own:
+                # only a part that starts fresh keeps the request's media.
+                if any(source is not None for source in sources.values()):
+                    for name in getattr(self.host, 'media_inputs', ()):
+                        prompt[node]['inputs'].pop(name, None)
                 prompt[node]['inputs'].update(self.inputs(block_inputs))
                 self.host.submit(prompt_id, node_prompt(prompt, node), extra)
             except Exception as error:

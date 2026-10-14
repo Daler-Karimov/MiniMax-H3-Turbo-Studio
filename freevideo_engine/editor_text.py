@@ -8,6 +8,7 @@ from functools import lru_cache
 from bisect import bisect_right
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -136,7 +137,8 @@ def _font(name, bold, size):
 @lru_cache(maxsize=8)
 def _verify_font(path, digest):
     if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
-        raise ValueError('Text font coverage is out of date')
+        # A replaced font can still render; the cached check warns once per face.
+        logging.getLogger(__name__).warning('Text font coverage is out of date; using font: %s', path)
 
 
 def wrap_text(text, measure, width):

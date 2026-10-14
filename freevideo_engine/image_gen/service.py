@@ -309,6 +309,7 @@ class Service:
                         env[resident_process.ENV] = str(owner.endpoint)
                         try:
                             resident_process.release_idle_cache(env, descriptor)
+                            resident_process.OWNER.record(action='released', reason='image_model')
                         except resident_process.SessionRestarted:
                             pass
                         env.pop(resident_process.ENV, None)

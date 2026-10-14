@@ -54,7 +54,9 @@ def policy(args, memory=None):
     allocator_capacity = min(capacity - reserve, amount('allocator_limit_gib', capacity - reserve))
     return dict(device_backend='mps', memory_model='unified', observed=memory,
         reserve_bytes=reserve, allocator_bytes=allocator, allocator_capacity_bytes=allocator_capacity,
-        encoder_bytes=min(3 * GiB, allocator),
+        # Text/vision encoding gets the same live allowance: a fixed 3 GiB trial
+        # cap failed once reference images added vision tokens on large Macs.
+        encoder_bytes=allocator,
         ram_budget_bytes=capacity if getattr(args, 'ram_gib', None) is not None else working,
         ram_budget_is_estimate=getattr(args, 'ram_gib', None) is None,
         emergency_floor_bytes=GiB, query_chunk=128, ff_chunk=256, projection_chunk=256,

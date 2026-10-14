@@ -39,6 +39,7 @@ def seconds_for_frames(frames, minimum=1.625, maximum=60., step=.1):
 
 class ComfyHost:
     continuation_inputs = tuple(CONTINUE_INPUTS.values())
+    media_inputs = ('media', 'first', 'last', 'references', 'conditioning')
 
     def __init__(self, server):
         self.server = server

@@ -257,15 +257,28 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     };
     redo.onclick = () => enhance().catch(() => {});
     show(''); save(false); render();
+    function useOriginal(error) {
+        console.warn('FreeVideo prompt rewrite failed; using the original prompt.', error?.message);
+        versions.value.selected = 'original'; apply();
+        show(t('Could not enhance; generated with the original.', '没能改写，已用原文生成。'), 'note');
+    }
     return {element, async beforeGenerate() {
         if (running) {
             try { await running; }
-            catch (error) { if (versions.value.enabled && !versions.value.useOriginal) return false; }
+            catch (error) {
+                if (versions.value.enabled && !versions.value.useOriginal) {
+                    if (error?.message === 'cancelled' || cancelling || disposed) return false;
+                    useOriginal(error); return;
+                }
+            }
         }
         // An untouched box generates the starter prompt as it is.
         if (!versions.value.enabled || versions.value.useOriginal || !versions.value.original.trim()) return;
         try { if (!versions.fresh(context())) await enhance(); }
-        catch (error) { show(errorText(error), error?.message === 'cancelled' ? '' : 'error'); return false; }
+        catch (error) {
+            if (error?.message === 'cancelled' || cancelling || disposed) { show(errorText({message: 'cancelled'})); return false; }
+            useOriginal(error);
+        }
     }, sync() { if (input.value !== versions.text()) changed(); }, dispose() {
         disposed = true; prestart.dispose(); cancelJob().catch(() => {}); input.removeEventListener('input', changed);
         input.removeEventListener('beforeinput', replace);

@@ -471,6 +471,7 @@ def cast_schema(name, *, local=False):
     if name == 'create':
         return obj(dict(kind=enum(('character', 'setting'), default='character'), **fields, ref=REF), ('name',))
     if name == 'update':
+        fields['images']['items']['properties']['label'] = {'type': 'string'}
         return obj(dict(fields, revision=number(1, integer=True), ref=REF))
     if name == 'delete':
         return obj(dict(revision=number(1, integer=True), ref=REF))
@@ -489,7 +490,7 @@ def cast_schema(name, *, local=False):
 def cast_view():
     picture = obj(dict(media=obj(dict(file=FILE, url=string(2048)), ('file', 'url')),
                        by=enum(('user', 'agent', 'builtin')), from_job=JOB, generated={'type': 'boolean'},
-                       label=enum(LABELS), label_guess={'type': 'boolean'}), ('media', 'by', 'label'))
+                       label={'type': 'string'}, label_guess={'type': 'boolean'}), ('media', 'by', 'label'))
     generating = obj(dict(job=JOB, face_job=nullable(JOB), jobs=array(JOB, 1, 5),
         source=enum(('image', 'video')), replace={'type': 'boolean'}, at=string(),
         by=enum(('user', 'agent', 'builtin'))), ('job', 'face_job', 'replace', 'at', 'by'))

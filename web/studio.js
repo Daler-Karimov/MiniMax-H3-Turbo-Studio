@@ -1,5 +1,6 @@
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
 import {topDialog} from './dialog_keys.js';
+import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
@@ -948,7 +949,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             // Only serialization briefly locks the editor. Network submission
             // and all GPU execution leave the next draft fully editable.
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = true;
-            const snapshot = singleRunSnapshot(extendSnapshot(structuredClone(await app.graphToPrompt()), node.id, source,
+            const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(structuredClone(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
             if (!snapshot) { status.textContent = t('Could not plan this single run. Try again.', '暂时无法计算这次单次生成，请重试。'); return; }
             const seedIndex = node.widgets.findIndex(w => w.name === 'seed');
