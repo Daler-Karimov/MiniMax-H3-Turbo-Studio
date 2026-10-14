@@ -73,7 +73,7 @@ GUIDE = {
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
-        'Otherwise it uses parts of up to 15 s (30 s is 15 + 15), continued and joined automatically. '
+        'Otherwise it uses as few parts as possible, each at least 10 s; how many depends on how long this computer can generate in one run, and the parts continue and join automatically. '
         'Multiple blocks or continue_from need two-pass text generation: quality "light" '
         'or sampling.two_pass=true, no preview and no media. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '

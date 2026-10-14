@@ -20,6 +20,7 @@ import re
 import time
 
 from . import spec as specs
+from ..chain_plan import MIN_PART_SECONDS
 
 EXAMPLE = {
     'title': '末班车', 'name': 'the-last-train', 'aspect': '9:16', 'quality': 'light',
@@ -33,7 +34,7 @@ EXAMPLE = {
                    'looking up at the departure board.', 'camera': 'The camera tracks her with small amplitude, then '
          'holds still.', 'lines': [{'who': 'lin', 'line': '还来得及吗？', 'how': 'says breathlessly'}],
          'sound': 'Heavy rain on the platform roof, splashing footsteps, the buzz of the lamp.'},
-        {'id': 'arrival', 'seconds': 6, 'continue': True, 'framing': 'vertical medium close-up',
+        {'id': 'arrival', 'seconds': 10, 'continue': True, 'framing': 'vertical medium close-up',
          'action': 'A train headlight sweeps across Lin\'s face; the wind of the arriving train lifts her wet hair and '
                    'her worry turns into a relieved smile.', 'camera': 'The camera pushes in slowly toward her face.',
          'lines': [{'who': 'lin', 'line': '来了。', 'how': 'says quietly'}],
@@ -406,10 +407,16 @@ def intent(play, shot):
                                                           shot.get('camera'), lines, looks) if x and x.strip())
 
 
+def shot_seconds(play, shot):
+    """A shot says its length; else the film does; else 6 s, and 10 s for a shot that continues the one before
+    (a part that continues another video is at least 10 s)."""
+    return shot.get('seconds', play.get('seconds', MIN_PART_SECONDS if shot.get('continue') else 6))
+
+
 def shot_job(play, shot, index, ref):
     job = dict(ref=ref, label='%s · %s' % (play.get('title') or 'drama', shot['id']), project=play.get('name'),
                aspect=play.get('aspect', '9:16'), quality=play.get('quality', 'light'),
-               seconds=shot.get('seconds', play.get('seconds', 6)), metadata={'drama_shot': shot['id']})
+               seconds=shot_seconds(play, shot), metadata={'drama_shot': shot['id']})
     if play.get('megapixels'):
         job['megapixels'] = play['megapixels']
     if shot.get('seed') is not None:
@@ -448,7 +455,7 @@ def batch(play):
     for i, shot in enumerate(play['shots']):
         if shot.get('idea') and not shot.get('action') and not shot.get('prompt'):
             rows.append(dict(ref='s%d-idea' % i, kind='enhance', text=shot['idea'],
-                             seconds=shot.get('seconds', play.get('seconds', 6)), project=play.get('name'),
+                             seconds=shot_seconds(play, shot), project=play.get('name'),
                              label='%s · %s idea' % (play.get('title') or 'drama', shot['id'])))
         rows.append(shot_job(play, shot, i, 's%d' % i))
     rows.append(review_job(play, [(shot, '@s%d' % i) for i, shot in enumerate(play['shots'])]))

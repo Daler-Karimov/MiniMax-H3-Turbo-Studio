@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 
-from . import chain_leads
+from . import chain_leads, chain_plan
 from . import chain_store as store
 
 
@@ -24,6 +24,16 @@ class ChainTooLong(ValueError):
         super().__init__('This video can have up to %d parts. Make it shorter.' % limit)
         self.parts, self.limit = parts, limit
         self.message_zh = '这条视频最多 %d 段，请缩短一些。' % limit
+
+
+class ChainPartTooShort(ValueError):
+    """A continuing part shorter than a continued video may have."""
+    code = 'chain_part_too_short'
+
+    def __init__(self, seconds, limit):
+        super().__init__('Each continued part must be at least %d seconds. Make it longer.' % limit)
+        self.seconds, self.limit = seconds, limit
+        self.message_zh = '接着生成的每一段至少 %d 秒，请加长一些。' % limit
 
 
 def _work_key(path):
@@ -58,9 +68,10 @@ def node_prompt(prompt, node):
 
 class ChainRunner:
     def __init__(self, store_dir, host, clock=time.monotonic, wall=time.time, estimate=None, poll=0.5, inputs=None,
-                 max_parts=None):
+                 max_parts=None, min_part_frames=None):
         self.store_dir, self.host = store_dir, host
         self.max_parts = max_parts or store.MAX_PARTS
+        self.min_part_frames = chain_plan.MIN_PART_FRAMES if min_part_frames is None else min_part_frames
         self.clock, self.wall, self.estimate, self.poll = clock, wall, estimate, poll
         self.inputs = inputs or host.inputs
         self.lock = threading.RLock()
@@ -175,6 +186,11 @@ class ChainRunner:
         record = store.validate(payload)
         with self.lock:
             # Before anything is written or queued: a refused chain leaves every record and file as it was.
+            short = [row['inputs']['frames'] for row in record['blocks']
+                     if (row['after'] is not None or row['before'] is not None)
+                     and row['inputs']['frames'] < self.min_part_frames]
+            if short:
+                raise ChainPartTooShort(min(short) / chain_plan.FPS, chain_plan.MIN_PART_SECONDS)
             parts = max(self._depths(record).values())
             if parts > self.max_parts:
                 raise ChainTooLong(parts, self.max_parts)

@@ -233,6 +233,8 @@ def plan(port, value, jobs=None):
     if jobs is not None:
         problems += parts_problems(spec, jobs.port.chain_runner(), work=jobs.continued_work(spec),
                                    planned=jobs.planned_parts(spec))
+    else:
+        problems += parts_problems(spec, None)
     if problems:
         raise specs.SpecError(problems)
     if jobs is not None:
