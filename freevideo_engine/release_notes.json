@@ -1,25 +1,62 @@
 {
   "schema": 1,
-  "product_version": "0.4.3",
+  "product_version": "0.4.4",
   "en": {
-    "summary": "LAN access settings of offline-package installations are kept when the launcher is reopened, and the agent no longer replies after a job is stopped on the page. Also includes several fixes; the image generation models can now be downloaded and installed normally.",
+    "summary": "Continuing a video segment by segment no longer stops with a memory error, medium-size videos on Windows with 16 GB or smaller cards are fast again in the second pass, and image generation on Windows no longer stalls. The editing view gains reference pictures and imported-video continuation, and several issues that stopped generation or setup are fixed.",
     "changes": [
-      "With an offline-package installation, LAN access and its port now stay as set after the launcher is reopened.",
-      "After a job is stopped on the page, the agent adds no message about it and does not retry on its own.",
-      "When the agent asks for a video length this computer cannot make, it now gets a clear explanation instead of an error.",
-      "The image generation models can now be downloaded and installed normally."
+      "Continuing a video segment by segment no longer stops with a memory error from the second segment on.",
+      "Windows: medium-size videos on graphics cards with 16 GB or less no longer slow down in the second pass.",
+      "Image generation: on Windows it no longer stalls while the image model starts, reports a false out-of-memory error after loading, or stalls while checking downloaded model files; tall pictures no longer show purple vertical lines or a grid texture.",
+      "After a video finishes, FreeVideo releases graphics and system memory right away unless the next part is about to start, and gives way at once to image generation or other programs.",
+      "Editing view: the generation bar takes reference pictures (upload one or make one with the image model, then set it as reference, first frame or last frame), every Generate press answers at once, and queued parts stay queued after the page is reloaded and start by themselves; if generation cannot run, they go back to drafts with the reason.",
+      "Editing view: videos imported from your computer can be extended and continued, files dropped on the timeline land where they are dropped, reopening it from the launcher keeps it usable, and keys pressed in the media library no longer change the timeline.",
+      "Mac: generating with reference pictures no longer runs out of memory while encoding; the compatibility setting, which only applies to separate graphics cards, is no longer shown.",
+      "Additional model folders entered in the node settings are now saved and used when FreeVideo looks for models and starts.",
+      "Edge model files now download from the ModelScope domestic site, and the image model gains an additional mirror source.",
+      "Image editor: leaving or reloading the page with unsaved changes now asks first. Flipping, resetting, fitting or dragging the locked original works on an automatic copy as one undo step. Renaming a layer by double-click keeps the name, and invalid canvas sizes are explained instead of failing silently.",
+      "Small mismatches no longer stop the launcher, setup, saved Agent films and cast cards, subtitle import, the image editor, sharing or prompt enhancement; FreeVideo continues and repairs what it can. Turning off or cancelling prompt enhancement while it runs stops it cleanly, and the release link in the update notice opens the latest release.",
+      "A workflow restored with an empty Total frames value no longer fails with a frame-count error; it generates by duration."
     ]
   },
   "zh": {
-    "summary": "用离线包安装时，局域网访问的设置在重开启动器后保留；在页面上停止任务后，Agent 不再另外回复；另有几处修复，图像生成模型现在可以正常下载和安装。",
+    "summary": "一段接一段连续生成不再因内存报错；Windows 上 16 GB 及以下显卡生成中等尺寸视频，第二遍恢复原来的速度；Windows 图像生成不再卡住。剪辑视图可以加参考图、接续导入的视频，另修复了几处会让生成或安装中断的问题。",
     "changes": [
-      "用离线包安装时，局域网访问的开关和端口在重开启动器后保持不变。",
-      "在页面上停止任务后，Agent 不再另外回复，也不会自行重试。",
-      "Agent 请求的视频长度超出这台电脑能做的范围时，会收到明确的说明，不再出错。",
-      "图像生成模型现在可以正常下载和安装。"
+      "一段接一段连续生成时，从第二段起不再因内存不足报错。",
+      "Windows：16 GB 及以下显卡生成中等尺寸视频时，第二遍不再变慢。",
+      "图像生成：Windows 上图像模型启动时不再卡住、加载完不再误报内存不足，下载后校验文件不再卡住；高图上不再出现紫色竖线和网格纹。",
+      "视频生成完会立即释放显存和内存；下一段马上开始时才短暂保留，遇到图像生成或其他程序要用时立刻让出。",
+      "剪辑视图：生成条可以加参考图（上传图片或用图像模型生成一张，可设为参考、首帧或尾帧）；每次点“生成”都会立刻有反应，排队的段刷新页面后仍在排队、轮到时自动开始，不能生成时退回草稿并说明原因。",
+      "剪辑视图：从电脑导入的视频也能往后接续生成，拖到时间线上的文件落在松手的位置；从启动入口再次进入时可以正常操作，素材库里按键不再改动时间线。",
+      "Mac：用参考图生成时，编码阶段不再报内存不足；只对独立显卡起作用的兼容性设置不再显示。",
+      "节点设置里填写的“其他模型目录”现在会保存，查找模型和启动时都会用到。",
+      "Edge 模型文件改从魔搭国内站下载，图像模型增加一个镜像下载源。",
+      "图片编辑器：有未保存的改动时离开或刷新页面会先提示；对已锁定的原图翻转、重置、适配或拖动时，自动在副本上操作并算一步撤销；双击重命名图层保留名称；画布尺寸不合法时给出提示而不是无反应。",
+      "启动器、安装、Agent 已存的影片和角色卡、字幕导入、图片编辑器、分享和提示词改写遇到小偏差不再中断，FreeVideo 会继续并自动修复能修的部分；提示词增强运行中关闭或取消时会正常停止，更新提示里的发布页链接打开最新版本。",
+      "恢复的工作流把“总帧数”留空时，生成不再因帧数校验报错，按时长正常生成。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.3",
+      "en": {
+        "summary": "LAN access settings of offline-package installations are kept when the launcher is reopened, and the agent no longer replies after a job is stopped on the page. Also includes several fixes; the image generation models can now be downloaded and installed normally.",
+        "changes": [
+          "With an offline-package installation, LAN access and its port now stay as set after the launcher is reopened.",
+          "After a job is stopped on the page, the agent adds no message about it and does not retry on its own.",
+          "When the agent asks for a video length this computer cannot make, it now gets a clear explanation instead of an error.",
+          "The image generation models can now be downloaded and installed normally."
+        ]
+      },
+      "zh": {
+        "summary": "用离线包安装时，局域网访问的设置在重开启动器后保留；在页面上停止任务后，Agent 不再另外回复；另有几处修复，图像生成模型现在可以正常下载和安装。",
+        "changes": [
+          "用离线包安装时，局域网访问的开关和端口在重开启动器后保持不变。",
+          "在页面上停止任务后，Agent 不再另外回复，也不会自行重试。",
+          "Agent 请求的视频长度超出这台电脑能做的范围时，会收到明确的说明，不再出错。",
+          "图像生成模型现在可以正常下载和安装。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.2",
       "en": {
@@ -234,43 +271,6 @@
         "summary": "通过启动器安装或更新后，图片编辑器可以正常打开了。",
         "changes": [
           "图片编辑器可以正常打开了。通过启动器安装或更新的 0.3.21 缺少编辑器用的字体，点“编辑”只会提示“这张图片无法打开编辑。”。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.21",
-      "en": {
-        "summary": "FreeVideo comes to Linux desktops as an AppImage, images in Media can be edited in place, and videos on Windows generate faster and more reliably when GPU memory or RAM is tight.",
-        "changes": [
-          "FreeVideo comes to Linux desktops as an AppImage with the same launcher as Windows and macOS: it installs ComfyUI, the runtime and the models, adds FreeVideo to the application menu and updates itself. In a terminal, ./setup.sh now continues until FreeVideo is open, and freevideo opens it again later. On a GPU server, freevideo server keeps FreeVideo running for other computers to use.",
-          "Images in Media can now be edited without leaving FreeVideo: click Edit on a picture to crop it to the video's shape, add text and shapes, adjust light and color, and work with layers, masks and selections. Spot healing fills each stroke with texture from the surrounding picture, and Captions only removes burned-in captions. Text uses FreeVideo's built-in open-source fonts. The original file is kept, and opening the edit again brings back every layer.",
-          "The FreeVideo toolbar with the Create and Nodes switch can now be dragged anywhere on the page, like a window. It stays where you leave it after ComfyUI, FreeVideo or the browser restarts, and in other browsers too. Double-click an empty part of the toolbar to put it back at the top.",
-          "Prompt enhancement now keeps the lines written for characters to say as spoken dialogue, word for word, instead of turning them into on-screen text, and puts each section of the enhanced prompt on its own line.",
-          "On Windows, FreeVideo now leaves room for the GPU memory other applications are using, so videos no longer slow down or start over when the GPU fills up. On a test GPU limited to 8 GB, with 2.6 GB used by another application, a 5-second 960×544 video took 208 s instead of 290 s. On computers with little free RAM, the second pass also no longer loads the video model again.",
-          "On Windows, int8 videos sample faster on GPUs with 6 to 16 GB of memory. When memory allows, attention is computed in larger groups without using more video memory: on a Windows test GPU limited to 12 GB, a 1344×768 step took 58.2 s instead of 63.3 s, about 8% faster. 16 GB RTX 40 and 30 series cards with 13.5 to 14 GB free now copy the next model layer while the current one computes, as RTX 50 series cards already did. The same seed can give a slightly different video, as it already does between GPUs with different memory.",
-          "On Windows computers short of RAM, model layers read from the drive are now read ahead while the previous layer computes, without using more memory; in our tests this cut each sampling step by about 20%. While the last steps run, FreeVideo also reads ahead as much of the video decoder as free RAM allows, instead of skipping it when the whole decoder does not fit. The same seed gives the same video as before.",
-          "Videos spend less time getting ready. A new prompt or video size no longer makes FreeVideo compile its GPU kernels again, which took about 7 seconds per video on a Windows test machine, and a long ComfyUI session keeps them compiled instead of falling back to a much slower path. The second sampling step no longer compiles part of the model again, which on Windows could stop an attempt when the GPU was nearly full. The same seed gives the same video as before.",
-          "On Mac, the installer shows and checks free space the same way Finder does, including space macOS frees on its own, such as local Time Machine snapshots. Below the install location it names the disk and its free space, Choose another disk lists the other connected disks, and when space runs short it suggests one with enough room. A new installation needs about 73 GB instead of about 110 GB, and exFAT, FAT32, read-only and disconnected disks are explained before installation starts.",
-          "Installation is harder to interrupt and easier to follow: the overall progress moves with the model download, a small file whose download breaks off is fetched again, and the launcher reinstalls its loader when the FreeVideo folder in ComfyUI's custom nodes had its original files put back.",
-          "Offline-package installations take less disk space. Once the installation holds and has verified everything in the imported ZIP files, FreeVideo offers to delete them, so the packages no longer take the space twice; nothing is deleted without confirmation. The first start after installing or updating removes unpacked package folders and download leftovers that are no longer needed and shows how much space was freed, and models copied from another disk come with a note on how to avoid the copy.",
-          "Fixes: FreeVideo's page now loads with ad-block filter lists that blocked one of its scripts by name, and the page check names any FreeVideo file a browser extension blocks. Enlarging a video to full screen in the node view no longer shows the \"did not load completely\" message. Newer ComfyUI versions no longer print an asset registration warning after every video. Local optimization works when the second pass keeps part of its data in RAM, as on 8 GB Windows GPUs."
-        ]
-      },
-      "zh": {
-        "summary": "FreeVideo 推出 Linux 桌面版 AppImage，素材图片可以直接编辑，Windows 上显存或内存紧张时生成更快、更稳定。",
-        "changes": [
-          "Linux 桌面可以使用 FreeVideo 的 AppImage，启动器与 Windows、macOS 相同：自动安装 ComfyUI、运行环境和模型，加入应用菜单，并能自动更新。在终端里，./setup.sh 现在会一直进行到打开 FreeVideo，之后输入 freevideo 会再次打开它。在 GPU 服务器上，freevideo server 会让 FreeVideo 保持运行，供其他电脑使用。",
-          "素材里的图片现在可以直接在 FreeVideo 中编辑：点击图片上的“编辑”，可以裁剪成视频比例、添加文字和形状、调整光线和颜色，并使用图层、蒙版和选区。污点修复会用周围画面的纹理填补，“只去字幕”可以去掉烧进画面的字幕。文字使用 FreeVideo 内置的开源字体。原图会保留，再次打开编辑时所有图层都在。",
-          "带“创作面板 / 节点视图”切换的 FreeVideo 工具栏现在可以像窗口一样拖到页面任意位置。重启 ComfyUI、FreeVideo 或浏览器后，它仍在原处，换一个浏览器也一样。双击工具栏空白处，可以让它回到顶部。",
-          "提示词增强现在会把写给角色说的台词原样保留为对白，不再变成画面里的文字；增强后的提示词每个部分各占一行。",
-          "在 Windows 上，FreeVideo 现在会给其他程序占用的显存留出空间，显卡被占满时生成不再变慢或中止重来。在一块限制为 8 GB、其中 2.6 GB 被其他程序占用的测试显卡上，生成 5 秒 960×544 视频从 290 秒缩短到 208 秒。在空闲内存较少的电脑上，第二遍也不再重新加载视频模型。",
-          "在 Windows 上，6–16 GB 显存的显卡生成 int8 视频更快。显存允许时，注意力以更大的分组计算，显存占用不增加：在一块限制为 12 GB 的 Windows 测试显卡上，1344×768 视频每步从 63.3 秒缩短到 58.2 秒，约快 8%。空闲显存为 13.5 到 14 GB 的 16 GB RTX 40 和 30 系列显卡，现在也会在当前层计算的同时复制下一层，与 RTX 50 系列此前的做法相同。同一个种子生成的视频可能略有不同，就像在显存不同的显卡上本来就会有差异一样。",
-          "在内存不足的 Windows 电脑上，需要从硬盘读取的模型层现在会在上一层计算时提前读取，而且不额外占用内存；在我们的测试中，每个采样步缩短约 20%。在最后几个采样步进行时，FreeVideo 还会在空闲内存允许的范围内预先读取尽可能多的视频解码器，不再因为放不下整个解码器就完全不读。同一个种子生成的视频与以前相同。",
-          "视频开始生成前的等待更短。换提示词或视频尺寸后，FreeVideo 不再重新编译显卡算子（在 Windows 测试机上每个视频约省 7 秒），在较长的 ComfyUI 会话中也不会退回慢得多的未编译方式。第二个采样步不再重新编译部分模型；在 Windows 上，这次编译曾在显卡快满时使尝试中止。同一个种子生成的视频与以前相同。",
-          "在 Mac 上，安装器显示和检查的可用空间现在与访达一致，包括 macOS 需要时会自动释放的空间，例如 Time Machine 本地快照。安装位置下方会显示所在硬盘和可用空间，点“换一块硬盘”可以选择其他已连接的硬盘，空间不够时会推荐一块够用的硬盘。全新安装所需的空间从约 110 GB 降到约 73 GB；exFAT、FAT32、只读或没有连接的硬盘，会在安装开始前说明原因。",
-          "安装更不容易中断，过程也更清楚：整体进度会随模型下载推进；小文件下载中断时会重新下载；ComfyUI 自定义节点里的 FreeVideo 文件夹被放回原始文件后，启动器会重新装上加载器。",
-          "用离线包安装后，占用的硬盘空间更少。安装已包含并校验完导入的压缩包里的全部内容后，FreeVideo 会提示删除这些压缩包，离线包不再占两份空间；删除前需要确认。安装或更新后第一次启动时，FreeVideo 会清理不再需要的离线包解压目录和下载残留，并显示释放了多少空间；从另一块硬盘复制来的模型，会附一句说明，讲清楚怎样避免这份复制。",
-          "修复：部分广告拦截列表会按文件名拦下 FreeVideo 的一个脚本，导致创作面板不显示，现在页面可以正常加载，页面检查也会指出被浏览器插件拦截的文件。在节点视图里把视频放大到全屏时，不再出现“没有完整加载”的提示。较新的 ComfyUI 不再在每个视频完成后打印资源登记警告。第二遍需要把部分数据放在内存里时（例如 8 GB Windows 显卡），本地优化可以正常运行。"
         ]
       }
     }
