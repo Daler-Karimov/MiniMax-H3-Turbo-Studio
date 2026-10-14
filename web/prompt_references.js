@@ -1,4 +1,5 @@
 // H3 numbers each reference kind separately, in the order of comfy_media.export.
+import {caretRect} from './caret_rect.js';
 const titles = {image: 'Picture', video: 'Video', audio: 'Audio'};
 const widget = (node, name) => node?.widgets?.find(w => w.name === name);
 const linkFor = (node, name) => node?.graph?.links?.[node.inputs?.find(i => i.name === name)?.link];
@@ -125,7 +126,8 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
         popup.style.width = `${Math.min(Math.max(rect.width, 260), innerWidth - 24)}px`;
         const height = Math.min(popup.scrollHeight, 280);
         popup.style.left = `${Math.max(12, Math.min(rect.left, innerWidth - popup.offsetWidth - 12))}px`;
-        popup.style.top = `${Math.max(12, rect.bottom + height + 8 < innerHeight ? rect.bottom + 6 : rect.top - height - 6)}px`;
+        const line = caretRect(input);
+        popup.style.top = `${Math.max(12, line.bottom + height + 8 < innerHeight ? line.bottom + 4 : line.top - height - 4)}px`;
     }
     function select(index) {
         active = index;

@@ -1,5 +1,6 @@
 // Camera and motion words offered while a prompt is typed. The list is local; nothing is sent anywhere,
 // a word is written only when it is chosen, and the typed language decides which form is inserted.
+import {caretRect} from './caret_rect.js';
 export const TERMS = [
     ['dolly in', '推镜头'], ['dolly out', '拉镜头'], ['pan left', '左摇镜头'], ['pan right', '右摇镜头'],
     ['tilt up', '上摇镜头'], ['tilt down', '下摇镜头'], ['tracking shot', '跟拍镜头'], ['orbit shot', '环绕镜头'],
@@ -70,7 +71,8 @@ export function attachTermSuggest(input, {t = en => en, host, suppressed = () =>
         popup.style.width = `${Math.min(Math.max(rect.width * .6, 240), innerWidth - 24)}px`;
         const height = Math.min(popup.scrollHeight, 220);
         popup.style.left = `${Math.max(12, Math.min(rect.left, innerWidth - popup.offsetWidth - 12))}px`;
-        popup.style.top = `${Math.max(12, rect.bottom + height + 8 < innerHeight ? rect.bottom + 6 : rect.top - height - 6)}px`;
+        const line = caretRect(input);
+        popup.style.top = `${Math.max(12, line.bottom + height + 8 < innerHeight ? line.bottom + 4 : line.top - height - 4)}px`;
     }
     function select(index) {
         active = index;
