@@ -47,6 +47,8 @@ export function viewSwitch(view, onStudio, onNodes, onEditor, onAutopilot) {
         ['autopilot', t('Autopilot', 'AI 全自动'), onAutopilot]]) {
         const button = document.createElement('button'); button.type = 'button';
         const text = document.createElement('span'); text.textContent = label; button.append(text);
+        // Browser translation must leave the product name as written.
+        if (id === 'autopilot') text.setAttribute('translate', 'no');
         button.dataset.label = label; button.dataset.view = id;
         if (id === 'editor') button.dataset.fvGuide = 'longer';
         button.setAttribute('aria-pressed', String(view === id)); button.onclick = action;
