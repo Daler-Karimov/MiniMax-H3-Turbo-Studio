@@ -448,6 +448,7 @@ class Service:
         if env.get(resident_process.ENV) and Path(env[resident_process.ENV]).is_file():
             try:
                 resident_process.release_idle_cache(env, descriptor)
+                resident_process.OWNER.record(action='released', reason='prompt_model')
             except resident_process.SessionRestarted:
                 pass  # That worker already exited, which is the release we need.
             env.pop(resident_process.ENV, None)

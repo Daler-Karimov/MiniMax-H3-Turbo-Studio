@@ -1416,6 +1416,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         state['encoder_prewarm'] = prewarm_summary(encoder_prewarm)
         if machine.get('device_backend') != 'mps' and (source/'freevideo_engine'/'resident_worker.py').is_file():
             from .resident_process import OWNER, ENV
+            # Whether the models were kept for this request or released, and why.
+            state['resident_since_last'] = OWNER.take_decisions()
             if environment.get('FREEVIDEO_KEEP_MODELS', 'auto').lower() in ('0', 'off', 'false'):
                 OWNER.close()
                 environment.pop(ENV, None)
@@ -1529,7 +1531,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                     # request's process tree. Confirm it exits too before offering
                     # another generation; cancellation should release its memory.
                     from .resident_process import OWNER
-                    OWNER.close()
+                    OWNER.release('cancelled')
         raise
     finally:
         from .resident_process import OWNER
