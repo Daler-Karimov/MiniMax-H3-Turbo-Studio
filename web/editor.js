@@ -1288,7 +1288,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (after.length || !clip.extend || !clip.source || store.sources.get(sourceKey(clip.source))?.missing) return true;
                 if (!store.generationAvailable) return false;
                 const spare = Math.min(...model.pair(state.record, clip.id).map(member => member.length - member.in - member.frames));
-                tracks.extendClip(clip.id, spare + model.RULES.minSeconds * model.FPS, {silent: true});
+                tracks.extendClip(clip.id, spare + model.continuedSeconds(0, capability.maxFollowSeconds) * model.FPS, {silent: true});
                 return true;
             };
             await store.generationReady();

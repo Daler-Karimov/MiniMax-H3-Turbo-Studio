@@ -75,14 +75,15 @@ export function rangeMoveParameters(record, range, anchor, frame, points, zoom, 
 
 // Classification uses the source tail only to decide which gesture to preview.
 // trim/extendClip still validate the requested edit (including pairs and limits).
-export function edgeParameters(clip, edge, frame, points, zoom, {canExtend = true} = {}) {
+export function edgeParameters(clip, edge, frame, points, zoom, {canExtend = true, maxFollowSeconds = model.RULES.maxSeconds} = {}) {
     const snapped = snapFrame(frame, points, zoom);
     if (clip.pending && !clip.source) return {kind: 'planned', edge, frame: snapped.frame, guide: snapped.guide};
     const sourceEnd = clip.start + clip.length - clip.in;
     if (speedEdited(clip)) return {kind: 'trim', edge, frame: snapped.frame, guide: snapped.guide};
     if (edge === 'end' && canExtend && clip.extend && snapped.frame > sourceEnd) {
-        const extra = Math.max(2 * model.FPS, Math.round((snapped.frame - sourceEnd) / model.FPS) * model.FPS);
-        return {kind: 'extend', frame: sourceEnd, frames: extra, guide: snapped.guide};
+        // What continues a video is at least followSeconds long; the preview already shows the raised length.
+        const wanted = Math.round((snapped.frame - sourceEnd) / model.FPS), seconds = model.continuedSeconds(wanted, maxFollowSeconds);
+        return {kind: 'extend', frame: sourceEnd, frames: seconds * model.FPS, guide: snapped.guide, raised: seconds !== wanted};
     }
     return {kind: 'trim', edge, frame: snapped.frame, guide: snapped.guide};
 }
@@ -798,7 +799,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 Object.assign(gesture, {type: 'range', anchor: clipEnd, flush: clipEnd, id: undefined, ids: [], clip: null, edge: null, rightPreviewIds: []});
                 cachedPoints = allPoints([]); tooltip.hidden = true; updatePointer(event); return;
             }
-            let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom, {canExtend: actions.generationAvailable?.() !== false});
+            let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom,
+                {canExtend: actions.generationAvailable?.() !== false, maxFollowSeconds: boundaryLimits().maxFollowSeconds});
             if (result.kind === 'extend') result.frames = capRange({start: result.frame, frames: result.frames}, false, true).frames;
             if (result.kind === 'planned') {
                 let preview;
@@ -832,10 +834,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                     const room = model.rightEdgeRoom(state.record, gesture.id, Math.max(0, growth), {generating: result.kind === 'extend'});
                     if (!room.blocked) return;
                     blocked = true;
-                    result = edgeParameters(gesture.clip, 'end', room.limit, [], state.zoom);
+                    result = edgeParameters(gesture.clip, 'end', room.limit, [], state.zoom, {maxFollowSeconds: boundaryLimits().maxFollowSeconds});
                     if (result.kind === 'extend') {
                         result.frames = Math.floor((room.limit - result.frame) / model.FPS) * model.FPS;
-                        if (result.frames < model.RULES.minSeconds * model.FPS) result = {kind: 'trim', edge: 'end', frame: result.frame, guide: null};
+                        // Less room than a continued part needs: the edge only trims.
+                        if (result.frames < model.continuedSeconds(0, boundaryLimits().maxFollowSeconds) * model.FPS) result = {kind: 'trim', edge: 'end', frame: result.frame, guide: null};
                     }
                     preview = edit(result);
                 }
@@ -876,7 +879,9 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 + (result.kind === 'extend' ? result.frames : 0);
             if (gesture.edge === 'end' && (growth > 0 || blocked)) {
                 clearTimeout(estimateTimer); estimateToken++;
-                tooltip.textContent = blocked ? '' : t(`+${Math.round(growth / model.FPS)} s`, `＋${Math.round(growth / model.FPS)} 秒`);
+                // A length below the shortest continued part shows that rule; release sets it to that length.
+                tooltip.textContent = blocked ? '' : result.raised ? t(`At least ${result.frames / model.FPS} s`, `至少 ${result.frames / model.FPS} 秒`)
+                    : t(`+${Math.round(growth / model.FPS)} s`, `＋${Math.round(growth / model.FPS)} 秒`);
                 tooltip.hidden = !!blocked;
                 selectionBox.classList.toggle('fv-ed-cannot-drop', !!blocked);
             }
@@ -903,7 +908,9 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'extend') {
             const frames = result.frame - finished.clip.start - finished.clip.frames + result.frames;
-            extendClip(finished.id, frames);
+            if (extendClip(finished.id, frames) && result.raised) {
+                actions.notify?.(t(`Extended to ${result.frames / model.FPS} s.`, `已补到 ${result.frames / model.FPS} 秒。`));
+            }
         } else attempt(t('Trim', '裁短'), record => model.trim(record, finished.id, finished.edge, result.frame));
         renderSelection();
         } finally { actions.gestureEnd?.(); }
