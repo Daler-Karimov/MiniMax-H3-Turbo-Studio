@@ -150,6 +150,30 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
 
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
     let conversations = emptyConversations(), selectedSession, selection = 0, reread = false, focusSession = null, creating = false;
+    // Only the reading position is persisted, scoped to this server; drafts stay in this open page.
+    let selectionKey = null;
+    try {
+        selectionKey = `freevideo.chat.selected:${new URL(api.apiURL('/freevideo/agent/chat'), location.href).href}`;
+        selectedSession = localStorage.getItem(selectionKey) || undefined;
+    } catch { /* Storage can be unavailable. Reading still works. */ }
+    function rememberSelection(session) {
+        try { if (selectionKey) { if (session) localStorage.setItem(selectionKey, session); else localStorage.removeItem(selectionKey); } } catch {}
+    }
+    const drafts = new Map(), unsaidSessions = new Set();
+    let draftSession = selectedSession ?? null;
+    function saveDraft() {
+        if (drafts.get(draftSession)?.text !== input.value) drafts.set(draftSession, {text: input.value});
+        return drafts.get(draftSession);
+    }
+    function showDraft(session) {
+        if (draftSession === session) return;
+        saveDraft(); draftSession = session; input.value = drafts.get(session)?.text || ''; grow();
+    }
+    const reason = error => error?.message || t('Connection lost', '连接中断');
+    async function requestError(response) {
+        const data = await response.json().catch(() => ({}));
+        return new Error(data.error?.message || data.error?.code || `HTTP ${response.status}`);
+    }
     // Work under way in another conversation while this one has none: {session, job, ids}. The page's header keeps it in sight.
     let away = null;
     let listBusy = false, listAgain = false, listAt = -Infinity;
@@ -158,12 +182,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     sidebar.id = `fv-chat-conversations-${++chatNumber}`; sidebar.setAttribute('aria-label', t('Chats', '对话')); sidebar.hidden = true;
     const newChat = press('fv-chat-new', t('New chat', '新对话'), () => void startChat());
     newChat.prepend(glyph('M12 5v14M5 12h14')); newChat.title = t('New chat', '新对话');
+    const newError = el('p', 'fv-chat-error fv-chat-new-error'); newError.hidden = true; newError.setAttribute('role', 'alert');
     const chats = press('fv-chat-chats', null, () => drawer(chats.getAttribute('aria-expanded') !== 'true'));
     const chatsDot = el('i', 'fv-chat-running'); chatsDot.setAttribute('aria-hidden', 'true'); chatsDot.hidden = true;
     chats.append(glyph('M4 5h16v12H9l-5 4V5M8 9h8M8 13h5'), chatsDot);
     chats.title = t('Chats', '对话'); chats.setAttribute('aria-label', chats.title);
     chats.setAttribute('aria-controls', sidebar.id); chats.setAttribute('aria-expanded', 'false');
-    tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, list); element.prepend(sidebar);
+    tools.hidden = true; tools.append(chats); main.prepend(tools); sidebar.append(newChat, newError, list); element.prepend(sidebar);
     const listNodes = new Map(), narrow = () => window.matchMedia('(max-width: 720px)').matches;
     let menuState = null, changingMenu = false;
     const deleting = new Set(), deleted = new Set();
@@ -235,6 +260,15 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         menuState = conversationMenu(conversations, menuState, 'open', session); updateMenu(true);
     }
     function renderConversations() {
+        // Keep this page's unsent conversations reachable even though history only lists spoken ones.
+        const rows = conversations.conversations.filter(row => !row.temporary);
+        const listed = new Set(rows.map(row => row.id));
+        for (const session of unsaidSessions) {
+            if (listed.has(session)) { unsaidSessions.delete(session); continue; }
+            if (!deleted.has(session) && (drafts.get(session)?.text.trim() || pending.some(entry => entry.session === session)))
+                rows.unshift({id: session, title: t('New chat', '新对话'), running: 0, temporary: true});
+        }
+        conversations = {...conversations, conversations: rows};
         const previous = menuState;
         const lostFocus = previous && inMenu(document.activeElement);
         menuState = conversationMenu(conversations, menuState);
@@ -257,6 +291,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 more.addEventListener('focusout', leaveMenu); container.append(button, more);
                 listNodes.set(row.id, node = {row: container, button, dot, title, more});
             }
+            node.row.dataset.temporary = String(!!row.temporary);
             node.title.textContent = row.title; node.button.title = row.title; node.dot.hidden = row.running <= 0;
             node.more.setAttribute('aria-label', t(`More: ${row.title}`, `更多：${row.title}`));
             node.more.hidden = !canDeleteConversation(row);
@@ -280,6 +315,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (stopped) return;
             if (response.ok || response.status === 404 && data.error?.code === 'not_found') {
                 const current = conversations.current === session;
+                unsaidSessions.delete(session); drafts.delete(session); pending = pending.filter(entry => entry.session !== session);
+                if (current) { rememberSelection(null); draftSession = null; }
                 deleted.add(session); conversations = removeConversation(conversations, session, data.here);
                 if (menuState?.session === session) closeMenu();
                 if (current) {
@@ -304,9 +341,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     function chooseChat(session, focus = false) {
         closeMenu();
+        showDraft(session); rememberSelection(session);
         selectedSession = session; selection++; pinned = true; away = null;
         conversations = selectConversation(conversations, session); renderConversations();
-        input.value = ''; grow(); drawer(false);
+        grow(); drawer(false);
         focusSession = focus ? session : null;
         if (focus && session === state.session) input.focus(); else if (narrow()) chats.focus();
         render(); void readConversations(true); void poll();
@@ -314,15 +352,18 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     async function startChat() {
         closeMenu();
         if (creating || !active() || conversations.supported !== true) return;
-        creating = true; renderConversations(); render();
+        creating = true; newError.hidden = true; renderConversations(); render();
         try {
             const response = await agentPost(api, '/freevideo/agent/chat/new', {});
             if (stopped) return;
             if (response.ok) {
                 const data = await response.json();
-                if (typeof data.session === 'string' && data.session) chooseChat(data.session, true);
-            } else if (response.status === 409) { state = {...state, agent: {connected: false, name: null}}; report(); }
-        } catch { /* Keep the current conversation available for another try. */ }
+                if (typeof data.session !== 'string' || !data.session) throw new Error(t('The reply was incomplete. Try again.', '回复不完整，请重试。'));
+                unsaidSessions.add(data.session); chooseChat(data.session, true);
+            } else throw await requestError(response);
+        } catch (error) {
+            if (!stopped) { newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = false; }
+        }
         finally { creating = false; if (!stopped) { renderConversations(); render(); } }
     }
     async function readConversations(force = false) {
@@ -340,7 +381,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             // A list read started before a deletion must not put the deleted row back.
             conversations = {...conversations, conversations: conversations.conversations.filter(row => !deleted.has(row.id))};
             renderConversations();
-            if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; selection++; void poll(); }
+            if (conversations.supported === false && selectedSession !== undefined) { selectedSession = undefined; rememberSelection(null); selection++; void poll(); }
         } catch { /* List failures do not interrupt reading or sending. */ }
         finally { listBusy = false; }
         if (listAgain) { listAgain = false; void readConversations(true); }
@@ -378,7 +419,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     // Whether the reader is at the newest entry. It holds while the conversation is out of sight, which forgets where it was scrolled.
     let pinned = true;
     const closed = new AbortController();
-    const nodes = new Map(), answers = new Map(), stopping = new Set();
+    const nodes = new Map(), answers = new Map(), stopping = new Set(), stopErrors = new Map(), retrying = new Set(), confirming = new Set(), confirmErrors = new Map();
+    let bulkStopping = false;
+    const cardKey = (session, id) => JSON.stringify([session, id]);
     // The fraction each job shows: the estimate, never backwards, short of 100% until the video is saved.
     const levels = new Map();
     function fractionOf(job) {
@@ -402,12 +445,52 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         return row ? row.seconds : null;
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
-    const sendingAllowed = () => !creating && (!selectedSession || selectedSession === state.session) && canSend(state);
+    const inSelectedChat = () => !creating && (!selectedSession || selectedSession === state.session);
+    const sendingAllowed = () => inSelectedChat() && canSend(state);
+
+    const draftSending = () => pending.some(entry => entry.sending && entry.draft && entry.draft === drafts.get(draftSession));
+    async function cancelJob(job, session) {
+        if (stopping.has(job.id)) return;
+        stopping.add(job.id); stopErrors.delete(job.id); render(); report();
+        try {
+            const response = await agentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
+            if (!response.ok) throw await requestError(response);
+        } catch (error) {
+            stopping.delete(job.id);
+            stopErrors.set(job.id, {session, text: t('Could not stop "' + jobName(job, t) + '": ', '没有停止“' + jobName(job, t) + '”：') + reason(error)});
+        }
+        if (!stopped) { render(); report(); void poll(); }
+    }
+    async function retryJob(key, text) {
+        if (retrying.has(key) || !sendingAllowed()) return;
+        retrying.add(key); render();
+        try { await send(text); }
+        finally { retrying.delete(key); if (!stopped) render(); }
+    }
 
     // ---- one entry of the conversation each ----
     function message(role) {
         const item = el('li', role === 'user' ? 'fv-chat-me' : 'fv-chat-ai'), text = el('p'); item.append(text);
-        return {element: item, update(entry) { text.textContent = entry.text; if (role === 'user') item.dataset.taken = String(entry.taken !== false); }};
+        let status = null, error = null, retry = null;
+        return {element: item, update(entry) {
+            text.textContent = entry.text;
+            if (role !== 'user') return;
+            item.dataset.taken = String(entry.taken !== false);
+            item.dataset.failed = String(!!entry.error);
+            if (entry.error || entry.sending && entry.retried) {
+                if (!status) {
+                    status = el('div', 'fv-chat-actions');
+                    error = el('span', 'fv-chat-error'); error.setAttribute('role', 'alert');
+                    retry = press('fv-chat-retry', t('Retry', '重试'), () => {
+                        const original = pending.find(value => value.id === entry.id);
+                        if (original) void send(original.text, original);
+                    });
+                    status.append(error, retry); item.append(status);
+                }
+                error.textContent = entry.error || ''; error.hidden = !entry.error;
+                retry.disabled = entry.sending || !sendingAllowed();
+            } else if (status) { status.remove(); status = null; }
+        }};
     }
     function preview(job) {
         const box = el('div', 'fv-chat-preview');
@@ -421,12 +504,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const middle = el('div', 'fv-chat-where'), parts = el('div', 'fv-chat-parts'), line = el('p', 'fv-chat-line'), part = el('span'), step = el('span'); line.append(part, step);
         middle.append(parts, line);
         const foot = el('div', 'fv-chat-actions'), left = el('span', 'fv-chat-left');
-        const stop = press('fv-chat-stop', null, async () => {
-            stopping.add(job.id); render();
-            try { await agentPost(api, '/freevideo/agent/activity/cancel', {id: job.id}); } catch { stopping.delete(job.id); }
-            poll();
-        });
-        foot.append(left, stop); info.append(head, middle, foot); item.replaceChildren(box, info);
+        const session = state.session;
+        const stop = press('fv-chat-stop', null, () => void cancelJob(job, session));
+        const error = el('p', 'fv-chat-error'); error.setAttribute('role', 'alert');
+        foot.append(left, stop); info.append(head, middle, foot, error); item.replaceChildren(box, info);
         const said = {};
         // The number rides on the water, and goes under the line once there is no room left above it.
         const level = next => {
@@ -451,6 +532,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const where = cardLine(said, next, t);
             part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : where;
             step.textContent = cells.length ? where : '';
+            error.textContent = stopErrors.get(next.id)?.text || ''; error.hidden = !error.textContent;
             const going = stopping.has(next.id);
             stop.disabled = going; stop.textContent = going ? t('Stopping', '正在停止') : t('Stop', '停止');
             stop.setAttribute('aria-label', t('Stop ', '停止 ') + jobName(next, t));
@@ -502,7 +584,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     function jobCard() {
         const item = el('li', 'fv-chat-job');
         let mode = null, apply = null;
-        return {element: item, update(job, {latest, retry}) {
+        return {element: item, update(job, {latest, retry, key}) {
             // Jobs without a picture (a check, a prompt) are one quiet line while they run, and nothing after.
             // A picture takes seconds: the same quiet line while it is made, then the picture.
             const card = VIDEOS.includes(job.kind || 'generate') || (job.kind === 'image' && !WORKING.includes(job.status));
@@ -511,7 +593,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 : WORKING.includes(job.status) ? 'quiet' : 'none';
             if (next !== mode) {
                 mode = next; item.dataset.job = job.id; item.dataset.mode = next.split(':')[0]; item.hidden = next === 'none';
-                if (next !== 'working') stopping.delete(job.id);
+                if (next !== 'working') { stopping.delete(job.id); stopErrors.delete(job.id); }
                 if (next === 'working') apply = working(item, job);
                 else if (next.startsWith('done')) apply = done(item, job);
                 else if (next === 'quiet') { item.replaceChildren(el('span', 'fv-chat-dots'), el('span', null, t(...(QUIET[job.kind] || ['Working', '进行中'])))); apply = null; }
@@ -528,30 +610,39 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 } else { item.replaceChildren(); apply = null; }
             }
             apply?.(job, latest);
-            const again = item.querySelector('.fv-chat-retry'); if (again) again.disabled = !sendingAllowed();
+            const again = item.querySelector('.fv-chat-retry'); if (again) again.disabled = !sendingAllowed() || retrying.has(key);
         }};
     }
     function confirmCard() {
         const item = el('li', 'fv-chat-confirm');
         let shownState = null;
         return {element: item, update(entry) {
-            const value = answers.get(entry.id) || state.confirms[entry.id] || entry.state || 'asked';
-            if (value === shownState) return;
-            shownState = value; item.dataset.state = value === 'asked' ? 'asked' : 'answered';
+            const session = state.session, key = cardKey(session, entry.id);
+            const value = answers.get(key) || state.confirms[entry.id] || entry.state || 'asked';
+            const disabled = confirming.has(key) || !inSelectedChat() || state.agent.connected !== true, error = confirmErrors.get(key) || '';
+            const signature = JSON.stringify([value, disabled, error]);
+            if (signature === shownState) return;
+            shownState = signature; item.dataset.state = value === 'asked' ? 'asked' : 'answered';
             if (value !== 'asked') { item.replaceChildren(el('span', null, value === 'approved' ? t('Started', '已开始') : t('Not now', '先不拍'))); return; }
             const answer = approve => async () => {
+                if (confirming.has(key) || !inSelectedChat() || state.agent.connected !== true || state.session !== session) return;
                 item.querySelectorAll('button').forEach(button => { button.disabled = true; });
+                confirming.add(key); confirmErrors.delete(key); render();
                 try {
-                    const response = await agentPost(api, '/freevideo/agent/chat/confirm', {id: entry.id, approve});
-                    if (response.ok) answers.set(entry.id, (await response.json()).state || (approve ? 'approved' : 'declined'));
-                } catch { /* The card stays as asked. */ }
-                shownState = null; render(); poll();
+                    const response = await agentPost(api, '/freevideo/agent/chat/confirm', {id: entry.id, approve, session});
+                    if (!response.ok) throw await requestError(response);
+                    answers.set(key, (await response.json()).state || (approve ? 'approved' : 'declined'));
+                } catch (error) { confirmErrors.set(key, t('Could not start shooting: ', '没有开始拍摄：') + reason(error)); }
+                finally { confirming.delete(key); }
+                if (!stopped) { render(); void poll(); }
             };
             const buttons = el('div', 'fv-chat-actions');
             buttons.append(press('fv-chat-yes fv-primary', t('Start', '开始'), answer(true)), press('fv-chat-no', t('Not now', '先不'), answer(false)));
+            buttons.querySelectorAll('button').forEach(button => { button.disabled = disabled; });
             const question = el('p', null, entry.question);
             const estimate = el('p', 'fv-chat-meta', entry.estimate_seconds > 0 ? about(entry.estimate_seconds, t) : ''); estimate.hidden = !estimate.textContent;
             item.replaceChildren(question, estimate, buttons);
+            if (error) { const notice = el('p', 'fv-chat-error', error); notice.setAttribute('role', 'alert'); item.append(notice); }
         }};
     }
     // Before anything is said: what the agent can do, and sentences that send themselves when clicked.
@@ -573,15 +664,17 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         item.setAttribute('role', 'status'); item.setAttribute('aria-label', t('Thinking', '正在思考')); item.append(mark);
         return {element: item, update() {}};
     }
-    const MAKE = {hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
+    const MAKE = {error: () => { const element = el('li', 'fv-chat-error'); element.setAttribute('role', 'alert'); return {element, update(text) { element.textContent = text; }}; }, hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
 
     function render(follow = false) {
         const entries = chatEntries(state), ids = new Set(entries.map(entry => entry.id).filter(Boolean));
-        pending = pending.filter(entry => !ids.has(entry.id));
-        const said = entries.some(entry => entry.type !== 'message' || entry.role === 'user') || pending.length > 0;
+        for (const entry of pending) if (entry.session === state.session && ids.has(entry.id)) acknowledge(entry);
+        pending = pending.filter(entry => entry.sending || entry.session !== state.session || !ids.has(entry.id));
+        const localPending = pending.filter(entry => entry.session === state.session && !ids.has(entry.id));
+        const said = entries.some(entry => entry.type !== 'message' || entry.role === 'user') || localPending.length > 0;
         const finished = entries.filter(entry => entry.type === 'job' && state.jobs[entry.job]?.status === 'succeeded' && state.jobs[entry.job].work).at(-1);
         const wanted = [];
-        if (!entries.length && !pending.length) wanted.push(['hello', 'hello', null]);
+        if (!entries.length && !localPending.length) wanted.push(['hello', 'hello', null]);
         let lastUser = null;
         for (const entry of entries) {
             if (entry.type === 'message') {
@@ -590,14 +683,16 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             } else if (entry.type === 'job') {
                 const job = state.jobs[entry.job]; if (!job) continue;
                 const text = lastUser?.text;
-                wanted.push([`s:${entry.seq}`, 'job', job, {latest: entry === finished, retry: text ? () => send(text) : null}]);
+                const key = cardKey(state.session, job.id);
+                wanted.push([`s:${entry.seq}`, 'job', job, {latest: entry === finished, key, retry: text ? () => retryJob(key, text) : null}]);
             } else wanted.push([`s:${entry.seq}`, 'confirm', entry]);
         }
-        for (const entry of pending) wanted.push([`m:${entry.id}`, 'user', {...entry, taken: false}]);
+        for (const entry of localPending) wanted.push([`m:${entry.id}`, 'user', {...entry, taken: false}]);
         if (!said) wanted.push(['examples', 'examples', null]);
         // The agent has the sentence, or is waiting for one, and has not answered yet.
-        const tail = pending.at(-1) || entries.at(-1);
-        if (tail?.type !== 'job' && tail?.type !== 'confirm' && (pending.length || tail?.role === 'user') && state.agent.connected === true
+        for (const [id, error] of stopErrors) if (error.session !== state.session) wanted.push([`stop:${id}`, 'error', error.text]);
+        const tail = localPending.at(-1) || entries.at(-1);
+        if (tail?.type !== 'job' && tail?.type !== 'confirm' && (localPending.some(entry => !entry.error) || !tail?.error && tail?.role === 'user') && state.agent.connected === true
             && (state.agent.listening !== false || tail.taken === true)) wanted.push(['dots', 'dots', null]);
 
         const stick = follow || pinned;
@@ -612,7 +707,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const sendable = sendingAllowed();
         input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
         input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to keep listening', '回到 Agent 那边让它继续') : t('Message the agent…', '对 Agent 说…');
-        sendButton.disabled = !sendable || !input.value.trim();
+        sendButton.disabled = !sendable || draftSending() || !input.value.trim();
         if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
         else if (log.children.length > before) down.hidden = false;
@@ -633,7 +728,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (!response.ok) { away = null; return; }
             const data = await response.json(), jobs = Object.values(data.jobs || {}).filter(job => WORKING.includes(job?.status));
             const job = data.jobs?.[data.current] || jobs[0];
-            away = job ? {session: row.id, job, ids: jobs.map(job => job.id)} : null;
+            away = job ? {session: row.id, job, jobs: data.jobs, ids: jobs.map(job => job.id)} : null;
         } catch { /* The last reading stays until the next one. */ }
     }
     let reportedJob = null;
@@ -642,38 +737,51 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // A job that starts or ends changes a dot in the list, so the list is read again right away.
         if ((current?.id || null) !== reportedJob) { reportedJob = current?.id || null; void readConversations(true); }
         changed({known, agent: state.agent, current, fraction: current ? fractionOf(current) : 0, left: current ? leftOf(current) : null, active: state.active,
-            any: state.items.size > 0 || pending.length > 0});
+            stopping: bulkStopping, any: state.items.size > 0 || pending.some(entry => entry.session === state.session)});
     }
-    async function send(text) {
-        text = String(text).trim();
-        if (!text || !sendingAllowed()) return false;
-        const sentSelection = selection;
-        const entry = {id: newId(), text}; pending.push(entry); render(true); report();
-        let response = null;
-        const body = conversations.supported === true && state.session ? {...entry, session: state.session} : entry;
-        try { response = await agentPost(api, '/freevideo/agent/chat', body); } catch { /* Handled below as not sent. */ }
-        if (stopped) return false;
-        if (response?.ok) {
-            const value = await response.json().catch(() => ({}));
-            if (sentSelection === selection) { if (value.agent) state.agent = value.agent; void poll(); }
-            void readConversations(true); return true;
+    function acknowledge(entry) {
+        entry.acknowledged = true; entry.error = null;
+        unsaidSessions.delete(entry.session);
+        if (entry.draft && drafts.get(entry.session) === entry.draft) {
+            drafts.delete(entry.session);
+            if (draftSession === entry.session) { input.value = ''; grow(); }
         }
-        if (sentSelection !== selection) return false;
-        // Not sent: the sentence goes back to the box. An agent that was never connected leads back to the card.
-        pending = pending.filter(item => item !== entry);
-        if (!input.value) { input.value = text; grow(); }
-        if (response?.status === 409) state = {...state, agent: {connected: false, name: null}};
-        render(); report();
-        return false;
+    }
+    async function send(text, original = null, draft = null) {
+        text = String(text).trim();
+        original ||= pending.find(entry => entry.session === (state.session ?? null) && entry.text === text && (entry.error || entry.sending));
+        if (!text || !sendingAllowed() || original?.sending || original && original.session !== state.session) return false;
+        const entry = original || {id: newId(), text, session: state.session ?? null, draft};
+        if (draft) entry.draft = draft;
+        if (!original) pending.push(entry);
+        entry.sending = true; entry.retried = !!original; entry.error = null; render(true); report();
+        try {
+            const body = {id: entry.id, text: entry.text};
+            if (conversations.supported === true && entry.session) body.session = entry.session;
+            const response = await agentPost(api, '/freevideo/agent/chat', body);
+            if (!response.ok) throw await requestError(response);
+            const value = await response.json().catch(() => ({}));
+            acknowledge(entry);
+            if (!entry.session && value.session) entry.session = value.session;
+            if (!stopped) { void poll(); void readConversations(true); }
+            return true;
+        } catch (error) {
+            if (entry.acknowledged) return true;
+            entry.error = t('Could not send: ', '没有发送成功：') + reason(error);
+            return false;
+        } finally {
+            entry.sending = false;
+            if (!stopped) { render(); renderConversations(); report(); }
+        }
     }
     function grow() {
         input.style.height = 'auto';
         // At most five lines; the box scrolls after that.
-        const line = parseFloat(getComputedStyle(input).lineHeight) || 22;
+        const line = (typeof getComputedStyle === 'function' && parseFloat(getComputedStyle(input).lineHeight)) || 22;
         input.style.height = `${Math.min(input.scrollHeight, Math.round(line * 5) + 14)}px`;
-        sendButton.disabled = !sendingAllowed() || !input.value.trim();
+        sendButton.disabled = !sendingAllowed() || draftSending() || !input.value.trim();
     }
-    input.addEventListener('input', grow);
+    input.addEventListener('input', () => { saveDraft(); grow(); if (unsaidSessions.has(draftSession)) renderConversations(); });
     // Enter sends, Shift+Enter starts a new line; Enter that confirms an input-method candidate does neither.
     input.addEventListener('keydown', event => {
         if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
@@ -682,13 +790,15 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     form.addEventListener('submit', event => {
         event.preventDefault();
         const text = input.value;
-        if (!text.trim() || !sendingAllowed()) return;
-        input.value = ''; grow(); void send(text);
+        const draft = saveDraft();
+        if (!text.trim() || !sendingAllowed() || draftSending()) return;
+        const failed = pending.find(entry => entry.session === state.session && entry.draft === draft && entry.error);
+        void send(text, failed, draft);
     });
 
     // Both a server-side session change and a list selection reset the same reader. Job clocks stay keyed by job id.
     function resetChat() {
-        state = emptyChat(); pending = []; answers.clear(); nodes.clear();
+        state = emptyChat(); nodes.clear();
         log.querySelectorAll('video').forEach(video => video.pause()); log.replaceChildren(); pinned = true;
     }
     async function poll() {
@@ -715,15 +825,31 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 // Another conversation began: forget this one and read the new one whole.
                 else if (after && (data.session ?? null) !== state.session) { resetChat(); again = true; }
                 else {
+                    // The first send can create the session before its HTTP response reaches the page.
+                    // Adopt the page's unassigned draft/outbox when that session first appears in a read.
+                    if (state.session == null && data.session && !requested) {
+                        for (const entry of pending) if (entry.session == null) entry.session = data.session;
+                        if (draftSession === null) {
+                            const draft = saveDraft();
+                            // Text entered during deletion's fallback read joins the target's older draft; neither is dropped.
+                            const older = drafts.get(data.session)?.text;
+                            if (draft.text && older && older !== draft.text) draft.text = `${older}\n\n${draft.text}`;
+                            if (draft.text || !older) drafts.set(data.session, draft);
+                            drafts.delete(null); draftSession = data.session;
+                            input.value = drafts.get(data.session)?.text || ''; grow();
+                        }
+                    }
                     if ((data.session ?? null) !== state.session) resetChat();
                     state = chatMerge(state, data); failures = 0;
+                    if (state.session && !chatEntries(state).some(entry => entry.type === 'message' && entry.role === 'user')) unsaidSessions.add(state.session);
+                    showDraft(state.session); rememberSelection(state.session);
                     conversations = selectConversation(conversations, state.session); renderConversations();
                     await readAway();
                     if (stopped) return;
                     if (readSelection !== selection) { away = null; again = true; }
                 }
             } else if (response.status === 404 && requested) {
-                selectedSession = undefined; selection++; resetChat(); again = true; void readConversations(true);
+                selectedSession = undefined; rememberSelection(null); selection++; resetChat(); again = true; void readConversations(true);
             } else failures++;
         } catch { failures++; }
         finally { busy = false; }
@@ -755,10 +881,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             else log.querySelector(`[data-job="${CSS.escape(id)}"]`)?.scrollIntoView({block: 'center', behavior: 'smooth'});
         },
         async stopAll() {
-            const ids = [...new Set([...Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => job.id), ...(away?.ids || [])])];
-            ids.forEach(id => stopping.add(id)); render();
-            await Promise.allSettled(ids.map(id => agentPost(api, '/freevideo/agent/activity/cancel', {id})));
-            poll();
+            if (bulkStopping) return;
+            const jobs = new Map(Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => [job.id, {job, session: state.session}]));
+            for (const id of away?.ids || []) if (!jobs.has(id)) jobs.set(id, {job: away.jobs[id], session: away.session});
+            bulkStopping = true; report();
+            try { await Promise.all([...jobs.values()].map(({job, session}) => cancelJob(job, session))); }
+            finally { bulkStopping = false; if (!stopped) { report(); void poll(); } }
         },
         stop() { closeMenu(); stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
             document.removeEventListener('visibilitychange', visible); document.removeEventListener('pointerdown', outside, true);

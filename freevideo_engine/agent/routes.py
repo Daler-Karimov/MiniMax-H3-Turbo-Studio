@@ -804,6 +804,11 @@ def register():
                     fold['items'].append(dict(base, role='user' if row['by'] == 'user' else 'agent', text=row['text']))
                     if row['by'] == 'user':
                         fold['said'] = row['text']
+                        if row.get('mid'):
+                            fold['sent'][row['mid']] = row['seq']
+                            fold['ids'][row['seq']] = row['mid']
+                            while len(fold['sent']) > 500:
+                                fold['ids'].pop(fold['sent'].pop(next(iter(fold['sent']))), None)
                 elif row['type'] == 'step' and row['state'] == 'done':
                     job = (row.get('refs') or {}).get('job')
                     if job and job not in fold['jobs']:
@@ -916,7 +921,7 @@ def register():
             if store.stopped(sid):
                 # Speaking again continues a conversation the user stopped earlier.
                 store.append(sid, dict(type='control', action='resumed'), by='user')
-            row = store.append(sid, dict(type='message', text=value['text']), by='user')
+            row = store.append(sid, dict(type='message', text=value['text'], mid=value['id']), by='user')
             fold['sent'][value['id']] = row['seq']
             fold['ids'][row['seq']] = value['id']
             while len(fold['sent']) > 500:

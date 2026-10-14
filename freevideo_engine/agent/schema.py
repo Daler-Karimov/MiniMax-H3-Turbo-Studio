@@ -743,6 +743,7 @@ def session_event(*, stored=False, agent_only=False):
         obj(dict(type={'const': 'plan'}, shots=array(obj(dict(text=text, seconds=number(0)), ('text',)),
             1, 20000), total_seconds=number(0)), ('type', 'shots'))]
     if not agent_only:
+        variants[0]['properties']['mid'] = CHAT_ID
         from .errors import ERRORS
         variants += [obj(dict(type={'const': 'step'}, id=string(12, pattern=r'^st[0-9a-f]{10}$'),
             tool=string(200), summary=text, state=enum(('started', 'done', 'failed')),
