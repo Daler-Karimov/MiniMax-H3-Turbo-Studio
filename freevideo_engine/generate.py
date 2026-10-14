@@ -340,6 +340,33 @@ def run(args):
         raise
 
 
+def dialogue_reason(prompt):
+    """Shared eligibility for opening-voice references and hidden dialogue tails."""
+    from .prompt_vlm.rules import split_source
+    if not prompt or not split_source(prompt)[2]:
+        return 'no_lines'
+    if re.search(r'(?i)\b(?:sing|sings|singing|sang|sung|lyrics)\b|唱', prompt):
+        return 'singing'
+    return None
+
+
+def hide_tail_geometry(canvas, prompt, requested=False, *, preview=False, max_frames=None):
+    """Plan the generated canvas while keeping the ordinary output duration."""
+    if not requested:
+        return canvas, None
+    from .continuation import HIDE_TAIL_FRAMES
+    from .geometry import geometry
+    # The product's longest selectable request is 60 seconds on the H3 grid.
+    limit = geometry(seconds=60)['frames'] if max_frames is None else max_frames
+    reason = 'preview' if preview else dialogue_reason(prompt)
+    if reason is None and canvas['frames'] + HIDE_TAIL_FRAMES > limit:
+        reason = 'too_long'
+    if reason is not None:
+        return canvas, dict(requested=True, used=False, reason=reason)
+    generated = dict(canvas, **geometry(canvas['width'], canvas['height'], frames=canvas['frames'] + HIDE_TAIL_FRAMES))
+    return generated, dict(requested=True, used=True, frames=HIDE_TAIL_FRAMES)
+
+
 def _run(args):
     from .hardware import detect
     from .geometry import geometry
@@ -385,6 +412,12 @@ def _run(args):
         validate_frames(frames)
     canvas = geometry(getattr(args, 'width', 1344), getattr(args, 'height', 768),
                       frames=frames, seconds=getattr(args, 'seconds', None))
+    visible_canvas = canvas
+    canvas, hide_tail = hide_tail_geometry(canvas,
+        args.prompt_file.read_text(encoding='utf-8') if getattr(args, 'hide_tail', False) and args.prompt_file else None,
+        getattr(args, 'hide_tail', False),
+        preview=bool(getattr(args, 'preview', False) or getattr(args, 'refine_from', None)))
+    hide_tail_frames = hide_tail['frames'] if hide_tail and hide_tail['used'] else 0
     continuation = None
     from .two_pass import validate_steps
     requested_steps = getattr(args, 'base_steps', None)
@@ -450,7 +483,6 @@ def _run(args):
         if continue_anchor is not None:
             continuation['anchor'] = media['references'][0]
         if voice_reference is not None:
-            from .prompt_vlm.rules import split_source
             if first_frame is not None:
                 voice_reference['reason'] = 'first_frame'
             elif continue_anchor is not None:
@@ -458,11 +490,9 @@ def _run(args):
             elif args.conditioning:
                 # Preencoded conditioning cannot take another reference.
                 voice_reference['reason'] = 'conditioning'
-            elif not args.prompt_file or not split_source(args.prompt_file.read_text(encoding='utf-8'))[2]:
-                voice_reference['reason'] = 'no_lines'
-            elif re.search(r'(?i)\b(?:sing|sings|singing|sang|sung|lyrics)\b|唱', args.prompt_file.read_text(encoding='utf-8')):
-                # Quoted lyrics read as lines, but on music the opening sound did not hold steady.
-                voice_reference['reason'] = 'singing'
+            else:
+                voice_reference['reason'] = dialogue_reason(
+                    args.prompt_file.read_text(encoding='utf-8') if args.prompt_file else None)
     active_loras = [row for row in media.get('loras', []) if row['strength'] != 0]
     if media:
         inferred_task = task_for(media)
@@ -479,7 +509,21 @@ def _run(args):
         hardware, resident_credit = credit(detect())
         profile = json.loads(args.profile.read_text(encoding='utf-8'))
     else:
-        hardware, resident_credit, profile = automatic_profile(args, canvas, stage='before-encoding', evidence=planning)
+        from .policy import ResourceBudgetError
+        try:
+            hardware, resident_credit, profile = automatic_profile(args, canvas, stage='before-encoding', evidence=planning)
+        except ResourceBudgetError:
+            if not hide_tail_frames:
+                raise
+            # The optional tail must fit this size/step tier too. Re-admit the
+            # original duration before encoding anything; never shorten it.
+            canvas, output_size = sampling_canvas(dict(canvas, **visible_canvas),
+                staged=bool(preview or refine_source), media=media, conditioned=bool(args.conditioning))
+            hardware, resident_credit, profile = automatic_profile(args, canvas, stage='before-encoding', evidence=planning)
+            hide_tail, hide_tail_frames = dict(requested=True, used=False, reason='too_long'), 0
+            if continuation is not None:
+                from .continuation import OVERLAP_FRAMES
+                continuation = dict(continuation, new_frames=canvas['frames'] - OVERLAP_FRAMES)
     print(json.dumps(dict(event='compute_device', backend='CUDA', name=getattr(hardware, 'gpu_name', None),
                           uuid=getattr(hardware, 'gpu_uuid', None), vram_total_bytes=getattr(hardware, 'vram_total', None),
                           vram_free_bytes=getattr(hardware, 'vram_free', None))), flush=True)
@@ -540,7 +584,7 @@ def _run(args):
               'reclaimable_resident_models': resident_credit,
               'encoder_mode': 'native H3 encoder library child' if args.prompt_file else 'preencoded shared conditioning'}
     if continuation is not None:
-        report['continuation'] = continuation_summary(continuation)
+        report['continuation'] = continuation_summary(continuation, hide_tail_frames=hide_tail_frames)
         if 'tail' in continuation:
             report['continuation']['context'] = 'encoded'
         report['audio_context'] = continuation['audio_context']
@@ -550,6 +594,11 @@ def _run(args):
         report['first_frame_reference'] = first_frame
     if voice_reference is not None:
         report['voice_reference'] = voice_reference
+    if hide_tail is not None:
+        report['hide_tail'] = hide_tail
+    if hide_tail_frames:
+        report['output_frames'] = (report['continuation']['new_frames'] if continuation is not None
+                                   else canvas['frames'] - hide_tail_frames)
     from .support_report import code_identity, write as write_debug
     report['runtime_hardware'] = hardware.to_dict()
     report['runtime_code'] = code_identity()
@@ -874,6 +923,8 @@ def _run(args):
                        'metrics': str(destination.with_suffix('.engine.json'))}
             if continuation is not None:
                 request['continuation'] = continuation
+            if hide_tail_frames:
+                request['hide_tail_frames'] = hide_tail_frames
             if preview:
                 request['preview'] = True
             if allocator_limit_bytes is not None:

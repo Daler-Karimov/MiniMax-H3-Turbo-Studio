@@ -66,6 +66,8 @@ class FreeVideoGenerate(io.ComfyNode):
                     optional=True, advanced=True, tooltip='Reduces drift.'),
                 io.Boolean.Input('voice_reference', display_name='Voice reference', default=False,
                     optional=True, advanced=True, tooltip='Keeps the opening voice consistent in continued dialogue.'),
+                io.Boolean.Input('hide_tail', display_name='Hide dialogue tail', default=False,
+                    optional=True, advanced=True, tooltip='Generates and discards 34 extra frames to keep dialogue moving between parts.'),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -111,7 +113,7 @@ class FreeVideoGenerate(io.ComfyNode):
     def execute(cls, text, width, height, seconds, seed, first=None, last=None,
                 references=None, loras=None, conditioning=None, media=None, two_pass=True,
                 force_regenerate=False, base_steps=8, refine_steps=3, preview=False, refine_from='',
-                continue_from='', frames=0, first_frame_reference=False, voice_reference=False):
+                continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False):
         from server import PromptServer
         from .comfy_chain import block_context, block_finished, report_fields
         node_id = cls.hidden.unique_id
@@ -224,6 +226,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 # Only a part that continues another can use it; other requests keep the existing bridge call.
                 **({'first_frame_reference': True} if first_frame_reference is True and options.get('continue_from') else {}),
                 **({'voice_reference': True} if voice_reference is True and options.get('continue_from') else {}),
+                **({'hide_tail': True} if hide_tail is True else {}),
                 **({'report_extra': {'chain': report_fields(chain)}} if chain is not None else {}))
             relative = output.relative_to(output_root)
             report = output.with_suffix('.request.json').read_text(encoding='utf-8')

@@ -503,6 +503,7 @@ class ChainRunner:
                 self._save(record)
                 prompt = deepcopy(record['snapshot']['prompt'])
                 block_inputs = dict(block['inputs'])
+                block_inputs.update(index=block['index'], count=len(record['blocks']))
                 sources = self._sources(record, block)
                 extra = deepcopy(record['snapshot']['extra_data'])
                 if record['client_id'] is not None:

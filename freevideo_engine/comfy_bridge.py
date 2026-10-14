@@ -1155,11 +1155,13 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
-             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False):
+             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False):
     if type(first_frame_reference) is not bool:
         raise ValueError('First-frame reference must be a boolean')
     if type(voice_reference) is not bool:
         raise ValueError('Voice reference must be a boolean')
+    if type(hide_tail) is not bool:
+        raise ValueError('Hide tail must be a boolean')
     if continue_from is not None:
         from .continuation import validate_route
         validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from)
@@ -1266,6 +1268,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 command += ['--' + field.replace('_', '-'), str(reserve)]
         if preview:
             command.append('--preview')
+    if hide_tail:
+        command.append('--hide-tail')
     state = {'status': 'starting', 'geometry': canvas, 'seed': seed, 'installation': str(root),
              'command': command, 'output': str(output), 'source': str(source), 'resources': resources}
     if preview:
@@ -1344,8 +1348,12 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                            'references': any(media.get(key) for key in ('first', 'last', 'references'))})
         from .media_request import task_for
         from .two_pass import plan, sampling_canvas
+        from .generate import hide_tail_geometry
+        generated_canvas, hidden = hide_tail_geometry(canvas, None if extra.get('conditioning') else prompt,
+                                                      hide_tail, preview=bool(preview or upscale))
+        hide_tail_frames = hidden['frames'] if hidden and hidden['used'] else 0
         # The engine samples this canvas; results, cache keys and labels keep the requested size.
-        sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale), media=extra.get('media'),
+        sampled, output_size = sampling_canvas(generated_canvas, staged=bool(preview or upscale), media=extra.get('media'),
                                                conditioned=bool(extra.get('conditioning')))
         planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
                        base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
@@ -1356,7 +1364,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             if continuation is not None:
                 try:
                     continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
-                    state['continuation'] = summary(continuation)
+                    state['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
                 except ValueError as error:
                     if str(error) != MISSING:
                         raise
@@ -1371,9 +1379,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             if continuation is None:
                 from .continuation import OVERLAP_FRAMES
                 state['continuation'] = dict(overlap_frames=OVERLAP_FRAMES,
-                                             new_frames=sampled['frames'] - OVERLAP_FRAMES, encoded=True)
+                                             new_frames=sampled['frames'] - hide_tail_frames - OVERLAP_FRAMES, encoded=True)
         # A preview is its own result; an upscale is always run from its preview.
         keyed = dict(planned, preview=True) if preview else planned
+        if hide_tail_frames:
+            keyed = dict(keyed, hide_tail_frames=hide_tail_frames)
         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
                                              resources, source, environment, inspection=check)
         state['result_cache'] = dict(enabled=False, hit=False, forced=force_regenerate)
@@ -1457,6 +1467,15 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 raise RuntimeError(generation_failure(run, process.returncode, repair=hint))
         report = json.loads(output.with_suffix('.request.json').read_text(encoding='utf-8'))
         engine = json.loads(output.with_suffix('.engine.json').read_text(encoding='utf-8'))
+        if hide_tail_frames and report.get('hide_tail') == dict(requested=True, used=False, reason='too_long'):
+            # Admission before encoding can decline the extra frames after the bridge's
+            # estimate. Validate the ordinary plan and don't cache it as a hidden-tail result.
+            # After encoding the conditioning is tied to the longer canvas, so a later refusal
+            # fails like any other request.
+            sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale),
+                media=extra.get('media'), conditioned=bool(extra.get('conditioning')))
+            hidden, hide_tail_frames = report['hide_tail'], 0
+            cache_key = None
         from .two_pass import steps, plan
         completed_steps = steps(report.get('sampling_plan'))
         expected_plan = plan(sampled, two_pass, report.get('profile', {}).get('engine', {}).get('task', 't2va'),
@@ -1472,6 +1491,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 or engine.get('sampling_plan') != report.get('sampling_plan')
                 or report.get('sampling_plan') != expected_plan
                 or bool(report.get('preview')) != preview or bool(report.get('upscaled_preview')) != bool(upscale)
+                or (hide_tail and report.get('hide_tail') != hidden)
                 or any(engine.get('geometry', {}).get(k) != shown[k] for k in ('width', 'height', 'frames'))
                 or (report.get('output_size') or None) != output_size):
             from .comfy_launcher_api import repair_hint

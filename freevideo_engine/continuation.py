@@ -415,9 +415,12 @@ def validate_snapshot(request, canvas, manifest=None, sampling_plan=None):
     return _prepare_snapshot(request, _snapshot_value(request), canvas, manifest, sampling_plan)
 
 
-def summary(request):
-    return dict({key: request[key] for key in ('overlap_frames', 'new_frames', 'frame_origin', 'audio_origin', 'segment')},
-                audio_lead_in_samples=request.get('audio_lead_in_samples', 0))
+def summary(request, *, hide_tail_frames=0):
+    result = dict({key: request[key] for key in ('overlap_frames', 'new_frames', 'frame_origin', 'audio_origin', 'segment')},
+                  audio_lead_in_samples=request.get('audio_lead_in_samples', 0))
+    if hide_tail_frames:
+        result['new_frames'] -= validate_hide_tail(hide_tail_frames)
+    return result
 
 
 def load(request, stage):
@@ -431,17 +434,33 @@ def load(request, stage):
                 audio=torch.from_numpy(value['audio'].copy()))
 
 
-def tail(video):
+# Dialogue parts settle into an ending over their last ~1.5 s; 17 frames hid only the pause, 34 also the pose reset.
+HIDE_TAIL_FRAMES = 34
+
+
+def validate_hide_tail(frames):
+    if type(frames) is not int or frames not in (0, 17, HIDE_TAIL_FRAMES):
+        raise ValueError('Hidden tail must be 0, 17 or 34 frames')
+    return frames
+
+
+def tail(video, *, hide_tail_frames=0):
     # clone avoids keeping the entire clip's storage behind a small view.
+    hidden = validate_hide_tail(hide_tail_frames) // 17 * 5
+    if hidden:
+        return video[:, :, -hidden - LATENT_FRAMES:-hidden].detach().cpu().clone()
     return video[:, :, -LATENT_FRAMES:].detach().cpu().clone()
 
 
-def tail_data(first, video, audio, canvas, sampling_plan, manifest, request=None):
+def tail_data(first, video, audio, canvas, sampling_plan, manifest, request=None, *, hide_tail_frames=0):
     chain = ({key: request[key] for key in ('segment', 'frame_origin', 'audio_origin')} if request
              else dict(segment=1, frame_origin=0, audio_origin=0))
-    start = audio_origin(chain['frame_origin'] + canvas['frames'] - OVERLAP_FRAMES) - chain['audio_origin']
-    return dict(video_lo=first, video_hi=tail(video), audio=audio[:, :, start:].detach().cpu().clone(),
-                metadata=dict(identity=identity(manifest), geometry={key: canvas[key] for key in ('width', 'height', 'frames')},
+    kept = canvas['frames'] - validate_hide_tail(hide_tail_frames)
+    start = audio_origin(chain['frame_origin'] + kept - OVERLAP_FRAMES) - chain['audio_origin']
+    end = round(kept * 40 / 24) if hide_tail_frames else audio.shape[2]
+    return dict(video_lo=first, video_hi=tail(video, hide_tail_frames=hide_tail_frames),
+                audio=audio[:, :, start:end].detach().cpu().clone(),
+                metadata=dict(identity=identity(manifest), geometry=dict(width=canvas['width'], height=canvas['height'], frames=kept),
                     first_canvas={key: sampling_plan['first'][key] for key in ('width', 'height')}, chain=chain,
                     **({'source_id': request['source_id']} if request and 'source_id' in request else {})))
 

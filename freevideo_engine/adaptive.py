@@ -660,11 +660,13 @@ def complete_observation(metrics, canvas, output, artifacts, telemetry):
     from .validation import _retained_array_header, finite_number
     expected = canvas['frames']
     continuation = metrics.get('continuation')
-    output_frames = expected
+    from .continuation import validate_hide_tail
+    hidden = validate_hide_tail(metrics.get('hide_tail_frames', 0))
+    output_frames = expected - hidden
     if continuation is not None:
         from .continuation import OVERLAP_FRAMES
         if (not isinstance(continuation, dict) or continuation.get('overlap_frames') != OVERLAP_FRAMES
-                or continuation.get('new_frames') != expected - OVERLAP_FRAMES):
+                or continuation.get('new_frames') != expected - hidden - OVERLAP_FRAMES):
             raise ValueError('Invalid continuation output geometry')
         output_frames = continuation['new_frames']
     preview = metrics.get('preview') is True

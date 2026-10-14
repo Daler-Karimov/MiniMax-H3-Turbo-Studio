@@ -94,6 +94,8 @@ def sampling_provenance(request):
             result['upscaler_sha256'] = _digest(request['upscaler_checkpoint'])
             if result['upscaler_sha256'] != request['sampling_plan']['upscaler_sha256']:
                 raise ValueError('Latent upscaler differs from the planned checkpoint')
+    if request.get('hide_tail_frames'):
+        result['hide_tail_frames'] = request['hide_tail_frames']
     if request.get('continuation') is not None:
         # A retry's identity binds the accepted bytes, without embedding the
         # snapshot again or making a relocation change computation identity.

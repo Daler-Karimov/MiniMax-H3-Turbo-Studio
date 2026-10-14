@@ -39,7 +39,7 @@ def seconds_for_frames(frames, minimum=1.625, maximum=60., step=.1):
 
 
 class ComfyHost:
-    continuation_inputs = (*CONTINUE_INPUTS.values(), 'voice_reference')
+    continuation_inputs = (*CONTINUE_INPUTS.values(), 'voice_reference', 'hide_tail')
     media_inputs = ('media', 'first', 'last', 'references', 'conditioning')
 
     def __init__(self, server):
@@ -61,6 +61,8 @@ class ComfyHost:
                 values[name] = '' if independent else block_inputs[key]
         if 'voice_reference' in schema and values.get('continue_from'):
             values['voice_reference'] = True
+        if 'hide_tail' in schema and not independent and block_inputs.get('index', 0) < block_inputs.get('count', 0) - 1:
+            values['hide_tail'] = True
         return values
 
     def work_exists(self, path):

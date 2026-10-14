@@ -162,6 +162,10 @@ def output_summary(report, relative_video):
                 video=relative_video.as_posix(), report=relative_video.with_suffix(
                     '.debug.json' if report.get('diagnostic_file') == relative_video.with_suffix('.debug.json').name
                     else '.request.json').as_posix())
+    if type(report.get('output_frames')) is int and report['output_frames'] > 0:
+        # Resource reports keep the generated canvas; result cards show only saved frames.
+        result['geometry'].update(frames=report['output_frames'],
+                                  seconds=report['output_frames'] / (result['geometry'].get('fps') or 24))
     checkpoint = encoding.get('checkpoint') or {}
     sizes = checkpoint.get('bytes'), checkpoint.get('expected_bytes')
     # Reports are read back from disk; a malformed one gets no notice rather than failing the library.

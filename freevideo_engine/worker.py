@@ -85,6 +85,10 @@ def generate(request, resident=None):
                    'torch_num_threads': torch.get_num_threads()}}}
     save(request['metrics'], metrics)
     try:
+        from .continuation import validate_hide_tail
+        hide_tail_frames = validate_hide_tail(request.get('hide_tail_frames', 0))
+        if hide_tail_frames:
+            metrics['hide_tail_frames'] = hide_tail_frames
         if 'sampling_plan' in request:
             from .two_pass import plan
             expected = plan(request['geometry'], request['sampling_plan']['requested'],
@@ -115,7 +119,7 @@ def generate(request, resident=None):
             request['continuation'] = continuation
             request['engine_options'] = dict(request['engine_options'],
                 adaln_task=ANCHOR_ADALN_TASK if continuation.get('anchor') else ADALN_TASK)
-            metrics['continuation'] = summary(continuation)
+            metrics['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
             metrics['audio_context'] = continuation['audio_context']
         metrics['device_memory'] = device_memory_report(request['gpu_budget_bytes'], request.get('allocator_limit_bytes'),
             reserve_bytes=request.get('gpu_reserve_bytes', 0), capacity_trial=request.get('capacity_trial', False))
@@ -240,7 +244,7 @@ def generate(request, resident=None):
                 return
             try:
                 from .continuation import tail
-                first_tail = tail(video)
+                first_tail = tail(video, **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}))
             except Exception as error:
                 tail_failure(error)
                 first_tail = None
@@ -253,7 +257,7 @@ def generate(request, resident=None):
                 **({'continuation_tail_callback': restore_tail} if continuable else {}))
             metrics.update(sampled, phase='decode', decode_phase='latent_transfer')
             if continuation is not None:
-                metrics['continuation'] = summary(continuation)
+                metrics['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
             save(request['metrics'], metrics)
             print(json.dumps(dict(event='decode_resume', sampling_source_attempt=metrics['sampling_source_attempt'])), flush=True)
             fit_decoder()
@@ -321,7 +325,8 @@ def generate(request, resident=None):
                     try:
                         from .continuation import tail_data
                         continuation_data = tail_data(first_tail, latents, audio, canvas,
-                            request['sampling_plan'], manifest, continuation)
+                            request['sampling_plan'], manifest, continuation,
+                            **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}))
                     except Exception as error:
                         tail_failure(error)
                         continuation_data = None
@@ -636,6 +641,7 @@ def generate(request, resident=None):
                 # Older retained sampling tails predate the predecessor binding.
                 continuation_data['metadata']['source_id'] = continuation['source_id']
         metrics.update(decode_to_file(latents, audio, request['output'], base=base, artifacts_dir=artifacts,
+                                     **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}),
                                      **({'continuation': continuation} if continuation is not None else {}),
                                      **({'audio_lead_in_callback': keep_audio_lead_in}
                                         if continuation is not None and continuation_data is not None else {}),
