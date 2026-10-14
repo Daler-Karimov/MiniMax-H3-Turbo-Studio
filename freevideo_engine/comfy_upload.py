@@ -1,4 +1,5 @@
 """Stream browser media to ComfyUI input without buffering a clip in RAM."""
+import asyncio
 from pathlib import Path, PureWindowsPath
 import uuid
 
@@ -56,5 +57,27 @@ def register():
         except (OSError, ValueError) as error:
             return web.json_response({'error': str(error)}, status=400)
         return web.json_response(result)
+
+    from .lora_triggers import get_trigger, set_trigger
+
+    @server.routes.get('/freevideo/lora/triggers')
+    async def lora_triggers(request):
+        try:
+            result = await asyncio.to_thread(get_trigger, request.query.get('name'), folders=folder_paths)
+        except (OSError, ValueError) as error:
+            return web.json_response({'error': str(error)}, status=400)
+        return web.json_response(result, headers={'Cache-Control': 'no-store'})
+
+    @server.routes.post('/freevideo/lora/triggers')
+    async def save_lora_triggers(request):
+        try:
+            value = await request.json()
+            if not isinstance(value, dict):
+                raise ValueError('A JSON object is required')
+            result = await asyncio.to_thread(set_trigger, value.get('name'), value.get('words'),
+                                             folders=folder_paths)
+        except (OSError, ValueError, TypeError) as error:
+            return web.json_response({'error': str(error)}, status=400)
+        return web.json_response(result, headers={'Cache-Control': 'no-store'})
 
     server._freevideo_upload_registered = True

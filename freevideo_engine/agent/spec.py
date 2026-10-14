@@ -243,6 +243,8 @@ def normalize(value, *, port=None):
 
 def comfy_prompt(spec, node, *, prompt, assets, refine_from=''):
     """The ComfyUI API-format graph for one generate job; media are files in ComfyUI input."""
+    from ..lora_triggers import apply_triggers
+    prompt = apply_triggers(prompt, spec.get('loras', []))
     inputs = dict(text=prompt, width=spec['width'], height=spec['height'], seconds=spec['seconds'],
                   seed=spec['seed'], two_pass=spec['two_pass'], base_steps=spec['base_steps'],
                   refine_steps=spec['refine_steps'], force_regenerate=spec['force_regenerate'],
@@ -258,7 +260,8 @@ def comfy_prompt(spec, node, *, prompt, assets, refine_from=''):
         inputs['media'] = [node + 'm', 0]
     if spec.get('loras'):
         graph[node + 'l'] = {'class_type': 'FreeVideoLoRAStack',
-                             'inputs': {'adapters': json.dumps([dict(r, enabled=True) for r in spec['loras']])},
+                             'inputs': {'adapters': json.dumps([dict(r, enabled=True) for r in spec['loras']
+                                                               if r.get('enabled', True)])},
                              '_meta': {'title': 'FreeVideo · LoRAs'}}
         inputs['loras'] = [node + 'l', 0]
     return graph

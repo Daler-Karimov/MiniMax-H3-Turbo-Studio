@@ -1434,6 +1434,7 @@ class Jobs:
                     return assets
                 assets = resolve()
                 graph = specs.comfy_prompt(spec, node, prompt=prompt, assets=assets)
+                prompt = graph[node]['inputs']['text']
                 with self.lock:
                     row['inputs'] = dict(media=assets, prompt_chars=len(prompt))
             if row.get('_cancel'):

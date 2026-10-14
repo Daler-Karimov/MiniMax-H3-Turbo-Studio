@@ -18,6 +18,7 @@ import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed } from './studio_queue.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
+import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
@@ -60,6 +61,63 @@ function view(file, type = 'input') {
 }
 const number = (n, divisor = 1, unit = 's') => Number.isFinite(n) && n >= 0 ? `${(n / divisor).toFixed(1)} ${unit}` : '—';
 
+const LORA_TRIGGERS = 'freevideo_lora_triggers';
+// Node and creation panels share lookups and serialize saves for each filename.
+const loraTriggers = new Map();
+function triggerEntry(name) {
+    if (!loraTriggers.has(name)) loraTriggers.set(name, {version: 0});
+    return loraTriggers.get(name);
+}
+// The server's own wording is technical; the panel always says the same plain sentence.
+const triggerReadError = () => new Error(t('Could not read trigger words.', '无法读取触发词。'));
+const triggerSaveError = () => new Error(t('Could not save. Try again.', '没有保存，请再试一次。'));
+async function triggerResponse(response, fail) {
+    let result = null;
+    try { result = await response.json(); } catch { /* not JSON: same sentence */ }
+    if (!response.ok || typeof result?.words !== 'string') throw fail();
+    return result;
+}
+function announceTriggers(name) {
+    window.dispatchEvent(new CustomEvent('freevideo-lora-triggers', {detail: name}));
+}
+function loadTriggers(name) {
+    const entry = triggerEntry(name);
+    if (entry.data && Date.now() - entry.updated < 60000) return Promise.resolve(entry.data);
+    if (entry.loading) return entry.loading;
+    const version = entry.version;
+    entry.loading = (async () => {
+        // The first read of a large file hashes it once on the server; keep asking while that finishes.
+        let result;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                result = await triggerResponse(await api.fetchApi('/freevideo/lora/triggers?' + new URLSearchParams({name}),
+                    {cache: 'no-store', signal: AbortSignal.timeout(6500)}), triggerReadError);
+                break;
+            } catch (error) {
+                if (error?.name === 'TimeoutError' && attempt < 9) continue;
+                throw triggerReadError();
+            }
+        }
+        if (entry.version === version) { entry.data = result; entry.updated = Date.now(); announceTriggers(name); }
+        return result;
+    })().finally(() => { entry.loading = null; });
+    return entry.loading;
+}
+function saveTriggers(name, words) {
+    const entry = triggerEntry(name), version = ++entry.version;
+    entry.saving = (entry.saving || Promise.resolve()).catch(() => {}).then(async () => {
+        let result;
+        try {
+            result = await triggerResponse(await api.fetchApi('/freevideo/lora/triggers', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, words: words.trim()}),
+            }), triggerSaveError);
+        } catch { throw triggerSaveError(); }
+        if (entry.version === version) { entry.data = result; entry.updated = Date.now(); announceTriggers(name); }
+        return result;
+    });
+    return entry.saving;
+}
+
 export const loraWarning = () => t(
     'FreeVideo needs no acceleration LoRA.',
     'FreeVideo无需添加加速LoRA');
@@ -78,16 +136,59 @@ export function promptGuide() {
     return note;
 }
 
-export function loraPanel(node, panel) {
+export function loraPanel(node, panel, {promptNode = null} = {}) {
     const list = el('div', null, 'fv-lora-list'), note = el('p', '', 'fv-lora-note');
     const actions = el('div', null, 'fv-lora-add'); panel.append(list, actions, note);
-    let names = [], disposed = false;
+    let names = [], disposed = false, rendering = false, renderAgain = false;
+    const drafts = new Map(), errors = new Map(), saves = new Map();
     const read = () => { const rows = JSON.parse(value(node, 'adapters') || '[]'); if (!Array.isArray(rows) || rows.length > 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); return rows; };
-    const write = rows => { set(node, 'adapters', JSON.stringify(rows)); window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: node.id})); };
-    function render() {
-        if (disposed) return; list.replaceChildren();
+    function syncPrompt(rows) {
+        const targets = new Set([promptNode, ...(node.graph?._nodes || []).filter(target =>
+            (target.type === 'FreeVideoGenerate' || target.comfyClass === 'FreeVideoGenerate') && upstream(target, 'loras') === node)].filter(Boolean));
+        const words = Object.fromEntries(rows.filter(row => triggerEntry(row.name).data)
+            .map(row => [row.name, triggerEntry(row.name).data.words]));
+        for (const target of targets) {
+            if (!widget(target, 'text')) continue;
+            const saved = target.properties?.[LORA_TRIGGERS];
+            const previous = Array.isArray(saved) ? saved : [];
+            const next = reconcileLoraTriggers(value(target, 'text'), previous, rows, words);
+            if (linked(target, 'text')) {
+                // Never claim an insertion that cannot be written to a linked prompt.
+                next.records = next.records.filter(row => previous.some(old => old.name === row.name && old.words === row.words));
+            } else if (next.prompt !== value(target, 'text')) {
+                set(target, 'text', next.prompt);
+                syncReferencePrompt(target, t);
+                // Encoded conditioning skips reference remapping, but both text
+                // editors still display edits to the unlinked prompt widget.
+                if (linked(target, 'conditioning')) window.dispatchEvent(new CustomEvent('freevideo-reference-prompt', {detail: target.id}));
+            }
+            if (JSON.stringify(previous) !== JSON.stringify(next.records)) {
+                (target.properties ||= {})[LORA_TRIGGERS] = next.records;
+                target.graph?.change(); target.setDirtyCanvas?.(true, true);
+            }
+        }
+    }
+    function refreshTriggerWords(name) {
+        if (disposed) return;
         try {
             const rows = read();
+            if (!rows.some(row => row.name === name)) return;
+            syncPrompt(rows);
+            for (const trigger of list.querySelectorAll('.fv-lora-trigger')) {
+                if (trigger.dataset.name === name && !drafts.has(name)) trigger.value = triggerEntry(name).data?.words ?? '';
+            }
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+        } catch (error) { note.textContent = error.message; }
+    }
+    const write = rows => { if (set(node, 'adapters', JSON.stringify(rows))) { syncPrompt(rows); window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: node.id})); } };
+    function render() {
+        if (disposed) return;
+        if (rendering) { renderAgain = true; return; }
+        rendering = true;
+        try {
+            list.replaceChildren();
+            const rows = read();
+            syncPrompt(rows);
             rows.forEach((row, index) => {
                 const wrap = el('div', null, 'fv-lora-row'); wrap.dataset.enabled = String(row.enabled !== false);
                 const enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = row.enabled !== false;
@@ -97,9 +198,31 @@ export function loraPanel(node, panel) {
                 select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; write(rows); };
                 const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = row.strength ?? 1;
                 strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度')); strength.onchange = () => { if (strength.reportValidity() && strength.value !== '') { row.strength = Number(strength.value); write(rows); } };
-                select.disabled = strength.disabled = row.enabled === false;
+                const trigger = el('input', null, 'fv-lora-trigger'); trigger.type = 'text'; trigger.maxLength = 300;
+                trigger.dataset.name = row.name;
+                trigger.placeholder = t('Trigger words', '触发词'); trigger.setAttribute('aria-label', trigger.placeholder);
+                trigger.value = drafts.get(row.name) ?? triggerEntry(row.name).data?.words ?? '';
+                trigger.oninput = () => drafts.set(trigger.dataset.name, trigger.value);
+                trigger.onchange = async () => {
+                    // Switching models can blur the old field after row.name changes.
+                    const name = trigger.dataset.name, draft = trigger.value;
+                    const request = Symbol(); saves.set(name, request);
+                    drafts.set(name, draft); errors.delete(name);
+                    try {
+                        await saveTriggers(name, draft);
+                        if (saves.get(name) !== request) return;
+                        errors.delete(name);
+                        if (drafts.get(name) === draft) drafts.delete(name);
+                        refreshTriggerWords(name);
+                    } catch (error) {
+                        if (!disposed && saves.get(name) === request && drafts.get(name) === draft) {
+                            errors.set(name, error.message); refreshTriggerWords(name);
+                        }
+                    }
+                };
+                select.disabled = strength.disabled = trigger.disabled = row.enabled === false;
                 const remove = button('×', () => { rows.splice(index, 1); write(rows); }); remove.setAttribute('aria-label', t('Remove LoRA', '移除 LoRA'));
-                wrap.append(enabled, select, strength, remove);
+                wrap.append(enabled, select, strength, remove, trigger);
                 if (rows.length > 1) {
                     const order = el('div', null, 'fv-lora-order');
                     for (const [label, delta] of [['↑', -1], ['↓', 1]]) {
@@ -110,9 +233,17 @@ export function loraPanel(node, panel) {
                     wrap.append(order);
                 }
                 list.append(wrap);
+                loadTriggers(row.name).catch(error => { if (!disposed && trigger.isConnected) note.textContent = error.message; });
             });
-            note.textContent = loraWarning();
-        } catch (error) { note.textContent = error.message; }
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+        } catch (error) {
+            if (error instanceof DOMException) throw error;
+            note.textContent = error.message;
+        }
+        finally {
+            rendering = false;
+            if (renderAgain) { renderAgain = false; queueMicrotask(render); }
+        }
     }
     const add = button(t('Add', '添加'), async () => {
         await refresh(); // The folder may have changed since the list was last read.
@@ -125,11 +256,13 @@ export function loraPanel(node, panel) {
     actions.append(add);
     const changed = e => { if (String(e.detail) === String(node.id)) render(); };
     window.addEventListener('freevideo-loras', changed);
+    const triggersChanged = e => refreshTriggerWords(e.detail);
+    window.addEventListener('freevideo-lora-triggers', triggersChanged);
     const configure = node.onConfigure;
     // Only the persistent node panel participates in graph loading.
-    if (panel.classList.contains('fv-lora-panel')) node.onConfigure = function (...args) { const result = configure?.apply(this, args); render(); return result; };
+    if (panel.classList.contains('fv-lora-panel')) node.onConfigure = function (...args) { const result = configure?.apply(this, args); queueMicrotask(render); return result; };
     render(); refresh();
-    const dispose = () => { disposed = true; window.removeEventListener('freevideo-loras', changed); };
+    const dispose = () => { disposed = true; window.removeEventListener('freevideo-loras', changed); window.removeEventListener('freevideo-lora-triggers', triggersChanged); };
     dispose.refresh = refresh;
     return dispose;
 }
@@ -143,7 +276,9 @@ function pendingLoras(node, existing = null) {
     const LiteGraph = globalThis.LiteGraph;
     if (!(slot >= 0) || !node.graph || (!existing && !LiteGraph?.registered_node_types?.FreeVideoLoRAStack)) return null;
     let stack = existing;
-    const adapters = {name: 'adapters', value: existing ? value(existing, 'adapters') || '[]' : '[]', callback(next) {
+    let adaptersValue = existing ? value(existing, 'adapters') || '[]' : '[]';
+    const adapters = {name: 'adapters', get value() { return stack ? value(stack, 'adapters') || '[]' : adaptersValue; },
+        set value(next) { adaptersValue = next; }, callback(next) {
         let rows; try { rows = JSON.parse(next); } catch { return; }
         const graph = node.graph, active = Array.isArray(rows) && rows.length > 0;
         if (active && !stack) {
@@ -164,7 +299,7 @@ function pendingLoras(node, existing = null) {
         graph.change?.();
         window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: stack.id}));
     }};
-    return {id: 'creation-lora', graph: node.graph, widgets: [adapters], inputs: []};
+    return {get id() { return stack?.id ?? 'creation-lora'; }, graph: node.graph, widgets: [adapters], inputs: []};
 }
 
 let current;
@@ -259,7 +394,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         return {seconds: Number(value(node, 'seconds')), media: items.map(row => ({file: row.file, role: row.role || 'reference'}))};
     }});
     cleanup.push(() => enhancer.dispose());
-    const promptChanged = e => { if (String(e.detail) === String(node.id)) { if (prompt.value !== shown(value(node, 'text'))) prompt.value = shown(value(node, 'text')); placeholder(); references.refresh(); enhancer.sync(); } };
+    const promptChanged = e => { if (String(e.detail) === String(node.id)) { if (prompt.value !== shown(value(node, 'text'))) prompt.value = shown(value(node, 'text')); prompt.disabled = linked(node, 'text'); mention.disabled = prompt.disabled; placeholder(); references.refresh(); enhancer.sync(); } };
     window.addEventListener('freevideo-reference-prompt', promptChanged);
     cleanup.push(() => window.removeEventListener('freevideo-reference-prompt', promptChanged));
     const promptSection = section(t('Describe your scene', '描述画面'));
@@ -371,7 +506,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const loraNode = connectedLora?.properties?.[CREATED_BY_PANEL] ? pendingLoras(node, connectedLora) : connectedLora || pendingLoras(node);
     const [loraDetails, loraMount] = expand(t('LoRA', 'LoRA'));
     if (loraNode && widget(loraNode, 'adapters')) {
-        const stop = loraPanel(loraNode, loraMount); cleanup.push(stop);
+        const stop = loraPanel(loraNode, loraMount, {promptNode: node}); cleanup.push(stop);
         loraDetails.addEventListener('toggle', () => { if (loraDetails.open) stop.refresh(); });
         loraDetails.open = JSON.parse(value(loraNode, 'adapters') || '[]').length > 0;
     }

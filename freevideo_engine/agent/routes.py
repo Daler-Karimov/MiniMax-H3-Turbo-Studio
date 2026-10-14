@@ -171,6 +171,7 @@ def features(continuation, vlm):
 
 
 def capabilities(port, jobs):
+    from ..lora_triggers import list_triggers
     from .. import __version__
     from ..desktop_runtime import source_release
     from ..comfy_assets import EXTENSIONS
@@ -217,6 +218,7 @@ def capabilities(port, jobs):
         aspects=sorted(specs.ASPECTS), native_megapixels=.98,
         tasks=GUIDE['tasks'], media_extensions={k: sorted(v) for k, v in EXTENSIONS.items()},
         loras=sorted(n for n in port.folders.get_filename_list('loras') if n.lower().endswith('.safetensors')),
+        lora_trigger_words=list_triggers(port.folders),
         vlm=vlm, queue=dict(running=len(running), pending=len(pending),
                             agent_active=len(jobs.active())),
         docs=dict(guide=PREFIX + '/guide', schema=PREFIX + '/schema', openapi=PREFIX + '/openapi.json'))
