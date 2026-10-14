@@ -532,10 +532,29 @@ def generate(request, resident=None):
                         if continuation is not None:
                             from .continuation import load
                             final_context = load(continuation, 'final')
+                        # The first pass/upscaler can leave a lower WDDM cap
+                        # than the one that selected the refinement's heads.
+                        # Recheck before its first allocation, not after OOM.
+                        from .policy import windows_int8_refinement_heads, windows_int8_refinement_head_need
+                        guard = dict(windows=metrics['device_memory'].get('windows_allocator_limit_enforced', False)
+                                     and not request.get('capacity_trial', False),
+                                     lora=bool(manifest.get('online_lora')))
+                        head_need = windows_int8_refinement_head_need(engine.config, canvas, **guard)
+                        second_compute = None
+                        if head_need is not None:
+                            if live_budget is not None:
+                                refresh_budget('refine')
+                            limit = metrics['device_memory'].get('effective_allocator_limit_bytes')
+                            second_compute = windows_int8_refinement_heads(engine.config, canvas, limit, **guard)
+                            if second_compute:
+                                metrics['refinement_head_planning'] = dict(planned_head_chunk=4, head_chunk=2,
+                                    allocator_limit_bytes=limit, head4_need_bytes=head_need)
+                                save(request['metrics'], metrics)
                         latents, audio, second = engine.sample(request['conditioning'], restart_seed,
                             **({'continuation': final_context} if final_context is not None else {}),
                             **sampling_plan['second'], initial_latents=(latents, audio), refine_steps=sampling_plan['refine_steps'],
                             refine_schedule=sampling_plan.get('refine_schedule'),
+                            compute_options=second_compute,
                             final_step_callback=None if decoder_cached else read_decoder_ahead,
                             step_callback=memory_diagnostics.complete, sampling_complete_callback=refined_complete,
                             progress_offset=sampling_plan['base_steps'], progress_total=sampling_plan['total_steps'],
