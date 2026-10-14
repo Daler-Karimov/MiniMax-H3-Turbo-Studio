@@ -2,6 +2,7 @@
 import argparse
 from contextlib import ExitStack, redirect_stdout
 import json
+import os
 from pathlib import Path
 import queue
 import sys
@@ -150,7 +151,11 @@ def main():
     args = parser.parse_args()
     if not 0 < args.idle_seconds < float('inf'):
         parser.error('--idle-seconds must be positive and finite')
-    serve(args.pack_dir, device=args.device, idle_seconds=args.idle_seconds)
+    stream = None
+    if os.name == 'nt':
+        from ..win32 import private_stdin
+        stream = private_stdin()
+    serve(args.pack_dir, device=args.device, idle_seconds=args.idle_seconds, stream=stream)
     return 0
 
 
