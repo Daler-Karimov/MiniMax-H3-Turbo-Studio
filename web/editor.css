@@ -69,6 +69,8 @@
 .fv-ed-gen-stage{flex:0 1000 auto}
 .fv-ed-gen-time{flex:none;max-width:100%}
 .fv-ed-genbar[data-mode=selected] .fv-ed-gen-hint{flex:none}
+.fv-ed-genbar[data-mode=running] .fv-ed-gen-hint{order:1;flex:none}
+.fv-ed-genbar[data-mode=running]>button:not(.fv-ed-generate){order:2}
 .fv-ed-gen-note{font-size:13px;color:var(--fv-ink);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-ed-gen-note[hidden]{display:none}
 .fv-editor:has(.fv-ed-gen-failure:not([hidden])){--fv-ed-generation-row:max-content}

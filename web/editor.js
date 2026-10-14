@@ -241,7 +241,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return true;
     }
     const content = record => JSON.stringify({...record, id: null, revision: 0});
-    function notify(text) { if (disposed) return; notice.textContent = text; notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000); }
+    function notify(text) { if (disposed) return; if (!text) { clearTimeout(noticeTimer); notice.hidden = true; return; } notice.textContent = text; notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000); }
     // `step` names what was being done, so a failure there says which step went wrong.
     function error(value, step = null) {
         const code = value?.reason || value?.code || value?.message;

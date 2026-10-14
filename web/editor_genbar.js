@@ -74,7 +74,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         const opening = (starting || !!actions.selectionSending?.()) && !held;
         const stopped = ['failed', 'cancelled', 'interrupted'].includes(status?.state);
         host.dataset.mode = busy ? 'running' : selected ? 'selected' : 'idle';
-        hint.hidden = !busy && !other; input.hidden = generate.hidden = busy;
+        hint.hidden = !busy && !other;
+        // The description and Generate stay where they are while a part is made, greyed, so nothing around them moves.
+        input.hidden = generate.hidden = false;
         // A choice that will move to an empty spot can still be described first.
         const writable = selected || !previewSelection && !!selection && !!actions.selectionMovable?.();
         input.disabled = !writable || busy;

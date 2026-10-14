@@ -12,7 +12,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     const menu = el('div', 'fv-ed-ref-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
     const picker = el('input'); picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true; picker.hidden = true;
     root.append(add, chips, menu, picker);
-    let shown = false, busy = false, working = false, opener = null, disposed = false, entries = [];
+    let shown = false, busy = false, working = false, opener = null, disposed = false, entries = [], waited = false;
     const active = () => source.rows().map((row, index) => ({row, index})).filter(({row}) => row.enabled !== false);
     const isImage = file => IMAGE.test(file || '');
     // On hover without a full stop; in the notice line with one.
@@ -109,7 +109,10 @@ export function createEditorReferences({t, source, size = () => null, error = ()
             if (rows[entry.index]?.file === entry.row.file) { rows[entry.index] = {...rows[entry.index], enabled: false}; write(rows); }
         })];
     }
+    // The line said on a click while a part is made; it goes away with the busy state it describes.
+    const wait = () => { waited = true; notify(sentence(waitText())); };
     function update(isBusy = busy, visible = shown) {
+        if (waited && busy && !isBusy) { waited = false; notify(''); }
         busy = isBusy; shown = visible;
         root.hidden = !shown || !source.available();
         if ((root.hidden || busy) && !menu.hidden) close(false);
@@ -125,12 +128,12 @@ export function createEditorReferences({t, source, size = () => null, error = ()
             chip.title = busy ? waitText() : label(entry.row.role); chip.setAttribute('aria-haspopup', 'menu');
             chip.setAttribute('aria-label', label(entry.row.role));
             chip.append(thumb(entry.row.file, 'fv-ed-ref-thumb'));
-            chip.onclick = () => { if (busy) { notify(sentence(waitText())); return; } if (!menu.hidden && opener === chip) close(); else open(chip, chipMenu(entry)); };
+            chip.onclick = () => { if (busy) { wait(); return; } if (!menu.hidden && opener === chip) close(); else open(chip, chipMenu(entry)); };
             return chip;
         }));
     }
     add.onclick = () => {
-        if (busy) { notify(sentence(waitText())); return; }
+        if (busy) { wait(); return; }
         if (active().length >= MAX) { notify(sentence(fullText())); return; }
         if (!menu.hidden && opener === add) close(); else open(add, addMenu()); };
     picker.onchange = () => addFiles(Array.from(picker.files));
