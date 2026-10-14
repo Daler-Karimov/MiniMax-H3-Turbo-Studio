@@ -165,8 +165,24 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
     }
     host.addEventListener('scroll', scheduleMore, {passive: true});
     const resize = new ResizeObserver(scheduleMore); resize.observe(host);
-    async function importFiles(files) {
+    // Files dropped on the tracks go to the drop point once ready, in drop order.
+    const placing = [];
+    let placed = Promise.resolve();
+    function placeReady(items) {
+        while (placing.length && !disposed) {
+            const head = placing[0], row = items.find(item => item.id === head.id);
+            if (row?.state === 'preparing' || (!row && recentImports.has(head.id))) return;
+            placing.shift();
+            if (row?.state !== 'ready') continue;
+            const value = metadata(row, 'import'), at = head.place.at;
+            if (value.hasVideo) head.place.at += value.frames;
+            const insert = {source: {kind: 'import', id: row.id}, at, frames: value.frames, hasVideo: value.hasVideo, hasAudio: value.hasAudio};
+            placed = placed.then(() => disposed ? null : actions.insertSource(insert, {loadMetadata: true})).catch(actions.error);
+        }
+    }
+    async function importFiles(files, {at} = {}) {
         choose('import');
+        const place = Number.isSafeInteger(at) && at >= 0 ? {at} : null;
         for (const value of files) {
             if (disposed) break;
             const id = 'upload-' + Math.random(), row = {id, name: value.name, kind: value.type.startsWith('audio') ? 'audio' : 'video', state: 'preparing', fraction: 0};
@@ -176,6 +192,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
                 if (item && !disposed) {
                     recentImports.set(item.id, item);
                     imported = [item, ...imported.filter(existing => existing.id !== item.id)];
+                    if (place) { placing.push({id: item.id, place}); placeReady(imported); }
                 }
             } catch { actions.notify(t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS); }
             finally { uploading.delete(id); render(); }
@@ -186,6 +203,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         for (const item of items) recentImports.delete(item.id);
         // A list request started before an upload may finish after it.
         imported = [...recentImports.values(), ...items]; render();
+        placeReady(imported);
     });
     const stopUsed = state?.subscribe(event => { if (event.type === 'record') updateUsed(); });
     render(); load();

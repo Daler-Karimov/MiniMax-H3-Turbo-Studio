@@ -973,7 +973,18 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         }
         return added;
     }
+    const droppingFiles = event => actions.importFiles && !Array.from(event.dataTransfer?.types || []).includes(SOURCE_TYPE)
+        && Array.from(event.dataTransfer?.types || []).includes('Files');
     function dropOver(event) {
+        if (droppingFiles(event)) {
+            // Files from the computer: only the place is known until they are imported.
+            event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy';
+            const frame = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom);
+            const track = state.record.tracks.find(row => row.id === trackAt(event));
+            showInsertion(insertionPoint(track?.clips || [], frame.frame).frame); insertion.classList.remove('fv-ed-blocked-insertion');
+            showGuide(frame.guide); tooltip.hidden = true;
+            return;
+        }
         if (!Array.from(event.dataTransfer?.types || []).includes(SOURCE_TYPE)) return;
         event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy';
         const frame = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom);
@@ -1009,6 +1020,13 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     }
     function dropSource(event) {
         clearSourcePreview();
+        if (droppingFiles(event) && event.dataTransfer.files?.length) {
+            event.preventDefault(); event.stopPropagation();
+            const at = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom).frame;
+            actions.importFiles([...event.dataTransfer.files], {at});
+            showInsertion(null); showGuide(null); dropPoint = null; dropPreviewKey = '';
+            return;
+        }
         const payload = sourcePayload(event.dataTransfer?.getData(SOURCE_TYPE));
         if (!payload) { showInsertion(null); showGuide(null); return; }
         event.preventDefault(); event.stopPropagation();

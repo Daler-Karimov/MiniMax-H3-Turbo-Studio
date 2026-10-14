@@ -530,6 +530,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         generationLimits: () => ({maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds}),
         generationAvailable: () => store.generationAvailable,
+        importFiles: (files, options) => library?.importFiles(files, options),
         gestureStart({selectionGesture = false} = {}) {
             pointerEditing = true;
             if (selectionGesture && !menu.hidden) { menu.hidden = true; updateTransport(); }
