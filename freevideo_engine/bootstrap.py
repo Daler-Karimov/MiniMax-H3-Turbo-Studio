@@ -1190,6 +1190,11 @@ class Installer:
         if value.get('disk_mode') == 'extreme':
             from .install_disk import environment
             self.env = environment(self.root, self.env)
+        # A folder the system code page cannot spell cannot hold what compiles kernels:
+        # every step runs from the short folder, and files and receipts keep the real one.
+        from . import launch_view
+        if launch_view.current(self.env) is None:
+            self.env = launch_view.environment_view(self.env, launch_view.for_engine(self.root))
         self.network = dict(value.get('network', {}), events_path=str(self.run_dir / 'network.jsonl'), quiet=True)
         self.state = {'status': 'running', 'steps': [], 'plan': value}
         if self.damaged_before:

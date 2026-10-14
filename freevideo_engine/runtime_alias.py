@@ -517,7 +517,8 @@ def _longest(root, suffixes=()):
     return _manifest_longest(str(path), info.st_mtime_ns, info.st_size, suffixes)
 
 
-def needs_view(root, longest=None) -> bool:
+def needs_view(root, longest=None, spelling_only=False) -> bool:
+    """spelling_only: only a folder the system code page cannot spell, never one that is merely long."""
     if not _backend.windows():
         return False
     root = _ordinary(resolved(checked_real_path(root)))
@@ -530,6 +531,8 @@ def needs_view(root, longest=None) -> bool:
     # length; the short folder is plain letters.
     if not _backend.ansi_path(root):
         return True
+    if spelling_only:
+        return False
     # An installation that runs from where it is keeps doing so; only one beyond its budget is
     # given the short folder.
     if longest is None and system_long_paths():
