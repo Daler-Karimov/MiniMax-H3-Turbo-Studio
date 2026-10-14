@@ -350,8 +350,8 @@ export async function openSetup() {
         const missing = result.missing_libraries || [];
         savedMissing = missing.length > 0;
         savedFolders = !missing.length ? t('Saved.', '已保存。')
-            : missing.length === 1 ? t(`Saved. This folder was not found: ${missing[0]}`, `已保存。找不到这个目录：${missing[0]}`)
-            : t(`Saved. These folders were not found: ${missing.join(', ')}`, `已保存。找不到这些目录：${missing.join('、')}`);
+            : missing.length === 1 ? t(`Saved. This folder was not found:\n${missing[0]}`, `已保存。找不到这个目录：\n${missing[0]}`)
+            : t(`Saved. These folders were not found:\n${missing.join('\n')}`, `已保存。找不到这些目录：\n${missing.join('\n')}`);
         state.textContent = savedFolders; state.className = savedMissing ? '' : 'fv-ready';
         state.scrollIntoView({block: 'nearest'});
         return result;
