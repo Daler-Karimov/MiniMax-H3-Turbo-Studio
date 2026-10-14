@@ -33,6 +33,8 @@ VERSION = 1
 MISSING = 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.'
 SIZE_MISMATCH = 'Use the same width and height as the previous video.'
 UNSUPPORTED = 'Video continuation requires full two-pass text generation on an NVIDIA GPU, without first frames, last frames or reference media.'
+# A continued part keeps the cast's pictures, one per person and at most three people in a frame.
+PICTURES_MAX = 3
 INVALID_FRAMES = 'Frame count must be 5 + 17n and at least 39 (39, 56, 73, 90, ...).'
 INVALID_FILE = 'Choose an existing MP4 video using its absolute path.'
 
@@ -71,21 +73,43 @@ def validate_frames(frames):
 
 def validate_route(*, task='t2va', two_pass=True, preview=False, refine_from=None,
                    media=None, backend=None, anchor=False, sound=False):
+    """anchor: the part also takes pictures (an explicit anchor or the cast's pictures);
+    sound: the engine adds the film's opening sound as the one audio reference."""
     media = media or {}
     references = media.get('references')
-    valid_reference = (anchor and isinstance(references, list) and len(references) == 1
-                       and isinstance(references[0], dict)
-                       and references[0].get('kind') == 'image')
+    kinds = ([row.get('kind') if isinstance(row, dict) else None for row in references]
+             if isinstance(references, list) else None)
+    valid_reference = (kinds is not None and kinds.count('image') + kinds.count('audio') == len(kinds)
+                       and kinds.count('image') <= (PICTURES_MAX if anchor else 0)
+                       and kinds.count('audio') == (1 if sound else 0))
     valid_task = task == ('ref2va' if anchor else 't2va')
     if sound:
-        valid_reference = (not anchor and isinstance(references, list) and len(references) == 1
-                           and isinstance(references[0], dict) and references[0].get('kind') == 'audio')
-        valid_task = task in ('t2va', 'ref2va', 'ref2va_audio') and valid_reference
+        valid_task = valid_reference and task in (('ref2va', 'ref2va_av') if anchor else ('t2va', 'ref2va', 'ref2va_audio'))
     if (not supported()[0] or backend not in (None, 'cuda') or not valid_task
             or not two_pass or preview or refine_from
             or any(media.get(key) for key in ('first', 'last', 'conditioning_info'))
             or (references and not valid_reference)):
         raise ValueError(UNSUPPORTED)
+
+
+def encoded_references(conditions, task, anchor):
+    """Check a continued part's encoded references: its pictures, then the engine's sound. True when the sound is there."""
+    rows = conditions or []
+    images = [row for row in rows if row['kind'] == 'image' and row.get('audio_latent') is None]
+    sound = (task == ('ref2va_av' if anchor else 'ref2va_audio') and len(rows) == len(images) + 1
+             and rows[-1]['kind'] == 'audio' and rows[-1].get('audio_latent') is not None)
+    if not rows or anchor != bool(images) or len(images) + sound != len(rows) or len(images) > PICTURES_MAX:
+        raise ValueError('Continuation pictures must be one to %d images, followed only by its own sound' % PICTURES_MAX)
+    return sound
+
+
+def continuation_pictures(media):
+    """The pictures a continued part takes: image references only, at most PICTURES_MAX (one per person)."""
+    references = media.get('references') or []
+    pictures = [row for row in references if row.get('kind') == 'image']
+    if len(pictures) != len(references) or len(pictures) > PICTURES_MAX:
+        raise ValueError(UNSUPPORTED)
+    return pictures
 
 
 def anchor_media(media, path):

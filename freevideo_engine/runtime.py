@@ -551,7 +551,7 @@ class Engine:
         if continuation is not None:
             from .continuation import validate_route
             # Audio references are admitted below, after inspecting the encoded modalities.
-            if self.task != 'ref2va_audio':
+            if self.task not in ('ref2va_audio', 'ref2va_av'):
                 validate_route(task=self.task, anchor=bool(continuation.get('anchor')))
             if tuple(continuation['video'].shape[-2:]) != (height // 16, width // 16):
                 from .continuation import SIZE_MISMATCH
@@ -618,13 +618,10 @@ class Engine:
                     sampling_kwargs.update(condition_schedule=condition_schedule, condition_trace=early_receipt['steps'])
             conditions = value.get('references') or None
             if continuation is not None:
-                sound = (not continuation.get('anchor') and self.task == 'ref2va_audio'
-                         and conditions is not None and len(conditions) == 1
-                         and conditions[0]['kind'] == 'audio' and conditions[0].get('audio_latent') is not None)
-                if not sound and (conditions is None or len(conditions) != 1 or conditions[0]['kind'] != 'image' or conditions[0].get('audio_latent') is not None):
-                    raise ValueError('Continuation anchor requires exactly one image reference without audio')
-                if sound:
-                    validate_route(task=self.task, sound=True, media=dict(references=conditions))
+                from .continuation import encoded_references
+                if encoded_references(conditions, self.task, bool(continuation.get('anchor'))):
+                    validate_route(task=self.task, sound=True, anchor=bool(continuation.get('anchor')),
+                                   media=dict(references=[dict(kind=row['kind']) for row in conditions]))
                 # Ref2VA packs independent-size references before generated
                 # video rows in both passes. Their latents do not need the
                 # keyframe resize used by first/last-frame conditioning.

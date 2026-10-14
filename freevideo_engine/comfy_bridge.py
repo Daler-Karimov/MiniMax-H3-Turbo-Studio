@@ -1346,6 +1346,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             media = extra.get('media') or {}
             send_progress({'label': 'Retaining and checking input media', 'timing_phase': 'encoding',
                            'references': any(media.get(key) for key in ('first', 'last', 'references'))})
+        # A continued part keeps the cast's pictures; the engine then leaves out the film's first frame.
+        pictured = continue_from is not None and any(
+            row.get('kind') == 'image' for row in (extra.get('media') or {}).get('references', []))
+        if pictured:
+            anchored = False
         from .media_request import task_for
         from .two_pass import plan, sampling_canvas
         from .generate import hide_tail_geometry
@@ -1355,11 +1360,12 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         # The engine samples this canvas; results, cache keys and labels keep the requested size.
         sampled, output_size = sampling_canvas(generated_canvas, staged=bool(preview or upscale), media=extra.get('media'),
                                                conditioned=bool(extra.get('conditioning')))
-        planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
+        planned = plan(sampled, two_pass, 'ref2va' if anchored or pictured else task_for(extra.get('media', {})),
                        base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
         if continue_from is not None:
             from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, MISSING, validate_snapshot, summary
-            validate_route(task='ref2va' if anchored else task_for(extra.get('media', {})), anchor=anchored,
+            validate_route(task='ref2va' if anchored or pictured else task_for(extra.get('media', {})),
+                           anchor=anchored or pictured,
                            media=extra.get('media'))
             if continuation is not None:
                 try:
@@ -1414,7 +1420,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         preparation_started = time.monotonic()
         try:
             # Reference audio selects its own tables; match the encoder's choice.
-            asset_task = ((ANCHOR_ADALN_TASK if anchored else ADALN_TASK) if continue_from is not None
+            asset_task = ((ANCHOR_ADALN_TASK if anchored or pictured else ADALN_TASK) if continue_from is not None
                           else engine_task(extra.get('media', {}), media_base))
             preparation = prepare_sampling_assets(root, machine, planned, asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)

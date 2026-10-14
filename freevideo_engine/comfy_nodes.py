@@ -82,13 +82,12 @@ class FreeVideoGenerate(io.ComfyNode):
                 # Use presence checks: tensor inputs have no scalar truth value.
                 assets = kwargs.get('media')
                 connected = assets.get('_connected', {}) if isinstance(assets, dict) else {}
+                # References are not checked here: a continued part keeps only their pictures.
                 media = dict(first=kwargs.get('first') is not None or connected.get('first') is not None,
                              last=kwargs.get('last') is not None or connected.get('last') is not None,
-                             references=bool(kwargs.get('references')) or any(
-                                 connected.get(key) is not None for key in ('reference', 'reference_audio')),
                              conditioning_info=kwargs.get('conditioning') is not None)
                 if isinstance(assets, dict):
-                    for key in ('first', 'last', 'references', 'conditioning_info'):
+                    for key in ('first', 'last', 'conditioning_info'):
                         media[key] = media[key] or bool(assets.get(key))
                 options.update(two_pass=kwargs.get('two_pass', True), preview=kwargs.get('preview', False),
                                refine_from=kwargs.get('refine_from'), media=media)
@@ -125,7 +124,7 @@ class FreeVideoGenerate(io.ComfyNode):
         from .background_compile import COMPILE
         # Returns once the idle compile released the GPU and the engine lease.
         COMPILE.stop(final=True)
-        from .comfy_media import export
+        from .comfy_media import continued, export
         import folder_paths
         import comfy.model_management as memory
         from comfy.utils import ProgressBar
@@ -220,8 +219,9 @@ class FreeVideoGenerate(io.ComfyNode):
                 base_steps=base_steps, refine_steps=refine_steps, comfy_metadata=graph,
                 preview=bool(preview), refine_from=refine_from or None,
                 interrupted=memory.throw_exception_if_processing_interrupted, release_models=release,
-                export_inputs=lambda run, canvas: export(run, canvas, first=first, last=last,
-                    references=references, loras=loras, conditioning=conditioning, assets=media),
+                export_inputs=lambda run, canvas: (continued if options.get('continue_from') else dict)(
+                    export(run, canvas, first=first, last=last, references=references, loras=loras,
+                           conditioning=conditioning, assets=media)),
                 **options,
                 # Only a part that continues another can use it; other requests keep the existing bridge call.
                 **({'first_frame_reference': True} if first_frame_reference is True and options.get('continue_from') else {}),

@@ -40,10 +40,26 @@ def seconds_for_frames(frames, minimum=1.625, maximum=60., step=.1):
 
 class ComfyHost:
     continuation_inputs = (*CONTINUE_INPUTS.values(), 'voice_reference', 'hide_tail')
-    media_inputs = ('media', 'first', 'last', 'references', 'conditioning')
+    # Inputs a continued part drops. The media panel and references stay: the Generate node keeps their pictures.
+    media_inputs = ('first', 'last', 'conditioning')
 
     def __init__(self, server):
         self.server = server
+
+    def continued(self, prompt, node):
+        """A continued part's media panel keeps only the pictures it uses (prompt is this submission's copy)."""
+        link = prompt[node]['inputs'].get('media')
+        if not (isinstance(link, list) and len(link) == 2 and link[0] in prompt):
+            return
+        media = prompt[link[0]]
+        if not isinstance(media, dict) or media.get('class_type') != 'FreeVideoMedia':
+            return
+        inputs = media.setdefault('inputs', {})
+        for name in ('first', 'last', 'reference_audio'):
+            inputs.pop(name, None)
+        if isinstance(inputs.get('assets'), str):
+            from .comfy_assets import continued_assets
+            inputs['assets'] = continued_assets(inputs['assets'])
 
     def inputs(self, block_inputs):
         schema = _generate_inputs()

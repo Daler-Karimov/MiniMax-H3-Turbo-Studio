@@ -1,4 +1,5 @@
 """Native Comfy sockets -> retained local files, without model duplication."""
+import logging
 from pathlib import Path
 from .comfy_assets import REFERENCE_INPUTS
 
@@ -41,6 +42,22 @@ def _audio(value, path):
                 container.mux(packet)
         for packet in stream.encode(None):
             container.mux(packet)
+
+
+def continued(exported):
+    """What a continued part keeps of exported inputs: the pictures (at most three, one per person) and LoRAs.
+
+    It starts from the footage, so keyframes, pre-encoded conditioning, clips and sound are left out."""
+    from .continuation import PICTURES_MAX
+    media = (exported or {}).get('media') or {}
+    kept = {key: value for key, value in media.items()
+            if key not in ('first', 'last', 'references', 'conditioning_info')}
+    pictures = [row for row in media.get('references', []) if row.get('kind') == 'image']
+    if len(pictures) > PICTURES_MAX:
+        logging.warning('[FreeVideo] A continued part keeps the first %d of %d pictures', PICTURES_MAX, len(pictures))
+    if pictures:
+        kept['references'] = pictures[:PICTURES_MAX]
+    return {'media': kept} if len(kept) > 1 else {}
 
 
 def export(run, canvas, *, first=None, last=None, references=None, loras=None, conditioning=None, assets=None):

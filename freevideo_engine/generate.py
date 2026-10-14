@@ -392,7 +392,7 @@ def _run(args):
                 raise
         # A record of another version, other weights or another first-pass size.
         value = dict(encoded_continuation(continue_from, canvas),
-                     **{key: value[key] for key in ('audio_context', 'source_video', 'anchor', 'sound') if key in value})
+                     **{key: value[key] for key in ('audio_context', 'source_video', 'anchor', 'pictures', 'sound') if key in value})
         return freeze_continuation(value) if continuation_directory is not None else value
 
     frames = getattr(args, 'frames', None)
@@ -436,14 +436,20 @@ def _run(args):
     if continue_anchor is not None:
         from .continuation import anchor_media
         media = anchor_media(media, continue_anchor)
+    # The cast's pictures, sent with a continued part like with a part that starts fresh.
+    pictures = []
+    if continue_from is not None and continue_anchor is None and media.get('references'):
+        from .continuation import continuation_pictures
+        pictures = continuation_pictures(media)
+    anchored = continue_anchor is not None or bool(pictures)
     # Too small to sample cleanly: render larger, scale the picture down. Decided before anything
     # compares or stores the canvas, so every later check sees the size that is sampled.
     from .two_pass import sampling_canvas
     canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
                                           conditioned=bool(args.conditioning))
     if continue_from is not None:
-        validate_route(task=getattr(args, 'task', None) or ('ref2va' if continue_anchor else 't2va'),
-                       anchor=continue_anchor is not None, two_pass=two_pass,
+        validate_route(task=getattr(args, 'task', None) or ('ref2va' if anchored else 't2va'),
+                       anchor=anchored, two_pass=two_pass,
                        preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
         # Reject absent/mismatched context before text encoding or model loading.
         if getattr(args, 'continuation_snapshot', None):
@@ -458,7 +464,10 @@ def _run(args):
                 # Nothing was stored for this file: its own ending is encoded when the run starts.
                 continuation = encoded_continuation(continue_from, canvas)
         continuation = dict(continuation, audio_context=audio_context(), source_video=str(continue_from))
-        if first_frame is not None:
+        if first_frame is not None and pictures:
+            # The cast's pictures already hold the people; the film's first frame is not added to them.
+            first_frame['reason'] = 'pictures'
+        elif first_frame is not None:
             from .continuation import anchor_media, chain_first_frame_picture
             try:
                 # A context encoded from the file carries no first frame; whoever planned this run saw none either.
@@ -480,10 +489,13 @@ def _run(args):
                 validate_route(task=getattr(args, 'task', None) or 'ref2va', anchor=True, two_pass=two_pass,
                                preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
                 first_frame.update(used=True, width=picture_width, height=picture_height)
-        if continue_anchor is not None:
+                anchored = True
+        if anchored:
             continuation['anchor'] = media['references'][0]
+        if pictures:
+            continuation['pictures'] = len(pictures)
         if voice_reference is not None:
-            if first_frame is not None:
+            if first_frame is not None and not pictures:
                 voice_reference['reason'] = 'first_frame'
             elif continue_anchor is not None:
                 voice_reference['reason'] = 'anchor'
@@ -553,7 +565,7 @@ def _run(args):
     manifest = json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8'))
     if continuation is not None:
         from .two_pass import plan as continuation_plan
-        validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None)
+        validate_route(task=profile['engine'].get('task', 't2va'), anchor=anchored)
         planned = continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps)
         continuation_first = planned['first']
         continuation = usable_continuation(continuation, canvas, None if active_loras else manifest, planned)
@@ -590,6 +602,8 @@ def _run(args):
         report['audio_context'] = continuation['audio_context']
         if continue_anchor is not None:
             report['continue_anchor'] = continuation['anchor']
+        if pictures:
+            report['continue_pictures'] = len(pictures)
     if first_frame is not None:
         report['first_frame_reference'] = first_frame
     if voice_reference is not None:
@@ -651,11 +665,13 @@ def _run(args):
                         path = destination.with_suffix('.first-sound.wav')
                         path.write_bytes(sound)
                         from .media_request import digest
-                        media = dict(media, version=1, references=[dict(kind='audio', path=str(path),
-                                     sha256=digest(path), bytes=path.stat().st_size)])
-                        validate_route(task=getattr(args, 'task', None) or 't2va', sound=True, two_pass=two_pass,
+                        # After the cast's pictures: the sound is the last reference.
+                        media = dict(media, version=1, references=[*media.get('references', []), dict(kind='audio',
+                                     path=str(path), sha256=digest(path), bytes=path.stat().st_size)])
+                        validate_route(task=getattr(args, 'task', None) or ('ref2va' if anchored else 't2va'), sound=True,
+                                       anchor=anchored, two_pass=two_pass,
                                        preview=preview, refine_from=getattr(args, 'refine_from', None), media=media)
-                        continuation['sound'] = media['references'][0]
+                        continuation['sound'] = media['references'][-1]
                         args.task = profile['engine']['task'] = task_for(media)
                         voice_reference['used'] = True
             resource_identity = local_identity(hardware, args.cache)
@@ -822,7 +838,7 @@ def _run(args):
                                           staged=bool(preview or refine_source))
             report['sampling_plan'] = sampling_plan
             if continuation is not None:
-                validate_route(task=profile['engine'].get('task', 't2va'), anchor=continue_anchor is not None,
+                validate_route(task=profile['engine'].get('task', 't2va'), anchor=anchored,
                                **(dict(sound=True, media=media) if voice_reference and voice_reference['used'] else {}))
                 continuation = usable_continuation(continuation, canvas,
                     json.loads((args.cache / 'manifest.json').read_text(encoding='utf-8')), sampling_plan)
@@ -948,7 +964,7 @@ def _run(args):
                 if continuation is not None:
                     from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK
                     selected['engine'] = dict(selected['engine'],
-                        adaln_task=ANCHOR_ADALN_TASK if continue_anchor is not None else ADALN_TASK)
+                        adaln_task=ANCHOR_ADALN_TASK if anchored else ADALN_TASK)
                 request.update(engine_options=selected['engine'], decoder_options=selected['decoder'],
                                ram_budget_bytes=round(selected['inference_ram_budget_gb'] * 1e9),
                                ram_budget_is_estimate=ram_budget_is_estimate(args),

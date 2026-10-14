@@ -106,6 +106,28 @@ def resolve_assets(serialized, input_directory):
     return result
 
 
+def continued_assets(serialized):
+    """The panel rows a continued part uses: enabled image references in panel order, at most three.
+
+    Its frames and sounds stay in the panel for parts that start fresh, but never reach a continued part's checks."""
+    from .continuation import PICTURES_MAX
+    try:
+        rows = json.loads(serialized)
+    except (TypeError, ValueError):
+        return '[]'
+    kept = []
+    for row in rows if isinstance(rows, list) else ():
+        if (isinstance(row, dict) and row.get('enabled', True) is True and row.get('role') == 'reference'
+                and isinstance(row.get('file'), str)):
+            try:
+                image = media_kind(row['file']) == 'image'
+            except ValueError:
+                image = False
+            if image and len(kept) < PICTURES_MAX:
+                kept.append(dict(file=row['file'], role='reference'))
+    return json.dumps(kept)
+
+
 def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None, **images):
     """Keep connected IMAGE/AUDIO values native until request input export."""
     result = dict(assets)
