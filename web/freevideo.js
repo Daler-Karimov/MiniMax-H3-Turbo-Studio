@@ -322,17 +322,20 @@ function mediaPanel(node, mount = null) {
     let uploading = false;
     serialized.serializeValue = () => {
         if (node.isUploading) throw new Error(text("Wait for media uploads to finish before running", "请等待素材上传完成后再生成"));
-        return serialized.value;
+        // The run takes only what it uses; the editing data of a picture stays in the workflow.
+        try { return JSON.stringify(read().map(({file, role, enabled}) => ({file, role, enabled}))); } catch { return serialized.value; }
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;
         uploading = true; node.isUploading = true; add.disabled = true; addAudio.disabled = true;
         try {
             for (const [index, file] of Array.from(files).entries()) {
-                const rows = read(); if (rows.length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
+                if (read().length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 const kind = mediaKind(file.name);
                 message(`${text("Uploading", "正在上传")} ${index + 1}/${files.length} · ${file.name}`);
                 const result = await uploadOne(file);
+                // Read again after the wait: another place may have changed the list meanwhile.
+                const rows = read(); if (rows.length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 rows.push({file: result.file, role: kind === "image" ? role.value : "reference", enabled: true}); update(rows);
             }
         } catch (error) { message(error.message, true); }

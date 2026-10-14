@@ -1,5 +1,6 @@
 // The editor owns its generation controls; progress can use the optional component.
 import {createFirstFrameSwitch} from './editor_first_frame.js';
+import {createEditorReferences} from './editor_references.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
@@ -12,6 +13,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     host.append(hint, input, generate, cancel, resume);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
     input.after(firstFrame.element);
+    // Reference pictures for a part that starts fresh: thumbnails and a small "+" before the description.
+    const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: actions.error, notify: actions.references.notify}) : null;
+    if (references) input.before(references.element);
     let status = null, serial = 0, disposed = false, submitting = false, previewSelection = null, estimateCache = null;
     async function render() {
         if (disposed) return;
@@ -35,6 +39,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
                 + (remaining != null ? ' · ' + timeEstimate(remaining, t) : '');
         }
         firstFrame.update(busy);
+        references?.update(busy, busy ? undefined : !!actions.references.visible());
         generate.textContent = t('Generate', '生成');
         generate.disabled = busy || !!previewSelection || !selected || !actions.canGenerate?.(input.value);
         generate.title = '';
@@ -71,7 +76,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, getText() { return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; unsubscribe(); }};
+        dispose() { disposed = true; ++serial; unsubscribe(); references?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.

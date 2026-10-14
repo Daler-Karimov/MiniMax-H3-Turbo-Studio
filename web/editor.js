@@ -231,6 +231,19 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const start = Math.min(...clips.map(clip => clip.start));
         return {start, frames: Math.max(...clips.map(clip => clip.start + clip.frames)) - start};
     }
+    // Whether the part about to be made starts fresh instead of continuing footage: only then can pictures guide it.
+    function startsFresh() {
+        const range = selectionRange(); if (!range) return false;
+        try {
+            const selected = selectionClips();
+            const planned = selected.length && selected.every(clip => clip.pending && !clip.source)
+                ? model.startAttempt(state.record, selected.map(clip => clip.id), 'x')
+                : model.planRange(state.record, {...range, target: 'both', text: 'x', maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds});
+            const ids = planned.tracks[0].clips.filter(clip => clip.start >= range.start && clip.start < range.start + range.frames
+                && clip.pending && !['queued', 'running'].includes(clip.pending)).map(clip => clip.id);
+            return ids.length > 0 && model.generationBefore(model.prepare(planned, ids), ids).some(before => before == null);
+        } catch (value) { if (value instanceof model.EditError) return false; throw value; }
+    }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
     function completeSources() {
         return store.getSources(model.references(state.record).map(sourceKey)).then(() => { player.refresh(); tracks?.refresh?.(); });
@@ -252,8 +265,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!value.node || !value.prompt?.[value.node]) throw new Error('missing_node');
         const inputs = value.prompt[value.node].inputs;
         Object.assign(inputs, state.record.settings || {}, capability.generationSize || generationSize(state.record));
-        // Tonight's new content uses text. References remain in the creative panel.
-        delete inputs.media; delete inputs.continue_from; delete inputs.continue_to;
+        // The media panel's pictures guide a part that starts fresh (generate() drops them when every part continues footage);
+        // without a panel to show them they stay out of the request.
+        if (!panel.references?.available()) delete inputs.media;
+        delete inputs.continue_from; delete inputs.continue_to;
         return {node: String(value.node), prompt: value.prompt, ...(value.extra_data ? {extra_data: value.extra_data} : {}), ...(api.clientId ? {client_id: api.clientId} : {})};
     }
     function pinStoppedJob(record, ids, job) {
@@ -477,6 +492,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return before || model.rangeParts(state.record, {...range, ...capability}).length > 1;
         },
+        // Pictures that guide a new part: the creative panel's media rows, shown while the part starts fresh.
+        references: panel.references ? {source: panel.references, notify, size: () => capability.generationSize || generationSize(state.record),
+            visible: () => store.generationAvailable && actions.supportedSelection() && startsFresh()} : null,
         setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
@@ -506,6 +524,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 submittedSelection = state.select({kind: 'clip', ids}); await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
+                // Pictures guide parts that start fresh; a request whose parts all continue footage carries none.
+                if (!request.blocks.some(block => !block.after)) delete frozen.prompt[frozen.node].inputs.media;
                 const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
                 // Parts made at another size than the edit's have that size's limit.
@@ -780,6 +800,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (dismissPopup(event)) return;
             if (tracks?.cancelGesture()) { event.preventDefault(); return; }
             if (document.fullscreenElement) { event.preventDefault(); document.exitFullscreen().catch(() => {}); return; }
+        }
+        if (inside && event.target.closest?.('.fv-ed-refs')) {
+            // The reference pictures' own buttons and menu keep their keys: no timeline, audio or transport shortcut.
+            for (let target = event.target; target && target !== element; target = target.parentNode) target.onkeydown?.(event);
+            return;
         }
         if (handleAudioShortcut(event, state, {t, error})) return;
         if (!inside && transportControls.keyboard(event, {ready: !initializing})) return;
