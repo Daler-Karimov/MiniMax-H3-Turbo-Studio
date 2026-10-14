@@ -26,7 +26,7 @@ class Element {
 
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
-    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, rememberedView = null;
+    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, doneNotifyStarts = 0, rememberedView = null;
     let progressView, progressOptions, realProgressFactory;
     const app = {
         registerExtension(extension) { extensions.push(extension); },
@@ -62,6 +62,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         createProgressConnection: () => ({start() {}, refresh() {}, reset() {}}),
         notifyCompatibility: async () => { compatibilityChecks++; },
         startUpdateChecks: () => { updateChecks++; },
+        startDoneNotify: () => { doneNotifyStarts++; }, askDesktopPermission: () => {},
         installNavigation: callback => installed.push(callback),
         refreshNavigation: () => refreshed++, preferredView: () => rememberedView,
         attachReferencePicker() {}, referenceItems: () => [], syncReferencePrompt() {},
@@ -90,6 +91,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { createProgressConnection } from './progress_connection.js';", 'const {createProgressConnection} = globalThis.__freevideoEntryTest;')
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
+            .replace("import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';", 'const {startDoneNotify,askDesktopPermission} = globalThis.__freevideoEntryTest; const DESKTOP_SETTING = "FreeVideo.DoneNotify.Desktop";')
             .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs} = globalThis.__freevideoEntryTest;')
             .replace("import { outputDownloadURL } from './output_download.js';", 'const {outputDownloadURL} = globalThis.__freevideoEntryTest;')
             .replace("import { shareButton } from './share.js';", 'const {shareButton} = globalThis.__freevideoEntryTest;')
@@ -110,6 +112,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(installed.length, 1, 'the Create / Nodes navigation must be installed');
         assert.equal(compatibilityChecks, 1);
         assert.equal(updateChecks, 1);
+        assert.equal(doneNotifyStarts, 1);
 
         class GenerateNode {
             constructor() {

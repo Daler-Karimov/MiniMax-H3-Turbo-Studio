@@ -7,6 +7,7 @@ import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText
 import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
+import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
@@ -619,13 +620,17 @@ const progressConnection = createProgressConnection(api, message => {
     window.dispatchEvent(new CustomEvent('freevideo-progress', {detail: message}));
 });
 
+const desktopNoticeEnabled = () => (app.extensionManager?.setting?.get?.(DESKTOP_SETTING) ?? app.ui?.settings?.getSettingValue?.(DESKTOP_SETTING)) === true;
+
 app.registerExtension({
     name: "FreeVideo.UnifiedMedia",
+    settings: [{id: DESKTOP_SETTING, name: text('Desktop notification when done', '完成时发桌面通知'),
+        type: 'boolean', defaultValue: false, onChange: value => { if (value) askDesktopPermission(); }}],
     beforeConfigureGraph() { configuringGraph = true; configuration++; },
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
         for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api))],
-            ['updates', startUpdateChecks]]) {
+            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled})]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));
