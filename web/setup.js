@@ -109,7 +109,10 @@ export async function openSetup() {
     const reserveHelp = note(t('Keep this much additional VRAM free. Applies to new requests; current usage is already accounted for.', '额外保留的空闲显存。对后续请求生效；其他程序当前的占用已单独计入。'));
     resources.append(autoLabel, reserveLabel, reserveHelp, saveReserve, reserveStatus);
     advanced.append(resources);
-    reserveAuto.onchange = () => { reserve.disabled = reserveAuto.checked; };
+    const clearReserveStatus = () => { reserveStatus.textContent = ''; reserveStatus.className = 'fv-muted'; };
+    reserveStatus.setAttribute('aria-live', 'polite');
+    reserve.oninput = clearReserveStatus;
+    reserveAuto.onchange = () => { reserve.disabled = reserveAuto.checked; clearReserveStatus(); };
     // Placement calibration. A measurement, not a setting: it changes nothing
     // about this installation, it reports what this machine measures so the
     // choices that are currently limited to one platform can be settled.
@@ -192,20 +195,29 @@ export async function openSetup() {
             render(await request('calibrate', {repeats: Number(calibrateRepeats.value)}));
             poll();
             calibration.open = true;
-            calibrateStatus.textContent = t('Running. Progress is below; closing this panel keeps it running.',
-                                            '正在运行。进度见下方；关闭面板不会中断。');
+            calibrateStatus.textContent = t('Running. Closing this panel keeps it running.',
+                                            '正在运行，关闭面板不会中断。');
+            installation.open = true;
+            cancel.scrollIntoView({block: 'center'});
         } catch (error) {
             calibrateStatus.className = 'fv-failure';
             calibrateStatus.textContent = failureText(error.message);
         } finally { calibrateButton.disabled = false; }
     };
     saveReserve.onclick = async () => {
-        if (!reserveAuto.checked && (!reserve.value || !reserve.checkValidity())) { reserve.reportValidity(); return; }
+        clearReserveStatus();
+        if (!reserveAuto.checked && !reserve.value) {
+            reserveStatus.className = 'fv-failure';
+            reserveStatus.textContent = t('Enter a value.', '请输入数值。');
+            reserve.focus();
+            return;
+        }
+        if (!reserveAuto.checked && !reserve.checkValidity()) { reserve.reportValidity(); return; }
         saveReserve.disabled = true;
         try {
             showResources(await request('resources', {[reserveField]: reserveAuto.checked ? null : Number(reserve.value)}));
             reserveStatus.textContent = t('Saved · applies to the next request', '已保存 · 下次生成生效');
-        } catch (error) { reserveStatus.textContent = failureText(error.message); }
+        } catch (error) { reserveStatus.className = 'fv-failure'; reserveStatus.textContent = failureText(error.message); }
         finally { saveReserve.disabled = false; }
     };
     function showDownloads(value) {
@@ -314,6 +326,7 @@ export async function openSetup() {
     }
     function render(task) {
         busy = Boolean(task.busy); ready = Boolean(task.ready) || ready && task.status !== 'failed';
+        cancel.textContent = task.action === 'calibrate' ? t('Stop', '停止') : t('Stop setup', '停止安装');
         inputs.hidden = busy; plan.hidden = busy;
         if (task.plan_id && task.plan_id !== lastPlanId) {
             lastPlanId = task.plan_id; planErrors = Boolean(task.plan?.errors?.length); planStale = false;
