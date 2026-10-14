@@ -61,7 +61,7 @@ class Worker:
 
 
 class Service:
-    def __init__(self, installation, input_directory, *, video_busy=None, idle_seconds=180.):
+    def __init__(self, installation, input_directory, *, video_busy=None, idle_seconds=45.):
         self.installation = installation
         self.input_directory = input_directory
         self.video_busy = video_busy or self._video_busy

@@ -75,7 +75,7 @@ def load_runner(pack_dir, device, *, progress=None):
     return ImageRunner(pack_dir, device=device, progress=progress)
 
 
-def serve(pack_dir, *, device='cuda', idle_seconds=180., stream=None, output=None, factory=None):
+def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None, factory=None):
     stream = sys.stdin if stream is None else stream
     output = sys.stdout if output is None else output
     factory = factory or load_runner
@@ -147,7 +147,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('pack_dir', type=Path)
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--idle-seconds', type=float, default=180.)
+    parser.add_argument('--idle-seconds', type=float, default=45.)
     args = parser.parse_args()
     if not 0 < args.idle_seconds < float('inf'):
         parser.error('--idle-seconds must be positive and finite')
