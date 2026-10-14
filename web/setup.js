@@ -161,8 +161,10 @@ export async function openSetup() {
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     document.body.append(dialog); dialog.showModal();
     let savedFolders = "", savedMissing = false;
-    let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false;
-    const fail = error => { installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
+    let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false, waitSince;
+    // A click names what is happening at once, before the server has answered.
+    const doing = (en, zh) => { waitSince ??= Date.now(); state.className = ''; state.textContent = t(en, zh); };
+    const fail = error => { waitSince = undefined; installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
     const request = async (action, value) => {
         const response = await api.fetchApi("/freevideo/setup" + (action ? "/" + action : root.value ? '?root='+encodeURIComponent(root.value) : ""), action ? {
             method: "POST", headers: { "Content-Type": "application/json", "X-FreeVideo-Setup": token }, body: JSON.stringify(value || {}),
@@ -323,7 +325,8 @@ export async function openSetup() {
         if (value.errors?.length) { const e = node("p", value.errors.map(failureText).join("\n")); e.className = "fv-failure"; plan.append(e); }
     }
     function render(task) {
-        busy = Boolean(task.busy); ready = Boolean(task.ready) || ready && task.status !== 'failed';
+        busy = Boolean(task.busy); if (!busy) waitSince = undefined; else waitSince ??= Date.now();
+        ready = Boolean(task.ready) || ready && task.status !== 'failed';
         cancel.textContent = task.action === 'calibrate' ? t('Stop', '停止') : t('Stop setup', '停止安装');
         inputs.hidden = busy; plan.hidden = busy;
         if (task.plan_id && task.plan_id !== lastPlanId) {
@@ -342,8 +345,8 @@ export async function openSetup() {
         overallText.textContent = phases.total > 0 ? `${t("Overall", "整体进度")} · ${phases.done} / ${phases.total} ${t("stages complete", "阶段已完成")} · ${Math.floor(100 * phases.done / phases.total)}%` : t("Preparing installation plan…", "正在准备安装计划…");
         bar.hidden = !busy; bar.max = valid ? p.total : 1; bar.value = valid ? p.done : 0;
         const amount = n => p.total >= 2 ** 30 ? gib(n) : `${(n / 2 ** 20).toFixed(1)} MiB`;
-        const count = valid ? `${Math.floor(100 * p.done / p.total)}% · ${p.unit === "bytes" ? `${amount(p.done)} / ${amount(p.total)}` : `${p.done} / ${p.total}`}` : t("Measuring progress…", "正在获取进度…");
-        const eta = valid && Number.isFinite(p.remaining_seconds) && p.remaining_seconds > 0 ? `${p.unit === "bytes" ? t("File ETA", "本文件预计剩余") : t("ETA", "预计剩余")} ~${Math.ceil(p.remaining_seconds)} s` : t("Estimating remaining time…", "正在估算剩余时间…");
+        const count = valid ? `${Math.floor(100 * p.done / p.total)}% · ${p.unit === "bytes" ? `${amount(p.done)} / ${amount(p.total)}` : `${p.done} / ${p.total}`}` : t("Preparing…", "正在准备…");
+        const eta = valid && Number.isFinite(p.remaining_seconds) && p.remaining_seconds > 0 ? `${p.unit === "bytes" ? t("File ETA", "本文件预计剩余") : t("ETA", "预计剩余")} ~${Math.ceil(p.remaining_seconds)} s` : valid ? t("Estimating remaining time…", "正在估算剩余时间…") : `${t("Elapsed", "已用时")} ${Math.floor((Date.now() - (waitSince || Date.now())) / 1000)} s`;
         counters.textContent = busy ? `${count} · ${eta}` : "";
         const others = (task.active_tasks || []).slice(1).map(p => p.label).filter(Boolean);
         const progressDetail = (p.detail || '').replace(/^Keeping the original file: /, t('Keeping the original file: ', '正在保留原文件：'));
@@ -375,16 +378,18 @@ export async function openSetup() {
     }
     saveFolders.onclick = async () => {
         invalidate(true); busy = true; controls();
+        const before = [state.textContent, state.className]; doing('Saving model folders…', '正在保存模型目录…');
         try { await saveModelFolders(); }
         catch (error) { savedFolders = ''; savedMissing = false; folderStatus.textContent = failureText(error.message); folderStatus.className = 'fv-failure'; }
-        finally { busy = false; controls(); }
+        finally { busy = false; waitSince = undefined; [state.textContent, state.className] = before; controls(); }
     };
     inspect.onclick = async () => {
-        invalidate(); busy = true; controls();
+        invalidate(); busy = true; controls(); doing('Checking installation…', '正在检查安装…');
         try { await saveModelFolders(); render(await request("inspect", {root: root.value, extra_libraries: extra.value.split("\n").map(s => s.trim()).filter(Boolean), copy: copy.checked, sampling_caches: samplingCaches.checked})); poll(); }
-        catch (error) { busy = false; controls(); fail(error); }
+        catch (error) { busy = false; waitSince = undefined; controls(); fail(error); }
     };
     install.onclick = async () => {
+        doing('Starting installation…', '正在开始安装…');
         try { render(await request("install", {plan_id: planId, accept_licenses: accept.checked})); invalidate(); poll(); }
         catch (error) { fail(error); }
     };
@@ -394,6 +399,7 @@ export async function openSetup() {
     };
     cancel.onclick = async () => { try { render(await request("cancel")); poll(); } catch (error) { fail(error); } };
     dialog.onclose = () => { clearTimeout(pollTimer); for (const dispose of motions) dispose(); dialog.remove(); if (current === dialog) current = undefined; };
+    doing('Reading installation settings…', '正在读取安装设置…');
     try {
         const info = await request(); token = info.discovery.token; root.value = info.discovery.root;
         extra.value = (info.discovery.extra_libraries || []).join("\n");
