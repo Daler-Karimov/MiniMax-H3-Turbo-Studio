@@ -88,6 +88,11 @@
 .fv-ed-refs[hidden],.fv-ed-ref-menu[hidden]{display:none}
 .fv-ed-ref-chips{display:flex;align-items:center;gap:6px;max-width:min(240px,32vw);overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--fv-border) transparent;padding:1px}
 .fv-ed-ref-chips:empty{display:none}
+/* A strip that scrolls fades at the hidden end(s); one that fits is untouched. */
+@property --fv-ref-fade-start{syntax:'<length>';inherits:false;initial-value:0px}
+@property --fv-ref-fade-end{syntax:'<length>';inherits:false;initial-value:0px}
+@keyframes fv-ref-fade{from{--fv-ref-fade-start:0px;--fv-ref-fade-end:16px}1%,99%{--fv-ref-fade-start:16px;--fv-ref-fade-end:16px}to{--fv-ref-fade-start:16px;--fv-ref-fade-end:0px}}
+@supports (animation-timeline:scroll()){.fv-ed-ref-chips{animation:fv-ref-fade linear both;animation-timeline:scroll(self inline);mask-image:linear-gradient(90deg,transparent,#000 var(--fv-ref-fade-start),#000 calc(100% - var(--fv-ref-fade-end)),transparent)}}
 .fv-ed-ref-add,.fv-ed-ref-chip{flex:none;width:30px;height:30px;padding:0;border:1px solid var(--fv-border);border-radius:8px;background:transparent;color:var(--fv-muted);font:16px/1 var(--fv-font);cursor:pointer;overflow:hidden;position:relative}
 .fv-ed-ref-chip{border-color:transparent;background:var(--fv-bg)}
 .fv-ed-ref-add:not(:disabled):not([aria-disabled=true]):hover,.fv-ed-ref-add[aria-expanded=true],.fv-ed-ref-chip:not(:disabled):not([aria-disabled=true]):hover{border-color:var(--fv-accent);color:var(--fv-ink)}
