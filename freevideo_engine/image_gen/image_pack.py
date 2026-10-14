@@ -136,7 +136,9 @@ def validate_catalog(spec):
                     or not re.fullmatch('[0-9a-f]{64}', row['sha256'])
                     or row['component'] not in ('dit', 'text_encoder', 'vae', 'text_encoder_config', 'processor')):
                 raise PackError('invalid_catalog')
-            if {s['id'] for s in row['sources']} != {'official', 'modelscope'} or len(row['sources']) != 2:
+            ids = [s['id'] for s in row['sources']]
+            if (len(set(ids)) != len(ids) or not {'official', 'modelscope'} <= set(ids)
+                    or not set(ids) <= {'official', 'modelscope', 'hf-mirror'}):
                 raise PackError('invalid_catalog')
             for source in row['sources']:
                 url = urlsplit(source['url'])
@@ -317,9 +319,9 @@ def _download_plan(engine_root=None):
     # that measured ranking until an image-specific probe is available.
     if FAMILY not in plan['sources']:
         inherited = plan['sources'].get('vdn-models', [])
-        plan['sources'][FAMILY] = [dict(r) for r in inherited if r['id'] in ('official', 'modelscope')]
+        plan['sources'][FAMILY] = [dict(r) for r in inherited if r['id'] in ('official', 'modelscope', 'hf-mirror')]
     known = {r['id'] for r in plan['sources'][FAMILY]}
-    plan['sources'][FAMILY] += [dict(id=s) for s in ('official', 'modelscope') if s not in known]
+    plan['sources'][FAMILY] += [dict(id=s) for s in ('official', 'hf-mirror', 'modelscope') if s not in known]
     return plan
 
 
@@ -345,7 +347,7 @@ def _transfer(plan, row, path, progress, check, background=None):
             background.wait()
         settings = current(plan)
         # An explicit choice supersedes affinity to the old partial's source.
-        plan['manual_source_switch'] = settings['source'] in ('official', 'modelscope')
+        plan['manual_source_switch'] = settings['source'] in ('official', 'hf-mirror', 'modelscope')
         def resource_check():
             check()
             latest = current(plan)
