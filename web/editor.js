@@ -797,8 +797,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             } catch (value) {
                 if (epoch === projectEpoch) {
                     if (ids.length) state.settle(record => model.settle(record, ids, 'draft'));
-                    failures.submission(value, frozen, text);
-                    submissionFailure = JSON.stringify(state.selection); genbar?.update(null);
+                    // A length limit is the user's to change and is said once in the notice; there is nothing to report.
+                    if (!['chain_too_long', 'chain_part_too_short'].includes(value?.code)) {
+                        failures.submission(value, frozen, text); submissionFailure = JSON.stringify(state.selection);
+                    }
+                    genbar?.update(null);
                 }
                 throw value;
             } finally { sendingRanges.delete(range); for (const id of ids) sending.delete(id); if (disposed && ids.length) queue.enqueue(state.record); generationBusy = false; finishGeneration?.(); generationDone = null; finishGeneration = null; updateTop(); updateTransport(); startHeld(); }
