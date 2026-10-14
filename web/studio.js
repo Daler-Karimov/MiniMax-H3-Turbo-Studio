@@ -881,6 +881,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         },
     }));
     const queueController = studioQueues.get(node);
+    let chainWasActive = false;
     chainController = createStudioChain({api, node, onProgress: (message, chain) => {
             const position = chainPosition(chain, message);
             const joining = readChainResult(chain).joining, waiting = chain.state === 'queued' && message.phase === 'prepare';
@@ -892,6 +893,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
         },
         onState: chain => {
             const active = chainController.active, position = chainPosition(chain), outcome = readChainResult(chain);
+            if (active && !chainWasActive) {
+                failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
+                lastQueueError = null; status.textContent = ''; status.dataset.error = 'false';
+            }
+            chainWasActive = active;
             busy = active || Boolean(queueState?.running || queueState?.pending.length); queued = chain?.state === 'queued';
             chainLine.hidden = !active;
             chainLine.textContent = outcome?.joining ? t('Joining the parts.', '正在接合各段。')
@@ -976,6 +982,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         loop_stopped: t('The last request did not complete. The loop has stopped.', '上一条任务未完成，循环已停止。'),
         linked_seed: t('Use the seed in this panel for batch or loop generation.', '批量和循环生成需使用面板内的种子，请先断开种子输入的连接。'),
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
+        chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
+        chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
     }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || error?.message || String(error));
     let lastQueueError = null;
     function showQueueError(error) {
@@ -989,6 +997,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
             ? t('Submission failed. See the details below.', '提交失败，具体原因见下方。')
             : extensionCause(error) ? t('A browser extension is interfering with FreeVideo. See details below.', '浏览器扩展干扰了 FreeVideo，详见下方。')
             : queueError(error);
+        // Recoverable chain actions need one visible sentence, not a second error card.
+        if (error?.action) { status.scrollIntoView({block: 'nearest'}); return; }
         const identity = error?.schema === 'freevideo.error-report' ? error : error?.message || error;
         if (lastQueueError === identity) return;
         lastQueueError = identity;
@@ -1003,12 +1013,18 @@ export function openStudio(node, {extendFrom = null} = {}) {
         // preference so returning to a short video and reloading show the same choice.
         runMode = multiple || extension.source ? 'single'
             : ['single', 'batch', 'loop'].includes(node.properties?.freevideo_run_mode) ? node.properties.freevideo_run_mode : runMode;
+        const chain = chainController?.state, position = chainPosition(chain);
+        const chainReason = !chainController?.active ? '' : readChainResult(chain)?.joining
+            ? t('Joining parts…', '正在拼接…')
+            : chain?.state === 'queued' ? t('Queued…', '排队中…')
+            : t(`Generating part ${position.index + 1}…`, `正在生成第 ${position.index + 1} 段…`);
         generate.disabled = submitting || chainController?.active || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
         generate.textContent = submitting ? t('Adding…', '正在添加…')
-            : runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 条任务`)
+            : chainReason || (runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 条任务`)
             : runMode === 'loop' ? (queueState?.looping ? t('Looping', '循环中') : t('Start loop', '开始循环'))
             : busy ? t('Add to queue', '添加到队列')
-            : previewFirst.checked && !previewFirst.disabled ? t('Generate preview', '生成预览') : t('Generate video', '生成视频');
+            : previewFirst.checked && !previewFirst.disabled ? t('Generate preview', '生成预览') : t('Generate video', '生成视频'));
+        generate.title = (lengthControl.blocked ? lengthControl.message : submitting ? t('Adding…', '正在添加…') : '');
         for (const b of modeButtons) b.setAttribute('aria-pressed', String(b.dataset.mode === runMode));
         for (const b of modeButtons) if (b.dataset.mode !== 'single') b.disabled = multiple;
         countField.hidden = runMode !== 'batch'; count.disabled = runMode !== 'batch';
@@ -1024,7 +1040,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     function updateExtendButton() {
         const button = links.querySelector('.fv-action-extend');
-        if (button) button.disabled = busy || queued || capturing || Boolean(chainController?.active);
+        if (button) {
+            button.disabled = capturing;
+            button.title = capturing ? t('Adding…', '正在添加…') : '';
+        }
     }
     function renderQueue(state) {
         if (disposed) return;
@@ -1227,7 +1246,14 @@ export function openStudio(node, {extendFrom = null} = {}) {
         busy = cancelling = false; activePrompt = null; updateRunButton(); hideProgress();
         failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null; status.dataset.error = 'false'; status.textContent = t('Cancelled', '已取消');
     });
-    const escape = e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); generate.click(); } }; dialog.addEventListener('keydown', escape);
+    const escape = e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (generate.disabled) {
+            generate.scrollIntoView({block: 'center'});
+            return;
+        }
+        generate.click();
+    } }; dialog.addEventListener('keydown', escape);
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     dialog.onclose = () => { disposed = true; for (const f of cleanup) f(); stage.querySelector('video')?.pause(); dialog.remove(); if (current?.dialog === dialog) { current = null; viewChanged('nodes', node); } };
     capabilityView = createCapabilityView({node, api, t, getState: () => ({ratio,

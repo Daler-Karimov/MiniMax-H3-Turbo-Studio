@@ -52,16 +52,16 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
     function clearPolls() { for (const id of timers) clearTimeout(id); timers.clear(); }
     function refresh() { clearPolls(); return poller?.poll(); }
     const active = () => submitting || activeStates.has(chain?.state) || chain?.output_state === 'joining';
-    async function json(path, options) {
+    async function json(path, options, allowMissing = false) {
         const response = await api.fetchApi(path, options);
-        if (response.status === 404) return null;
-        const value = await response.json();
+        if (response.status === 404 && allowMissing) return null;
+        const value = await response.json().catch(() => ({}));
         if (!response.ok) throw Object.assign(new Error(value.error || 'chain_request_failed'), {code: value.code, status: response.status,
             ...(value.error_zh ? {said: [value.error, value.error_zh]} : {})});
         return value;
     }
     function progress(message = {}, fresh = false) {
-        if (!chain || disposed) return;
+        if (!chain || disposed || (!activeStates.has(chain.state) && chain.output_state !== 'joining')) return;
         if (message.chain?.id && message.chain.id !== chain.id) return;
         const position = chainPosition(chain, message);
         if (position.index !== lastIndex) { lastMessage = {}; lastIndex = position.index; }
@@ -122,16 +122,47 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
         const version = epoch;
         try {
             const known = node.properties?.[CHAIN_PROPERTY]?.id;
-            const reply = await json('/freevideo/chains');
+            const reply = await json('/freevideo/chains', undefined, true);
             if (disposed || version !== epoch || chain) return;
             const found = reply?.chains?.find(row => String(row.node) === String(node.id) && (known ? row.id === known
                 : activeStates.has(row.state) && row.client_id && row.client_id === api.clientId));
             if (!found) return;
-            const value = (await json(chainRoute(found.id)))?.chain;
+            const value = (await json(chainRoute(found.id), undefined, true))?.chain;
             if (disposed || version !== epoch || chain || !value) return;
             adopt(value);
             if (node.freevideoProgress?.chain?.id === value.id) progress(node.freevideoProgress);
         } catch {} // Recovery must never enqueue a request or block ordinary generation.
+    }
+    function acceptAction(value, restarted) {
+        epoch++; poller?.dispose(); clearPolls();
+        if (restarted) {
+            previous = {}; lastMessage = {}; lastIndex = -1; corrected = false; etaAt = 0;
+            delivered = errorShown = null;
+        }
+        deliver(value, restarted); if (active()) watch();
+    }
+    async function changeState(action, body) {
+        const id = chain.id, version = epoch;
+        try {
+            const value = (await json(chainRoute(id, action), post(body)))?.chain;
+            if (!value?.id) throw new Error('chain_missing');
+            if (version === epoch && !disposed) acceptAction(value, action === 'resume');
+        } catch (cause) {
+            // The action may have reached the server even if its reply failed.
+            // Read directly: a stopped chain has no active poller to refresh.
+            if (version === epoch && !disposed) {
+                try {
+                    const latest = (await json(chainRoute(id), {cache: 'no-store'}))?.chain;
+                    if (latest?.id === id && version === epoch && !disposed) {
+                        const confirmed = action === 'cancel' ? ['cancelling', 'cancelled'].includes(latest.state)
+                            : ['queued', 'running'].includes(latest.state) || (latest.state === 'done' && latest.output_state !== 'failed');
+                        acceptAction(latest, action === 'resume' && confirmed);
+                        if (confirmed) return;
+                    }
+                } catch {} // Keep the last known state; the action still fails visibly.
+            }
+            throw Object.assign(new Error(`chain_${action}_failed`), {cause, action, status: cause.status});
+        }
     }
     recover();
     return {
@@ -142,7 +173,7 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
             try {
                 const body = buildChainRequest(options, {node: node.id, prompt: snapshot.output,
                     extra_data: {extra_pnginfo: {workflow: snapshot.workflow || {}}}, ...(api.clientId ? {client_id: api.clientId} : {})});
-                const value = (await json(chainRoute(), post(body)))?.chain;
+                const value = (await json(chainRoute(), post(body), true))?.chain;
                 if (!value) return null;
                 if (!value.id) throw new Error('chain_missing');
                 const inputs = snapshot.output[String(node.id)].inputs;
@@ -153,15 +184,11 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
         refresh,
         async cancel() {
             if (!chain) return;
-            const id = chain.id, version = epoch;
-            const value = (await json(chainRoute(id, 'cancel'), post({})))?.chain;
-            if (version === epoch && !disposed && value) { epoch++; poller?.dispose(); clearPolls(); deliver(value); if (active()) watch(); }
+            await changeState('cancel', {});
         },
         async resume() {
             if (!chain || active()) return;
-            const id = chain.id, version = epoch;
-            const value = (await json(chainRoute(id, 'resume'), post({client_id: api.clientId})))?.chain;
-            if (version === epoch && !disposed && value) { epoch++; poller?.dispose(); clearPolls(); previous = {}; corrected = false; etaAt = 0; delivered = errorShown = null; deliver(value, true); if (active()) watch(); }
+            await changeState('resume', {client_id: api.clientId});
         },
         progress(message) { if (!chain || message.chain?.id !== chain.id) return false; progress(message);
             if (message.result || ['complete', 'failed', 'cancelled'].includes(message.phase)) refresh(); return true; },
