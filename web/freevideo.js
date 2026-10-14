@@ -20,6 +20,7 @@ import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
 import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
+import { createCastLibrary } from './cast_library.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -130,6 +131,8 @@ function mediaPanel(node, mount = null) {
     }
     role.value = 'reference';
     toolbar.append(add, generateImage, addAudio, role, picker, audioPicker); panel.append(toolbar, mode, note, audioHelp, connections, cards);
+    const cast = createCastLibrary({api, text, viewURL, uploadOne});
+    panel.prepend(cast.element);
     const read = () => {
         const rows = JSON.parse(serialized.value || "[]");
         if (!Array.isArray(rows) || rows.length > 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
@@ -349,7 +352,7 @@ function mediaPanel(node, mount = null) {
     panel.ondragover = event => { event.preventDefault(); event.stopPropagation(); };
     panel.ondrop = event => { event.preventDefault(); event.stopPropagation(); upload(event.dataTransfer.files); };
     panel.onpaste = event => { if (event.clipboardData?.files.length) { event.preventDefault(); event.stopPropagation(); upload(event.clipboardData.files); } };
-    const dispose = () => window.removeEventListener('freevideo-media', changed);
+    const dispose = () => { window.removeEventListener('freevideo-media', changed); cast.destroy(); };
     if (mount) { mount.append(panel); render(); return dispose; }
     node.freevideoCreateMediaEditor = target => mediaPanel(node, target);
     node.addDOMWidget("freevideo_media", "freevideo_media", panel, {serialize: false, getMinHeight: () => 300, getMaxHeight: () => 520});

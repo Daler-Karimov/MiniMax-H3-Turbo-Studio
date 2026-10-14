@@ -27,6 +27,7 @@ class Element {
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
     let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, doneNotifyStarts = 0, rememberedView = null;
+    const casts = [];
     let progressView, progressOptions, realProgressFactory;
     const app = {
         registerExtension(extension) { extensions.push(extension); },
@@ -37,6 +38,10 @@ test('main browser entry registers both views and preserves node hooks', async t
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
         app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        createCastLibrary: options => {
+            const cast = {element: new Element('cast'), options, destroyed: false, destroy() { this.destroyed = true; }};
+            casts.push(cast); return cast;
+        },
         secondPassAction: () => new Element('button'),
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         errorText: value => String(value),
@@ -104,6 +109,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
             .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
+            .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
         await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const extension = extensions.find(row => row.name === 'FreeVideo.UnifiedMedia');
@@ -295,7 +301,11 @@ test('main browser entry registers both views and preserves node hooks', async t
         await extension.beforeRegisterNodeDef(MediaNode, {name: 'FreeVideoMedia'});
         const media = new MediaNode(); media.onNodeCreated();
         const panel = media.dom.find(row => row.name === 'freevideo_media').element;
-        const [toolbar, mode, note, audioHelp, connections] = panel.children;
+        const [castRow, toolbar, mode, note, audioHelp, connections] = panel.children;
+        assert.equal(castRow, casts[0].element);
+        assert.equal(casts[0].options.api, api);
+        assert.equal(typeof casts[0].options.uploadOne, 'function');
+        assert.equal(typeof casts[0].options.viewURL, 'function');
         assert.match(mode.textContent, /Reference/);
         assert.equal(audioHelp.hidden, false);
         assert.match(audioHelp.textContent, /<Audio 1>/);
@@ -329,6 +339,10 @@ test('main browser entry registers both views and preserves node hooks', async t
         await imagePicker.onchange();
         assert.deepEqual(JSON.parse(media.widgets[0].value).map(row => row.role), ['reference', 'first']);
         media.onRemoved();
+        assert.equal(casts[0].destroyed, true);
+        const mounted = new Element('mount'), disposeMedia = media.freevideoCreateMediaEditor(mounted);
+        assert.equal(mounted.children[0].children[0], casts[1].element);
+        disposeMedia(); assert.equal(casts[1].destroyed, true);
 
         await t.test('Generate node removal preserves the original hook when setSize throws', async () => {
             const previousInterval = globalThis.setInterval, previousClear = globalThis.clearInterval;

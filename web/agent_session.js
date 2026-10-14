@@ -28,9 +28,14 @@ export async function agentGet(api, path, options = {}) {
 
 // A restarted FreeVideo forgets page sessions: fetch a new one once and repeat.
 export async function agentPost(api, path, body) {
+    return agentSend(api, 'POST', path, body);
+}
+
+export async function agentSend(api, method, path, body, headers = {}) {
     for (let attempt = 0; ; attempt++) {
-        const response = await api.fetchApi(path, {method: 'POST',
-            headers: {'Content-Type': 'application/json', ...await agentHeaders(api)}, body: JSON.stringify(body)});
+        const response = await api.fetchApi(path, {method, credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', ...headers, ...await agentHeaders(api)},
+            ...(body === undefined ? {} : {body: JSON.stringify(body)})});
         if (response.status !== 403 || attempt) return response;
         const value = await response.clone().json().catch(() => null);
         if (value?.error?.code !== 'page_session_required') return response;
