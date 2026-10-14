@@ -1,6 +1,7 @@
 """Transient progress snapshots for reopened ComfyUI tabs; no request inputs."""
 from copy import deepcopy
 from pathlib import Path
+import heapq
 import threading
 import time
 import uuid
@@ -242,6 +243,30 @@ def cancel_request(queue, prompt_id, node_id, interrupt):
         return 'finished'
 
 
+def move_request_first(queue, prompt_id, node_id, protected=lambda prompt_id: False):
+    """Put exactly this waiting FreeVideo request ahead of every other waiting one.
+
+    Comfy runs the smallest queue number first, so the request takes a number
+    below the current smallest. Everything else keeps its relative order.
+    """
+    with queue.mutex:
+        waiting = queue.queue
+        row = next((row for row in waiting if row[1] == prompt_id
+                    and row[2].get(str(node_id), {}).get('class_type') == 'FreeVideoGenerate'), None)
+        if row is None:
+            running = any(item[1] == prompt_id for item in queue.currently_running.values())
+            return 'running' if running else 'finished'
+        if protected(prompt_id):
+            return 'unavailable'
+        if row is min(waiting):
+            return 'first'
+        index = next(i for i, item in enumerate(waiting) if item is row)
+        waiting[index] = (min(item[0] for item in waiting) - 1,) + tuple(row[1:])
+        heapq.heapify(waiting)
+        queue.server.queue_updated()
+        return 'moved'
+
+
 def register():
     import asyncio
     from aiohttp import web
@@ -279,3 +304,14 @@ def register():
         import nodes
         return web.json_response({'status': cancel_request(server.prompt_queue, prompt_id,
             node_id, nodes.interrupt_processing)})
+
+    @server.routes.post('/freevideo/queue/first')
+    async def queue_first(request):
+        value = await request.json()
+        prompt_id, node_id = value.get('prompt_id'), value.get('node_id')
+        if not isinstance(prompt_id, str) or not prompt_id or not isinstance(node_id, str):
+            return web.json_response({'error': 'A request and node ID are required'}, status=400)
+        from . import comfy_chain
+        runner = comfy_chain.RUNNER
+        return web.json_response({'status': move_request_first(server.prompt_queue, prompt_id, node_id,
+            runner.owns if runner is not None else (lambda prompt_id: False))})

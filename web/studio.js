@@ -1019,6 +1019,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const queueError = error => ({
         queue_unavailable: t('Could not read the queue. Any loop has been stopped; already submitted videos stay queued.', '暂时无法读取队列。循环已停止追加，已提交的任务仍在队列中。'),
         cancel_failed: t('Could not cancel. Try again.', '暂时未能取消，请重试。'),
+        move_failed: t('Could not move it. Try again.', '暂时未能移动，请重试。'),
         submit_failed: t('The workflow was not queued. Check the node settings.', '工作流未能提交，请检查节点设置。'),
         loop_active: t('Stop the current loop before starting another.', '请先停止当前循环。'),
         loop_stopped: t('The last request did not complete. The loop has stopped.', '上一条任务未完成，循环已停止。'),
@@ -1113,7 +1114,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
                     catch (error) { showQueueError(error); remove.disabled = false; }
                 }, 'fv-quiet');
                 remove.setAttribute('aria-label', t(`Remove queued video ${index + 1}`, `移除第 ${index + 1} 条排队任务`));
-                item.append(description, remove); queueList.append(item);
+                item.append(description);
+                if (index > 0) {
+                    const first = button(t('Move to front', '排到最前'), async () => {
+                        first.disabled = remove.disabled = true;
+                        try { await queueController.moveFirst(row.id); }
+                        catch (error) { showQueueError(error); first.disabled = remove.disabled = false; }
+                    }, 'fv-quiet');
+                    first.setAttribute('aria-label', t(`Move queued video ${index + 1} to front`, `把第 ${index + 1} 条排队任务排到最前`));
+                    item.append(first);
+                }
+                item.append(remove); queueList.append(item);
             });
         }
         if (!busy) cancelling = false;

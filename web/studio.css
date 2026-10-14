@@ -112,9 +112,11 @@
 .fv-studio .fv-run-menu .fv-field{padding:10px 8px 0}.fv-studio .fv-run-menu p{margin:10px 8px 2px;line-height:1.6}
 .fv-studio .fv-queue-actions{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;margin-top:8px}
 .fv-studio .fv-queue-actions button,.fv-studio .fv-queue-details>summary{padding:4px 8px;min-height:28px;font-size:var(--fv-micro);color:var(--fv-muted)}
-.fv-studio .fv-queue-details{position:relative}.fv-studio .fv-queue-details>summary{cursor:pointer;list-style:none}
+.fv-studio .fv-queue-actions{position:relative}.fv-studio .fv-queue-details{position:static}.fv-studio .fv-queue-details>summary{cursor:pointer;list-style:none}
 .fv-studio .fv-queue-list{left:0;right:auto;bottom:calc(100% + var(--fv-h-lg) + 24px);width:300px;max-height:260px;overflow:auto;scrollbar-width:thin}
 .fv-studio .fv-queue-item{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fv-micro);padding:3px 0;white-space:nowrap}
+.fv-studio .fv-queue-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fv-studio .fv-queue-item button{flex:none}
 .fv-studio .fv-status{min-height:22px;text-align:center;font-size:var(--fv-micro);color:var(--fv-muted);overflow-wrap:anywhere}.fv-studio .fv-status[data-error=true]{color:var(--fv-danger)}
 .fv-studio .fv-progress{width:100%;height:4px;accent-color:var(--fv-accent);border:0;margin:0 0 10px}.fv-studio .fv-budget,.fv-studio .fv-prewarm{text-align:center;font-size:var(--fv-micro);color:var(--fv-muted)}
 .fv-studio .fv-panel{height:auto;padding:0;border:none;border-radius:0;background:transparent;color:var(--fv-ink);font-size:var(--fv-micro);overflow:visible}

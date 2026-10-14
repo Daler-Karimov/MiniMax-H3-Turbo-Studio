@@ -300,6 +300,12 @@ class ChainRunner:
                     return record, block
         return None, None
 
+    def owns(self, prompt_id):
+        """True while a chain block submitted this host request; its order is the chain's."""
+        with self.lock:
+            return any(row['prompt_id'] == prompt_id and row['state'] in ('queued', 'running')
+                       for record in self.records.values() for row in record['blocks'])
+
     def _start(self, block):
         if block['started'] is None:
             block['started'] = self.wall()
