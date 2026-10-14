@@ -58,16 +58,20 @@ function popover(menu, summary, onClose = () => {}) {
 }
 
 // The next step of a first-pass preview. `run` reports its own errors and throws.
-function secondPassAction(t, run) {
+export function secondPassAction(t, run) {
     const button = action('button', t('Run second pass', '继续二采'), 'expand', 'fv-action-primary fv-action-second-pass');
     const label = button.lastElementChild;
     button.title = t('Continue from this preview: latent upscale, the second pass and a full-resolution decode.',
         '从这个预览接着跑：潜空间放大、二采，再以全分辨率解码。');
     button.onclick = async () => {
         if (button.disabled) return;
-        button.disabled = true;
-        try { await run(); label.textContent = t('Queued', '已加入队列'); }
-        catch { button.disabled = false; }
+        button.disabled = true; button.setAttribute('aria-busy', 'true');
+        label.textContent = button.title = t('Adding…', '正在添加…');
+        try { await run(); label.textContent = button.title = t('Queued', '已加入队列'); }
+        catch {
+            button.disabled = false;
+            label.textContent = button.title = t('Second pass did not start · Retry', '二采没有开始 · 重试');
+        } finally { button.removeAttribute('aria-busy'); }
     };
     return button;
 }
@@ -117,14 +121,23 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
     }
     if (extend && canExtend(record)) {
         const button = action('button', extendText(t, 'action'), 'extend', 'fv-action-secondary fv-action-extend');
-        button.hidden = true;
-        extendSourceExists(api, record).then(exists => { button.hidden = !exists; });
+        const label = button.lastElementChild;
+        const available = exists => {
+            label.textContent = exists ? extendText(t, 'action') : t('Video unavailable · retry', '视频不可用 · 重试');
+            button.title = '';
+        };
+        extendSourceExists(api, record).then(available);
         button.onclick = async () => {
             if (button.disabled) return;
             button.disabled = true;
+            button.title = t('Checking video…', '正在检查视频…');
             try {
-                if (!await extendSourceExists(api, record)) { button.hidden = true; return; }
-                await extend(record);
+                const exists = await extendSourceExists(api, record); available(exists);
+                if (!exists) return;
+                if (await extend(record) === null) throw new Error(t('Could not open the editor. Try again.', '无法打开剪辑，请重试。'));
+            } catch (error) {
+                label.textContent = error.message || t('Could not open the editor. Try again.', '无法打开剪辑，请重试。');
+                button.title = label.textContent;
             } finally { button.disabled = false; }
         };
         bar.append(button);

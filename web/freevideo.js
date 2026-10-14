@@ -15,7 +15,8 @@ import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
 import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
-import { regenerateResult, upscaleResult } from './studio_queue.js';
+import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
+import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
 
@@ -511,14 +512,10 @@ function resultPanel(node) {
         links.append(shareButton(value, text));
         links.append(el("span", value.result_cache_hit ? text("Reused previous result", "已复用上次结果") : value.conditioning_cache_hit ? text("Input cache reused", "已复用输入缓存") : text("Inputs encoded", "已编码输入"), "fv-mode"));
         if (value.preview) {
-            const upscale = el('button', text('Run second pass', '继续二采')); upscale.type = 'button';
-            upscale.title = text('Continue from this preview: latent upscale, the second pass and a full-resolution decode.', '从这个预览接着跑：潜空间放大、二采，再以全分辨率解码。');
-            upscale.onclick = async () => {
-                upscale.disabled = true;
-                try { await node.freevideoUpscaleResult(value); upscale.textContent = text('Queued', '已加入队列'); }
-                catch (error) { upscale.disabled = false; node.freevideoShowFailure(error); }
-            };
-            links.append(upscale);
+            links.append(secondPassAction(text, async () => {
+                try { await node.freevideoUpscaleResult(value); }
+                catch (error) { node.freevideoShowFailure(error); throw error; }
+            }));
         }
         if (value.result_cache_hit) {
             const again = el('button', text('Regenerate', '重新生成')); again.type = 'button';
@@ -548,12 +545,7 @@ function resultPanel(node) {
             : text("VRAM: engine allocator peak. RAM: measured request processes, ", "显存为引擎分配器峰值，内存为请求进程实测，")) + (value.ram_metric || "unknown");
         fitPanel();
     };
-    node.freevideoUpscaleResult = async value => {
-        if (node.freevideoUpscaling) return;
-        node.freevideoUpscaling = true;
-        try { return await upscaleResult(api, node.id, value, async () => cleanOptionalPrompt(await app.graphToPrompt())); }
-        finally { node.freevideoUpscaling = false; }
-    };
+    node.freevideoUpscaleResult = createSecondPassQueue(api, () => node.id, async () => cleanOptionalPrompt(await app.graphToPrompt()));
     node.freevideoRegenerateResult = async value => {
         if (node.freevideoRegenerating) return;
         node.freevideoRegenerating = true;

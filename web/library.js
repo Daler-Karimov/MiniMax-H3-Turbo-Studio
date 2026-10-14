@@ -1,7 +1,7 @@
 import { api } from '../../scripts/api.js';
 import { closeDialog } from './motion.js';
 import { resultActions, previewBadge } from './result_actions.js';
-import { extendSourceExists } from './studio_extend.js';
+import { videoUnavailableText } from './studio_extend.js';
 import { topDialog } from './dialog_keys.js';
 
 const style = document.createElement('link');
@@ -138,11 +138,10 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         media.append(player);
         if (row.preview) media.append(previewBadge(row, t));
         frame.append(media);
-        player.addEventListener('error', async () => {
-            if (!disposed && selected === row.video) {
-                const note = el('p', t('This video is unavailable. Refresh if it was moved.', '视频暂时无法打开，若文件已移动请刷新。'), 'fv-library-message');
+        player.addEventListener('error', event => {
+            if (!disposed && selected === row.video && event.currentTarget === player) {
+                const note = el('p', videoUnavailableText(t), 'fv-library-message');
                 frame.replaceChildren(note);
-                if (!await extendSourceExists(api, row) && selected === row.video) links.querySelector('.fv-action-extend')?.remove();
             }
         }, {once: true});
     }
@@ -157,7 +156,12 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
                     if (!isCurrent()) return;
                     player?.pause();
                     const run = extend || (async (record, options) => (await import('./studio.js')).openExtendEditor(record, undefined, options));
-                    try { const editor = await run(saved, {isCurrent}); if (editor && !disposed) { dialog.close(); editor.element?.focus({preventScroll: true}); } }
+                    try {
+                        const editor = await run(saved, {isCurrent});
+                        if (!editor && isCurrent()) throw new Error(t('Could not open the editor. Try again.', '无法打开剪辑，请重试。'));
+                        if (editor && !disposed) { dialog.close(); editor.element?.focus({preventScroll: true}); }
+                        return editor;
+                    }
                     catch (error) { notice.textContent = error.message; }
                 },
                 secondPass: row.preview && upscale ? () => secondPass(row) : null,
@@ -189,9 +193,9 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         notice.textContent = '';
         try {
             await upscale(row);
-            notice.textContent = t('Queued. The finished video appears here when the second pass is done.', '已加入队列，二采完成后成片会出现在作品里。');
+            if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后在“作品”里。');
         } catch (error) {
-            notice.textContent = t('Could not start the second pass: ', '无法开始二采：') + error.message;
+            if (!disposed && selected === row.video) notice.textContent = t('Could not start the second pass: ', '无法开始二采：') + error.message;
             throw error;
         }
     }

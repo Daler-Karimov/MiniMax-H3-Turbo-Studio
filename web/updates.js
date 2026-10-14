@@ -168,7 +168,7 @@ export function createUpdateNotice(cn) {
         } else if (failure) {
             text = t('Open the FreeVideo launcher to update, or download the new version.', '请在 FreeVideo 启动器中更新，或下载新版。');
             actions = true;
-        } else if (candidate && dismissed !== identity(candidate)) {
+        } else if (candidate) {
             text = t('FreeVideo update available', 'FreeVideo 有新版本') + ' · ' + displayVersion(candidate);
             if (launcher?.status === 'error' && launcher.error) text += ' · ' + t('last attempt failed', '上次更新未完成');
             actions = true;
@@ -184,7 +184,7 @@ export function createUpdateNotice(cn) {
         const direct = !!launcher && !launcher.manual && !failure;
         apply.hidden = !actions || !direct;
         link.hidden = !actions || direct;
-        dismiss.hidden = !actions;
+        dismiss.hidden = !actions || dismissed === identity(candidate);
         stop.hidden = !(busy && phase === 'waiting' && !offline);
     };
     listeners.add(render); render();

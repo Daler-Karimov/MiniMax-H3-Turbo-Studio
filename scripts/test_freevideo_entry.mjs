@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
-import {regenerateResult, upscaleResult} from '../web/studio_queue.js';
+import {regenerateResult, upscaleResult, createSecondPassQueue} from '../web/studio_queue.js';
 import {referenceInputs} from '../web/prompt_references.js';
 import {cleanOptionalPrompt, cleanOptionalWidgets} from '../web/optional_inputs.js';
 
@@ -36,7 +36,8 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        secondPassAction: () => new Element('button'),
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
@@ -96,6 +97,8 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';", 'const {rememberPromptDraft,savePromptDraft} = globalThis.__freevideoEntryTest; const trackPromptDraft = () => {}; const watchPromptHistory = () => {}; const promptHistoryRestoring = () => false;')
             .replace("import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';", 'const {cleanOptionalWidgets,cleanOptionalPrompt} = globalThis.__freevideoEntryTest;')
             .replace("import { regenerateResult, upscaleResult } from './studio_queue.js';", 'const {regenerateResult,upscaleResult} = globalThis.__freevideoEntryTest;')
+            .replace("import { regenerateResult, createSecondPassQueue } from './studio_queue.js';", 'const {regenerateResult,createSecondPassQueue} = globalThis.__freevideoEntryTest;')
+            .replace("import { secondPassAction } from './result_actions.js';", 'const {secondPassAction} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
             .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')

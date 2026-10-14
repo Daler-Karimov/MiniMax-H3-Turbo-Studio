@@ -31,7 +31,7 @@ import { createFirstRunGuide } from './first_run_guide.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261011-length';
-import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail } from './studio_extend.js';
+import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -330,7 +330,15 @@ export async function extendVideo(record, node = current?.node || app.graph?._no
 
 export async function openExtendEditor(record, node = current?.node || app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate'),
     {studio = current?.node === node ? current?.dialog : undefined, isCurrent} = {}) {
-    if (!node || isCurrent?.() === false) return null;
+    if (isCurrent?.() === false) return null;
+    if (!node || !app.graph?._nodes?.includes(node)) {
+        node = app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate');
+        if (!node) {
+            node = globalThis.LiteGraph?.createNode('FreeVideoGenerate');
+            if (!node || !app.graph) throw new Error(t('Could not add the creation node. Try again.', '无法添加创作节点，请重试。'));
+            app.graph.add(node); app.graph.change?.();
+        }
+    }
     const handle = await openEditorView(node, {studio, work: record, extend: true, isCurrent});
     await handle?.ready;
     return handle;
@@ -819,8 +827,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
         progress.updateReport({report_id: node.freevideoReportId});
         stage.querySelector('video')?.pause(); stageMedia.replaceChildren();
         const video = el('video'); video.src = view(r.video, 'output') + (r.version ? `&fv=${encodeURIComponent(r.version)}` : ''); video.controls = true; video.preload = 'metadata'; video.playsInline = true; stageMedia.append(video);
-        video.addEventListener('error', async () => {
-            if (!await extendSourceExists(api, r) && result === r) links.querySelector('.fv-action-extend')?.remove();
+        video.addEventListener('error', () => {
+            if (!disposed && result === r && video.isConnected) {
+                stageMedia.replaceChildren(el('p', videoUnavailableText(t), 'fv-note fv-video-problem'));
+                if (r.preview) stageMedia.append(previewBadge(r, t));
+            }
         }, {once: true});
         // A preview is marked on the picture itself; its timings describe only
         // the half-resolution first pass, so they stay in the report.
