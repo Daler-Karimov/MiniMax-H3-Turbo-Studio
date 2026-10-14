@@ -1300,7 +1300,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         busy = cancelling = false; updateRunButton(); hideProgress(); status.dataset.error = 'true';
         node.freevideoFailureReport = failure.show(e.detail, true, {stage: 'execution', node, graph: app.graph, progress: node.freevideoProgress});
         node.freevideoFailure = errorText(node.freevideoFailureReport);
-        status.textContent = t('Generation stopped. See the explanation below.', '生成已停止，原因和处理建议见下方。');
+        status.textContent = t('Generation stopped.', '生成已停止。');
     });
     listen('execution_interrupted', e => {
         if (chainController.active && String(e.detail?.node_id) === String(node.id)) { chainController.refresh(); return; }

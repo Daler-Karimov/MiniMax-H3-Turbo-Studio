@@ -271,12 +271,12 @@ export function failureAdvice(value, t, known = knownError(value)) {
         }
         // A custom step count is not a quality level: no "档" / "quality level" for it.
         const title = custom
-            ? [`The sampling table for Custom (${known.base_steps} steps) is not downloaded yet`, `“自定义（${known.base_steps} 步）”的采样表还没有下载`]
-            : [`The ${levels[index][0]} quality level's sampling table is not downloaded yet`, `${keep(`“${levels[index][1]}”档`)}的采样表还没有下载`];
-        const what = custom ? ['the sampling table for this step count', '这个步数的采样表'] : ["that level's sampling table", '这一档的采样表'];
+            ? [`Custom (${known.base_steps} steps) is not downloaded yet`, `“自定义（${known.base_steps} 步）”还没下载`]
+            : [`The ${levels[index][0]} quality level is not downloaded yet`, `${keep(`“${levels[index][1]}”档`)}还没下载`];
+        const what = custom ? ['This step count', '这个步数'] : ['This level', '这一档'];
         return {...row('sampling-table', title,
-            [`This video first needs ${what[0]} (about ${size}), and it could not be downloaded this time. Check the network connection and generate again; FreeVideo downloads it automatically.${known.available.length ? ` You can also switch to a quality level that is already available: ${join(0)}.` : ''}`,
-             `这次生成需要先下载${what[1]}（约 ${size}），但这次没能下载。请确认网络连接后再生成一次，FreeVideo 会自动下载。${known.available.length ? `也可以改用已经可以使用的${join(1)}。` : ''}`], ['', '']), plain: true};
+            [`${what[0]} needs a download (about ${size}) that did not finish this time. Generate again when online and it downloads automatically.${known.available.length ? ` You can also use ${join(0)} for now.` : ''}`,
+             `${what[1]}要先下载（约 ${size}），这次没能下载。联网后再生成一次，会自动下载。${known.available.length ? `也可以先用${join(1)}。` : ''}`], ['', '']), plain: true};
     }
     // ComfyUI and worker tracebacks carry English exceptions. Translate these
     // actionable failures through the existing signature/advice path.
@@ -419,8 +419,7 @@ export function createErrorPanel(t) {
     const location = document.createElement('p'), cause = document.createElement('p'); cause.className = 'fv-failure-cause';
     location.className = 'fv-failure-location';
     const privacy = document.createElement('p'); privacy.className = 'fv-failure-privacy';
-    privacy.textContent = t('Known input text, paths and common credentials are removed. Export saves a local JSON file; review it before sharing.',
-        '已去除已知输入文本、路径和常见凭据。导出会保存为本地 JSON 文件，分享前可查看内容。');
+    privacy.textContent = t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
     const downloadStatus = document.createElement('p'); downloadStatus.setAttribute('role', 'status');
     let currentReport = null;
     const disclosure = document.createElement('details'), summary = document.createElement('summary');
@@ -517,9 +516,8 @@ export function createErrorPanel(t) {
         }
         privacy.textContent = download.hidden
             ? t('Use Download report in the preview or node panel for the diagnostic report.', '完整诊断请使用预览区或节点面板中的“下载报告”。')
-            : t('Known input text, paths and common credentials are removed. Export saves a local error summary; review it before sharing.',
-                '已去除已知输入文本、路径和常见凭据。导出会保存本地错误摘要，分享前可查看内容。');
-        copy.textContent = advice.kind === 'sampling-table' ? t('Copy full details', '复制完整详情') : t('Copy error', '复制错误');
+            : t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
+        copy.textContent = advice.kind === 'sampling-table' ? t('Copy details', '复制详情') : t('Copy error', '复制错误');
         if (popup) showFailureDialog(report, t);
         return report;
     }, clear() { currentReport = null; details.value = ''; element.hidden = true; }};
