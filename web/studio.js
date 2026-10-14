@@ -17,7 +17,8 @@ import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed } from './studio_queue.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt } from './prompt_references.js';
+import { attachTermSuggest } from './prompt_terms.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
@@ -412,6 +413,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     mention.title = mention.getAttribute('aria-label');
     mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault(); promptEditor.append(mention);
     cleanup.push(() => references.dispose());
+    const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd)});
+    cleanup.push(() => terms.dispose());
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
         onReport: row => { node.freevideoReportId = row.report_id; progress.updateReport(row); },
         onChange: () => rememberPromptDraft(api, node),
