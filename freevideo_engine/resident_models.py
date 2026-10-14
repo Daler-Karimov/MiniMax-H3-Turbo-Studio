@@ -266,7 +266,16 @@ class ModelBank:
         weights = sum(t.numel()*t.element_size() for t in list(model.parameters()) + list(model.buffers()))
         area = canvas.get('width', 1344)*canvas.get('height', 768)/(1344*768)
         workspace = 2*GiB if audio else max(2*GiB, 6*GiB*area)
-        self.make_room('input_audio_vae' if audio else 'input_video_vae', weights + workspace)
+        # The same stage also grows this whole process's host memory: the
+        # video encoder's checkpoint pages and the decoded reference frames
+        # rose by more than 13 GiB at 960x544 (about 26 GiB per full 1344x768
+        # canvas) beside an idle engine's pinned weights. That pushed a
+        # 25.6 GiB budget through its RAM guard and failed the continued
+        # segment. The GPU estimate says nothing about host memory, so an idle
+        # model's host copy is released unless the live budget covers the
+        # stage as well. Plentiful hosts keep it for reuse.
+        host = weights + (2*GiB if audio else max(8*GiB, 26*GiB*area))
+        self.make_room('input_audio_vae' if audio else 'input_video_vae', weights + workspace, ram_need=host)
 
     def device_ceiling(self):
         """What this process's allocator can hold before the device itself is full.
