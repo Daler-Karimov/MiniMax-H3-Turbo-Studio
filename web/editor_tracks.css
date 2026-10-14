@@ -35,7 +35,7 @@
 .fv-ed-progress-fill{display:none;right:auto;width:calc(var(--fv-ed-progress) * 100%);background:color-mix(in srgb,var(--fv-accent) 55%,transparent)}
 .fv-ed-clip[data-state=running] .fv-ed-progress-fill:not([hidden]){display:block}
 .fv-ed-block-progress{display:none}
-.fv-ed-clip[data-state=running] .fv-ed-block-progress{display:block}
+.fv-ed-clip[data-state=running] .fv-ed-block-progress,.fv-ed-block-progress[data-queued=true]{display:block}
 .fv-ed-clip[data-state=failed]{border:1px solid color-mix(in srgb,var(--fv-warning) 60%,transparent);background:color-mix(in srgb,var(--fv-warning) 12%,transparent);cursor:grab}
 .fv-ed-clip-status{position:absolute;left:10px;right:4px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;overflow:hidden;color:var(--fv-warning);pointer-events:none}
 .fv-ed-clip-status svg{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}

@@ -64,6 +64,10 @@
 .fv-ed-genbar .fv-ed-description{width:auto}
 .fv-ed-clip[data-state=running] .fv-block-progress.fv-ed-block-progress{display:grid}
 .fv-ed-gen-hint{font-size:13px;color:var(--fv-muted);flex:1;min-width:0}
+.fv-ed-genbar[data-mode=selected] .fv-ed-gen-hint{flex:none}
+.fv-ed-gen-note{font-size:13px;color:var(--fv-ink);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fv-ed-gen-note[hidden]{display:none}
+.fv-ed-basic-progress[data-state=waiting] .fv-ed-basic-percent{font-weight:500;color:var(--fv-muted)}
 .fv-ed-description{flex:1;width:0}
 .fv-ed-first-frame{display:flex;align-items:center;gap:8px;flex:none;font-size:13px;white-space:nowrap}
 .fv-ed-first-frame[hidden]{display:none}
@@ -143,6 +147,8 @@
  .fv-ed-description{width:100%;flex:1 1 100%}
  .fv-ed-genbar .fv-ed-description{order:-1}
  .fv-ed-refs{margin-right:auto}
+ .fv-ed-gen-hint{flex:1 0 auto;white-space:nowrap}
+ .fv-ed-gen-note{order:-1;flex:1 1 100%;white-space:normal}
  .fv-editor .fv-ed-genbar>button{margin-left:auto;max-width:100%;font-size:12px}
  .fv-ed-name-menu{position:fixed;top:120px;left:8px}
  .fv-ed-notice{top:60px;bottom:auto;pointer-events:none}

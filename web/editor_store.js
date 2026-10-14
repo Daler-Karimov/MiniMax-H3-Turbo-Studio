@@ -209,14 +209,17 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         pollers.add(retry);
     }
     // Optional adapter (or factory): startChain, owns, chain, chainAction, and
-    // optional restoreSources. Production callers provide none.
+    // optional restoreSources and generationAvailable/generationReady readiness
+    // hooks for a delayed test generator. Production callers provide none.
     const standIn = typeof injected === 'function'
         ? injected({clock, sources, request: json, mediaURL: value => mediaURL(api, value)}) : injected;
     const store = {
         sources, cache,
-        get generationAvailable() { return !!standIn || generationAvailable; },
+        get generationAvailable() { return standIn ? standIn.generationAvailable ?? true : generationAvailable; },
         generationReady() {
-            if (standIn) return Promise.resolve(true);
+            if (standIn) return standIn.generationReady
+                ? Promise.resolve(standIn.generationReady(ready => { if (!disposed) onGenerationReady(ready); }))
+                : Promise.resolve(true);
             if (generationAvailable || generationGone || disposed) return Promise.resolve(generationAvailable);
             // Generating stays off until the list of long videos answers in its
             // expected shape. One bounded request at a time, shared by concurrent
@@ -413,9 +416,9 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 return null;
             }
             if (response.status === 400) {
-                // The server's own sentence for a video with too many parts is shown as it is.
+                // The server's own sentence for a video with too many parts, or a continued part too short, is shown as it is.
                 const body = await response.json().catch(() => null);
-                if (body?.code === 'chain_too_long') throw Object.assign(new Error(body.code), {code: body.code, said: [body.error, body.error_zh]});
+                if (['chain_too_long', 'chain_part_too_short'].includes(body?.code)) throw Object.assign(new Error(body.code), {code: body.code, said: [body.error, body.error_zh]});
             }
             if (!response.ok) throw errorFor(response);
             return (await response.json())?.chain || null;

@@ -46,7 +46,7 @@ function restoreGeneration(record, before, prepared) {
     return next;
 }
 const icon = path => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true'); svg.classList.add('fv-ed-glyph'); const line = document.createElementNS(svg.namespaceURI, 'path'); line.setAttribute('d', path); svg.append(line); return svg; };
-function basicBlockProgress(clipId, clipElement) {
+function basicBlockProgress(clipId, clipElement, t = en => en) {
     const element = el('div', 'fv-ed-basic-progress'), water = el('div', 'fv-ed-basic-water'), percent = el('span', 'fv-ed-basic-percent');
     element.append(water, percent);
     let level = 0, run = null;
@@ -54,7 +54,10 @@ function basicBlockProgress(clipId, clipElement) {
         if (value.run && value.run !== run) { level = 0; run = value.run; }
         element.dataset.state = value.state;
         const fraction = level = value.state === 'waiting' ? 0 : Math.max(level, Math.max(0, Math.min(1, value.fraction || 0))); water.style.height = `${fraction * 100}%`;
-        percent.textContent = `${Math.floor(fraction * 100 + 1e-8)}%`; percent.hidden = value.state !== 'generating' || clipElement.dataset.track !== 'v1' || clipElement.getBoundingClientRect().width < 44;
+        const queued = value.state === 'waiting' && !!value.queued;
+        element.dataset.queued = queued ? 'true' : 'false';
+        percent.textContent = queued ? t('Queued', '排队中') : `${Math.floor(fraction * 100 + 1e-8)}%`;
+        percent.hidden = (value.state !== 'generating' && !queued) || clipElement.dataset.track !== 'v1' || clipElement.getBoundingClientRect().width < 44;
         water.hidden = value.state !== 'generating';
     }, dispose() { element.remove(); }};
 }
@@ -185,13 +188,18 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const code = value?.code || value?.message;
         if (['audio_prepare', 'speed_pending', 'speed_locked', 'speed'].includes(code)) return {ok: false, reason: code};
         if (code === 'unsupported') { genbar?.update(null); return; }
-        if (code === 'chain_too_long') {
+        if (['chain_too_long', 'chain_part_too_short'].includes(code)) {
             const [en, zh] = (value.said || []).map(text => typeof text === 'string' && text ? text.slice(0, 200) : null);
-            notify(t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短一些。'));
+            notify(code === 'chain_too_long' ? t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短一些。')
+                : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接着生成的每一段至少 10 秒，请加长一些。'));
             return {ok: false, reason: code};
         }
         if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
+            const said = {busy: t('This part is generating.', '这一段正在生成。'), locked: t('This track is locked.', '这条轨道已锁定。'),
+                text: t('Write a description first.', '先写一句描述。'), overlap: t('That spot is taken. Use an empty spot.', '这里已经有片段了，请放到空白处。'),
+                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。')}[code];
+            if (said) notify(said);
             return {ok: false, reason: code};
         }
         notify(t('Could not complete. Try again.', '没有完成，请重试'));
@@ -199,15 +207,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
         generationAsked = true; genHost.hidden = !ready; element.dataset.generationReady = String(ready);
-        settleGenbar(); if (ready) { offerInitial?.(); extendEntry?.(); }
+        settleGenbar(); if (ready) { offerInitial?.(); extendEntry?.(); void startHeld(); }
         tracks?.refresh?.(); genbar?.update(mostRecentJob ? barJob(jobStatuses.get(mostRecentJob)) : null);
         updateTransport(); adjustPanel?.update();
     }});
     // Until the server has answered, the bar keeps its place but cannot be used.
     let generationAsked = store.generationAvailable, loaded = false;
     const settleGenbar = () => {
-        const waiting = !loaded || !generationAsked;
-        genHost.inert = waiting || !store.generationAvailable; genHost.classList.toggle('fv-ed-pending', waiting);
+        // While the engine is still answering, a press queues the part instead of doing nothing.
+        genHost.inert = !loaded || generationAsked && !store.generationAvailable; genHost.classList.toggle('fv-ed-pending', !loaded);
     };
     store.generationReady();
     const queue = store.createSaveQueue({get record() { return state.record; },
@@ -245,6 +253,85 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         } catch (value) { if (value instanceof model.EditError) return false; throw value; }
     }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
+    // Parts pressed while they cannot be sent yet: the engine is still starting, or they continue a part
+    // that is not finished. They are planned at once, shown queued, and sent in order when they can be.
+    // Parts, and ranges not yet planned into parts, whose request is being sent.
+    const held = [], sending = new Set(), sendingRanges = new Set();
+    const overlaps = (a, b) => a.start < b.start + b.frames && a.start + a.frames > b.start;
+    let startingHeld = false;
+    const generating = clip => ['queued', 'running'].includes(clip?.pending);
+    const isHeld = id => held.some(entry => entry.ids.includes(id));
+    const partBefore = start => state.record.tracks[0].clips.find(clip => clip.frames > 0 && clip.start + clip.frames === start);
+    function busySelection(selection) {
+        const range = selectionRange(selection); if (!range) return false;
+        if ([...sendingRanges].some(other => overlaps(other, range))) return true;
+        return state.record.tracks[0].clips.some(clip => (generating(clip) || isHeld(clip.id) || sending.has(clip.id))
+            && clip.start < range.start + range.frames && clip.start + clip.frames > range.start);
+    }
+    function waitingFor(selection) {
+        if (!store.generationAvailable) return 'ready';
+        const before = partBefore(selectionRange(selection).start);
+        return generationBusy || generating(before) || before && isHeld(before.id) ? 'before' : null;
+    }
+    // The nearest spot at or after the chosen one where a part of the same length fits.
+    function emptySpot(selection) {
+        if (!['range', 'gap'].includes(selection?.kind)) return null;
+        const range = selectionRange(selection), clips = state.record.tracks.filter(track => ['v1', 'a1', 'a2'].includes(track.id)).flatMap(track => track.clips);
+        const starts = [range.start, ...clips.map(clip => clip.start + clip.frames).filter(at => at > range.start)].sort((a, b) => a - b);
+        for (const start of starts) {
+            if (clips.some(clip => clip.start < start + range.frames && clip.start + clip.frames > start)) continue;
+            const moved = {kind: 'range', start, frames: range.frames, tracks: ['v1', 'a1']};
+            if (actions.supportedSelection(moved)) return moved;
+        }
+        return null;
+    }
+    // A range left a sliver (under the shortest part) after a clip closes up to that clip's end.
+    function flushSpot(selection) {
+        if (selection?.kind !== 'range') return null;
+        const range = selectionRange(selection), most = model.RULES.minSeconds * model.FPS;
+        const clips = state.record.tracks.filter(track => ['v1', 'a1', 'a2'].includes(track.id)).flatMap(track => track.clips);
+        const end = Math.max(-1, ...state.record.tracks[0].clips.map(clip => clip.start + clip.frames).filter(at => at < range.start));
+        if (end < 0 || range.start - end >= most || clips.some(clip => clip.start < range.start && clip.start + clip.frames > end)) return null;
+        const moved = {kind: 'range', start: end, frames: range.frames, tracks: ['v1', 'a1']};
+        return actions.supportedSelection(moved) ? moved : null;
+    }
+    // A part with no description borrows the one before it, else the nearest earlier one, else any.
+    function nearbyText(start) {
+        const before = partBefore(start);
+        if (before?.text?.trim()) return {text: before.text, before: true};
+        const described = state.record.tracks[0].clips.filter(clip => clip.text?.trim()).sort((a, b) => a.start - b.start);
+        const found = described.filter(clip => clip.start < start).at(-1) || described.at(-1);
+        return found ? {text: found.text, before: false} : null;
+    }
+    const markHeld = (ids, queued) => { for (const id of ids) tracks?.setProgress(id, {state: 'waiting', fraction: 0, remainingSeconds: null, ...(queued ? {queued: true} : {})}); };
+    function hold(selection, text) {
+        const range = selectionRange(selection), selectedIds = selectionClips(selection).map(clip => clip.id), shown = selection === state.selection;
+        let ids = [];
+        state.apply(t('Generate', '生成'), record => {
+            const selected = selectedIds.map(id => model.find(record, id)).filter(Boolean), planned = selected.length && selected.every(clip => !clip.source && clip.pending && !generating(clip));
+            const next = planned ? model.startAttempt(record, selected.map(clip => clip.id), text) : model.planRange(record, {...range, target: 'both', text, maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds});
+            ids = next.tracks[0].clips.filter(clip => clip.start >= range.start && clip.start < range.start + range.frames && clip.pending && !generating(clip)).map(clip => clip.id);
+            return next;
+        }, {checkpoint: true});
+        held.push({ids, text}); markHeld(ids, true);
+        if (shown) state.select({kind: 'clip', ids});
+    }
+    async function startHeld() {
+        if (startingHeld || disposed || closing || generationBusy || !store.generationAvailable) return;
+        startingHeld = true;
+        try {
+            while (held.length && !disposed) {
+                const entry = held[0], clips = entry.ids.map(id => model.find(state.record, id)).filter(clip => clip && clip.pending && !generating(clip));
+                if (!clips.length) { held.shift(); markHeld(entry.ids, false); continue; }
+                const selection = {kind: 'clip', ids: clips.map(clip => clip.id)}, before = partBefore(Math.min(...clips.map(clip => clip.start)));
+                if (generating(before)) break;
+                held.shift(); markHeld(entry.ids, false);
+                if (before && !before.source && before.pending) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
+                try { await actions.generate({text: entry.text, selection}); }
+                catch (value) { const reason = error(value); if (reason && !['chain_too_long', 'chain_part_too_short'].includes(reason.reason)) genbar?.say(t('This part did not start. Choose "Generate" again.', '这一段没有开始，请再点一次“生成”。')); }
+            }
+        } finally { startingHeld = false; }
+    }
     function completeSources() {
         return store.getSources(model.references(state.record).map(sourceKey)).then(() => { player.refresh(); tracks?.refresh?.(); });
     }
@@ -316,6 +403,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (completed.size || (!active && previous?.state !== job.state) || (job.output && job.output !== previous?.output))
             library?.refresh({outputs: job.output ? [job.output] : [...completed]});
         if (!active) jobWatchers.delete(job.id);
+        void startHeld();
         return active;
     }
     function watchJob(id) {
@@ -348,7 +436,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         let remembered = editorViews.get(viewKey);
         if (!remembered) try { remembered = JSON.parse(localStorage.getItem(viewPrefix + viewKey)); } catch {}
         initialSelection = offerInitial = extendEntry = null;
-        projectEpoch++;
+        projectEpoch++; held.length = 0;
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); progressConnection?.reset();
         mostRecentJob = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
         suppressSave = true; try { state.replace(record); savedContent = content(record); } finally { suppressSave = false; }
@@ -460,13 +548,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             }
         },
         reasonText: code => code === 'gpu_memory' ? t('Not enough graphics memory', '显存不够') : t('Could not generate', '没能生成'),
-        supportedSelection() {
-            if (state.selection?.kind === 'clip' && state.selection.ids.some(id => isText(model.find(state.record, id)))) return false;
-            const range = selectionRange(); if (!range) return false;
-            if (state.selection.kind === 'range' && !['v1', 'a1'].every(id => state.selection.tracks.includes(id))) return false;
-            if (state.selection.kind === 'gap' && state.selection.track !== 'v1') return false;
+        supportedSelection(selection = state.selection) {
+            if (selection?.kind === 'clip' && selection.ids.some(id => isText(model.find(state.record, id)))) return false;
+            const range = selectionRange(selection); if (!range) return false;
+            if (selection.kind === 'range' && !['v1', 'a1'].every(id => selection.tracks.includes(id))) return false;
+            if (selection.kind === 'gap' && selection.track !== 'v1') return false;
             try {
-                const selected = selectionClips();
+                const selected = selectionClips(selection);
                 if (selected.length && selected.every(clip => clip.pending && !clip.source))
                     model.prepare(state.record, selected.map(clip => clip.id));
                 else model.planRange(state.record, {...range, target: 'both'});
@@ -474,14 +562,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             }
             catch (value) { if (value instanceof model.EditError) return value.code === 'busy'; throw value; }
         },
-        canGenerate(text) {
-            if (!store.generationAvailable || !actions.supportedSelection() || jobActive()) return false;
-            const range = selectionRange();
+        // Another part generating is no reason: the server runs parts one after another.
+        canGenerate(text, selection = state.selection) {
+            return store.generationAvailable && actions.supportedSelection(selection) && (!!text.trim() || !actions.needsText(selection));
+        },
+        needsText(selection = state.selection) {
+            const range = selectionRange(selection); if (!range) return true;
             // Only a part pulled out of a finished one needs no description: it continues that one.
             const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
             const before = !!head && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-            return !!text.trim() || before;
+            return !before;
         },
         // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
         firstFrameVisible() {
@@ -503,13 +594,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             for (const count of model.rangeParts(state.record, {...range, ...capability})) { const value = capability.estimate(count); if (value == null) return null; seconds += value; }
             return seconds;
         },
-        async generate({target = 'both', text = '', label = t('Generate', '生成')} = {}) {
-            if (target !== 'both' || !actions.supportedSelection()) throw new model.EditError('unsupported');
-            if (!actions.canGenerate(text)) throw new model.EditError('text');
+        async generate({target = 'both', text = '', label = t('Generate', '生成'), selection = state.selection} = {}) {
+            if (target !== 'both' || !actions.supportedSelection(selection)) throw new model.EditError('unsupported');
+            if (!actions.canGenerate(text, selection)) throw new model.EditError('text');
+            const shown = selection === state.selection;
             generationBusy = true; updateTop(); updateTransport();
             generationDone = new Promise(resolve => { finishGeneration = resolve; });
             let ids = [], prepared = null, beforeAttempt = null, priorSelection = null, priorText = null, submittedSelection = null;
-            const epoch = projectEpoch, range = selectionRange(), selectedIds = selectionClips().map(clip => clip.id);
+            const epoch = projectEpoch, range = selectionRange(selection), selectedIds = selectionClips(selection).map(clip => clip.id);
+            sendingRanges.add(range);
             try {
                 const frozen = await snapshot(); if (epoch !== projectEpoch || closing || disposed || !store.generationAvailable) return;
                 beforeAttempt = state.record; priorSelection = state.selection; priorText = state.rangeText;
@@ -520,8 +613,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     ids = next.tracks[0].clips.filter(clip => clip.start >= range.start && clip.start < range.start + range.frames && clip.pending && !['queued', 'running'].includes(clip.pending)).map(clip => clip.id);
                     return model.prepare(next, ids);
                 }, {checkpoint: true});
+                for (const id of ids) sending.add(id);
                 prepared = state.record;
-                submittedSelection = state.select({kind: 'clip', ids}); await completeSources();
+                // Only a press on what is still chosen moves the choice; a part started in the background
+                // leaves whatever the user has moved on to, and what they typed there.
+                submittedSelection = shown && state.selection === selection ? state.select({kind: 'clip', ids}) : state.selection; await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
                 // Pictures guide parts that start fresh; a request whose parts all continue footage carries none.
@@ -543,7 +639,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const job = await store.startChain({...frozen, blocks});
                 if (!job && !store.generationAvailable) {
                     if (epoch === projectEpoch) {
-                        const restoreSelection = state.selection === submittedSelection;
+                        const restoreSelection = submittedSelection !== priorSelection && state.selection === submittedSelection;
                         // Reverse only this submission's changes. Keep save receipts,
                         // reserved IDs and unrelated edits made while POST was pending.
                         state.settle(record => restoreGeneration(record, beforeAttempt, prepared));
@@ -559,9 +655,56 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             } catch (value) {
                 if (ids.length && epoch === projectEpoch) state.settle(record => model.settle(record, ids, 'draft'));
                 throw value;
-            } finally { if (disposed && ids.length) queue.enqueue(state.record); generationBusy = false; finishGeneration?.(); generationDone = null; finishGeneration = null; updateTop(); updateTransport(); }
+            } finally { sendingRanges.delete(range); for (const id of ids) sending.delete(id); if (disposed && ids.length) queue.enqueue(state.record); generationBusy = false; finishGeneration?.(); generationDone = null; finishGeneration = null; updateTop(); updateTransport(); startHeld(); }
         },
-        async cancel() { const id = mostRecentJob; if (id) await deliverChain(await store.chainAction(id, 'cancel')); },
+        // A press on Generate always answers: what can be done for the user is done, then said in one line.
+        async press(text) {
+            if (disposed || closing || initializing) return {say: t('Opening the edit…', '正在打开…')};
+            let selection = state.selection, said = null;
+            if (!selectionRange(selection)) return {say: t('Drag on the timeline to choose a part first.', '先在时间线上拖出一段。')};
+            if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
+            if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
+            const flush = flushSpot(selection);
+            if (flush) { selection = state.select(flush); said = t('Moved to right after the part before.', '已接在上一段后面。'); genbar?.say(said); }
+            else if (!actions.supportedSelection(selection)) {
+                const moved = emptySpot(selection);
+                if (!moved) return {say: t('Choose an empty spot on the timeline.', '请在时间线上选一段空白。')};
+                selection = state.select(moved); said = t('Moved to the next empty spot.', '已挪到后面的空位。'); genbar?.say(said);
+            }
+            let used = null;
+            if (!text.trim() && actions.needsText(selection)) {
+                const found = nearbyText(selectionRange(selection).start);
+                if (!found) return {say: [said, t('Write a description first.', '先写一句描述。')].filter(Boolean).join(' '), focus: true};
+                text = found.text; used = found.before ? t('Used the description of the part before.', '沿用了上一段的描述。')
+                    : t('Used the latest description.', '沿用了最近一次的描述。');
+                state.setRangeText(text); genbar?.setText(text);
+            }
+            const waiting = waitingFor(selection);
+            if (waiting) {
+                hold(selection, text);
+                return {text, say: [said, used, waiting === 'ready' ? t('Queued. It starts once generation is ready.', '已排队，准备好后自动开始。')
+                    : t('Queued. It starts after the part before it.', '已排队，上一段完成后自动开始。')].filter(Boolean).join(' '), queued: true};
+            }
+            const busyBefore = jobActive();
+            await actions.generate({text, selection});
+            return {text, say: [said, used, busyBefore ? t('Queued. It starts after the part now generating.', '已排队，正在生成的那段完成后自动开始。') : null].filter(Boolean).join(' ') || null, queued: busyBefore};
+        },
+        selectionRunning: () => busySelection(state.selection),
+        selectionSending() { const range = selectionRange(state.selection); return !!range && ([...sendingRanges].some(other => overlaps(other, range)) || [...sending].some(id => { const clip = model.find(state.record, id); return clip && overlaps(clip, range); })); },
+        selectionHeld() { const ids = selectionClips(state.selection).map(clip => clip.id); return ids.length > 0 && ids.every(isHeld); },
+        // Takes the selected parts out of the line; they stay as drafts.
+        unhold() {
+            const ids = selectionClips(state.selection).map(clip => clip.id);
+            for (let i = held.length - 1; i >= 0; i--) if (held[i].ids.some(id => ids.includes(id))) { markHeld(held[i].ids, false); held.splice(i, 1); }
+        },
+        async cancel() {
+            const range = selectionRange(state.selection);
+            const own = range && state.record.tracks[0].clips.find(clip => clip.job && generating(clip)
+                && clip.start < range.start + range.frames && clip.start + clip.frames > range.start)?.job;
+            // A part still being sent has no job yet; never stop another one in its place.
+            if (!own && actions.selectionSending()) return;
+            const id = own || mostRecentJob; if (id) await deliverChain(await store.chainAction(id, 'cancel'));
+        },
         async resume() {
             if (!store.generationAvailable) return;
             const epoch = projectEpoch;
@@ -912,7 +1055,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (trackResult.status === 'rejected') throw trackResult.reason;
         const module = trackResult.value, components = componentResult.status === 'fulfilled' ? componentResult.value : {};
         blockStates = components.blocks?.blockStates || null;
-        let blockProgress = basicBlockProgress;
+        let blockProgress = (id, clipElement) => basicBlockProgress(id, clipElement, t);
         if (components.blocks?.createBlockProgress) blockProgress = (id, clipElement) => {
             const component = components.blocks.createBlockProgress({t, showPercent: clipElement.dataset.track === 'v1'});
             let run = null;

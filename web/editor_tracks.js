@@ -437,7 +437,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         const value = progresses.get(item.clip.id) || {state: item.clip.pending === 'queued' ? 'waiting'
             : busy(item.clip) ? 'generating' : model.clipState(item.clip) === 'done' ? 'done'
                 : item.clip.pending === 'stopped' ? 'stopped' : model.clipState(item.clip) === 'failed' ? 'failed' : 'waiting',
-        fraction: 0, remainingSeconds: null};
+        fraction: 0, remainingSeconds: null, ...(item.clip.pending === 'queued' ? {queued: true} : {})};
         item.element.style.setProperty('--fv-ed-progress', String(clamp(Number(value.fraction) || 0, 0, 1)));
         item.component?.update(value);
     }
@@ -655,6 +655,9 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         for (const value of [frame, frame + length]) points.push(Math.round(value / grid) * grid);
         return transportSnapPoints(state, points, pointerEvent);
     }
+    // A clip's end can be dragged longer only over hidden source, by generating more, or as a planned part.
+    const canGrow = clip => (clip.pending && !clip.source) || isText(clip) || speedEdited(clip) || clip.in + clip.frames < clip.length
+        || (clip.extend && actions.generationAvailable?.() !== false);
     // Only a part that continues another is held to the length of a continued part; a range being drawn never is.
     function boundaryLimits(clip = null) {
         const limits = actions.generationLimits?.() || {}, maxSeconds = limits.maxSeconds ?? model.RULES.maxSeconds;
@@ -714,7 +717,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             if (gesture.type === 'rangeMove' && gesture.rangeBlocked) tooltip.hidden = true;
         } else if (gesture.type === 'range') {
             const aligned = snap(frame, points, state.zoom);
-            gesture.selection = capRange(rangeParameters(gesture.anchor, aligned.frame), aligned.frame < gesture.anchor);
+            const drawn = rangeParameters(gesture.anchor, aligned.frame);
+            // Drawn from a clip's end, the range starts exactly there.
+            if (gesture.flush != null && aligned.frame > gesture.flush) Object.assign(drawn, {start: gesture.flush,
+                frames: Math.max(2 * model.FPS, Math.round((aligned.frame - gesture.flush) / model.FPS) * model.FPS)});
+            gesture.selection = capRange(drawn, aligned.frame < gesture.anchor);
             previewSelection = gesture.selection; showGuide(aligned.guide);
             renderSelection(); hint(gesture.selection, event);
         } else if (gesture.type === 'move') {
@@ -749,6 +756,13 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             selectionBox.classList.toggle('fv-ed-cannot-drop', !!error);
             if (error) tooltip.hidden = true;
         } else if (gesture.type === 'edge') {
+            // Past the end of a clip that cannot grow there, the drag draws the next part from that end.
+            const clipEnd = gesture.clip.start + gesture.clip.frames;
+            if (gesture.edge === 'end' && frame > clipEnd && !canGrow(gesture.clip)) {
+                for (const id of [...gesture.ids, ...(gesture.rightPreviewIds || [])]) { const item = locate(id); if (item) position(item.element, item.clip.start, item.clip.frames); }
+                Object.assign(gesture, {type: 'range', anchor: clipEnd, flush: clipEnd, id: undefined, ids: [], clip: null, edge: null, rightPreviewIds: []});
+                cachedPoints = allPoints([]); tooltip.hidden = true; updatePointer(event); return;
+            }
             let result = edgeParameters(gesture.clip, gesture.edge, frame, points, state.zoom, {canExtend: actions.generationAvailable?.() !== false});
             if (result.kind === 'extend') result.frames = capRange({start: result.frame, frames: result.frames}, false, true).frames;
             if (result.kind === 'planned') {
