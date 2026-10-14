@@ -11,6 +11,64 @@ const duration = value => {
 };
 
 const progressFields = ['phase', 'stage', 'timing_phase', 'label', 'done', 'total', 'block'];
+// Iris's approved substage sentences. Unknown engine labels never reach the UI.
+const SUBACTIVITY = {
+    start: ['Starting the generation process', '正在启动生成进程'],
+    libraries: ["Loading the text encoder's libraries", '正在载入文本编码器的程序库'],
+    weights: ['Reading the text encoder from disk', '正在从硬盘读取文本编码器'],
+    gpu: ['Moving the text encoder to the GPU', '正在把文本编码器载入显卡'],
+    prompt: ['Encoding the prompt', '正在编码提示词'],
+    reference: ['Encoding the reference images and videos', '正在编码参考图片和视频'],
+    load: ['Loading the video model', '正在载入视频模型'],
+    first: ['Running the first step (it takes longer the first time a size is used or after an update)',
+        '正在进行第一步（首次使用这个尺寸或更新后，第一步要多花一些时间）'],
+    upscale: ['Upscaling the first pass', '正在放大第一遍的结果'],
+    decoder: ['Loading the video decoder', '正在载入视频解码器'],
+    decode: ['Decoding the video', '正在解码视频'],
+    audio: ['Decoding the audio', '正在解码音频'],
+    save: ['Saving the video', '正在保存视频'],
+};
+// [EN, ZH, EN with a step, ZH with a step]; a request that samples twice adds which pass.
+const SAMPLING_NAME = {
+    single: ['Sampling', '正在采样', 'Sampling step', '正在采样第 '],
+    first: ['Sampling (first pass)', '正在采样（一采）', 'Sampling step', '正在采样第 '],
+    pass2: ['Sampling (second pass)', '正在采样（二采）', 'Sampling step', '正在采样第 '],
+    preview: ['Sampling (preview)', '正在采样（预览）', 'Sampling step', '正在采样第 '],
+};
+const SAMPLING_PASS = {first: ['first pass', '一采'], pass2: ['second pass', '二采'], preview: ['preview', '预览']};
+const SUBACTIVITY_LABELS = {
+    'Starting generation process': 'start', 'Starting text encoder': 'libraries',
+    'Loading text encoder': 'libraries', 'Preparing text encoder GPU': 'gpu',
+    'Reading text encoder weights': 'weights', 'Preparing text encoder model': 'weights',
+    'Loading text encoder onto GPU': 'gpu', 'Encoding prompt': 'prompt', 'Encoding text and images': 'prompt',
+    'Loading video VAE': 'decoder', 'Loading and decoding audio': 'audio', 'Saving MP4 and audio': 'save',
+    'Decoding the video': 'decode', 'Processing video colors': 'decode', 'Decoding audio': 'audio',
+    'Saving decoded video': 'save', 'Saving decoded audio': 'save',
+};
+function subactivity(message, activity, t) {
+    const phase = message.phase || message.timing_phase || message.stage;
+    const label = message.label;
+    let key = SUBACTIVITY_LABELS[label];
+    const sampling = ['pass1', 'pass2', 'preview'].includes(activity?.key);
+    if (sampling) {
+        // Engines send kernel_prepare before every pass's first step; its count is the first pass's steps.
+        if (message.done === 0 || message.stage === 'kernel_prepare') key = 'first';
+        // A paused stage line carries no counts; the normal line keeps the user's steps.
+        else return {key: `sampling:${activity.key}`, text: t(...SAMPLING_NAME.single.slice(0, 2)), sampling: true};
+    }
+    key ||= {prepare: phase === 'starting' ? 'start' : null, encode: LABEL_ACTIVITY.reference.includes(label)
+        ? 'reference' : 'prompt', load: 'load', decode: 'decode', save: 'save', upscale: 'upscale'}[activity?.key];
+    if (key) return {key, text: t(...SUBACTIVITY[key]), sampling};
+    // Only a download name needs the fallback frame; every other activity already reads as a sentence.
+    const named = activity && activity.key !== 'prepare' ? activity.text : '';
+    return {key: `other:${activity?.key || 'prepare'}`, sampling,
+        text: !named ? t(...ACTIVITY.prepare) : activity.key === 'download' ? t(`Still working: ${named}`, `仍在进行：${named}`) : named};
+}
+const waitDuration = (seconds, t) => {
+    const n = Math.floor(Math.max(0, seconds)), minutes = Math.floor(n / 60), rest = n % 60;
+    return minutes ? t(`${minutes} min${rest ? ` ${rest} s` : ''}`, rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`)
+        : t(`${rest} s`, `${rest} 秒`);
+};
 // Only our status sentences, scoped to a request; no prompt or engine log.
 // A reopened Studio/tab must not announce the replayed explanation again.
 const announcementKey = 'freevideo.progress.announcements';
@@ -37,18 +95,17 @@ const STALL_SECONDS_BY_PHASE = Object.freeze({
     latent_upscale: 180, sample_finalize: 180, decode: 180, save: 180,
     dependencies: 180, recovery: 180, other: 180,
 });
-// Only these fixed stage sentences reach either progress view, with at most the
-// sampling step or a download's size and speed. Engine labels, layer, block and
-// frame counts and the original sampling plan remain available in the report.
+// Normal stage sentences keep the sampling step or a download's size and speed.
+// After 15 s of engine silence SUBACTIVITY names the work without counts.
+// Raw engine labels and internal units remain available in the report.
 // Stage words the product already uses: settings say 一采 / 二采, results say 解码.
-// No "正在": the stage line sits beside a moving clock and a small bar.
 const ACTIVITY = {
-    prepare: ['Preparing', '准备中'],
-    prompt: ['Encoding the prompt', '编码提示词'],
-    combined: ['Encoding the prompt and references', '编码提示词和参考素材'],
-    load: ['Loading the video model', '载入视频模型'],
-    decode: ['Decoding the video', '解码视频'],
-    save: ['Saving the video', '保存视频'],
+    prepare: ['Preparing', '正在准备'],
+    prompt: ['Encoding the prompt', '正在编码提示词'],
+    combined: ['Encoding the prompt and references', '正在编码提示词和参考素材'],
+    load: ['Loading the video model', '正在载入视频模型'],
+    decode: ['Decoding the video', '正在解码视频'],
+    save: ['Saving the video', '正在保存视频'],
 };
 const LABEL_ACTIVITY = {
     prepare: ['Starting generation process', 'Preparing video', 'Checking saved video', 'Resource forecast ready'],
@@ -68,9 +125,10 @@ const LABEL_ACTIVITY = {
         'Low-memory mode for this GPU'],
     refine: ['Upscaling before the second pass', 'Continuing from the preview', 'Reusing the completed first pass'],
     decode: ['Loading video VAE', 'Decoding video and audio', 'Decoding the video', 'Decoding video tiles',
-        'Loading and decoding audio', 'Reusing completed sampling · retrying video and audio decoding',
+        'Loading and decoding audio', 'Processing video colors', 'Decoding audio',
+        'Reusing completed sampling · retrying video and audio decoding',
         'Checking completed sampling', 'Saving completed sampling', 'Releasing sampling buffers', 'Preparing video decoding'],
-    save: ['Saving MP4 and audio'],
+    save: ['Saving MP4 and audio', 'Saving decoded video', 'Saving decoded audio'],
 };
 // Engine steps that run only when the request has reference media.
 const REFERENCE_WORK = new Set(['Encoding reference media', 'Encoding image/video references', 'Encoding reference audio',
@@ -103,13 +161,18 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         }
         return {key: 'download', text: t(download[0], download[1]) + detail};
     }
-    const steps = (key, en, zh, step, total) => ({key, text: Number.isInteger(step) && Number.isInteger(total) && total > 0
-        ? t(`${en} · step ${step} of ${total}`, `${zh} · 第 ${step} / ${total} 步`) : t(en, zh)});
+    const steps = (key, name, step, total) => {
+        const [en, zh, enSteps, zhSteps] = SAMPLING_NAME[name];
+        const pass = SAMPLING_PASS[name];
+        return {key, text: Number.isInteger(step) && Number.isInteger(total) && total > 0
+            ? t(`${enSteps} ${step} of ${total}${pass ? ` (${pass[0]})` : ''}`, `${zhSteps}${step} / ${total} 步${pass ? `（${pass[1]}）` : ''}`)
+            : t(en, zh)};
+    };
     const base = Number.isInteger(plan.base_steps) && plan.base_steps > 0 ? plan.base_steps : null;
     const second = plan.second || plan.upscale_target;
     if (message.prediction || message.sampling_plan) return named('prepare');
     if (phase === 'recovery') return message.retry?.reuse_sampling === true ? named('decode')
-        : message.retry?.reuse_first_pass === true ? steps('pass2', 'Second pass', '二采') : named('prepare');
+        : message.retry?.reuse_first_pass === true ? steps('pass2', 'pass2') : named('prepare');
     if (phase === 'sample_finalize') return named('decode');
     if (message.stage === 'latent_upscale' || phase === 'latent_upscale')
         return {key: 'upscale', text: Number.isInteger(second?.width) && Number.isInteger(second?.height)
@@ -123,12 +186,12 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         if ((secondPass || phase === 'refinement') && twoPass) {
             const refine = total !== null && total > base ? total - base : plan.refine_steps;
             const step = done === null ? null : Math.min(Math.max(1, done - base + 1), refine);
-            return steps('pass2', 'Second pass', '二采', step, refine);
+            return steps('pass2', 'pass2', step, refine);
         }
         const count = twoPass ? base : total;
         const step = done === null || count === null ? null : Math.min(done + 1, count);
-        if (twoPass && plan.preview) return steps('preview', 'Preview', '预览', step, count);
-        return twoPass ? steps('pass1', 'First pass', '一采', step, count) : steps('pass1', 'Sampling', '采样', step, count);
+        if (twoPass && plan.preview) return steps('preview', 'preview', step, count);
+        return steps('pass1', twoPass ? 'first' : 'single', step, count);
     }
     const key = labelActivities.get(message.label) || {
         starting: 'prepare', prepare: 'prepare', prediction: 'prepare', encoding: 'combined',
@@ -136,8 +199,11 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
     }[phase] || labelActivities.get(message.stage);
     if (!key) return null;
     if (key === 'refine') return {key: 'upscale', text: t('Second pass · upscaling', '二采 · 放大')};
-    // One sentence for the whole encoding stage. The engine names images in its
-    // steps either way; only a request with reference media says so.
+    // Named encoder and post-sampling events stay distinct, even before a pause.
+    const substage = SUBACTIVITY_LABELS[message.label] || (key === 'reference' ? 'reference' : null);
+    if (substage) return {key: ['prompt', 'combined', 'reference'].includes(key) ? 'encode' : key,
+        text: t(...SUBACTIVITY[substage])};
+    // Older or unnamed encoding events keep the safe generic activity.
     if (key === 'prompt' || key === 'combined' || key === 'reference')
         return {key: 'encode', text: t(...ACTIVITY[references ? 'combined' : 'prompt'])};
     // LoRA preparation counts LoRA files, then the model counts its own blocks:
@@ -322,6 +388,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     let pauseAnnounced = false, lastExplanation = '', announcedMessages = new Set();
     let announcementRecord = null;
     let remainingSeconds = null;
+    let detail = null, localShare = null, decodeMinutes = null, decodeMinutesAt = -Infinity;
+    const workShares = new Map();
     let completedSteps = 0, previousRemaining = null, remainingAt = 0, lastActivity = null;
     // Once the shown time reaches zero before the video is saved, it stays hidden for this request.
     // The last minute runs on real time even while an estimate holds the number.
@@ -390,7 +458,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             if (id === reportId) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
         } finally { if (id === reportId) report.disabled = false; }
     };
-    const counted = value => Number.isInteger(value.total) && value.total > 0 && Number.isInteger(value.done)
+    const hasCount = value => Number.isInteger(value.total) && value.total > 0 && Number.isInteger(value.done)
         && value.done >= 0 && value.done <= value.total;
 
     function drawOverall() {
@@ -436,25 +504,23 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // A segment can take several minutes. Extended silence gets a notice once;
     // leave the run going, and
     // offer the report, whose engine log shows the step it stopped at.
-    let stallHasReport = null, stallLoading = null;
+    let stallHasReport = null;
+    const segmentTypical = () => detail?.sampling && valid(state.estimated_step_seconds)
+        ? state.estimated_step_seconds : overall.typical_seconds;
     function drawStall(age, ended) {
         const floor = STALL_SECONDS_BY_PHASE[state.phase || state.timing_phase] ?? STALL_SECONDS_BY_PHASE.other;
-        const threshold = Math.max(floor, valid(overall.typical_seconds) ? 2 * overall.typical_seconds : 0);
+        const typical = segmentTypical();
+        const threshold = Math.max(floor, valid(typical) ? 2 * typical : 0);
         const shown = !ended && age >= threshold;
         const wasShown = !stall.hidden;
         const hasReport = reportId !== null;
-        // Shown after 3 minutes, without saying so: the card shows two times only.
-        const loading = (state.phase || state.timing_phase) === 'load';
-        if (shown && (stall.hidden || hasReport !== stallHasReport || loading !== stallLoading)) {
-            const first = loading
-                ? t('No loading progress for a while. Generation is still running, so you can keep waiting.',
-                    '已经有一段时间没有新的加载进度，生成仍在进行，可以继续等待。')
-                : t('No progress for a while. Generation is still running, so you can keep waiting.',
+        // The separate notice never adds another clock or blocks the run.
+        if (shown && (stall.hidden || hasReport !== stallHasReport)) {
+            const first = t('No progress for a while. Generation is still running, so you can keep waiting.',
                     '已经有一段时间没有新的进度，生成仍在进行，可以继续等待。');
             const sentence = hasReport ? first + t(
                 ' You can also use Download report below and submit the report in a GitHub issue; we will look into it and work on a fix for you.',
                 '也可以点击下方的“下载报告”并提交到 GitHub issue，我们会专门排查和优化，为您解决这个问题。') : first;
-            stallLoading = loading;
             if (hasReport) {
                 const buttonName = el('span', ''); buttonName.style.whiteSpace = 'nowrap';
                 buttonName.textContent = t('Download report', '“下载报告”');
@@ -491,10 +557,12 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     let holdUntil = 0, holdMode = null, holdFraction = null;
     function miniTarget() {
         const key = lastActivity?.key;
-        const counted = value => Number.isFinite(value?.[0]) && Number.isFinite(value?.[1]) && value[1] > 0
+        const ratio = value => Number.isFinite(value?.[0]) && Number.isFinite(value?.[1]) && value[1] > 0
             ? Math.max(0, Math.min(1, value[0] / value[1])) : null;
         if (key === 'download' || key === 'load' || key === 'lora' || key === 'decode' || key === 'encode') {
-            const share = counted([state.done, state.total]);
+            if (localShare !== null && hasCount(state) && ['load', 'decode'].includes(detail?.key))
+                return {mode: 'determinate', fraction: localShare};
+            const share = ratio([state.done, state.total]);
             if (share !== null) return {mode: 'determinate', fraction: share};
             // Slow without a count (an older engine, an audio pass): sweep only.
             return {mode: 'indeterminate'};
@@ -517,7 +585,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // The current stage has lasted 2 s: the stage line names it from now on.
     function settle(at) {
         if (stageId !== null && stageId !== labelId && at - stageSince >= 2000) {
-            labelId = stageId; labelText = lastActivity?.text ?? labelText; away = null;
+            labelId = stageId; labelText = lastActivity ? withWorkPercent(lastActivity.text) : labelText; away = null;
         }
     }
     function enterStage(id, at) {
@@ -562,17 +630,22 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         if (!lastActivity) { labelId = null; return t(...ACTIVITY.prepare); }
         settle(now());
         if (labelId === null) { labelId = stageId; away = null; }
-        if (labelId === stageId) labelText = lastActivity.text;
+        if (labelId === stageId) labelText = withWorkPercent(lastActivity.text);
         return labelText;
     }
+    function withWorkPercent(base) {
+        const percent = localShare === null ? null : Math.min(localShare === 1 ? 100 : 99, Math.floor(localShare * 100 + 1e-9));
+        // Keep the percentage with its own sentence while a new stage waits to be named.
+        return percent !== null && (detail?.key === 'load' || detail?.key === 'decode')
+            ? base + t(` (${percent}% of this step)`, `（本步 ${percent}%）`) : base;
+    }
     function drawActivity(age, ended) {
-        const base = ended ? (overall.status === 'complete' || state.phase === 'complete' ? savedText() : t('Stopped', '已停止'))
-            : stageText();
         const paused = !ended && age > 15;
-        // Two times only (elapsed, remaining): a pause shows on the small bar, not as text.
-        if (label.textContent !== base) label.textContent = base;
+        const base = ended ? (overall.status === 'complete' || state.phase === 'complete' ? savedText() : t('Stopped', '已停止'))
+            : paused ? detail?.text || stageText() : stageText();
+        const shown = !ended && paused && detail ? withWorkPercent(base) : base;
+        if (label.textContent !== shown) label.textContent = shown;
         drawMini(age, ended);
-        const firstSlow = state.phase === 'sampling' && state.stage !== 'latent_upscale' && state.done === 0 && paused;
         const automatic = compatibility?.origin === 'automatic' && compatibility.level > 0;
         const required = Number.isInteger(compatibility?.recovery_successes_required) && compatibility.recovery_successes_required > 0
             ? compatibility.recovery_successes_required : 3;
@@ -583,17 +656,33 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             : t(remaining === 1 ? 'Generation is slowed automatically for stability; it speeds up after one more successful generation.'
                 : `Generation is slowed automatically for stability; it speeds up after ${remaining} more successful generations.`,
                 `为了稳定，生成已自动放慢；再连续完成 ${remaining} 次后会加快一些。`) : '';
-        if (compatibilityNote.textContent !== compatibilityText) {
-            compatibilityNote.textContent = compatibilityText;
-            compatibilityNote.hidden = !compatibilityText;
-            layout();
+        // All explanations share one row, including automatic compatibility.
+        compatibilityNote.hidden = true;
+        let pauseText = '';
+        if (paused) {
+            const elapsed = waitDuration((now() - segmentStartedAt) / 1000, t);
+            const typical = segmentTypical(), usual = valid(typical) && typical > 0 ? waitDuration(typical, t) : '';
+            const similar = overall.typical_source === 'similar';
+            pauseText = t(`${elapsed} so far`, `已进行 ${elapsed}`);
+            if (usual) pauseText += similar ? t(` (about ${usual} on similar hardware)`, `（相近配置约 ${usual}）`)
+                : t(` (usually about ${usual})`, `（通常约 ${usual}）`);
         }
-        const level = ended ? '' : recovery ? 'retry' : firstSlow ? 'first-step'
-            : lowMemory ? 'memory' : memoryTight ? 'unified-memory' : compatibility && !automatic && compatibility.level > 0 ? 'compatibility' : trims.size ? 'notice' : '';
+        // Only an available engine estimate can supply this long-decode fallback.
+        const remainingEstimate = rawRemaining();
+        if (!ended && detail?.key === 'decode' && valid(remainingEstimate) && remainingEstimate >= 180) {
+            const minutes = Math.ceil(remainingEstimate / 60);
+            if (decodeMinutes === null || now() - decodeMinutesAt >= 60000 && Math.abs(minutes - decodeMinutes) >= 1) {
+                decodeMinutes = minutes; decodeMinutesAt = now();
+            }
+        } else { decodeMinutes = null; decodeMinutesAt = -Infinity; }
+        const decodeEta = decodeMinutes === null ? '' : t(`About ${decodeMinutes} min left`, `还需约 ${decodeMinutes} 分钟`);
+        const progressText = [paused ? pauseText : '', decodeEta].filter(Boolean).join(t(' · ', '，'));
+        const level = ended ? '' : recovery ? 'retry' : paused ? 'pause'
+            : lowMemory ? 'memory' : memoryTight ? 'unified-memory' : automatic ? 'automatic'
+                : compatibility && compatibility.level > 0 ? 'compatibility' : trims.size ? 'notice' : '';
         const explanation = {retry: recovery,
-            'first-step': t('The first run at this size, or after an update, takes longer to start.',
-                '首次使用这个尺寸或更新后，开头要多花一些时间。'),
-            memory: t('This generation uses low-memory mode; it is slower than usual but will finish.',
+            pause: progressText,
+            memory: t('This video uses a memory-saving mode, so it takes longer than usual but will finish.',
                 '这次生成使用省显存方式，会比平时慢，但能完成。'),
             // Mac, level 3 with low-memory mode (never both). The measured numbers go to the
             // report only. Closing applications during the first pass can still give the
@@ -605,21 +694,28 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
                     '可用的统一内存较少，这次生成会比平时慢。'),
             compatibility: compatibility ? t(`Compatibility setting ${compatibility.name_en} is on, so generation is slower than usual.`,
                 `已开启兼容性设置（${compatibility.name_zh}档），生成会比平时慢。`) : '',
-            notice: trimStatus([...trims.values()], t)}[level] || '';
+            automatic: compatibilityText,
+            notice: trimStatus([...trims.values()], t)}[level] || (!ended ? progressText : '');
         if (status.textContent !== explanation) status.textContent = explanation;
         status.hidden = !explanation; status.dataset.level = level;
         const announcements = [];
-        if (paused && !pauseAnnounced) { announcements.push(base); pauseAnnounced = true; }
-        for (const text of [compatibilityText, explanation !== lastExplanation ? explanation : '']) {
+        const pauseKey = `pause:${segmentKey}`;
+        if (paused && !pauseAnnounced) {
+            if (!announcedMessages.has(pauseKey)) announcements.push(base);
+            announcedMessages.add(pauseKey); pauseAnnounced = true;
+        }
+        // Seconds and local percentages are visual only. Announce the work once.
+        const spoken = level === 'pause' || explanation === progressText ? '' : explanation;
+        for (const text of [spoken !== lastExplanation ? spoken : '']) {
             if (!text || announcedMessages.has(text)) continue;
             announcements.push(text); announcedMessages.add(text);
-            if (announcementRecord) {
-                announcementRecord.messages = [...announcedMessages];
-                try { sessionStorage.setItem(announcementKey, JSON.stringify(Object.fromEntries(requestAnnouncements))); }
-                catch { /* In-memory deduplication still works. */ }
-            }
         }
-        lastExplanation = explanation;
+        if (announcementRecord && announcements.length) {
+            announcementRecord.messages = [...announcedMessages];
+            try { sessionStorage.setItem(announcementKey, JSON.stringify(Object.fromEntries(requestAnnouncements))); }
+            catch { /* Optional storage; in-memory deduplication remains. */ }
+        }
+        lastExplanation = spoken;
         if (announcements.length) live.textContent = announcements.join(t(' ', ''));
     }
 
@@ -735,6 +831,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             recovery = ''; lowMemory = false; compatibility = null; references = false; trims.clear();
             memoryTight = null; firstPassOver = false;
             samplingPlan = {}; secondPass = false; hasHeartbeat = false;
+            detail = null; localShare = null; workShares.clear(); decodeMinutes = null; decodeMinutesAt = -Infinity;
             announcementRecord = null;
         }
         if (!placeholderReset && (message.stream_id !== undefined || terminal)) placeholder = false;
@@ -753,6 +850,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         const heartbeat = beat && previousProgress !== null;
         if (message.reset === true) {
             hasHeartbeat = false; lastActivity = null;
+            workShares.clear(); localShare = null; decodeMinutes = null; decodeMinutesAt = -Infinity;
             // A stage restarting its own count (the sampler's start) leaves the
             // bridge's whole-request estimate standing; a retry starts afresh.
             if (estimateSource && !message.retry && message.phase !== 'recovery') { completedSteps = 0; previousRemaining = null; }
@@ -761,6 +859,14 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             // (hidden, 5 s again). One before anything was counted, such as the
             // sampler's own start, keeps the stage's clock and the 2 s rule.
             if (miniFraction > 0) resetMini();
+        }
+        if (!heartbeat && message.retry && message.phase === 'recovery') {
+            // Resource retries do not carry reset=true. Clear only the new attempt's work.
+            const retryId = JSON.stringify(message.retry);
+            if (retryId !== JSON.stringify(state.retry)) {
+                workShares.clear(); localShare = null; resetMini();
+                decodeMinutes = null; decodeMinutesAt = -Infinity;
+            }
         }
         if (beat) hasHeartbeat = true;
         if (!heartbeat && message.phase === 'sampling' && valid(message.done))
@@ -826,13 +932,24 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             enterStage(activity.key === 'download' ? `download:${state.stage || state.phase}` : activity.key, receivedAt);
             lastActivity = activity;
         }
-        const key = JSON.stringify([state.phase || state.timing_phase, state.stage,
-            state.phase === 'sampling' ? [state.done, state.total] : [state.label, lastActivity?.text]]);
+        detail = subactivity(state, lastActivity, t);
+        localShare = null;
+        if (['load', 'decode'].includes(detail.key) && lastActivity?.key !== 'lora') {
+            const shareKey = `${detail.key}:${secondPass ? 'second' : 'first'}`;
+            const share = hasCount(state) ? state.done / state.total
+                : state.label === 'Video model ready' ? 1 : null;
+            if (share !== null) workShares.set(shareKey, Math.max(workShares.get(shareKey) ?? 0, share));
+            localShare = workShares.get(shareKey) ?? null;
+        }
+        const key = JSON.stringify([detail.key, detail.sampling ? [lastActivity?.key, state.done] : null]);
         if (key !== segmentKey || message.reset) {
             segmentKey = key;
-            segmentStartedAt = receivedAt - (state.phase === 'sampling' && valid(message.step_elapsed_seconds)
+            segmentStartedAt = receivedAt - (detail.sampling && valid(message.step_elapsed_seconds)
                 ? message.step_elapsed_seconds * 1000 : 0);
             pauseAnnounced = false;
+            if (detail.sampling && !('estimated_step_seconds' in message)) delete state.estimated_step_seconds;
+        } else if (detail.sampling && valid(message.step_elapsed_seconds)) {
+            segmentStartedAt = Math.min(segmentStartedAt, receivedAt - message.step_elapsed_seconds * 1000);
         }
         element.dataset.phase = message.phase || message.timing_phase || '';
         if (message.overall && typeof message.overall === 'object') {
@@ -850,6 +967,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         if (timer !== null) clearInterval(timer); timer = null; state = {}; overall = {}; shownFraction = null;
         stopCount(); countShown = null;
         resetRemaining(); lastActivity = null; resetMini(); previousProgress = null; segmentKey = ''; status.textContent = ''; live.textContent = '';
+        detail = null; localShare = null; workShares.clear(); decodeMinutes = null; decodeMinutesAt = -Infinity;
         // Last: the layout callback sizes the node from the cleared state.
         drawStall(0, true);
     }

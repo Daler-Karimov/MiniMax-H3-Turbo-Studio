@@ -29,6 +29,17 @@ export function openEditorView(node, {studio, work = null, extend = false} = {})
             const number = progressElement.querySelector('.fv-generation-count')?.textContent?.match(/(\d+)%/);
             return number ? {percent: Number(number[1])} : {percent: 0};
         };
+        // What the creation panel is saying now; the editor covers that panel, so its bar repeats the words.
+        panel.progressWords = () => {
+            if (progressElement.hidden) return null;
+            const words = selector => {
+                const element = progressElement.querySelector(selector);
+                return element && !element.hidden && element.getClientRects().length ? element.textContent.replace(/\s+/g, ' ').trim() : '';
+            };
+            // The block already shows the overall percentage; the bar keeps only the stage sentence.
+            const stage = words('.fv-generation-label').replace(/（本步 \d+%）$| \(\d+% of this step\)$/, '');
+            return {stage, time: words('.fv-generation-status'), stall: words('.fv-generation-stall')};
+        };
     }
     const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view) {
         if (view === 'nodes') showNodes(node, studio);

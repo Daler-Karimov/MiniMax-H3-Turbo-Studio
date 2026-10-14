@@ -209,7 +209,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     function barJob(job) {
         const latest = [...runProgress.values()].filter(message => message.chain.id === job.id)
             .sort((a, b) => (a.received_at || 0) - (b.received_at || 0)).at(-1);
-        return latest ? {...job, chainProgress: latest.chain} : job;
+        const words = panel.progressWords?.() || null;
+        return latest ? {...job, chainProgress: latest.chain, words} : words ? {...job, words} : job;
     }
     function paintJob(job) {
         const messages = blockMessages([...runProgress.values()].filter(message => message.chain.id === job.id),
@@ -1254,7 +1255,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             listeners.push(() => api.removeEventListener('execution_error', executionError));
         }
         if (panel.progressElement && typeof MutationObserver !== 'undefined') {
-            progressObserver = new MutationObserver(() => { for (const job of jobStatuses.values()) paintJob(job); });
+            progressObserver = new MutationObserver(() => {
+                for (const job of jobStatuses.values()) paintJob(job);
+                if (mostRecentJob && jobStatuses.has(mostRecentJob)) genbar?.update(barJob(jobStatuses.get(mostRecentJob)));
+            });
             progressObserver.observe(panel.progressElement, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-valuenow', 'hidden']});
         }
         const bar = tracks.element.querySelector('.fv-ed-track-zoom');

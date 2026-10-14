@@ -429,7 +429,7 @@ class WholeVideoProgress:
             if self.request['flow'] == 'upscale' or self.retry_reuse_first:
                 return 'pass2'
             if self.request['flow'] != 'preview' and self.request['two_pass']:
-                if done > base or (done == base and (name == 'sampling_start' or message.get('stage') in ('layers', 'inputs'))):
+                if done > base or (done == base and (name == 'sampling_start' or message.get('stage') in ('layers', 'inputs', 'kernel_prepare'))):
                     return 'pass2'
             return 'pass1'
         return {'encoding': 'encode', 'load': 'load', 'decode': 'decode_save'}.get(phase) if isinstance(phase, str) else None
@@ -493,9 +493,10 @@ class WholeVideoProgress:
                         self.live_calibration = True
         elif phase == 'load':
             if event.get('event') == 'loaded':
-                done, total = 50, 50
+                total = self.count[1] if self.count else 50
+                done = total
             elif event.get('event') == 'prepared_blocks':
-                done, total = event.get('blocks'), 50
+                done, total = message.get('done'), message.get('total')
             elif event.get('event') == 'model_load_phase':
                 done, total = event.get('done'), event.get('total')
             # LoRA groups describe a substage, not completion of the whole load.
@@ -1031,9 +1032,14 @@ def progress_message(event):
         return {'label': 'Preparing reference media', 'timing_phase': 'encoding',
                 'reference_trimmed': {key: event.get(key) for key in ('kind', 'number', 'seconds', 'used_seconds')}}
     if name == 'prepared_blocks':
-        # The cached video model has 50 blocks, as in the former label.
-        return {'label': 'Loading the video model',
-                'timing_phase': 'load', 'done': event.get('blocks'), 'total': 50}
+        # Old engine logs omitted the total for the pinned 50-block model.
+        # Current workers report the actual model length, including the last
+        # block when that length is not a multiple of five.
+        result = {'label': 'Loading the video model', 'timing_phase': 'load'}
+        done, total = event.get('blocks'), event.get('total', 50)
+        if type(done) is int and type(total) is int and total > 0 and 0 <= done <= total:
+            result.update(done=done, total=total)
+        return result
     if name in ('sampling_preset_download', 'reference_assets_download'):
         reference = name == 'reference_assets_download'
         return dict(label='Preparing reference media resources' if reference else 'Preparing sampling preset',

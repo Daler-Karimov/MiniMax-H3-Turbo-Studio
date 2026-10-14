@@ -63,7 +63,11 @@
 .fv-ed-genbar{grid-column:1/-1;grid-row:4;display:flex;align-items:center;gap:12px;padding:0 16px;border-top:1px solid var(--fv-border);border-bottom:1px solid var(--fv-border);background:var(--fv-card);min-width:0}
 .fv-ed-genbar .fv-ed-description{width:auto}
 .fv-ed-clip[data-state=running] .fv-block-progress.fv-ed-block-progress{display:grid}
-.fv-ed-gen-hint{font-size:13px;color:var(--fv-muted);flex:1;min-width:0}
+.fv-ed-gen-hint{display:flex;font-size:13px;color:var(--fv-muted);flex:1;min-width:0;overflow:hidden;white-space:pre}
+.fv-ed-gen-part{flex:none}
+.fv-ed-gen-stage,.fv-ed-gen-time{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fv-ed-gen-stage{flex:0 1000 auto}
+.fv-ed-gen-time{flex:none;max-width:100%}
 .fv-ed-genbar[data-mode=selected] .fv-ed-gen-hint{flex:none}
 .fv-ed-gen-note{font-size:13px;color:var(--fv-ink);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-ed-gen-note[hidden]{display:none}

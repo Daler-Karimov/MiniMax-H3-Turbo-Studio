@@ -89,6 +89,9 @@ class SamplingProgress:
 
     def start(self):
         self.event('sampling_start', stage='inputs', step=1)
+        # Preparation can encounter a new shape or a cold compiler cache. We
+        # cannot tell whether a compile is active, or how far it has progressed.
+        self.event('sampling_prepare', stage='kernel_prepare', step=1)
 
     def layer(self, index):
         if len(self.completed) >= self.steps:
@@ -160,6 +163,15 @@ def progress_message(event):
             return dict(label=labels[phase], phase='sample_finalize', stage=phase,
                         done=0, total=0)
         return None
+    if name == 'sampling_prepare':
+        done, total = event.get('completed_steps'), event.get('total')
+        if type(total) is not int or total < 1 or type(done) is not int or not 0 <= done < total:
+            return None
+        return dict(label='Preparing GPU programs for the first step', phase='sampling',
+                    stage='kernel_prepare', done=done, total=total, unit='steps',
+                    kernel_cache_note=True,
+                    uniform_remaining_steps=event.get('uniform_remaining_steps', True),
+                    step_elapsed_seconds=event.get('step_elapsed_seconds', 0.))
     if name not in ('sampling_start', 'sampling_progress', 'step', 'loaded'):
         return None
     total = event.get('total', 8)

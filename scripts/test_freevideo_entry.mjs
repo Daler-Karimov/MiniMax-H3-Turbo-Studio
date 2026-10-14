@@ -351,11 +351,12 @@ test('main browser entry registers both views and preserves node hooks', async t
                 const activity = progress.snapshot().label;
                 removalNode.freevideoShowProgress({compatibility: {level: 2, name_en: 'Compatible', name_zh: '兼容'}});
                 assert.equal(progress.snapshot().label, activity, 'The node must not replace the activity for settings-only events');
-                assert.match(progress.snapshot().status, /Compatibility setting Compatible|兼容档/);
+                assert.match(progress.snapshot().status, /so far|已进行/, 'pause has priority over a settings-only compatibility notice');
                 removalNode.freevideoShowProgress({phase: 'recovery', retry: {kind: 'ram_pressure'}});
                 assert.match(progress.snapshot().status, /Out of RAM|内存不足/);
                 removalNode.freevideoShowProgress({new_request: true, phase: 'load', received_at: 0});
-                assert.equal(progress.snapshot().status, '', 'A new request clears the old retry and compatibility notice');
+                assert.match(progress.snapshot().status, /so far|已进行/, 'An aged new request clears retry and compatibility but shows its own pause');
+                assert.doesNotMatch(progress.snapshot().status, /Out of RAM|内存不足|Compatibility setting|兼容档/);
                 assert.equal(progress.stall.hidden, false);
                 assert.equal(timers.size, 1);
                 let layoutCalls = 0, timersDuringLayout;
