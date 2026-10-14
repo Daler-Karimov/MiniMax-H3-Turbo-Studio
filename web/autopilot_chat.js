@@ -1,6 +1,8 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost} from './agent_session.js';
+import {isolateDialogKeys, routeDialogKey} from './dialog_keys.js';
+import {closeDialog} from './motion.js';
 import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
 import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 import {renderImageFailure} from './image_generation.js';
@@ -135,6 +137,79 @@ function newId() {
     return 'm-' + [...bytes].map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 20);
 }
 
+// A picture is viewed here, independently of the video library. The image stays within reach while zoomed.
+function imageViewer(t, src, name, opener, failed) {
+    const dialog = el('dialog', 'fv-studio fv-chat-image-viewer'), actions = el('div', 'fv-chat-actions');
+    dialog.setAttribute('aria-label', name);
+    const close = press('fv-close', '×', () => closeDialog(dialog));
+    close.setAttribute('aria-label', t('Close', '关闭')); close.title = t('Close', '关闭'); actions.append(close);
+    const stage = el('div', 'fv-chat-image-stage'), image = el('img');
+    image.alt = name; image.draggable = false; stage.append(image); dialog.append(actions, stage);
+    let scale = 1, fit = 1, x = 0, y = 0, disposed = false;
+    let frameWidth = 0, frameHeight = 0, pictureWidth = 0, pictureHeight = 0;
+    const pointers = new Map();
+    const draw = () => {
+        const limitX = Math.max(0, (image.naturalWidth * scale - stage.clientWidth) / 2);
+        const limitY = Math.max(0, (image.naturalHeight * scale - stage.clientHeight) / 2);
+        x = Math.max(-limitX, Math.min(limitX, x)); y = Math.max(-limitY, Math.min(limitY, y));
+        image.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${scale})`;
+    };
+    const resize = () => {
+        const w = stage.clientWidth, h = stage.clientHeight, iw = image.naturalWidth, ih = image.naturalHeight;
+        if (!iw || !ih || !w || !h) return;
+        // The observer's first notification can follow the first gesture; do not reset zoom for the same size.
+        if (w === frameWidth && h === frameHeight && iw === pictureWidth && ih === pictureHeight) return;
+        frameWidth = w; frameHeight = h; pictureWidth = iw; pictureHeight = ih;
+        fit = Math.min(w / iw, h / ih);
+        scale = fit; x = y = 0; draw();
+    };
+    const zoom = (factor, cx, cy) => {
+        const next = Math.max(fit, Math.min(fit * 16, scale * factor)), ratio = next / scale;
+        x = cx - (cx - x) * ratio; y = cy - (cy - y) * ratio; scale = next; draw();
+    };
+    stage.addEventListener('wheel', event => {
+        event.preventDefault();
+        const rect = stage.getBoundingClientRect(), unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1;
+        zoom(Math.exp(-event.deltaY * unit / 500), event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
+    }, {passive: false});
+    const gesture = () => {
+        const [a, b] = [...pointers.values()], rect = stage.getBoundingClientRect();
+        return {cx: (a.x + b.x) / 2 - rect.left - rect.width / 2, cy: (a.y + b.y) / 2 - rect.top - rect.height / 2,
+            distance: Math.hypot(a.x - b.x, a.y - b.y)};
+    };
+    stage.onpointerdown = event => {
+        if (event.button !== 0) return;
+        pointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+        stage.setPointerCapture(event.pointerId); stage.dataset.dragging = 'true';
+    };
+    stage.onpointermove = event => {
+        const previous = pointers.get(event.pointerId); if (!previous) return;
+        const before = pointers.size === 2 ? gesture() : null;
+        pointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+        if (before) {
+            const after = gesture(); x += after.cx - before.cx; y += after.cy - before.cy;
+            zoom(before.distance > 0 ? after.distance / before.distance : 1, after.cx, after.cy);
+        } else { x += event.clientX - previous.x; y += event.clientY - previous.y; draw(); }
+    };
+    stage.onpointerup = stage.onpointercancel = stage.onlostpointercapture = event => {
+        pointers.delete(event.pointerId); stage.dataset.dragging = String(pointers.size > 0);
+    };
+    // Keep ComfyUI's document shortcuts out of this modal while retaining native Tab/Enter behavior.
+    const stopKeys = isolateDialogKeys(dialog, event => routeDialogKey(event, dialog));
+    const observer = new ResizeObserver(resize);
+    const cleanup = () => {
+        if (disposed) return;
+        disposed = true; observer.disconnect(); stopKeys(); pointers.clear(); image.onload = image.onerror = null;
+        dialog.remove(); if (opener.isConnected && !opener.disabled) opener.focus({preventScroll: true});
+    };
+    dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(dialog); });
+    dialog.addEventListener('close', cleanup, {once: true});
+    image.onload = () => { image.style.width = `${image.naturalWidth}px`; image.style.height = `${image.naturalHeight}px`; resize(); };
+    image.onerror = () => { failed(); closeDialog(dialog); };
+    document.body.append(dialog); dialog.showModal(); observer.observe(stage); close.focus(); image.src = src;
+    return () => { if (dialog.open) dialog.close(); cleanup(); };
+}
+
 // open(job) shows a finished video in Creations, edit(job) takes it to the editing view. shown() says whether the
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
@@ -148,6 +223,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
     form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
 
+    let dismissImage = null;
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
     let conversations = emptyConversations(), selectedSession, selection = 0, reread = false, focusSession = null, creating = false;
     // Only the reading position is persisted, scoped to this server; drafts stay in this open page.
@@ -511,7 +587,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     function preview(job) {
         const box = el('div', 'fv-chat-preview');
-        const shape = (w, h) => { if (w > 0 && h > 0) { box.style.aspectRatio = `${w} / ${h}`; box.dataset.shape = w > h * 1.1 ? 'wide' : 'tall'; } };
+        const shape = (w, h) => {
+            if (!(w > 0 && h > 0)) return;
+            box.style.aspectRatio = `${w} / ${h}`; box.dataset.shape = w > h * 1.1 ? 'wide' : 'tall';
+            if (job.kind === 'image') box.style.setProperty('--fv-chat-ratio', w / h);
+        };
         shape(job.width, job.height);
         return {box, shape};
     }
@@ -558,17 +638,25 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     function done(item, job) {
         const info = el('div', 'fv-chat-info'), head = el('div'), name = el('h3'), meta = el('p', 'fv-chat-meta'); head.append(name, meta);
         const foot = el('div', 'fv-chat-actions');
-        const show = press('fv-chat-open', t('Open', '打开'), () => open(job));
+        const picture = job.kind === 'image';
+        const show = press('fv-chat-open', t('Open', '打开'), () => {
+            if (!picture) return open(job);
+            dismissImage?.();
+            dismissImage = imageViewer(t, api.apiURL(job.thumbnail), name.textContent, show, () => { show.disabled = true; });
+        });
         const cut = press('fv-chat-edit', t('Edit', '剪辑'), () => edit(job));
-        if (job.work) foot.append(show, cut);
-        info.append(head, foot);
+        if (picture && job.thumbnail) { show.disabled = true; foot.append(show); }
+        else if (!picture && job.work) foot.append(show, cut);
+        info.append(head); if (foot.childElementCount) info.append(foot);
         const children = [info];
         if (job.thumbnail || job.play) {
             const {box, shape} = preview(job), length = el('span', 'fv-chat-length', job.seconds > 0 ? clock(job.seconds) : '');
             if (job.thumbnail) {
-                const image = el('img'); image.alt = ''; image.src = api.apiURL(job.thumbnail);
-                image.onload = () => { if (!box.style.aspectRatio) shape(image.naturalWidth, image.naturalHeight); };
-                box.append(image);
+                const image = el('img'); image.alt = '';
+                const viewable = on => { show.disabled = !on; if (on) box.dataset.open = 'true'; else delete box.dataset.open; };
+                image.onload = () => { if (!box.style.aspectRatio) shape(image.naturalWidth, image.naturalHeight); if (picture) viewable(true); };
+                if (picture) { image.onerror = () => viewable(false); box.onclick = () => { if (!show.disabled) show.click(); }; }
+                image.src = api.apiURL(job.thumbnail); box.append(image);
             }
             if (job.play) {
                 // The video plays inside its frame, with its sound; the line under it follows and can be dragged.
@@ -595,6 +683,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         item.replaceChildren(...children);
         return (next, latest) => {
             name.textContent = jobName(next, t); meta.textContent = jobMeta(next, t); meta.hidden = !meta.textContent;
+            if (picture) show.setAttribute('aria-label', t('Open ', '打开 ') + jobName(next, t));
             show.classList.toggle('fv-primary', latest);
         };
     }
@@ -610,6 +699,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 : WORKING.includes(job.status) ? 'quiet' : 'none';
             if (next !== mode) {
                 mode = next; item.dataset.job = job.id; item.dataset.mode = next.split(':')[0]; item.hidden = next === 'none';
+                if (job.kind === 'image') item.dataset.kind = 'image'; else delete item.dataset.kind;
                 if (next !== 'working') { stopping.delete(job.id); stopErrors.delete(job.id); }
                 if (next === 'working') apply = working(item, job);
                 else if (next.startsWith('done')) apply = done(item, job);
@@ -689,7 +779,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         pending = pending.filter(entry => entry.sending || entry.session !== state.session || !ids.has(entry.id));
         const localPending = pending.filter(entry => entry.session === state.session && !ids.has(entry.id));
         const said = entries.some(entry => entry.type !== 'message' || entry.role === 'user') || localPending.length > 0;
-        const finished = entries.filter(entry => entry.type === 'job' && state.jobs[entry.job]?.status === 'succeeded' && state.jobs[entry.job].work).at(-1);
+        const finished = entries.filter(entry => entry.type === 'job' && state.jobs[entry.job]?.status === 'succeeded' && (state.jobs[entry.job].work || (state.jobs[entry.job].kind === 'image' && state.jobs[entry.job].thumbnail))).at(-1);
         const wanted = [];
         if (!entries.length && !localPending.length) wanted.push(['hello', 'hello', null]);
         let lastUser = null;
@@ -815,6 +905,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
 
     // Both a server-side session change and a list selection reset the same reader. Job clocks stay keyed by job id.
     function resetChat() {
+        dismissImage?.(); dismissImage = null;
         state = emptyChat(); nodes.clear();
         log.querySelectorAll('video').forEach(video => video.pause()); log.replaceChildren(); pinned = true;
     }
@@ -905,7 +996,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             try { await Promise.all([...jobs.values()].map(({job, session}) => cancelJob(job, session))); }
             finally { bulkStopping = false; if (!stopped) { report(); void poll(); } }
         },
-        stop() { closeMenu(); stopped = true; closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
+        stop() { closeMenu(); stopped = true; dismissImage?.(); closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
             document.removeEventListener('visibilitychange', visible); document.removeEventListener('pointerdown', outside, true);
             document.removeEventListener('keydown', keys, true); window.removeEventListener('resize', resize); list.removeEventListener('scroll', listScroll);
             log.querySelectorAll('video').forEach(video => video.pause()); }};

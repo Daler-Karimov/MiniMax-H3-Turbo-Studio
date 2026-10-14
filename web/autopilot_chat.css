@@ -76,6 +76,18 @@
 .fv-chat-seek::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;margin-top:-3px;border-radius:50%;background:#fff}
 .fv-chat-seek::-moz-range-track{height:3px;border-radius:9px;background:#ffffff40}.fv-chat-seek::-moz-range-thumb{width:9px;height:9px;border:0;border-radius:50%;background:#fff}
 .fv-chat-info{display:grid;align-content:space-between;gap:12px;min-width:0;padding:4px 4px 2px 0}
+/* Finished cards have only a heading and any available actions; an empty footer takes no room. */
+.fv-chat-job[data-kind=image][data-mode=done] .fv-chat-preview{max-width:calc(160px * var(--fv-chat-ratio,1.7778))}
+.fv-chat-job[data-mode=done]:not(:has(.fv-chat-preview)){grid-template-columns:minmax(0,1fr)}
+/* The picture viewer uses the same modal, surfaces and ordinary action buttons as the conversation. */
+.fv-studio.fv-chat-image-viewer[open]{display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px;padding:12px;border-radius:14px;background:var(--fv-card)}
+.fv-chat-image-viewer>.fv-chat-actions{justify-content:flex-end}
+.fv-studio.fv-chat-image-viewer .fv-close{min-height:34px;width:34px;padding:0;font-size:20px;line-height:1;background:transparent;border-color:transparent;color:var(--fv-muted)}
+.fv-studio.fv-chat-image-viewer .fv-close:hover{background:var(--fv-raised);color:var(--fv-ink)}
+.fv-chat-preview[data-open=true]{cursor:zoom-in}
+.fv-chat-image-stage{position:relative;min-width:0;min-height:0;overflow:hidden;border-radius:9px;background:var(--fv-bg);touch-action:none;cursor:grab;user-select:none}
+.fv-chat-image-stage[data-dragging=true]{cursor:grabbing}
+.fv-chat-image-stage>img{position:absolute;left:50%;top:50%;max-width:none;max-height:none;pointer-events:none}
 .fv-chat-info h3{margin:0;font-size:15px;line-height:1.4;font-weight:var(--fv-semibold);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-chat-info .fv-chat-meta{margin-top:3px}
 .fv-chat-parts{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;margin-bottom:7px}
