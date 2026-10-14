@@ -84,8 +84,12 @@ class ProductionFailure(JobError):
         super().__init__(error.code, error.message)
         self.status = errors.PRODUCTION_STATUS.get(error.code, errors.ERRORS[error.code][0])
         message = production._public(error.message) if isinstance(error.message, str) else ''
-        self.error = errors.build(error.code, validation=True, message=message[:300],
-            details=_rows(error), next_action=(FILM_STOPPED_NEXT if error.code == 'stopped_by_user' else error.next))
+        rows = _rows(error)
+        if error.code == 'invalid_screenplay' and rows and all('field' in row for row in rows):
+            # Like a request validation error: every problem with its field, as the tool text shows only this.
+            message = '; '.join(row['message'] for row in rows)[:2000]
+        self.error = errors.build(error.code, validation=True, message=message[:2000],
+            details=rows, next_action=(FILM_STOPPED_NEXT if error.code == 'stopped_by_user' else error.next))
         if error.code == 'not_ready':
             self.error['retryable'] = False
 
@@ -172,7 +176,7 @@ class Productions:
                     raise ValueError('Invalid submission marker')
                 production.view(state)
                 try:
-                    checked = production.plan(request)
+                    checked = production.plan(request, fields=False)
                     if [s['id'] for s in state['shots']] != [s['id'] for s in checked['preview']['shots']]:
                         raise JobError('internal_error', 'Saved shots differ from the current plan')
                     production.advance(deepcopy(state), deepcopy(record['children']), now=state['updated_at'])

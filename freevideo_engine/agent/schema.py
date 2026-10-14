@@ -427,9 +427,17 @@ DRAMA_OPERATIONS = {
 }
 
 
+# The fields are checked when planning; the shape is told here so an agent does not guess it.
+SCREENPLAY = {'type': 'object', 'description': (
+    'characters: {key: {card: cast card ID, or name, look, voice, language}}; '
+    'shots: [{id, seconds, action or prompt, camera, framing, sound, takes, seed, '
+    'cast: [character keys], lines: [{who: character key, line, how}], '
+    'continue: true to carry on from the previous shot}]; also title, style, aspect, quality, music.')}
+
+
 def drama_schema(name):
     if name in ('plan', 'start'):
-        return obj(dict(screenplay={'type': 'object'}, takes_per_shot=number(1, 8, integer=True, default=1),
+        return obj(dict(screenplay=SCREENPLAY, takes_per_shot=number(1, 8, integer=True, default=1),
                         director=enum(('agent', 'builtin'), default='agent'), ref=REF), ('screenplay',))
     if name == 'list':
         return obj(dict(status=enum(('active', 'all'), default='all'), limit=number(1, 200, integer=True, default=50)))
