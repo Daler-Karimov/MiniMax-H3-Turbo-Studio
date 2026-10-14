@@ -187,6 +187,36 @@ def stop_read_ahead(trace):
         trace.data['encoder_read_ahead'] = reader.close()
 
 
+def start_layer_window(trace, clip, path):
+    """Read the streamed layers ahead of the forward pass when the whole-file read-ahead could not.
+
+    Speculative like the readers above: any failure leaves the encode exactly as before. Once per request."""
+    if getattr(trace, 'layer_window', None) is not None or 'encoder_window' in trace.data:
+        return
+    if os.environ.get('FREEVIDEO_ENCODER_WINDOW', 'auto').lower() in ('off', '0', 'false'):
+        trace.data['encoder_window'] = dict(state='skipped', reason='Disabled by FREEVIDEO_ENCODER_WINDOW')
+        return
+    if (trace.data.get('encoder_read_ahead') or {}).get('state') == 'ready':
+        trace.data['encoder_window'] = dict(state='skipped', reason='The whole checkpoint is already in the OS cache')
+        return
+    try:
+        from .encoder_checkpoint import owns_readonly_tensor
+        from .encoder_window import LayerWindow, layer_modules
+        modules = layer_modules(clip.cond_stage_model, owns_readonly_tensor)
+        release = os.environ.get('FREEVIDEO_ENCODER_WINDOW_RELEASE', 'auto').lower() not in ('off', '0', 'false')
+        trace.layer_window = window = LayerWindow(path, modules, release=release)
+        window.start()
+    except Exception as error:
+        trace.data['encoder_window'] = dict(state='failed', reason=type(error).__name__ + ': ' + str(error))
+
+
+def stop_layer_window(trace):
+    """Stop the layer window, once, and keep what it did in the metrics."""
+    window = getattr(trace, 'layer_window', None)
+    if window is not None and 'encoder_window' not in trace.data:
+        trace.data['encoder_window'] = window.close()
+
+
 def start_model_read_ahead(trace, request):
     """On a slow drive, read the video model's files while the encoder computes.
 
@@ -221,6 +251,7 @@ def encode(args, request, resident=None, diagnostics=None):
         metrics = _encode(args, request, resident, trace)
     except BaseException:
         stop_read_ahead(trace)
+        stop_layer_window(trace)
         stop_model_read_ahead(trace)
         trace.finish(False)
         raise
@@ -485,6 +516,8 @@ def _encode(args, request, resident, trace):
         phase('encoder_compute', load_seconds=load_seconds, device_load_seconds=transfer_seconds[0],
               gpu=snapshot(torch, clip, memory))
         print(json.dumps({'event': 'encoder_compute_start'}), flush=True)
+        if not encoder_cache_hit:
+            start_layer_window(trace, clip, path)
         return result
     @contextmanager
     def attempt(index, failure):
@@ -550,6 +583,7 @@ def _encode(args, request, resident, trace):
         phase('encoder_conditioning_pack', gpu=snapshot(torch, clip, memory))
     finally:
         del clip.load_model
+        stop_layer_window(trace)
         guard.disarm()
         if reader is not None:
             reader.close()

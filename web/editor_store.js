@@ -417,12 +417,13 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 notice('generate', 'Restart FreeVideo to generate.', '请重新启动 FreeVideo 后再生成。');
                 return null;
             }
-            if (response.status === 400) {
+            if (!response.ok) {
                 // The server's own sentence for a video with too many parts, or a continued part too short, is shown as it is.
                 const body = await response.json().catch(() => null);
                 if (['chain_too_long', 'chain_part_too_short'].includes(body?.code)) throw Object.assign(new Error(body.code), {code: body.code, said: [body.error, body.error_zh]});
+                throw Object.assign(new Error(typeof body?.error === 'string' ? body.error : body?.message || `HTTP ${response.status}`),
+                    {status: response.status, reason: body?.reason || body?.code, response: body});
             }
-            if (!response.ok) throw errorFor(response);
             return (await response.json())?.chain || null;
         },
         async chain(id) { return standIn?.owns(id) ? standIn.chain(id) : (await json(chainRoute(id)))?.chain || null; },
@@ -433,8 +434,11 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
             return (await json(chainRoute(id, action), post(payload)))?.chain || null;
         },
         async export(id, revision, options) {
-            const value = await json('/freevideo/editor/export', post({id, revision, ...(options && Object.keys(options).length ? {options} : {})}));
-            if (!value) notice('export', 'Export is unavailable until you restart after updating.', '更新后重启即可导出。');
+            const response = await request('/freevideo/editor/export', post({id, revision, ...(options && Object.keys(options).length ? {options} : {})}));
+            const value = await response.json().catch(() => null);
+            if (!response.ok && (response.status !== 404 || value?.reason || value?.code))
+                throw Object.assign(errorFor(response), {reason: value?.reason, code: value?.code, items: value?.items});
+            if (response.status === 404 || !value) { notice('export', 'To export, update FreeVideo and restart it.', '请更新 FreeVideo 并重新启动后再导出。'); return null; }
             return value?.export || null;
         },
         watchExport(id, fn) { return watch(async () => (await json('/freevideo/editor/export?' + new URLSearchParams({id})))?.export || null, fn); },

@@ -226,8 +226,36 @@ def packages(folder):
             yield Path(plain(pack)), 'models', value if isinstance(value, dict) else None
 
 
+def known_package_tree(pack, value):
+    """Retain unrecognized packages and anything added outside their inventory."""
+    from .offline_packages import inventory, VERIFIED
+    if (not isinstance(value, dict) or value.get('schema_version') != 1 or value.get('kind') != 'models'
+            or not isinstance(value.get('files'), list) or not value['files']):
+        return False
+    try:
+        inventory(value['files'])
+        if any(not row['path'].startswith('models/') for row in value['files']):
+            return False
+        files = {INNER + '/' + row['path'] for row in value['files']}
+        files.update(INNER + '/' + name for name in (MODELS_MARKER, VERIFIED, '模型包使用说明.txt'))
+        folders = {parent.as_posix() for name in files for parent in Path(name).parents}
+        pack = io_path(pack)
+        def unreadable(error):
+            raise error
+        for directory, children, names in os.walk(pack, followlinks=False, onerror=unreadable):
+            directory = Path(directory)
+            if any((directory / name).relative_to(pack).as_posix() not in folders for name in children):
+                return False
+            if any((directory / name).relative_to(pack).as_posix() not in files for name in names):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def prune_packages(engine, comfy_root=None, index=None, running=None, dry_run=False):
     """Model package extractions the installation no longer needs."""
+    from .locking import runtime_lock
     result = dict(released_bytes=0, removed=[], kept=[])
     try:
         engine = checked_real_path(engine)
@@ -241,32 +269,39 @@ def prune_packages(engine, comfy_root=None, index=None, running=None, dry_run=Fa
     installed = installed_at(engine)
     holders = [io_path(checked_real_path(path)) for paths in index.values() for path in paths]
     for folder in package_roots(engine, comfy_root):
-        for pack, kind, value in packages(folder):
-            pack = io_path(pack)
-            if kind == 'runtime' or inside(engine, pack):
-                result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='environment package'))
-                continue
-            if any(inside(path, pack) for path in holders):
-                result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='installed files live here'))
-                continue
-            rows = [row for row in (value or {}).get('files', [])
-                    if isinstance(row, dict) and row.get('path') != PACK_INVENTORY
-                    and (pack / INNER / str(row.get('path', ''))).is_file()]
-            covered = bool(rows) and all(row.get('sha256') in index for row in rows)
-            try:
-                stale = installed is not None and max((pack / INNER).stat().st_mtime, pack.stat().st_mtime) < installed
-            except OSError:
-                stale = installed is not None
-            if not covered and not stale:
-                result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='imported after this installation'))
-                continue
-            freed = discard(pack, folder, running, dry_run)
-            if freed is None:
-                result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='in use'))
-                continue
-            result['released_bytes'] += freed
-            result['removed'].append(dict(kind='offline-package', path=plain(pack), bytes=freed,
-                                          reason='installed and verified' if covered else 'not used by this installation'))
+        try:
+            with runtime_lock(io_path(folder) / 'import.lock', inherit=False):
+                for pack, kind, value in packages(folder):
+                    pack = io_path(pack)
+                    if kind == 'runtime' or inside(engine, pack):
+                        result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='environment package'))
+                        continue
+                    if any(inside(path, pack) for path in holders):
+                        result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='installed files live here'))
+                        continue
+                    if not known_package_tree(pack, value):
+                        result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='in use'))
+                        continue
+                    rows = [row for row in (value or {}).get('files', [])
+                            if isinstance(row, dict) and row.get('path') != PACK_INVENTORY
+                            and (pack / INNER / str(row.get('path', ''))).is_file()]
+                    covered = bool(rows) and all(row.get('sha256') in index for row in rows)
+                    try:
+                        stale = installed is not None and max((pack / INNER).stat().st_mtime, pack.stat().st_mtime) < installed
+                    except OSError:
+                        stale = installed is not None
+                    if not covered and not stale:
+                        result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='imported after this installation'))
+                        continue
+                    freed = discard(pack, folder, running, dry_run)
+                    if freed is None:
+                        result['kept'].append(dict(kind='offline-package', path=plain(pack), reason='in use'))
+                        continue
+                    result['released_bytes'] += freed
+                    result['removed'].append(dict(kind='offline-package', path=plain(pack), bytes=freed,
+                                                  reason='installed and verified' if covered else 'not used by this installation'))
+        except BlockingIOError:
+            result['kept'].append(dict(kind='offline-package', path=plain(folder), reason='in use'))
     return result
 
 

@@ -175,7 +175,8 @@ def create_ui(session, *, show=True):
 
         @Slot(str)
         def browse(self, key):
-            if session.controller.busy:
+            if not session.can_manage():
+                self.invoke(session.explain_busy)
                 return
             path = QFileDialog.getExistingDirectory(None, session.t('Choose folder', '选择文件夹'),
                 str(session.form.get(key) or ''), QFileDialog.ShowDirsOnly)
@@ -196,7 +197,8 @@ def create_ui(session, *, show=True):
 
         @Slot()
         def useDownloadedFolder(self):
-            if session.controller.busy or session.importer.busy:
+            if not session.can_manage():
+                self.invoke(session.explain_busy)
                 return
             path = QFileDialog.getExistingDirectory(None, session.downloads_view()['copy']['use_folder'], '', QFileDialog.ShowDirsOnly)
             if path:
@@ -278,7 +280,12 @@ def create_ui(session, *, show=True):
             from PySide6.QtGui import QDesktopServices
             folder = session.download_export
             if folder and Path(folder).is_dir():
+                if session.action_notice == 'download_missing':
+                    session.action_notice = ''
                 self.invoke(QDesktopServices.openUrl, QUrl.fromLocalFile(str(Path(folder).resolve())))
+            else:
+                session.action_notice = 'download_missing'
+                self.refresh()
 
         @Slot(str)
         def selectSource(self, value):

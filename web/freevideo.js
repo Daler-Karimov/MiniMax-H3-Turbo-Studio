@@ -7,15 +7,17 @@ import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText
 import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
+import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
-import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';
+import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
 import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
-import { regenerateResult, upscaleResult } from './studio_queue.js';
+import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
+import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
 
@@ -289,8 +291,8 @@ function mediaPanel(node, mount = null) {
                         const off = Math.abs(Math.log((preview.naturalWidth / preview.naturalHeight) / (size.width / size.height))) > .02;
                         if (!off || !preview.isConnected) return;
                         const note = el("div", undefined, "fv-shape-note");
-                        note.append(el("span", text(`Its shape differs from the video (${size.width}×${size.height}); the edges are cropped when generating.`,
-                            `比例与视频（${size.width}×${size.height}）不同，生成时会居中裁掉多出的部分。`)),
+                        note.append(el("span", text('Different aspect ratio from the video; it will be center-cropped.',
+                            '和视频比例不同，会居中裁剪。')),
                             button(text("Adjust crop", "调整裁剪"), text("Choose what the video keeps", "选择视频保留的画面"), () => editImage(row.file, "crop")));
                         wrap.after(note);
                     }, {once: true});
@@ -511,14 +513,10 @@ function resultPanel(node) {
         links.append(shareButton(value, text));
         links.append(el("span", value.result_cache_hit ? text("Reused previous result", "已复用上次结果") : value.conditioning_cache_hit ? text("Input cache reused", "已复用输入缓存") : text("Inputs encoded", "已编码输入"), "fv-mode"));
         if (value.preview) {
-            const upscale = el('button', text('Run second pass', '继续二采')); upscale.type = 'button';
-            upscale.title = text('Continue from this preview: latent upscale, the second pass and a full-resolution decode.', '从这个预览接着跑：潜空间放大、二采，再以全分辨率解码。');
-            upscale.onclick = async () => {
-                upscale.disabled = true;
-                try { await node.freevideoUpscaleResult(value); upscale.textContent = text('Queued', '已加入队列'); }
-                catch (error) { upscale.disabled = false; node.freevideoShowFailure(error); }
-            };
-            links.append(upscale);
+            links.append(secondPassAction(text, async () => {
+                try { await node.freevideoUpscaleResult(value); }
+                catch (error) { node.freevideoShowFailure(error); throw error; }
+            }));
         }
         if (value.result_cache_hit) {
             const again = el('button', text('Regenerate', '重新生成')); again.type = 'button';
@@ -548,12 +546,7 @@ function resultPanel(node) {
             : text("VRAM: engine allocator peak. RAM: measured request processes, ", "显存为引擎分配器峰值，内存为请求进程实测，")) + (value.ram_metric || "unknown");
         fitPanel();
     };
-    node.freevideoUpscaleResult = async value => {
-        if (node.freevideoUpscaling) return;
-        node.freevideoUpscaling = true;
-        try { return await upscaleResult(api, node.id, value, async () => cleanOptionalPrompt(await app.graphToPrompt())); }
-        finally { node.freevideoUpscaling = false; }
-    };
+    node.freevideoUpscaleResult = createSecondPassQueue(api, () => node.id, async () => cleanOptionalPrompt(await app.graphToPrompt()));
     node.freevideoRegenerateResult = async value => {
         if (node.freevideoRegenerating) return;
         node.freevideoRegenerating = true;
@@ -569,6 +562,42 @@ function resultPanel(node) {
 }
 
 let configuringGraph = false;
+let configuration = 0;
+const watchedGraphs = new WeakSet();
+function captureWorkflow(graph) {
+    if (!graph || graph !== app.graph || promptHistoryRestoring(app)) return;
+    watchPromptHistory(api, app);
+    const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
+    // Current ComfyUI and older installations expose different names.
+    (tracker?.captureCanvasState || tracker?.checkState)?.call(tracker);
+}
+function trackCreationDraft(node) {
+    trackPromptDraft(node, () => captureWorkflow(node.graph), () => app.extensionManager?.workflow?.activeWorkflow?.path);
+}
+function watchCreationGraph(graph) {
+    if (!graph || watchedGraphs.has(graph)) return;
+    watchedGraphs.add(graph);
+    const changed = graph.on_change;
+    let queued = false;
+    graph.on_change = function (...args) {
+        const result = changed?.apply(this, args);
+        if (!configuringGraph && graph === app.graph && !queued) {
+            queued = true;
+            const revision = configuration;
+            queueMicrotask(() => {
+                queued = false;
+                if (configuringGraph || graph !== app.graph || revision !== configuration || promptHistoryRestoring(app)) return;
+                // graph.change() only redraws. Capture the finished edit, including
+                // properties and the asynchronous media/LoRA panel updates.
+                captureWorkflow(graph);
+                for (const node of graph._nodes || []) {
+                    if (node.comfyClass === 'FreeVideoGenerate' || node.type === 'FreeVideoGenerate') rememberPromptDraft(api, node);
+                }
+            });
+        }
+        return result;
+    };
+}
 function syncPrompts(reset = false) {
     if (configuringGraph && reset !== true) return;
     for (const node of app.graph?._nodes || []) if (node.type === 'FreeVideoGenerate') syncReferencePrompt(node, text, reset === true);
@@ -591,16 +620,21 @@ const progressConnection = createProgressConnection(api, message => {
     window.dispatchEvent(new CustomEvent('freevideo-progress', {detail: message}));
 });
 
+const desktopNoticeEnabled = () => (app.extensionManager?.setting?.get?.(DESKTOP_SETTING) ?? app.ui?.settings?.getSettingValue?.(DESKTOP_SETTING)) === true;
+
 app.registerExtension({
     name: "FreeVideo.UnifiedMedia",
-    beforeConfigureGraph() { configuringGraph = true; },
+    settings: [{id: DESKTOP_SETTING, name: text('Desktop notification when done', '完成时发桌面通知'),
+        type: 'boolean', defaultValue: false, onChange: value => { if (value) askDesktopPermission(); }}],
+    beforeConfigureGraph() { configuringGraph = true; configuration++; },
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
         for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api))],
-            ['updates', startUpdateChecks]]) {
+            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled})]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));
+        void savePromptDraft(api); // Retry this tab's outbox after an interrupted save.
         window.FreeVideoUI = {...window.FreeVideoUI, ready: true};
         await notifyCompatibility();
     },
@@ -654,13 +688,17 @@ app.registerExtension({
                             '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；其他二采步数需小于一采步数。');
                     }
                 }
-                const prompt = this.widgets?.find(w => w.name === 'text');
-                if (prompt) {
-                    // Every edit, in the creation panel or on the node, is the draft the launcher reopens.
-                    const node = this, callback = prompt.callback;
-                    prompt.callback = function (...args) { if (!configuringGraph) rememberPromptDraft(api, node); return callback?.apply(this, args); };
-                    prompt.inputEl?.addEventListener?.('input', () => rememberPromptDraft(api, node));
+                for (const widget of this.widgets || []) {
+                    // Node and creation-panel edits use the same named draft.
+                    const node = this, callback = widget.callback;
+                    widget.callback = function (...args) {
+                        const result = callback?.apply(this, args);
+                        if (!configuringGraph) rememberPromptDraft(api, node);
+                        return result;
+                    };
+                    widget.inputEl?.addEventListener?.('input', () => { if (!configuringGraph) rememberPromptDraft(api, node); });
                 }
+                trackCreationDraft(this);
                 resultPanel(this);
                 this.addWidget('button', text('Open creative workspace', '打开创作面板'), null, () => showStudio(this), {serialize: false});
                 const removed = this.onRemoved;
@@ -673,6 +711,13 @@ app.registerExtension({
     afterConfigureGraph() {
         syncPrompts(true);
         configuringGraph = false;
+        for (const node of app.graph?._nodes || []) {
+            if (node.comfyClass !== 'FreeVideoGenerate' && node.type !== 'FreeVideoGenerate') continue;
+            trackCreationDraft(node);
+        }
+        watchCreationGraph(app.graph);
+        // The host activates the target workflow after afterConfigureGraph.
+        requestAnimationFrame(() => watchPromptHistory(api, app));
         progressConnection.reset();
         progressConnection.refresh();
         refreshNavigation();

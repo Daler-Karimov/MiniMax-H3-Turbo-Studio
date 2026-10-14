@@ -25,9 +25,21 @@ export function extendVideoURL(record) {
 
 export async function extendSourceExists(api, record) {
     if (!canExtend(record)) return false;
-    try { return (await api.fetchApi(extendVideoURL(record), {method: 'HEAD'})).ok; }
-    catch { return false; }
+    const url = extendVideoURL(record);
+    try {
+        if ((await api.fetchApi(url, {method: 'HEAD', signal: AbortSignal.timeout(10000)})).ok) return true;
+    } catch { /* HEAD can fail even when the browser can still read the video. */ }
+    try {
+        const response = await api.fetchApi(url, {method: 'GET', headers: {Range: 'bytes=0-0'},
+            signal: AbortSignal.timeout(10000)});
+        // A server may ignore Range. Release its stream without downloading the video.
+        await response.body?.cancel().catch(() => {});
+        return response.ok;
+    } catch { return false; }
 }
+
+export const videoUnavailableText = t => t('This video cannot be opened. If you moved the file, refresh the page.',
+    '视频打不开，如果移动过文件，请刷新页面。');
 
 export async function readExtendRecord(api, record) {
     if (record.geometry?.width && record.geometry?.height && (record.geometry.seconds || record.geometry.frames)) return record;

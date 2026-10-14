@@ -16,7 +16,8 @@ from ..offload import LayerOffloader, pin_layer_weights
 class StreamedStack:
     """``layers`` hold frozen CPU weights; they are moved to the card on use."""
 
-    def __init__(self, layers, *, name, device='cuda', pin=True, max_pin_bytes=None, prefetch=True):
+    def __init__(self, layers, *, name, device='cuda', pin=True, max_pin_bytes=None, prefetch=True,
+                 progress=None):
         self.name = name
         self.layers = list(layers)
         if not self.layers:
@@ -28,7 +29,8 @@ class StreamedStack:
         # Pinning is an optimization: a host that refuses it costs transfer
         # speed, not the request (pin_layer_weights keeps the unpinned layers
         # on their ordinary storage and the offloader stages them).
-        self.pinned_bytes = pin_layer_weights(self.layers, max_bytes=max_pin_bytes) if pin else 0
+        pin_options = {'progress': progress} if progress is not None else {}
+        self.pinned_bytes = pin_layer_weights(self.layers, max_bytes=max_pin_bytes, **pin_options) if pin else 0
         self.offloader = LayerOffloader(self.layers, device=device, prefetch=prefetch, host_prefetch=False)
         self.layer_bytes = max(sum(count * parameter.element_size()
                                    for parameter, _, _, _, count, _ in entries)

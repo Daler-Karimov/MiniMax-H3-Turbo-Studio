@@ -404,6 +404,62 @@ INT8_GPU_OUTPUT_MARGIN = int(.25 * GiB)
 INT8_GPU_OUTPUT_MARGIN_WINDOWS = int(.5 * GiB)
 
 
+# Report 243, B200 on pinned OpenVDN/Diffusers, int8, cudnn/torch-flash,
+# native allocator, 1088x1920x362 + 2040 reference rows (220320 effective
+# tokens), staged residual, grouped host outputs, stream, no resident block,
+# window 4, FF 2048 / projection 1024. One cold and two warm refinement steps
+# at the same 10 GiB cap: head 4/2 allocated peaks 7.309/6.797 GiB; the largest
+# paired-step widening cost was 601331200 bytes (0.56003 GiB, the cold step).
+# That is 2729.35 bytes per effective token, scaled below without rounding down.
+# Reserved peaks were 8.342/8.736 GiB: pool layout is not live activation cost.
+# At a shared 14 GiB cap, allocated was 7.313/6.797 (delta 0.516 GiB), but
+# reserved was 10.299/8.693 (delta 1.605 GiB). The 0.56003 paired-step bound
+# covers both caps; the reserved delta must not become an activation slope.
+# See benchmarks/report243-b200. B200 absolute peaks are NOT Windows/sage2
+# peaks. Charge only its measured widening delta over the existing Windows
+# staged envelope, with the same 0.5 GiB allocator margin used above. Report
+# 243's allocator fell from its 10.69 GiB plan to 10.00 GiB before refinement;
+# a plan's budget is only an upper bound on that live allocator ceiling.
+# Do not extrapolate this correction below its measured token count: smaller
+# Windows staging requests already have completed head-4 capacity evidence.
+WINDOWS_INT8_CPU_HEAD_TOKENS = 220320
+WINDOWS_INT8_CPU_HEAD4_EXTRA = 601331200
+
+
+def windows_int8_cpu_output_need(tokens, canvas=None):
+    """Head-4 staged Windows envelope including measured widening and margin.
+
+    A starting estimate for this large-token route, not B200/Windows capacity
+    equivalence. None preserves the smaller, independently qualified paths.
+    """
+    if tokens is None or tokens < WINDOWS_INT8_CPU_HEAD_TOKENS:
+        return None
+    adjustment = int(4.6 * GiB * (tokens / (72 * 1008) - 1.))
+    staged = max(decoder_workspace(canvas),
+                 RESIDUAL_ACTIVATION_RESERVE + adjustment - tokens * FF_STASH_WIDTH * 2)
+    extra = (WINDOWS_INT8_CPU_HEAD4_EXTRA * tokens + WINDOWS_INT8_CPU_HEAD_TOKENS - 1) // WINDOWS_INT8_CPU_HEAD_TOKENS
+    return staged + extra + INT8_GPU_OUTPUT_MARGIN_WINDOWS
+
+
+def windows_int8_refinement_head_need(engine, canvas, *, windows=False, lora=False):
+    """The measured envelope only for the eligible Windows refinement route."""
+    if (not windows or lora or engine.get('linear_compute') != 'int8' or engine.get('head_chunk') != 4
+            or not engine.get('residual_offload') or not engine.get('attention_cpu_outputs')
+            or not engine.get('grouped_attention_outputs') or not engine.get('stream_weights')
+            or engine.get('resident_blocks') != 0):
+        return None
+    from .two_pass import placement_tokens
+    return windows_int8_cpu_output_need(placement_tokens(canvas), canvas)
+
+
+def windows_int8_refinement_heads(engine, canvas, allocator_limit, *, windows=False, lora=False):
+    """Pass-local narrowing when Windows's allocator shrank since planning."""
+    if type(allocator_limit) is not int or allocator_limit <= 0:
+        return None
+    need = windows_int8_refinement_head_need(engine, canvas, windows=windows, lora=lora)
+    return {'head_chunk': 2} if need is not None and need > allocator_limit else None
+
+
 def int8_gpu_output_need(tokens, windows=False, full_tail=False):
     """Bytes the int8 staging path needs with its attention outputs on the GPU.
 
@@ -1387,6 +1443,15 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
         # at all -- it is the bounded retained subset that stops those bytes
         # being reread every step, which is the larger cost there.
         pin = 0.
+    windows_cpu_head_limited = False
+    if (desktop and int8 and not lora and stage == 'generation' and not capacity_trial
+            and head == 4 and residual_offload and cpu_outputs and streamed_weights and resident == 0):
+        head4_need = windows_int8_cpu_output_need(effective_tokens, canvas)
+        if head4_need is not None and head4_need > gpu_budget:
+            # Fund activations before dispatch. Keep residency, windows, host
+            # caching and every other compute/placement choice intact.
+            head = 2
+            windows_cpu_head_limited = True
     engine = dict(attention='/'.join(legs), prefetch=prefetch,
                   adaln_cache=True, adaln_disk_cache=True, inference_kernels=True,
                   # One chunk size for every band, on neutrality rather than
@@ -1456,10 +1521,13 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
                      'This is a capacity attempt, not measured proof that this GPU fits.' %
                      (gpu_budget / GiB, residual_floor / GiB))
     if windows_activation_limited:
-        notes.append('The Windows GPU-output activation estimate exceeds the live budget even with zero resident blocks. Start this token count with four-head groups, %s attention outputs and one host residual buffer; estimated workspace %.2f GiB. Resolution, duration, steps, weights and attention backend are preserved. This is request-specific, not a persistent compatibility downgrade.' % ('host' if cpu_outputs else 'GPU', windows_workspace / GiB))
+        notes.append('The Windows GPU-output activation estimate exceeds the live budget even with zero resident blocks. Start this token count with %s-head groups, %s attention outputs and one host residual buffer; estimated workspace %.2f GiB. Resolution, duration, steps, weights and attention backend are preserved. This is request-specific, not a persistent compatibility downgrade.' % ('two' if head == 2 else 'four', 'host' if cpu_outputs else 'GPU', windows_workspace / GiB))
     elif windows_workspace is not None:
         notes.append('Windows head-8 GPU-output workspace estimate: %.2f GiB for the selected FF storage path, caches and transfer buffers; remaining live budget permits %d resident blocks. Based on complete Windows measurements, not a capacity guarantee. Head/window/FF tile shapes and system reserves are unchanged.' %
                      (windows_workspace / GiB, resident))
+    if windows_cpu_head_limited:
+        notes.append('The large-token Windows int8 host-output/residual path estimates %.2f GiB for four heads, including measured widening workspace and allocator margin, above the %.2f GiB planning upper bound on the live allocator. Start with two heads; resident blocks, window batch, weight caching, geometry, steps and backend are preserved. B200 measured the head-width delta, not this Windows GPU\'s capacity.' %
+                     (head4_need / GiB, gpu_budget / GiB))
     if residual_offload:
         notes.append('The original small path exceeds the live VRAM budget: stage residuals in one reusable CPU buffer, preserving kernel shapes, dtype and every requested row. Host weight caching leaves an additional %.2f GiB for this buffer. Extra transfers cost time; this is a capacity route, not a claimed speedup.' % (residual_host / GiB))
     if streamed_weights:

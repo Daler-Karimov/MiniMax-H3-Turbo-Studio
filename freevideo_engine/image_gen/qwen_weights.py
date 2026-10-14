@@ -13,6 +13,7 @@ from torch import nn
 from ..streamed_weights import _open_safetensors
 from .qwen_dit import QwenImageDiT
 from .qwen_vae import QwenImageVAE, comfy_vae_key_to_diffusers, vae_key_map
+from .load_progress import TensorProgress
 
 
 CONVROT_METADATA = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
@@ -91,14 +92,16 @@ def _quant_targets(model, name):
     return targets, modules
 
 
-def load_dit(path, device="cpu", *, config=None):
+def load_dit(path, device="cpu", *, config=None, progress=None):
     """Load a Comfy Turbo int8_convrot DiT; CPU supports storage, CUDA execution.
 
     The optional config override is for small models/tests. Production files
     without JSON config metadata use the official 32-block Qwen-Image 2.1 config.
     An unknown marker, tensor layout, missing key, or extra key is an error.
+    ``progress(done_bytes, total_bytes)`` reports completed source tensor batches.
     """
     with _open_safetensors(path, framework="pt", device="cpu") as checkpoint:
+        reads = TensorProgress(checkpoint, progress) if progress is not None else None
         with torch.device("meta"):
             model = QwenImageDiT(**_config(checkpoint.metadata() or {}, QwenImageDiT, config))
         keys = _keys(checkpoint, "model.diffusion_model.")
@@ -120,6 +123,8 @@ def load_dit(path, device="cpu", *, config=None):
                 raise ValueError(f"Invalid Comfy quantization JSON: {marker_key}") from exc
             if marker != CONVROT_METADATA or type(marker.get("convrot")) is not bool or type(marker.get("convrot_groupsize")) is not int:
                 raise ValueError(f"Unsupported Comfy quantization format for {name}: {marker!r}")
+            if reads is not None:
+                reads.tensors(marker_key)
             targets, modules = _quant_targets(model, name)
             rows = sum(module.out_features for module in modules)
             width = modules[0].in_features
@@ -144,6 +149,8 @@ def load_dit(path, device="cpu", *, config=None):
                 raise ValueError(f"Invalid Comfy attention hint: {key}") from exc
             if hint != COMFY_ATTENTION_HINT:
                 raise ValueError(f"Unsupported Comfy attention format for {key}: {hint!r}")
+            if reads is not None:
+                reads.tensors(keys[key])
             consumed.add(key)
         ordinary = set(expected) - replaced
         missing, extra = ordinary - set(keys), set(keys) - consumed - ordinary
@@ -174,23 +181,29 @@ def load_dit(path, device="cpu", *, config=None):
                 _assign(model, target + ".weight_scale", scales[offset:offset + rows], device, torch.float32)
                 offset += rows
             del weight, scales
+            if reads is not None:
+                reads.tensors(keys[name + ".weight"], keys[name + ".weight_scale"])
         for key in sorted(ordinary):
             # A quantized Linear's original bias (if a future supported config has
             # one) lives under original.bias in the engine wrapper.
             parent, _, leaf = key.rpartition(".")
             target = key if parent not in specs or leaf != "bias" else parent + ".original.bias"
             _assign(model, target, checkpoint.get_tensor(keys[key]), device, torch.bfloat16)
+            if reads is not None:
+                reads.tensors(keys[key])
         model.to(device=device)
         return model.eval().requires_grad_(False)
 
 
-def load_vae(path, device="cpu", *, config=None):
+def load_vae(path, device="cpu", *, config=None, progress=None):
     """Load the Comfy BF16 VAE, accepting only explicit one-to-one key mappings.
 
     Single-frame Comfy Conv3d weights may retain a size-one temporal axis. It is
     squeezed without numerical conversion; any other shape is rejected.
+    ``progress(done_bytes, total_bytes)`` counts source bytes before squeezing.
     """
     with _open_safetensors(path, framework="pt", device="cpu") as checkpoint:
+        reads = TensorProgress(checkpoint, progress) if progress is not None else None
         with torch.device("meta"):
             model = QwenImageVAE(**_config(checkpoint.metadata() or {}, QwenImageVAE, config))
         table = vae_key_map(model)
@@ -220,4 +233,6 @@ def load_vae(path, device="cpu", *, config=None):
                 tensor = tensor.squeeze(2)
             _assign(model, target, tensor, device, torch.bfloat16)
             del tensor
+            if reads is not None:
+                reads.tensors(key)
         return model.eval().requires_grad_(False)

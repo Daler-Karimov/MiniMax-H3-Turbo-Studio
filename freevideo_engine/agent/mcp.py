@@ -108,6 +108,19 @@ def short_drama(arguments):
 Use ref to replay writes safely. Ordinary job batches remain available through freevideo_submit_batch."""
 
 
+def preload():
+    """Load what tool calls import before stdin is read.
+
+    Tool calls run on threads while this thread waits on stdin. On Windows a DLL loaded for the first
+    time then (numpy's OpenBLAS, loaded through spec) can wait for the client's next line, so the first
+    tool call would stall."""
+    from . import errors, schema, spec  # noqa: F401
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        pass
+
+
 class Server:
     def __init__(self, client, out=None):
         self.client = client
@@ -129,6 +142,7 @@ class Server:
             self.client.hello(via='mcp')
         except (ApiError, AttributeError):
             pass  # Starting before FreeVideo is allowed; later authenticated requests mark it online.
+        preload()
         for line in stream:
             line = line.strip()
             if not line:

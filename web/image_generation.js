@@ -2,13 +2,14 @@
 // owns its document/history; this module inserts a result through its commands.
 import * as commands from './image_commands.js';
 import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.js';
+import {saveReport, reportIssue, showReportTip} from './report_issue.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
-    installed: 'ready', phase: 'phase', bytes: 'bytes',
+    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading',
     token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', seed: 'seed',
     stage: 'stage', fraction: 'fraction', file: 'file', error: 'error', name: 'name', subfolder: 'subfolder',
-    states: {starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
+    states: {queued: 'waiting', starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
         cancelling: 'running', cancelled: 'error'},
 });
 export const IMAGE_GEN_POLL_MS = 500;
@@ -33,7 +34,9 @@ export function blankCanvasSize(ratio, sizes = null) {
     const units = Math.floor(Math.sqrt(1024 ** 2 / (w * h * 32 ** 2)));
     return {width: w * units * 32, height: h * units * 32};
 }
-const failure = code => Object.assign(new Error(code || 'generation_failed'), {code: code || 'generation_failed'});
+const failure = (code, info = {}) => Object.assign(new Error(code || 'generation_failed'), {
+    code: code || 'generation_failed', report_id: info.report_id || null, stage: info.stage || '',
+});
 
 export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThis)) {
     let token = '';
@@ -41,7 +44,7 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
     async function request(path, options) {
         const response = await fetchImpl(path, options);
         const value = await response.json();
-        if (!response.ok || value[p.error] && !value[p.phase] && !value.state) throw failure(value[p.error]);
+        if (!response.ok || value[p.error] && !value[p.phase] && !value.state) throw failure(value[p.error], value);
         return value;
     }
     async function post(action, value, retried = false) {
@@ -73,6 +76,7 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
             const phase = value[p.phase];
             return {...value, state: value.state || p.states[phase] || 'error',
                 stage: value[p.stage] || (phase === 'starting' ? 'load' : ''),
+                waiting: phase === 'queued' ? value.queued_behind || 'image' : '', fitted: value.fitted || null,
                 fraction: value[p.fraction], file: value[p.file], error: value[p.error],
                 ...(phase === 'cancelled' ? {error: 'cancelled'} : {})};
         },
@@ -100,11 +104,94 @@ export function imagePackMessage(info, t) {
     return t(`Download "${name}" in the launcher first, ${size}.`, `先在启动器里下载“${name}”，${size}。`);
 }
 export function imageGenError(code, info, t) {
-    if (code === 'pack_missing') return imagePackMessage(info, t);
-    if (code === 'busy_video') return t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。');
-    if (code === 'no_memory') return t('Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
-        '显存不足。在“图像大小…”里缩小后再试。');
-    return t('The image could not be generated. Try again.', '没有生成成功，请再试一次。');
+    const reasons = {
+        no_memory: ['Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
+            '显存不足。在“图像大小…”里缩小后再试。'],
+        busy_video: ['A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。'],
+        busy: ['An image is already being generated. Try again when it finishes.', '已有一张图在生成，完成后再试。'],
+        model_unreadable: ['The image generation model files could not be read. Repair them in the launcher and try again.',
+            '图像生成模型的文件读不出来。在启动器里修复后再试。'],
+        device_unavailable: ['The graphics card is not available right now. Try again later.', '显卡暂时用不了，稍后再试。'],
+        worker_exit: ['Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'],
+        timeout: ['This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'],
+        cancelled: ['Image generation was cancelled.', '已取消图像生成。'],
+        invalid_request: ['The image settings are invalid. Check them and try again.', '图像生成参数不合法，请检查后重试。'],
+        invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
+        reload: ['The image service restarted. Try again.', '图像服务已重启，请重试。'],
+        generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
+    };
+    if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);
+    return t(...(Object.hasOwn(reasons, code) ? reasons[code] : reasons.generation_failed));
+}
+
+// Keep image failure copy here for editorial review. The submit card and its
+// wording belong to report_issue.js, shared with video reports.
+// Queue and size-fit notes, kept with the failure copy for editorial review.
+export const QUEUE_LABELS = Object.freeze({
+    image: ['Added to the queue. It starts when the previous one finishes.', '已加入队列，前面的完成后自动开始。'],
+    video: ['Queued. It starts when the video finishes.', '已排队，视频生成完后自动开始。'],
+});
+export const fittedNote = (size, t) => t(`Not enough GPU memory. Made at ${size.width}\u00a0×\u00a0${size.height} instead.`,
+    `显存不足，已改为 ${size.width}\u00a0×\u00a0${size.height} 生成。`);
+export const REPORT_LABELS = Object.freeze({
+    download: ['Diagnostic report', '诊断报告'],
+    description: ['Redacted diagnostic report: hardware, settings and timings', '已脱敏的诊断报告：硬件、设置和耗时'],
+    preparing: ['Preparing…', '正在整理…'],
+    unavailable: ['Report unavailable · retry', '报告暂不可用 · 重试'],
+});
+
+// Shared by the editor and the other image entry points. Only the opaque report
+// ID goes in the request; raw service messages are never shown in the page.
+export function renderImageFailure(host, {error, report_id} = {}, t,
+    {productVersion = () => null, fetchApi = globalThis.fetch.bind(globalThis)} = {}) {
+    host.replaceChildren();
+    if (!error || error === 'cancelled') return null;
+    const doc = host.ownerDocument || document;
+    const cssURL = new URL('./result_actions.css', import.meta.url).href;
+    if (!doc.querySelector(`link[href="${cssURL}"]`)) {
+        const css = doc.createElement('link'); css.rel = 'stylesheet'; css.href = cssURL; doc.head.append(css);
+    }
+    const card = doc.createElement('div'); card.className = 'fv-result-links';
+    const reason = doc.createElement('div'); reason.className = 'fv-image-failure-reason';
+    reason.setAttribute('role', 'status'); reason.textContent = imageGenError(error, null, t);
+    card.append(reason); host.append(card);
+    if (!report_id) return card;
+    const fetchReport = async () => {
+        const response = await fetchApi(`${IMAGE_GEN_PROTOCOL.root}/report/${encodeURIComponent(report_id)}`, {cache: 'no-store'});
+        if (!response.ok) throw new Error('report_unavailable');
+        return response.blob();
+    };
+    const version = () => typeof productVersion === 'function' ? productVersion() : productVersion;
+    const bar = doc.createElement('div'); bar.className = 'fv-actions';
+    const anchor = doc.createElement('button'); anchor.type = 'button';
+    anchor.className = 'fv-action fv-action-secondary fv-action-report';
+    anchor.textContent = t(...REPORT_LABELS.download); anchor.title = t(...REPORT_LABELS.description);
+    anchor.onclick = async () => {
+        if (anchor.disabled) return;
+        const restoreFocus = doc.activeElement === anchor;
+        anchor.disabled = true; anchor.textContent = t(...REPORT_LABELS.preparing);
+        try {
+            await saveReport(await fetchReport());
+            if (card.isConnected) showReportTip(bar, anchor, t, {mode: 'downloaded',
+                submit: () => reportIssue(fetchReport, version(), {save: false}), onHide: () => anchor.focus()});
+            anchor.textContent = t(...REPORT_LABELS.download);
+        } catch { anchor.textContent = t(...REPORT_LABELS.unavailable); }
+        finally {
+            anchor.disabled = false;
+            if (restoreFocus && card.isConnected && doc.activeElement === doc.body) anchor.focus({preventScroll: true});
+        }
+    };
+    // Let native Enter/Space activate these buttons without invoking editor
+    // canvas shortcuts. Tab and the shared card's Escape handling still work.
+    card.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+    });
+    bar.append(anchor); card.append(bar);
+    return card;
+}
+function imagePackUnavailableMessage(info, t) {
+    return info?.[IMAGE_GEN_PROTOCOL.downloading]
+        ? t('Downloading. Available when finished.', '正在下载，完成后可用。') : imagePackMessage(info, t);
 }
 
 // The service accepts 256..2048 on each side; a larger canvas is generated at its
@@ -203,8 +290,11 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
     schedule = setTimeout, unschedule = clearTimeout,
     visible = () => globalThis.document?.visibilityState !== 'hidden'}) {
     let epoch = 0, timer = null, infoTimer = null, disposed = false, checking = null;
-    let state = {info: null, checking: false, running: false, job: null, fraction: 0, stage: '', error: ''};
+    let state = {info: null, checking: false, running: false, job: null, fraction: 0, stage: '', error: '', report_id: null,
+        waiting: '', fitted: null};
     const emit = patch => { state = {...state, ...patch}; if (!disposed) onChange(state); };
+    const failed = error => error.code === 'cancelled' ? {error: '', report_id: null, stage: ''}
+        : {error: error.code || 'generation_failed', report_id: error.report_id || null, stage: error.stage || ''};
     const cancelJob = job => Promise.resolve().then(() => client.cancel(job)).catch(() => {});
     function scheduleInfo() {
         unschedule(infoTimer); infoTimer = null;
@@ -219,7 +309,7 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
         emit({checking: true});
         checking = (async () => {
             try { const info = await client.info(); if (!disposed) emit({info}); }
-            catch (error) { if (!disposed && !state.running) emit({error: error.code || error.message}); }
+            catch (error) { if (!disposed && !state.running) emit(failed(error)); }
             finally { checking = null; if (!disposed) { emit({checking: false}); scheduleInfo(); } }
         })();
         return checking;
@@ -227,7 +317,7 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
     async function start(request) {
         if (state.running || disposed || !request.prompt.trim() || !state.info?.installed) return;
         const current = ++epoch;
-        emit({running: true, job: null, fraction: 0, stage: '', error: ''});
+        emit({running: true, job: null, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
         const alive = () => current === epoch && !disposed;
         let withImages = false;
         async function poll(job, context) {
@@ -235,17 +325,18 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
                 const row = await client.status(job);
                 if (!alive()) return;
                 const fraction = imageGenProgress(row.stage, row.fraction, withImages);
-                emit({fraction: Math.max(state.fraction, fraction), stage: row.stage || ''});
+                emit({fraction: Math.max(state.fraction, fraction), stage: row.stage || '', waiting: row.waiting || '',
+                    fitted: row.fitted || state.fitted});
                 if (row.state === 'done') {
                     if (!row.file) throw failure();
                     await apply(row, context, alive);
-                    if (alive()) emit({running: false, job: null, fraction: 1, stage: ''});
-                } else if (row.state === 'error') throw failure(row.error);
+                    if (alive()) emit({running: false, job: null, fraction: 1, stage: '', waiting: ''});
+                } else if (row.state === 'error') throw failure(row.error, row);
                 else timer = schedule(() => { timer = null; void poll(job, context); }, IMAGE_GEN_POLL_MS);
             } catch (error) {
                 if (alive()) {
                     void cancelJob(job);
-                    emit({running: false, job: null, stage: '', error: error.code || error.message});
+                    emit({running: false, job: null, waiting: '', ...failed(error)});
                 }
             }
         }
@@ -253,28 +344,31 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
             const {context, images = []} = await prepare(request, alive);
             if (!alive()) return;
             withImages = images.length > 0;
-            const {job} = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images});
-            if (!job) throw failure();
+            const row = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images});
+            const {job} = row;
+            if (!job) throw failure(row.error, row);
+            if (row.fitted) emit({fitted: row.fitted});
             if (!alive()) { await cancelJob(job); return; }
             emit({job});
             timer = schedule(() => { timer = null; void poll(job, context); }, IMAGE_GEN_POLL_MS);
         } catch (error) {
-            if (alive()) emit({running: false, job: null, stage: '', error: error.code || error.message});
+            if (alive()) emit({running: false, job: null, ...failed(error)});
         }
     }
     function cancel() {
         ++epoch; unschedule(timer); timer = null;
         const job = state.job;
-        emit({running: false, job: null, stage: '', fraction: 0, error: ''});
+        emit({running: false, job: null, stage: '', fraction: 0, error: '', report_id: null, waiting: '', fitted: null});
         return job ? cancelJob(job) : Promise.resolve();
     }
-    return {check, start, cancel, clearError: () => emit({error: ''}), state: () => state,
+    return {check, start, cancel, clearError: () => emit({error: '', report_id: null}), state: () => state,
         dispose() { disposed = true; unschedule(infoTimer); infoTimer = null; return cancel(); }};
 }
 
 export function createImageGeneration({client, renderer, t, getDoc, getSelection, commit, el, button, segmented,
-    library = [], resolve = file => file, icon = () => '', onRatioChange}) {
+    library = [], resolve = file => file, icon = () => '', onRatioChange, productVersion, fetchApi}) {
     let mode = 'edit', prompt = '', mounted = null, references = [];
+    let promptRequired = false, attentionTimer = null;
     const copies = new Map();
     // A reference is sent no larger than the largest picture the service makes.
     async function referencePNG(file) {
@@ -300,7 +394,27 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
     });
     const limit = () => referenceLimit(session.state().info);
     const chosen = () => mode === 'edit' ? references.slice(0, limit() - 1) : [];
-    const start = () => session.start({mode, prompt, references: chosen()});
+    function clearAttention() {
+        clearTimeout(attentionTimer); attentionTimer = null;
+        mounted?.input.classList.remove('fv-ie-active');
+    }
+    function start() {
+        // The button is only marked unavailable, so a click while the service is being checked is turned away here.
+        const now = session.state();
+        if (now.checking || !now.info?.installed) return;
+        if (!prompt.trim()) {
+            promptRequired = true; update();
+            if (mounted) {
+                const {input} = mounted;
+                clearAttention(); input.focus(); input.classList.add('fv-ie-active');
+                attentionTimer = setTimeout(() => {
+                    input.classList.remove('fv-ie-active'); attentionTimer = null;
+                }, 300);
+            }
+            return;
+        }
+        return session.start({mode, prompt, references: chosen()});
+    }
     function drawEdited(canvas) {
         try {
             const doc = getDoc(), layer = generationContext(doc, null, 'edit').layer;
@@ -366,13 +480,29 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         input.setAttribute('aria-label', input.placeholder);
         action.textContent = state.running ? t('Stop', '停止') : t('Generate', '生成');
         action.classList.toggle('fv-ie-primary', !state.running);
-        action.disabled = !state.running && (disabled || !prompt.trim()); action.hidden = !!missing;
+        action.setAttribute('aria-disabled', String(!state.running && (disabled || !prompt.trim())));
+        action.title = !state.running && !prompt.trim() ? t('Write a short description first', '请先写一句画面描述') : '';
+        action.hidden = !!missing;
         const percent = Math.floor(state.fraction * 100) + '%';
-        note.textContent = missing ? imagePackMessage(state.info, t) : state.error ? imageGenError(state.error, state.info, t)
-            : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent : '';
+        if (state.error && !promptRequired) {
+            const failureKey = `${state.error}:${state.report_id || ''}`;
+            if (mounted.failureKey !== failureKey) {
+                renderImageFailure(note, state, t, {productVersion, fetchApi});
+                mounted.failureKey = failureKey;
+            }
+        } else {
+            mounted.failureKey = null;
+            note.textContent = missing ? imagePackUnavailableMessage(state.info, t)
+                : promptRequired ? t('Write a short description first.', '请先写一句画面描述。')
+                : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
+                : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent
+                : state.fitted ? fittedNote(state.fitted, t) : '';
+        }
         note.hidden = !note.textContent;
-        bar.dataset.running = String(state.running); bar.dataset.message = String(!!missing || !!state.error);
-        meter.hidden = !state.running; meter.setAttribute('aria-valuenow', String(Math.floor(state.fraction * 100)));
+        bar.dataset.running = String(state.running);
+        bar.dataset.message = String(!!missing || promptRequired || !!state.error || !!note.textContent);
+        bar.dataset.failed = String(!!state.error && !promptRequired);
+        meter.hidden = !state.running || !!state.waiting; meter.setAttribute('aria-valuenow', String(Math.floor(state.fraction * 100)));
         fill.style.width = state.fraction * 100 + '%';
     }
     function mount(bar) {
@@ -397,7 +527,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         const box = el('div', null, 'fv-ie-gen-box');
         const input = el('textarea', null, 'fv-ie-gen-prompt'); input.rows = 1; input.maxLength = 2000; input.value = prompt;
         box.append(input); field.append(refs, box);
-        const note = el('span', '', 'fv-ie-opt-note fv-ie-gen-note'); note.setAttribute('role', 'status');
+        const note = el('div', '', 'fv-ie-opt-note fv-ie-gen-note'); note.setAttribute('role', 'status');
         const action = button(t('Generate', '生成'), null, () => {
             if (session.state().running) void session.cancel(); else void start();
         }, 'fv-ie-button fv-ie-primary');
@@ -408,8 +538,15 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         if (ratio) bar.append(ratio);
         bar.append(field, note, action, meter);
         mounted = {bar, input, action, note, meter, fill, group, refs, ratio};
-        const grow = () => { input.style.height = '0px'; input.style.height = Math.min(80, Math.max(32, input.scrollHeight + 2)) + 'px'; };
-        input.oninput = () => { prompt = input.value; session.clearError(); grow(); };
+        const grow = () => {
+            input.style.height = '0px';
+            input.style.height = (prompt.trim() ? Math.min(80, Math.max(32, input.scrollHeight + 2)) : 32) + 'px';
+        };
+        input.oninput = () => {
+            prompt = input.value;
+            if (prompt.trim()) promptRequired = false;
+            clearAttention(); session.clearError(); grow();
+        };
         input.onkeydown = event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault(); void start();
@@ -417,6 +554,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         };
         grow(); update();
     }
-    return {mount, unmount() { mounted = null; }, selected: () => session.check(), cancel: session.cancel,
-        dispose: session.dispose, state: session.state};
+    return {mount, unmount() { clearAttention(); promptRequired = false; mounted = null; },
+        selected: () => session.check(), cancel: session.cancel,
+        dispose() { clearAttention(); return session.dispose(); }, state: session.state};
 }

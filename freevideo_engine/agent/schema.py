@@ -386,6 +386,7 @@ def contracts(*, local=False):
             ('/activity/cancel', 'POST', obj({'id': JOB}, ('id',))), ('/connect', 'GET', None),
             ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
             ('/chat/video', 'GET', None), ('/chat/list', 'GET', None), ('/chat/new', 'POST', EMPTY),
+            ('/chat/delete', 'POST', obj({'session': SESSION}, ('session',))),
             ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION}, ('text', 'id'))),
             ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
                                            'session': SESSION}, ('id', 'approve')))):
@@ -426,16 +427,24 @@ DRAMA_OPERATIONS = {
 }
 
 
+# The fields are checked when planning; the shape is told here so an agent does not guess it.
+SCREENPLAY = {'type': 'object', 'description': (
+    'characters: {key: {card: cast card ID, or name, look, voice, language}}; '
+    'shots: [{id, seconds, action or prompt, camera, framing, sound, takes, seed, '
+    'cast: [character keys], lines: [{who: character key, line, how}], '
+    'continue: true to carry on from the previous shot}]; also title, style, aspect, quality, music.')}
+
+
 def drama_schema(name):
     if name in ('plan', 'start'):
-        return obj(dict(screenplay={'type': 'object'}, takes_per_shot=number(1, 8, integer=True, default=1),
+        return obj(dict(screenplay=SCREENPLAY, takes_per_shot=number(1, 8, integer=True, default=1),
                         director=enum(('agent', 'builtin'), default='agent'), ref=REF), ('screenplay',))
     if name == 'list':
         return obj(dict(status=enum(('active', 'all'), default='all'), limit=number(1, 200, integer=True, default=50)))
     if name == 'get':
         return obj(dict(since=number(1, integer=True), wait=WAIT))
     if name == 'sheet':
-        return obj(dict(frames=number(2, 24, integer=True, default=6)))
+        return obj(dict(frames=number(2, 24, integer=True, description='Frames per take; default one per second of the take (6 to 24)')))
     if name == 'choose':
         return obj(dict(take=number(1, integer=True), reason=string(20000), cascade={'type': 'boolean'}, ref=REF), ('take',))
     if name == 'reshoot':
@@ -742,6 +751,7 @@ def session_event(*, stored=False, agent_only=False):
         obj(dict(type={'const': 'plan'}, shots=array(obj(dict(text=text, seconds=number(0)), ('text',)),
             1, 20000), total_seconds=number(0)), ('type', 'shots'))]
     if not agent_only:
+        variants[0]['properties']['mid'] = CHAT_ID
         from .errors import ERRORS
         variants += [obj(dict(type={'const': 'step'}, id=string(12, pattern=r'^st[0-9a-f]{10}$'),
             tool=string(200), summary=text, state=enum(('started', 'done', 'failed')),
@@ -1317,6 +1327,10 @@ def openapi():
                 jobs={'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}})),
             'Error': obj(dict(code=enum(ERRORS),
                 message=string(), details={'type': 'array'}, next=string(), retryable={'type': 'boolean'},
+                reason=obj(dict(en=string(), zh=string()), ('en', 'zh'),
+                           description='Fixed bilingual reason for an image failure.'),
+                report_id={'type': ['string', 'null'], 'pattern': '^[0-9a-f]{32}$',
+                           'description': 'Image diagnostic report ID, or null when no report exists.'},
                 request_id=string(), docs=string(), retry_after_seconds=number(0), card={'type': 'object'}, job=JOB,
                 project={'type': 'object'}, current_revision=number(1, integer=True)),
                 ('code', 'message', 'details', 'retryable', 'request_id', 'docs'))}))

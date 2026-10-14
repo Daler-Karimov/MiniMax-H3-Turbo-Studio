@@ -183,7 +183,9 @@ class ChainRunner:
         return 1
 
     def create(self, payload):
+        from .lora_triggers import apply_chain_triggers
         record = store.validate(payload)
+        apply_chain_triggers(record)
         with self.lock:
             # Before anything is written or queued: a refused chain leaves every record and file as it was.
             short = [row['inputs']['frames'] for row in record['blocks']

@@ -118,7 +118,22 @@ export function capabilitySurface(grid, state) {
         const point = points.reduce((best, p) => Math.abs(p.seconds - seconds) < Math.abs(best.seconds - seconds) ? p : best);
         return {...point, width: sizes[i].width, height: sizes[i].height, pixels: sizes[i].pixels, size: i};
     }
-    return {sizes, xs, top, edge, snap, at: seconds => curve(available.map(i => xs[i]), available.map(i => curves[i](seconds)))};
+    function nearest(x, y) {
+        if (![x, y].every(Number.isFinite) || x < 0 || x > 1 || y < 0 || y > 1) return null;
+        let best = null, distance = Infinity;
+        sizes.forEach((size, i) => {
+            for (const point of size.points) {
+                if (point.seconds > top) continue;
+                const d = (xs[i] - x) ** 2 + (1 - point.seconds / top - y) ** 2;
+                if (d < distance) {
+                    distance = d;
+                    best = {...point, width: size.width, height: size.height, pixels: size.pixels, size: i};
+                }
+            }
+        });
+        return best;
+    }
+    return {sizes, xs, top, edge, snap, nearest, at: seconds => curve(available.map(i => xs[i]), available.map(i => curves[i](seconds)))};
 }
 
 // Iris's blue ramp in OKLab, interpolated in linear light; transparent beyond
@@ -172,7 +187,8 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     for (const item of [canvas, previous, now, mark]) item.setAttribute('aria-hidden', 'true');
     tip.setAttribute('role', 'status'); tip.append(time, configuration); plot.append(canvas, previous, now, mark, tip);
     plot.tabIndex = 0; plot.setAttribute('role', 'group'); plot.setAttribute('aria-label', t('Available sizes and lengths', '可生成范围'));
-    chart.append(yAxis, plot, xAxis); element.append(entry, chart);
+    const notice = el('p', 'fv-muted'); notice.hidden = true; notice.setAttribute('role', 'status');
+    chart.append(yAxis, plot, xAxis); element.append(entry, chart, notice);
     let opened = false;
     try { opened = localStorage.getItem('freevideo.range-open') === '1'; } catch {}
     const fold = () => { chart.hidden = !opened; entry.setAttribute('aria-expanded', String(opened)); };
@@ -293,10 +309,25 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     function point(event) {
         if (!surface) return;
         const box = plot.getBoundingClientRect(), x = clamp(event.clientX - box.left, 0, box.width), y = clamp(event.clientY - box.top, 0, box.height);
+        if (!box.width || !box.height) return;
         const snapped = surface.snap(x / box.width, y / box.height);
         if (snapped) show(snapped, x, y); else hideHover();
+        return {x: x / box.width, y: y / box.height};
     }
-    const pick = () => { if (hover && !getState().disabled) { const point = hover; onPick(point); current(); } };
+    const pick = position => {
+        if (!surface || getState().disabled) return;
+        let selected = hover, adjusted = Boolean(selected?.adjusted);
+        if (!selected) {
+            const x = position?.x ?? surface.xs[Math.max(0, currentSize())];
+            const y = position?.y ?? clamp(1 - Number(value(node, 'seconds')) / surface.top, 0, 1);
+            selected = surface.snap(x, y);
+            if (!selected) { selected = surface.nearest(x, y); adjusted = true; }
+        }
+        if (!selected) return;
+        onPick(selected); current();
+        notice.hidden = !adjusted;
+        notice.textContent = adjusted ? t('Moved to the nearest available spot.', '已挪到最近的可用位置。') : '';
+    };
     plot.onpointermove = point;
     plot.onpointerdown = event => {
         if (event.button !== 0) return;
@@ -304,14 +335,14 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     };
     plot.onpointerup = event => {
         if (event.pointerId !== pointer) return;
-        point(event); pointer = null; plot.releasePointerCapture(event.pointerId); pick();
+        const position = point(event); pointer = null; plot.releasePointerCapture(event.pointerId); pick(position);
     };
     plot.onpointercancel = () => { pointer = null; hideHover(); };
     plot.onlostpointercapture = () => { pointer = null; };
     plot.onpointerleave = event => { if (pointer === null && event.pointerType !== 'touch') hideHover(); };
     plot.onblur = hideHover;
     plot.onkeydown = event => {
-        if (!surface) return;
+        if (!surface || event.ctrlKey || event.metaKey || event.altKey) return;
         if (['Enter', ' '].includes(event.key)) { event.preventDefault(); pick(); return; }
         const delta = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1]}[event.key];
         if (!delta) return;
@@ -319,10 +350,12 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
         const base = hover || {size: Math.max(0, currentSize()), seconds: Math.round(Number(value(node, 'seconds')))};
         let i = clamp(base.size + delta[0], 0, surface.sizes.length - 1);
         while (!surface.sizes[i].points.length && delta[0] && i + delta[0] >= 0 && i + delta[0] < surface.sizes.length) i += delta[0];
-        if (!surface.sizes[i].points.length) return;
-        const seconds = clamp(base.seconds + delta[1], 2, Math.min(surface.top, surface.sizes[i].max));
+        const available = surface.sizes[i].points.length > 0;
+        const seconds = clamp(base.seconds + delta[1], 2, available ? Math.min(surface.top, surface.sizes[i].max) : surface.top);
         const x = surface.xs[i], y = 1 - seconds / surface.top, snapped = surface.snap(x, y);
-        if (snapped) show(snapped, x * plot.clientWidth, y * plot.clientHeight);
+        const selected = snapped || surface.nearest(x, y);
+        if (selected) show({...selected, adjusted: !snapped}, surface.xs[selected.size] * plot.clientWidth,
+            (1 - selected.seconds / surface.top) * plot.clientHeight);
     };
     function changed(event) {
         if (event.detail?.revision === grid?.revision) return;

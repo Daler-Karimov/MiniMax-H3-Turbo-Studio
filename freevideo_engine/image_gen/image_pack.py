@@ -7,20 +7,26 @@ Installer.start('install', background=True) yields to the existing engine lease
 or an optional busy callback. The CLI writes atomic, read-only status snapshots.
 """
 from collections import deque
+from copy import deepcopy
 from contextlib import ExitStack, contextmanager
+import errno
 import json
 import logging
+import platform
 from pathlib import Path, PurePosixPath
 import re
 import signal
 import sys
 import threading
 import time
+import traceback
+import uuid
 from urllib.parse import urlsplit
 
 from .. import disk_space, model_repair, network, provision
 from ..locking import runtime_lock
 from ..monitoring import save
+from ..failure_details import Redactor, image_pack_error_code, redacted_launcher_error
 
 LEDGER = 'download-verified.json'
 OWNERSHIP = 'owned-files.json'
@@ -109,7 +115,10 @@ class _Background:
 
 
 def catalog():
-    spec = json.loads(Path(__file__).with_name('image_models.json').read_text(encoding='utf-8'))
+    try:
+        spec = json.loads(Path(__file__).with_name('image_models.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise PackError('invalid_catalog') from error
     validate_catalog(spec)
     return spec
 
@@ -221,14 +230,14 @@ def _notice_ready(path):
 
 def _write_notice(folder, owned):
     """Put the notice into the model folder when possible; a failure is logged and the install goes on."""
-    notice = _path(folder, 'NOTICE.txt')
     try:
+        notice = _path(folder, 'NOTICE.txt')
         if notice.exists():
             return   # present (ours or the user's own text): left as it is
         notice.write_bytes(NOTICE_TEXT)
         _own(folder, owned, notice)
     except Exception as error:
-        logging.warning('[FreeVideo] Could not write the image model notice: %s', error)
+        logging.warning('[FreeVideo] Could not write the image model notice: %s', redacted_launcher_error(error))
 
 
 def status(root=None):
@@ -248,8 +257,10 @@ def status(root=None):
         if not intact:
             missing.append(row['file'])
         files.append(dict(file=row['file'], bytes=row['bytes'], ready=intact, downloaded_bytes=retained))
-    notice = _path(folder, 'NOTICE.txt')
-    notice_ready = _notice_ready(notice)
+    try:
+        notice_ready = _notice_ready(_path(folder, 'NOTICE.txt'))
+    except PackError:
+        notice_ready = False
     total = sum(r['bytes'] for r in files)
     available = not missing
     return dict(installable=True, ready=available, total_bytes=total, verified_bytes=verified_bytes,
@@ -261,6 +272,32 @@ def status(root=None):
 
 def ready(root=None):
     return status(root)['ready']
+
+
+def downloading(root=None, engine_root=None) -> bool:
+    """Probe the existing pack lease without creating files or waiting."""
+    try:
+        path = _path(base(root), 'pack.lock')
+        # install() holds this lease through transfers and generation pauses.
+        # A separate descriptor also detects a holder in this process.
+        with path.open('rb') as stream:
+            if sys.platform == 'win32':
+                import msvcrt
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBRLCK, 1)
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    return True
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+        return False
+    except Exception:
+        return False
 
 
 @contextmanager
@@ -297,11 +334,18 @@ def _verify(folder, root, progress, check, full=False):
     for row in rows():
         check()
         path = target(row, root)
+        hashed = False
         def checked(current, size):
+            nonlocal hashed
+            hashed = True
             check()
             progress(dict(phase='verify', done=done + current, total=total))
         before = model_repair.identity(path)
-        if not provision.verified(path, row, ledger, mode='full' if full else 'auto', progress=checked):
+        intact = provision.verified(path, row, ledger, mode='full' if full else 'auto', progress=checked)
+        progress(dict(phase='diagnostic', diagnostic=dict(file=row['file'], verification='verified' if intact else
+                                      'mismatch' if path.exists() else 'missing',
+                                      method='sha256' if hashed else 'receipt' if intact else 'size')))
+        if not intact:
             ledger.pop(str(path), None)
             if path.exists():
                 model_repair.record(folder, path, row, before)
@@ -330,18 +374,28 @@ def _own(folder, owned, path, row=None):
     save(_path(folder, OWNERSHIP), owned)
 
 
-def _transfer(plan, row, path, progress, check, background=None):
+def _transfer(plan, row, path, progress, check, background=None, diagnostic=None):
     from ..download_settings import current, SwitchRequested
-    failures = []
-    if background is not None:
-        plan = dict(plan)
-        prior_event = plan.get('event_callback')
-        def event(value):
-            if value.get('action') in ('fallback', 'route-retry'):
-                failures.append((value.get('reason'), value.get('http_status')))
-            if prior_event:
-                prior_event(value)
-        plan['event_callback'] = event
+    failures = deque(maxlen=128)
+    plan = dict(plan)
+    prior_event = plan.get('event_callback')
+    def event(value):
+        if value.get('action') in ('fallback', 'route-retry'):
+            failures.append((value.get('reason'), value.get('http_status')))
+        # Only catalogue labels and bounded numeric transfer metadata cross
+        # into diagnostics. Never retain URLs, headers, paths or settings.
+        details = {k: value[k] for k in ('action', 'source', 'route', 'reason', 'http_status',
+                                        'bytes', 'resume_bytes', 'observed_bytes', 'expected_bytes') if k in value}
+        details['file'] = row['file']
+        if value.get('action') == 'verified':
+            details.update(verification='verified', method='sha256')
+        elif value.get('reason') == 'integrity-mismatch':
+            details.update(verification='mismatch', method='sha256')
+        if diagnostic:
+            diagnostic(dict(phase='diagnostic', diagnostic=details))
+        if prior_event:
+            prior_event(value)
+    plan['event_callback'] = event
     while True:
         if background is not None:
             background.wait()
@@ -355,6 +409,7 @@ def _transfer(plan, row, path, progress, check, background=None):
                 raise SwitchRequested(latest)
         plan['resource_check'] = resource_check
         try:
+            failures.clear()
             network.download(network.model_urls(plan, row), path, row['sha256'], progress,
                              network=plan, size=row['bytes'], category=FAMILY,
                              keep_partial=True, stall_seconds=30)
@@ -368,15 +423,14 @@ def _transfer(plan, row, path, progress, check, background=None):
             if background is None:
                 raise
         except ConnectionError as error:
-            if background is None:
-                raise
             raise PackError('offline') from error
         except RuntimeError as error:
-            if background is None:
-                raise
             offline = failures and all(reason in OFFLINE_TRANSFER_REASONS and
                                        status in (None, '', '000') for reason, status in failures)
-            raise PackError('offline' if offline else 'source_failed') from error
+            reason = ('integrity_failed' if failures and failures[-1][0] in ('integrity-mismatch', 'response-size-exceeded')
+                      else 'write_failed' if failures and failures[-1][0] == 'curl-23'
+                      else 'offline' if offline else 'source_failed')
+            raise PackError(reason) from error
 
 
 def install(root=None, progress=None, check=None, *, engine_root=None, repair=False, _background=None):
@@ -432,7 +486,7 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
                     progress(dict(phase='download', done=done + current + pending_prefixes, total=total))
                     transfer_check()
                 try:
-                    _transfer(plan, row, path, moved, transfer_check, _background)
+                    _transfer(plan, row, path, moved, transfer_check, _background, progress)
                 finally:
                     # Completed files and cancellable prefixes have separate identities.
                     for artifact in (partial, affinity):
@@ -464,12 +518,20 @@ def removal_plan(root=None):
     for row in rows():
         allowed.update((row['file'], row['file'] + '.partial', row['file'] + '.partial.source.json'))
     for name in allowed:
+        if name == 'NOTICE.txt':
+            continue
         _path(folder, name)
     files, skipped = [], []
     for name, stamp in owned.items():
         if name not in allowed or not isinstance(stamp, dict):
             continue
-        path = _path(folder, name)
+        try:
+            path = _path(folder, name)
+        except PackError:
+            if name != 'NOTICE.txt':
+                raise
+            skipped.append(name)
+            continue
         if not path.exists():
             continue
         if _owned_intact(path, stamp):
@@ -519,6 +581,15 @@ class Installer:
         self.transferred = 0
         self.last_done = None
         self.background = False
+        self.reports = {}
+        self.file_checks = {}
+        self.events = deque(maxlen=128)
+        self.started = None
+
+    def failure_report(self, report_id=None):
+        """An immutable, already redacted snapshot; exports survive a retry."""
+        with self.lock:
+            return deepcopy(self.reports.get(report_id or self.value.get('report_id')))
 
     @property
     def busy(self):
@@ -546,6 +617,15 @@ class Installer:
 
     def _progress(self, value):
         value = dict(value)
+        diagnostic = value.pop('diagnostic', None)
+        if diagnostic is not None:
+            with self.lock:
+                file = diagnostic['file']
+                self.file_checks.setdefault(file, {}).update({k: diagnostic[k] for k in
+                    ('verification', 'method', 'source') if k in diagnostic})
+                if 'action' in diagnostic:
+                    self.events.append(dict(diagnostic))
+            return
         with self.lock:
             if value.get('phase') == 'download':
                 now, done = time.monotonic(), value['done']
@@ -579,7 +659,10 @@ class Installer:
             self.background = background
             self.samples.clear()
             self.transferred, self.last_done = 0, None
-            self.value = dict(state='running', action=action, done=0, total=0, bytes_per_second=0, reason=None)
+            self.file_checks.clear()
+            self.events.clear()
+            self.started = time.monotonic()
+            self.value = dict(state='running', action=action, done=0, total=0, bytes_per_second=0, reason=None, report_id=None)
             self.thread = threading.Thread(target=self._run, args=(action, self.stop, background),
                                            name='freevideo-image-pack', daemon=True)
             self.thread.start()
@@ -607,18 +690,79 @@ class Installer:
                 options['progress'] = self._progress
             result = globals()[action](**options)
             check()
+            if action == 'verify' and not result['ready']:
+                raise PackError('integrity_failed' if any(v.get('verification') == 'mismatch'
+                                for v in self.file_checks.values()) else 'needs_repair')
             if background:
                 self._set(done=result['total_bytes'], total=result['total_bytes'])
             self._set(state='done', reason=None, result=result)
         except InterruptedError:
             self._set(state='cancelled', reason=None)
-        except PackError as error:
-            reason = error.reason
-            if background and reason not in ('disk_space', 'offline', 'source_failed', 'busy_video', 'failed'):
-                reason = 'source_failed' if reason == 'download_failed' else 'failed'
-            self._set(state='failed', reason=reason, **error.details)
+        except Exception as error:
+            self._failed(action, error)
+
+    def _failed(self, action, error):
+        """Collect metadata only, even when the pack or catalogue is unreadable."""
+        from .. import __version__
+        code = image_pack_error_code(error)
+        try:
+            spec = catalog()
+            entries = rows(spec)
         except Exception:
-            self._set(state='failed', reason='failed')
+            spec, entries = {}, []
+        try:
+            pack = status(self.root)
+        except Exception:
+            pack = dict(ready=False, files=[], missing=[], downloaded_bytes=0)
+        with self.lock:
+            checks, events = deepcopy(self.file_checks), list(self.events)
+            downloaded = self.transferred
+        live = {f['file']: f for f in pack['files']}
+        files = []
+        for row in entries:
+            observed = live.get(row['file'], {})
+            file = dict(file=row['file'], expected_bytes=row['bytes'], expected_sha256=row['sha256'],
+                        downloaded_bytes=observed.get('downloaded_bytes', 0), ready=observed.get('ready', False),
+                        verification='not_checked', method=None)
+            file.update(checks.get(row['file'], {}))
+            files.append(file)
+        pack = {k: pack[k] for k in ('ready', 'missing', 'downloaded_bytes', 'verified_bytes', 'total_bytes') if k in pack}
+        pack.update(name=spec.get('model_id', 'image'), repo=spec.get('repo'), revision=spec.get('revision'),
+                    format=spec.get('format'), files=files, transferred_bytes=downloaded,
+                    sources=[dict(file=row['file'], id=s['id'], host=urlsplit(s['url']).hostname)
+                             for row in entries for s in row['sources']], events=events)
+        details = {k: v for k, v in getattr(error, 'details', {}).items()
+                   if k in ('needed_bytes', 'free_bytes') and type(v) is int}
+        redactor = Redactor()
+        # No source lines in stack frames: a caller may have embedded user
+        # data in source. Retain filenames, line numbers, functions and the
+        # complete exception chain, redacted by the shared launcher policy.
+        stack, seen, cause = [], set(), error
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            stack.append('Traceback (most recent call last):\n')
+            stack.extend('  File "%s", line %d, in %s\n' % (Path(frame.f_code.co_filename).name, line, frame.f_code.co_name)
+                         for frame, line in traceback.walk_tb(cause.__traceback__))
+            stack.append('%s: %s\n' % (type(cause).__name__, cause))
+            cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+            if cause is not None:
+                stack.append('Caused by:\n')
+        report = dict(schema='freevideo.image-report', schema_version=1,
+                      created_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                      kind='download' if action == 'install' else 'install', operation=action,
+                      analysis=dict(version=__version__, hardware=dict(system=platform.system()), geometry={}),
+                      summary=dict(request_seconds=max(0, time.monotonic() - self.started) if self.started else 0),
+                      request={}, plan=None, stages=[], stage_at_failure=self.value.get('phase', action),
+                      error=dict(code=code, **{'class': type(error).__name__}, message=str(error),
+                                 traceback=''.join(stack), details=details), pack=pack,
+                      service=dict(video_busy=code == 'busy_video', worker_restarts=0))
+        report = json.loads(redactor.data(json.dumps(report).encode('utf-8'), '.json'))
+        report_id = uuid.uuid4().hex
+        with self.lock:
+            self.reports[report_id] = report
+            while len(self.reports) > 16:
+                del self.reports[next(iter(self.reports))]
+            self.value.update(state='failed', reason=code, report_id=report_id, **details)
 
 
 def main(argv=None):

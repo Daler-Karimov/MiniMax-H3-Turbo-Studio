@@ -9,6 +9,8 @@ import sys
 import threading
 import time
 
+from .failure import Context, classify_exception, exception_details, safe_plan
+
 
 class Inbox:
     """Read cancellation while the main thread is inside a denoising step."""
@@ -75,7 +77,7 @@ def load_runner(pack_dir, device, *, progress=None):
     return ImageRunner(pack_dir, device=device, progress=progress)
 
 
-def serve(pack_dir, *, device='cuda', idle_seconds=180., stream=None, output=None, factory=None):
+def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None, factory=None):
     stream = sys.stdin if stream is None else stream
     output = sys.stdout if output is None else output
     factory = factory or load_runner
@@ -97,15 +99,23 @@ def serve(pack_dir, *, device='cuda', idle_seconds=180., stream=None, output=Non
             if value is None or inbox.closed.is_set():
                 break
             started = time.monotonic()
+            context = Context('generate', value)
             result = None
             try:
                 from PIL import Image
                 with ExitStack() as stack, redirect_stdout(sys.stderr):
                     if inbox.cancel.is_set():
                         raise InterruptedError('cancelled')
-                    progress = lambda stage, fraction: send(phase='progress', stage=stage, fraction=fraction)
+                    def progress(stage, fraction):
+                        context.timing.enter(stage)
+                        send(phase='progress', stage=stage, fraction=fraction)
+
                     if runner is None:
+                        context.timing.enter('load')
                         runner = factory(pack_dir, device, progress=progress)
+                    if hasattr(runner, 'last_plan'):
+                        runner.last_plan = None
+                    context.timing.enter('start')
                     references = []
                     for path in value.get('images', []):
                         image = stack.enter_context(Image.open(path))
@@ -123,13 +133,18 @@ def serve(pack_dir, *, device='cuda', idle_seconds=180., stream=None, output=Non
                         image.save(target, format='PNG')
                     plan = runner.stats().get('plan')
                 result = dict(phase='result', path=value['path'], seconds=time.monotonic() - started, plan=plan)
-            except MemoryError:
-                result = dict(phase='error', code='no_memory', message_zh='内存或显存不足，请降低图像尺寸或减少参考图。')
             except Exception as error:
-                # Exceptions may echo prompts, filenames or model paths.
-                code = ('cancelled' if inbox.cancel.is_set() else
-                        'no_memory' if type(error).__name__ == 'OutOfMemoryError' else 'generation_failed')
-                result = dict(phase='error', code=code)
+                code = classify_exception(error, stage=context.timing.stage, cancelled=inbox.cancel.is_set())
+                plan = None
+                if runner is not None:
+                    try:
+                        plan = safe_plan(runner.stats().get('plan'), context.redactor)
+                    except Exception:
+                        # Diagnostics must not replace the inference exception.
+                        pass
+                result = dict(phase='error', code=code, stage=context.timing.stage,
+                              seconds=context.timing.seconds(), stages=context.timing.snapshot(), plan=plan,
+                              error=exception_details(error, context.redactor, code))
             finally:
                 with inbox.mutex:
                     inbox.busy = False
@@ -147,7 +162,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('pack_dir', type=Path)
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--idle-seconds', type=float, default=180.)
+    parser.add_argument('--idle-seconds', type=float, default=45.)
     args = parser.parse_args()
     if not 0 < args.idle_seconds < float('inf'):
         parser.error('--idle-seconds must be positive and finite')

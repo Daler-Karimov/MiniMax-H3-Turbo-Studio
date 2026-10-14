@@ -1,41 +1,78 @@
 {
   "schema": 1,
-  "product_version": "0.4.4",
+  "product_version": "0.4.5",
   "en": {
-    "summary": "Continuing a video segment by segment no longer stops with a memory error, medium-size videos on Windows with 16 GB or smaller cards are fast again in the second pass, and image generation on Windows no longer stalls. The editing view gains reference pictures and imported-video continuation, and several issues that stopped generation or setup are fixed.",
+    "summary": "Generation progress now says what is happening with real percentages, image generation explains failures and waits in line behind running work, and the creation panel keeps your settings and media after a refresh. The editing view gains a first-open guide, smoother playback and clearer continued parts, prompts suggest camera and motion words, and many smaller issues are fixed.",
     "changes": [
-      "Continuing a video segment by segment no longer stops with a memory error from the second segment on.",
-      "Windows: medium-size videos on graphics cards with 16 GB or less no longer slow down in the second pass.",
-      "Image generation: on Windows it no longer stalls while the image model starts, reports a false out-of-memory error after loading, or stalls while checking downloaded model files; tall pictures no longer show purple vertical lines or a grid texture.",
-      "After a video finishes, FreeVideo releases graphics and system memory right away unless the next part is about to start, and gives way at once to image generation or other programs.",
-      "Editing view: the generation bar takes reference pictures (upload one or make one with the image model, then set it as reference, first frame or last frame), every Generate press answers at once, and queued parts stay queued after the page is reloaded and start by themselves; if generation cannot run, they go back to drafts with the reason.",
-      "Editing view: videos imported from your computer can be extended and continued, files dropped on the timeline land where they are dropped, reopening it from the launcher keeps it usable, and keys pressed in the media library no longer change the timeline.",
-      "Mac: generating with reference pictures no longer runs out of memory while encoding; the compatibility setting, which only applies to separate graphics cards, is no longer shown.",
-      "Additional model folders entered in the node settings are now saved and used when FreeVideo looks for models and starts.",
-      "Edge model files now download from the ModelScope domestic site, and the image model gains an additional mirror source.",
-      "Image editor: leaving or reloading the page with unsaved changes now asks first. Flipping, resetting, fitting or dragging the locked original works on an automatic copy as one undo step. Renaming a layer by double-click keeps the name, and invalid canvas sizes are explained instead of failing silently.",
-      "Small mismatches no longer stop the launcher, setup, saved Agent films and cast cards, subtitle import, the image editor, sharing or prompt enhancement; FreeVideo continues and repairs what it can. Turning off or cancelling prompt enhancement while it runs stops it cleanly, and the release link in the update notice opens the latest release.",
-      "A workflow restored with an empty Total frames value no longer fails with a frame-count error; it generates by duration."
+      "Progress: generation progress names what is happening during loading, decoding and saving, shows real percentages, and no longer stays on the same line for minutes; the upscale before the second pass keeps reporting while it runs. When a longer run finishes in a background tab, the tab title flashes and a short sound plays; desktop notifications can be turned on in the settings.",
+      "Image generation: a failure says why on the card and offers the diagnostic report; a request made while the graphics card is busy waits in line; a size that does not fit memory is made smaller automatically; model loading shows progress by what has actually been read; the panel tells a model that is still downloading from one that is not installed; Generate with an empty description says what is missing. Graphics memory is released 45 seconds after the last picture when nothing else is waiting.",
+      "Creation panel: settings, prompt and media are kept after a refresh, undo and redo; an empty duration, size, seed or step count is asked for instead of reusing an old value; the duration control explains lengths longer than one run; part-by-part videos show cancelled, resumed and finished states after a refresh and say why a part failed; result actions, sharing and the second pass report their progress and failures.",
+      "Prompts: while you type, the start of a camera or motion word lists matching words in English or Chinese; these suggestions and @ mentions open under the line being typed.",
+      "Editing view: a short first-open guide that can be skipped; smoother timeline playback, with the next clip made ready before each cut; a failed part says which step went wrong and offers the diagnostic report; export failures say why (missing font characters, a missing or unreadable source, a full disk). Edit, Create and Autopilot in the view switch open even when no node is selected.",
+      "Editing view timeline: a part that continues the one before it shows a link mark; continued parts keep the ten-second minimum while dragging and fill to ten seconds on release; a part waiting in line still says Queued after a reload; a reopened edit fits its content; the description box and Generate button stay in place while a part is made; on phone-width windows the toolbar stays on one row, with the rest in a More menu.",
+      "LoRA: each LoRA can carry its own trigger words, added to the prompt whenever it is selected and removed when it is not, in Create, Agent and the editing view. The list keeps the three most recently used LoRAs at the top and has a Clear button.",
+      "Agent: tools no longer stall on the first call on Windows; conversations can be deleted from the row menu; drafts and failed messages stay after switching conversations, and a retry after an unclear failure no longer sends the message twice. Finished pictures have an Open button with zoom and drag, past chats show a small cover from their first finished video, screenplay problems name the field at fault, and take sheets show one frame per second unless a count is given; on narrow windows the Autopilot header keeps Settings, and the connection shows as a dot.",
+      "Launcher and offline packages: actions requested while background work is running start once it finishes or say why they are unavailable; update failures tell a full disk from a network problem; offline package imports check file contents before finishing and no longer clash with a cleanup running at the same time.",
+      "Settings: an empty manual graphics-memory value is reported instead of being ignored, compatibility saves no longer overlap and show their progress, and the placement test shows its progress and Stop button as soon as it starts; the setup Stop button appears only while something is running; the additional model folders box is taller and its save status sits beside the button, in a warning colour when a folder cannot be found.",
+      "Windows int8: the second pass on large videos chooses its group size from the graphics memory actually available, so it no longer shows a memory warning and retries.",
+      "Browser page translation leaves the product name as written."
     ]
   },
   "zh": {
-    "summary": "一段接一段连续生成不再因内存报错；Windows 上 16 GB 及以下显卡生成中等尺寸视频，第二遍恢复原来的速度；Windows 图像生成不再卡住。剪辑视图可以加参考图、接续导入的视频，另修复了几处会让生成或安装中断的问题。",
+    "summary": "生成进度会写明正在做什么，百分比按实际进度走；图像生成失败时会说明原因，显卡忙时自动排队；创作面板刷新后保留设置和素材。剪辑视图加了首次打开的引导，播放更顺，接续的段更清楚；写提示词时会提示运镜和动作词；另修复了多处小问题。",
     "changes": [
-      "一段接一段连续生成时，从第二段起不再因内存不足报错。",
-      "Windows：16 GB 及以下显卡生成中等尺寸视频时，第二遍不再变慢。",
-      "图像生成：Windows 上图像模型启动时不再卡住、加载完不再误报内存不足，下载后校验文件不再卡住；高图上不再出现紫色竖线和网格纹。",
-      "视频生成完会立即释放显存和内存；下一段马上开始时才短暂保留，遇到图像生成或其他程序要用时立刻让出。",
-      "剪辑视图：生成条可以加参考图（上传图片或用图像模型生成一张，可设为参考、首帧或尾帧）；每次点“生成”都会立刻有反应，排队的段刷新页面后仍在排队、轮到时自动开始，不能生成时退回草稿并说明原因。",
-      "剪辑视图：从电脑导入的视频也能往后接续生成，拖到时间线上的文件落在松手的位置；从启动入口再次进入时可以正常操作，素材库里按键不再改动时间线。",
-      "Mac：用参考图生成时，编码阶段不再报内存不足；只对独立显卡起作用的兼容性设置不再显示。",
-      "节点设置里填写的“其他模型目录”现在会保存，查找模型和启动时都会用到。",
-      "Edge 模型文件改从魔搭国内站下载，图像模型增加一个镜像下载源。",
-      "图片编辑器：有未保存的改动时离开或刷新页面会先提示；对已锁定的原图翻转、重置、适配或拖动时，自动在副本上操作并算一步撤销；双击重命名图层保留名称；画布尺寸不合法时给出提示而不是无反应。",
-      "启动器、安装、Agent 已存的影片和角色卡、字幕导入、图片编辑器、分享和提示词改写遇到小偏差不再中断，FreeVideo 会继续并自动修复能修的部分；提示词增强运行中关闭或取消时会正常停止，更新提示里的发布页链接打开最新版本。",
-      "恢复的工作流把“总帧数”留空时，生成不再因帧数校验报错，按时长正常生成。"
+      "进度：生成进度会写明载入、解码、保存各在做什么，百分比按实际进度走，不再长时间停在同一句；第二遍前的放大过程中进度持续更新。较长的生成在后台标签页完成时，标签标题会闪烁并响一声短提示音；在设置里可以打开桌面通知。",
+      "图像生成：失败时卡片上写明原因，并可提交诊断报告；显卡忙时发起的生成自动排队；尺寸超出显存时自动缩小；模型载入进度按实际读取量显示；能区分模型“下载中”和“未安装”；描述为空时点生成会提示缺什么。最后一张图完成 45 秒后，如果没有别的任务在等，就释放显存。",
+      "创作面板：刷新、撤销和重做后，设置、提示词和素材都会保留；时长、尺寸、种子或步数留空时会提示填写，不再沿用旧值；时长控件会说明超过一次能生成的长度时怎么处理；分段生成的视频刷新后能显示已取消、已继续和已完成，失败的段会说明原因；结果操作、分享和第二遍都会显示进度和失败原因。",
+      "提示词：输入运镜或动作词的开头时，会列出匹配的词，中英文都可以；这些候选和 @ 选择器跟在正在输入的那一行下面。",
+      "剪辑视图：首次打开时有一段简短引导，可以跳过；时间线播放更顺，换段前先把下一段准备好；某一段失败时说明是哪一步出的错，并可提交诊断报告；导出失败会说明原因（字体缺字、源文件缺失或读不出、磁盘已满）。没有选中节点时，视图切换里的剪辑、创作、全自动也能打开。",
+      "剪辑视图时间线：接续上一段的部分带链环标记；接着生成的每一段在拖动时就保证至少 10 秒，松手后自动补齐；排队的段刷新后仍显示“排队中”；重新打开的作品按内容适配缩放；生成一段时描述框和“生成”按钮留在原位；手机宽度的窗口里工具栏保持一行，其余放进“更多”菜单。",
+      "LoRA：每个 LoRA 可以带自己的触发词，选中时自动加进提示词，取消时去掉，创作、Agent 和剪辑视图都适用。列表把最近用过的三个放在最上面，并新增“清除”按钮。",
+      "Agent：Windows 上第一次调用工具不再卡住；可以在对话行的菜单里删除对话；切换对话后草稿和发送失败的消息仍在，失败原因不明时重试不会把消息发两遍。做好的图片可以点“打开”放大、拖动查看；历史对话显示第一段做成的视频的小封面；剧本有问题时写明是哪个字段；审片拼图默认每秒一帧；窄窗口下全自动页顶栏保留“设置”，连接状态显示为圆点。",
+      "启动器和离线包：后台任务进行中点的操作，会在任务结束后执行一次，或者说明暂时不能用的原因；更新失败时区分磁盘已满和网络问题；导入离线包会先核对文件内容再完成，不再和同时进行的清理冲突。",
+      "设置：手动显存留空时会提示，不再被忽略；兼容性设置的保存不会重叠，并显示进度；放置测试一开始就显示进度和停止按钮；安装页的停止按钮只在运行时出现；其他模型目录输入框加高，保存结果显示在按钮旁，找不到目录时用警示色。",
+      "Windows int8：生成较大的视频时，第二遍按实际可用的显存选分组大小，不再弹显存提示后重试。",
+      "浏览器翻译页面时不再翻译产品名。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.4",
+      "en": {
+        "summary": "Continuing a video segment by segment no longer stops with a memory error, medium-size videos on Windows with 16 GB or smaller cards are fast again in the second pass, and image generation on Windows no longer stalls. The editing view gains reference pictures and imported-video continuation, and several issues that stopped generation or setup are fixed.",
+        "changes": [
+          "Continuing a video segment by segment no longer stops with a memory error from the second segment on.",
+          "Windows: medium-size videos on graphics cards with 16 GB or less no longer slow down in the second pass.",
+          "Image generation: on Windows it no longer stalls while the image model starts, reports a false out-of-memory error after loading, or stalls while checking downloaded model files; tall pictures no longer show purple vertical lines or a grid texture.",
+          "After a video finishes, FreeVideo releases graphics and system memory right away unless the next part is about to start, and gives way at once to image generation or other programs.",
+          "Editing view: the generation bar takes reference pictures (upload one or make one with the image model, then set it as reference, first frame or last frame), every Generate press answers at once, and queued parts stay queued after the page is reloaded and start by themselves; if generation cannot run, they go back to drafts with the reason.",
+          "Editing view: videos imported from your computer can be extended and continued, files dropped on the timeline land where they are dropped, reopening it from the launcher keeps it usable, and keys pressed in the media library no longer change the timeline.",
+          "Mac: generating with reference pictures no longer runs out of memory while encoding; the compatibility setting, which only applies to separate graphics cards, is no longer shown.",
+          "Additional model folders entered in the node settings are now saved and used when FreeVideo looks for models and starts.",
+          "Edge model files now download from the ModelScope domestic site, and the image model gains an additional mirror source.",
+          "Image editor: leaving or reloading the page with unsaved changes now asks first. Flipping, resetting, fitting or dragging the locked original works on an automatic copy as one undo step. Renaming a layer by double-click keeps the name, and invalid canvas sizes are explained instead of failing silently.",
+          "Small mismatches no longer stop the launcher, setup, saved Agent films and cast cards, subtitle import, the image editor, sharing or prompt enhancement; FreeVideo continues and repairs what it can. Turning off or cancelling prompt enhancement while it runs stops it cleanly, and the release link in the update notice opens the latest release.",
+          "A workflow restored with an empty Total frames value no longer fails with a frame-count error; it generates by duration."
+        ]
+      },
+      "zh": {
+        "summary": "一段接一段连续生成不再因内存报错；Windows 上 16 GB 及以下显卡生成中等尺寸视频，第二遍恢复原来的速度；Windows 图像生成不再卡住。剪辑视图可以加参考图、接续导入的视频，另修复了几处会让生成或安装中断的问题。",
+        "changes": [
+          "一段接一段连续生成时，从第二段起不再因内存不足报错。",
+          "Windows：16 GB 及以下显卡生成中等尺寸视频时，第二遍不再变慢。",
+          "图像生成：Windows 上图像模型启动时不再卡住、加载完不再误报内存不足，下载后校验文件不再卡住；高图上不再出现紫色竖线和网格纹。",
+          "视频生成完会立即释放显存和内存；下一段马上开始时才短暂保留，遇到图像生成或其他程序要用时立刻让出。",
+          "剪辑视图：生成条可以加参考图（上传图片或用图像模型生成一张，可设为参考、首帧或尾帧）；每次点“生成”都会立刻有反应，排队的段刷新页面后仍在排队、轮到时自动开始，不能生成时退回草稿并说明原因。",
+          "剪辑视图：从电脑导入的视频也能往后接续生成，拖到时间线上的文件落在松手的位置；从启动入口再次进入时可以正常操作，素材库里按键不再改动时间线。",
+          "Mac：用参考图生成时，编码阶段不再报内存不足；只对独立显卡起作用的兼容性设置不再显示。",
+          "节点设置里填写的“其他模型目录”现在会保存，查找模型和启动时都会用到。",
+          "Edge 模型文件改从魔搭国内站下载，图像模型增加一个镜像下载源。",
+          "图片编辑器：有未保存的改动时离开或刷新页面会先提示；对已锁定的原图翻转、重置、适配或拖动时，自动在副本上操作并算一步撤销；双击重命名图层保留名称；画布尺寸不合法时给出提示而不是无反应。",
+          "启动器、安装、Agent 已存的影片和角色卡、字幕导入、图片编辑器、分享和提示词改写遇到小偏差不再中断，FreeVideo 会继续并自动修复能修的部分；提示词增强运行中关闭或取消时会正常停止，更新提示里的发布页链接打开最新版本。",
+          "恢复的工作流把“总帧数”留空时，生成不再因帧数校验报错，按时长正常生成。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.3",
       "en": {
@@ -219,58 +256,6 @@
           "浏览器扩展干扰 FreeVideo 时，出错卡片会写出是哪个扩展，并给出解决办法。",
           "许可确认里的“查看许可证”会列出要同意的每一项许可，每项都能打开；用离线整合包安装时打开的是本机全文，断网也能看。",
           "修复：引擎更新后，用引擎自带 Python 运行的命令也会用新版 FreeVideo；Linux 上安装目录里的 uv 被换成链接时，“安装 / 修复”也能完成。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.23",
-      "en": {
-        "summary": "Generation and installation progress show one overall percentage with the details that matter, such as the current step and how much has been downloaded; the workspace fills the window; RTX 50 GPUs no longer keep pausing when the driver cache is full, and the first video after a start waits less.",
-        "changes": [
-          "The first video after FreeVideo starts waits up to about 15 seconds less for the text encoder. On RTX 40 and RTX 50 cards under Windows, and on Linux, more of the video decoder stays on the graphics card while decoding (all of it on 12 GB cards), so decoding is faster.",
-          "On Windows with RTX 50 GPUs, generation no longer keeps pausing once the graphics driver's compile cache is full.",
-          "On Windows, when the video model fits neither in GPU memory nor in RAM, generation waits less for the drive. When another program takes GPU memory during generation, decoding no longer starts over because it ran out of memory.",
-          "Generation progress shows one overall percentage, the current step and the elapsed time, with a small bar under slow stages, and the remaining time appears after the first two steps; during installation, repair and updates, a download shows what is being downloaded, how much and how fast. Loading the video model no longer hangs when the graphics driver does not answer, and after a long time without progress the page says that generation is still running and offers the report.",
-          "Error cards now say in one sentence what happened and what to do, with the raw error under Technical details; cases such as a reference video that is too short or a LoRA that cannot be used with the int8 model yet each have their own message. The compatibility setting now describes what each level does.",
-          "The creative workspace and the Creations window now fill the browser window, so the video preview grows with it. On windows at least 1680 px wide, a Recent videos column appears on the right; clicking a video plays it in the preview, and a button in the preview header hides the column.",
-          "A custom step count now downloads only a sampling table the first time, up to 1.2 GB, instead of 26 GB of model weights. Any download still needed, as for some LoRAs on FP8, shows its progress, size and speed instead of an unchanging “Loading model”.",
-          "On NVIDIA graphics cards with 8 GB or more, prompt enhancement needs about 4 GiB of free RAM instead of 11 GiB, and on 8 GB and 10 GB cards a rewrite takes tens of seconds instead of several minutes. While it runs, the status line shows how long it has taken.",
-          "Each saved video now takes far less disk space, about 40 MB instead of about 790 MB for a 10-second 1344 × 768 video, because the uncompressed video and audio are no longer kept. The first start after updating deletes them from earlier videos as well, and previews can still continue with Run second pass.",
-          "A new Repair button in the launcher fixes an installation in one step and keeps models and videos; it appears on the error card when the launcher finds a problem it can repair, and in Settings › Environment. A repair that only adds a few packages no longer asks for as much free disk space as a new installation.",
-          "On a Mac, when unified memory runs short, the second pass switches to a computation that uses less memory; if it still runs short, the first pass is kept and only the second pass runs again. When less memory is available than a video needs, FreeVideo says so as soon as generation starts.",
-          "Fixes: on Linux, desktops without xdg-open can open FreeVideo in the browser, and the background service starts when the folder name contains %, $, quotes or backslashes; when port 8188 is in use, the launcher starts ComfyUI on a free port and shows the new address; and Captions only in the image editor no longer leaves white specks when it sweeps a caption in several strokes. With a self-installed ComfyUI updated to a recent version, each video appears once in Assets instead of twice, and paths with hidden folders no longer show <PATH><PATH> in the launcher terminal and diagnostic reports."
-        ]
-      },
-      "zh": {
-        "summary": "生成和安装的进度只显示一个总百分比，并给出在做什么、下了多少等必要的细节；创作面板铺满整个窗口；RTX 50 显卡不再因驱动缓存写满而反复停顿，启动后的第一个视频等待更短。",
-        "changes": [
-          "启动后的第一个视频等文本编码器的时间更短，最多少等约 15 秒。在 Windows 上的 RTX 40、RTX 50 显卡以及 Linux 上，解码时更多的解码器留在显卡上（12 GB 显卡可以全部留下），解码更快。",
-          "在使用 RTX 50 系显卡的 Windows 电脑上，显卡驱动的编译缓存写满后，生成时不再反复停顿。",
-          "在 Windows 上，显存和内存都放不下整个视频模型时，生成时等硬盘的时间更短。生成期间其他程序占用了显存时，解码不再因显存不足而从头再来一遍。",
-          "生成进度只显示一个总百分比、正在做的那一步和已用时间，慢的阶段下面多一条小进度条，跑完两步后再显示预计剩余时间；安装、修复和更新时，下载会写明在下什么、下了多少和速度。加载视频模型时不再因显卡驱动没有响应而一直卡住；长时间没有新的进度时，页面会说明生成仍在进行，并可以下载报告。",
-          "出错时，卡片用一句话说明发生了什么、该怎么做，原始报错收进“技术详情”；参考视频太短、LoRA 暂时不能用于 int8 模型等情况各有自己的说明。兼容性设置也改成说明每一档的效果。",
-          "创作面板和作品窗口现在铺满浏览器窗口，视频预览随窗口一起变大。窗口宽 1680 像素以上时，右侧会多出“最近作品”一栏，点击其中的视频会在预览中播放，预览标题行的按钮可以收起这一栏。",
-          "选用自定义步数时，第一次只需下载一个采样表（最多 1.2 GB），不再先下载 26 GB 的模型权重。仍需下载时（例如 FP8 上的部分 LoRA），会显示进度、大小和速度，不再一直停在“加载模型”。",
-          "在 8 GB 及以上的 NVIDIA 显卡上，提示词增强只需约 4 GiB 可用内存（原来要 11 GiB），8 GB 和 10 GB 显卡上的改写从几分钟缩短到几十秒。改写时，状态栏会显示已用时间。",
-          "保存的视频占用的磁盘空间大幅减少：10 秒、1344 × 768 的视频从约 790 MB 降到约 40 MB，因为不再保留未压缩的画面和音频。更新后第一次启动时，也会删除之前视频里的这些文件；预览仍然可以点“继续二采”。",
-          "启动器新增“修复”按钮，一步修好安装，模型和视频都会保留；发现可以修复的问题时，出错卡片上会出现这个按钮，“设置 → 环境”里也有。只需补装几个包的修复，不再要求和全新安装一样多的空闲磁盘空间。",
-          "在 Mac 上，统一内存不足时，第二遍会改用占用内存更少的计算方式；仍然不足时，保留第一遍的结果，只重新运行第二遍。可用内存低于所需时，生成开始时就会给出提示。",
-          "修复：Linux 上，没有 xdg-open 的桌面也能在浏览器中打开 FreeVideo，文件夹名带 %、$、引号或反斜杠时后台服务也能启动；本机 8188 端口被占用时，启动器会改用空闲端口并说明新地址；图片编辑器的“只去字幕”分几笔扫过字幕时不再留下白点。自行将 ComfyUI 更新到较新版本后，每个视频在“资产”中不再出现两条记录；启动器终端和诊断报告里，隐去文件夹的路径不再显示为 <PATH><PATH>。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.22",
-      "en": {
-        "summary": "The image editor opens again after installing or updating with the launcher.",
-        "changes": [
-          "The image editor opens again. In 0.3.21 installed or updated with the launcher, clicking Edit only showed \"The image could not be opened for editing.\" because the fonts the editor uses were missing from the package."
-        ]
-      },
-      "zh": {
-        "summary": "通过启动器安装或更新后，图片编辑器可以正常打开了。",
-        "changes": [
-          "图片编辑器可以正常打开了。通过启动器安装或更新的 0.3.21 缺少编辑器用的字体，点“编辑”只会提示“这张图片无法打开编辑。”。"
         ]
       }
     }

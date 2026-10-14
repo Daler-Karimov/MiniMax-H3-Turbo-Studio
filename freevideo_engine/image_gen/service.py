@@ -1,5 +1,7 @@
-"""One image job at a time, with a leased worker retained until idle or video work."""
+"""One active image and one waiting job, with a worker leased until idle or video work."""
 import atexit
+from collections import OrderedDict
+from copy import deepcopy
 import json
 import math
 from pathlib import Path
@@ -11,11 +13,17 @@ import time
 import uuid
 
 from . import image_pack
+from .failure import Context, ERRORS, FailureError, MESSAGE_ZH, NO_REPORT, STAGES, classify_exception
 
 BODY_LIMIT = 64 * 1024
 CANCEL_GRACE = 5.
 MAX_IMAGES = 4
-ERRORS = {'no_memory', 'cancelled', 'generation_failed', 'invalid_request', 'busy'}
+REPORT_LIMIT = 16
+INFERENCE_TIMEOUT = 600.
+QUEUE_TIMEOUT = 600.
+QUEUE_POLL = .1
+INVALID_ERRORS = frozenset(('invalid_request', 'invalid_prompt', 'invalid_dimensions', 'invalid_seed',
+                            'invalid_media', 'too_many_images'))
 
 
 class Worker:
@@ -61,7 +69,7 @@ class Worker:
 
 
 class Service:
-    def __init__(self, installation, input_directory, *, video_busy=None, idle_seconds=180.):
+    def __init__(self, installation, input_directory, *, video_busy=None, idle_seconds=45.):
         self.installation = installation
         self.input_directory = input_directory
         self.video_busy = video_busy or self._video_busy
@@ -78,6 +86,15 @@ class Service:
         self._busy = False
         self.closed = False
         self.yielding = False
+        self.reports = OrderedDict()
+        self.context = None
+        self.last_machine = {}
+        self.worker_restarts = 0
+        self.worker_started = False
+        self.queued = None
+        self.queue_thread = None
+        self.queue_wake = threading.Event()
+        self.finished = OrderedDict()
         atexit.register(self.close)
 
     @staticmethod
@@ -89,9 +106,11 @@ class Service:
         return self._busy
 
     def info(self):
-        _, machine = self.installation()
+        engine_root, machine = self.installation()
         spec = image_pack.catalog()
-        return dict(ready=image_pack.ready(machine['model_root']), model=spec['repo'],
+        ready = image_pack.ready(machine['model_root'])
+        return dict(ready=ready, model=spec['repo'],
+                    downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
                     max_images=MAX_IMAGES)
 
@@ -132,40 +151,149 @@ class Service:
             raise ValueError('invalid_media')
         output.mkdir(exist_ok=True)
         return dict(prompt=prompt, width=dimensions[0] // 32 * 32, height=dimensions[1] // 32 * 32,
-                    seed=seed, images=paths, path=str(output / (uuid.uuid4().hex + '.png')))
+                    steps=8, seed=seed, images=paths, path=str(output / (uuid.uuid4().hex + '.png')))
 
     def start(self, action, value):
         if action not in ('generate', 'compose'):
             raise ValueError('invalid_request')
+        context = Context(action, value)
         with self.mutex:
             if self.closed:
                 raise ValueError('closed')
-            if self.yielding or self.video_busy():
-                raise ValueError('busy_video')
-            if self.busy() or self.thread is not None and self.thread.is_alive() and self.session_stop.is_set():
+            if self.queued is not None:
                 raise ValueError('busy')
+            if self.yielding:
+                context.set_machine(self.last_machine)
+                raise FailureError(self.failed('busy_video', context, video_busy=True))
+            video = self.video_busy()
+            waiting = (video or self.busy() or self.thread is not None
+                       and self.thread.is_alive() and self.session_stop.is_set())
+            raw = deepcopy(value)
+            root, machine, prepared = self.prepare(action, raw, context, waiting=waiting)
+            key = secrets.token_urlsafe(24)
+            if waiting:
+                self.queued = dict(key=key, action=action, value=raw, context=context,
+                                   state=dict(phase='queued', queued_behind='video' if video else 'image'),
+                                   video_since=time.monotonic() if video else None)
+                if self.queue_thread is None or not self.queue_thread.is_alive():
+                    self.queue_thread = threading.Thread(target=self.wait_queued,
+                                                        name='freevideo-image-queue', daemon=True)
+                    self.queue_thread.start()
+            else:
+                self.begin(key, root, machine, prepared, context)
+            return dict(job=key)
+
+    def prepare(self, action, value, context, *, waiting=False):
+        """Validate at admission and again at dispatch, against the original request."""
+        try:
             root, machine = self.installation()
+        except (OSError, ValueError) as error:
+            raise FailureError(self.failed('pack_missing', context, error=error)) from None
+        context.set_machine(machine)
+        self.last_machine = machine
+        try:
             if not image_pack.ready(machine['model_root']):
                 raise ValueError('pack_missing')
+            requested = {name: value.get(name) for name in ('width', 'height')} if isinstance(value, dict) else {}
             if action == 'compose':
                 from . import compose
                 value = compose.build(value, self.input_directory())
             value = self.request(value)
-            self.preflight(machine, value)
-            self.key = secrets.token_urlsafe(24)
-            self.stop.clear()
-            self.state = dict(phase='starting')
-            self._busy = True
-            if self.thread is None or not self.thread.is_alive():
-                self.session_stop = threading.Event()
-                self.requests = queue.Queue()
-                self.thread = threading.Thread(target=self.work, args=(root, machine),
-                                               name='freevideo-image-gen', daemon=True)
-                self.requests.put(value)
-                self.thread.start()
-            else:
-                self.requests.put(value)
-            return dict(job=self.key)
+            value['kind'] = context.kind
+            context.update_request(value)
+            context.plan = self.preflight(machine, value, fit=not waiting)
+            # Live free memory while another job owns the GPU is advisory. Keep
+            # the original request for dispatch, when the owner has released it.
+            if not waiting and context.plan is not None and not context.plan['feasible']:
+                raise ValueError('no_memory')
+            if 'fitted' in value:
+                value['fitted']['requested'] = requested
+                context.update_request(value)
+            return root, machine, value
+        except ValueError as error:
+            if str(error) in INVALID_ERRORS:
+                raise
+            code = str(error) if str(error) in ERRORS else classify_exception(error)
+            raise FailureError(self.failed(code, context, error=error)) from None
+        except Exception as error:
+            raise FailureError(self.failed(classify_exception(error), context, error=error)) from None
+
+    def remember(self, key, state):
+        self.finished[key] = deepcopy(state)
+        while len(self.finished) > REPORT_LIMIT:
+            self.finished.popitem(last=False)
+
+    def begin(self, key, root, machine, value, context):
+        if self.key is not None:
+            self.remember(self.key, self.state)
+        self.key = key
+        self.stop.clear()
+        self.state = dict(phase='starting', stage='start')
+        if 'fitted' in value:
+            self.state['fitted'] = deepcopy(value['fitted'])
+        self.context = context
+        self._busy = True
+        if self.thread is None or not self.thread.is_alive():
+            self.session_stop = threading.Event()
+            self.requests = queue.Queue()
+            self.thread = threading.Thread(target=self.work, args=(root, machine),
+                                           name='freevideo-image-gen', daemon=True)
+            self.requests.put(value)
+            self.thread.start()
+        else:
+            self.requests.put(value)
+
+    def discard_queued(self, state):
+        self.remember(self.queued['key'], state)
+        self.queued = None
+        self.queue_wake.set()
+
+    def wait_queued(self):
+        while True:
+            with self.mutex:
+                pending = self.queued
+                if pending is None:
+                    # Clearing under the lock lets a new admission start a reader.
+                    self.queue_thread = None
+                    return
+                if self.closed:
+                    self.discard_queued(dict(phase='cancelled'))
+                    continue
+                try:
+                    video = self.yielding or self.video_busy()
+                except Exception as error:
+                    self.discard_queued(self.failed(classify_exception(error), pending['context'], error=error))
+                    continue
+                pending['state']['queued_behind'] = 'video' if video else 'image'
+                if video:
+                    if pending['video_since'] is None:
+                        pending['video_since'] = time.monotonic()
+                    if time.monotonic() - pending['video_since'] >= QUEUE_TIMEOUT:
+                        state = self.failed('timeout', pending['context'],
+                                            error=TimeoutError('video queue timeout'), video_busy=True)
+                        self.discard_queued(state)
+                        continue
+                else:
+                    pending['video_since'] = None
+                    stopping = (self.thread is not None and self.thread.is_alive()
+                                and self.session_stop.is_set())
+                    if not self.busy() and not stopping:
+                        try:
+                            root, machine, value = self.prepare(pending['action'], pending['value'],
+                                                                pending['context'])
+                        except FailureError as error:
+                            self.discard_queued(error.status)
+                        except Exception as error:
+                            # A previously valid reference may disappear while waiting.
+                            code = ('generation_failed' if str(error) in INVALID_ERRORS
+                                    else classify_exception(error))
+                            self.discard_queued(self.failed(code, pending['context'], error=error))
+                        else:
+                            self.queued = None
+                            self.begin(pending['key'], root, machine, value, pending['context'])
+                        continue
+                self.queue_wake.clear()
+            self.queue_wake.wait(QUEUE_POLL)
 
     def memory_budget(self, machine):
         """Bound the driver query, without importing Torch or starting a worker."""
@@ -207,7 +335,7 @@ class Service:
         except (OSError, RuntimeError, AttributeError, ValueError):
             return None
 
-    def preflight(self, machine, value):
+    def preflight(self, machine, value, *, fit=True):
         budget = self.memory_budget(machine)
         if budget is None:
             return
@@ -220,20 +348,88 @@ class Service:
                 reference_pixels += round(image.width * scale) * round(image.height * scale)
         plan = plan_image(gpu_budget_bytes=budget, width=value['width'], height=value['height'],
                           reference_pixels=reference_pixels)
-        if not plan.feasible:
-            raise ValueError('no_memory')
+        if fit and not plan.feasible:
+            width, height = value['width'], value['height']
+            landscape = width >= height
+            long, short = max(width, height), min(width, height)
+            # At most 48 probes for the accepted 2048-pixel limit. Round the
+            # proportional short side to its nearest 32-pixel grid point.
+            for side in range(long - 32, 511, -32):
+                other = (short * side + long * 16) // (long * 32) * 32
+                if other < 512:
+                    break
+                fitted_width, fitted_height = (side, other) if landscape else (other, side)
+                candidate = plan_image(gpu_budget_bytes=budget, width=fitted_width, height=fitted_height,
+                                       reference_pixels=reference_pixels)
+                if candidate.feasible:
+                    value.update(width=fitted_width, height=fitted_height,
+                                 fitted=dict(width=fitted_width, height=fitted_height,
+                                             requested=dict(width=width, height=height)))
+                    return candidate.to_dict()
+        return plan.to_dict()
+
+    def failed(self, code, context, *, row=None, error=None, video_busy=None):
+        """One safe failure status, used by admission, worker, HTTP and Agent callers."""
+        code = code if isinstance(code, str) and code in ERRORS else 'generation_failed'
+        if code == 'cancelled':
+            return dict(phase='cancelled')
+        stage = row.get('stage') if isinstance(row, dict) else None
+        stage = stage if stage in STAGES else context.timing.stage
+        result = dict(phase='failed', error=code, report_id=None, stage=stage)
+        if code in MESSAGE_ZH:
+            result['message_zh'] = MESSAGE_ZH[code]
+        if code not in NO_REPORT:
+            if video_busy is None:
+                try:
+                    video_busy = self.yielding or self.video_busy()
+                except Exception:
+                    video_busy = False
+            if context.pack is None and context.machine.get('model_root'):
+                try:
+                    context.pack = image_pack.status(context.machine['model_root'])
+                except Exception:
+                    # A missing/broken pack must not prevent reporting the original error.
+                    pass
+            report = context.report(code, row=row, error=error, video_busy=video_busy,
+                                    worker_restarts=self.worker_restarts)
+            with self.mutex:
+                report_id = uuid.uuid4().hex
+                self.reports[report_id] = report
+                while len(self.reports) > REPORT_LIMIT:
+                    self.reports.popitem(last=False)
+            result['report_id'] = report_id
+        return result
+
+    def report(self, report_id):
+        if (not isinstance(report_id, str) or len(report_id) != 32
+                or any(char not in '0123456789abcdef' for char in report_id)):
+            return None
+        with self.mutex:
+            report = self.reports.get(report_id)
+            # Callers cannot mutate a retained report through an in-process reference.
+            return json.loads(json.dumps(report, allow_nan=False)) if report is not None else None
 
     def status(self, key):
         with self.mutex:
-            if (not isinstance(key, str) or not self.key
-                    or not secrets.compare_digest(key.encode('utf-8'), self.key.encode('utf-8'))):
-                raise ValueError('unknown_job')
-            return dict(self.state)
+            if isinstance(key, str):
+                def matches(candidate):
+                    return candidate is not None and secrets.compare_digest(key.encode('utf-8'), candidate.encode('utf-8'))
+                if matches(self.key):
+                    return deepcopy(self.state)
+                if self.queued is not None and matches(self.queued['key']):
+                    return deepcopy(self.queued['state'])
+                for candidate, state in self.finished.items():
+                    if matches(candidate):
+                        return deepcopy(state)
+            raise ValueError('unknown_job')
 
     def cancel(self, key):
         with self.mutex:
             row = self.status(key)
-            if not self.busy():
+            if row['phase'] == 'queued':
+                self.discard_queued(dict(phase='cancelled'))
+                return dict(phase='cancelled')
+            if key != self.key or not self.busy():
                 return row
             self.stop.set()
             self.state['phase'] = 'cancelling'
@@ -251,6 +447,10 @@ class Service:
             self.yielding = True
             self.stop.set()
             self.session_stop.set()
+            if self.queued is not None:
+                self.queued['state']['queued_behind'] = 'video'
+                if self.queued['video_since'] is None:
+                    self.queued['video_since'] = time.monotonic()
             thread = self.thread
         try:
             if thread is not None and thread is not threading.current_thread():
@@ -258,12 +458,18 @@ class Service:
         finally:
             with self.mutex:
                 self.yielding = False
+                self.queue_wake.set()
         return True
 
     def close(self):
         with self.mutex:
             self.closed = True
+            if self.queued is not None:
+                self.discard_queued(dict(phase='cancelled'))
+            queue_thread = self.queue_thread
         self.stop_for_generation()
+        if queue_thread is not None and queue_thread is not threading.current_thread():
+            queue_thread.join()
 
     def environment(self, root):
         from ..comfy_bridge import source_root
@@ -291,6 +497,7 @@ class Service:
         from .. import processes, resident_process
         session = None
         failure = 'worker_exit'
+        failure_error = None
         try:
             from ..background_compile import COMPILE
             from ..encoder_prewarm import IDLE
@@ -321,6 +528,8 @@ class Service:
                     with self.mutex:
                         self.worker = session
                         self.process = session.process
+                        self.worker_restarts += int(self.worker_started)
+                        self.worker_started = True
                     while not self.session_stop.is_set():
                         try:
                             value = self.requests.get(timeout=.05)
@@ -337,6 +546,7 @@ class Service:
                             with self.mutex:
                                 self.worker = session
                                 self.process = session.process
+                                self.worker_restarts += 1
                         self.infer(session, value)
                 finally:
                     # Keep the parent's lease until the whole owned process tree exits.
@@ -350,23 +560,36 @@ class Service:
                         processes.stop(session.process, grace=5)
                         session.process.wait()
                         session.close()
-        except BlockingIOError:
+        except BlockingIOError as error:
             failure = 'busy_video'
-        except Exception:
+            failure_error = error
+        except TimeoutError as error:
+            failure = 'timeout'
+            failure_error = error
+        except Exception as error:
             failure = 'worker_exit'
+            failure_error = error
         finally:
             with self.mutex:
                 self.process = self.worker = None
                 self.session_stop.set()
                 if self.busy():
+                    context = self.context or Context('generate', {})
+                    fitted = self.state.get('fitted')
                     self.state = (dict(phase='cancelled') if self.stop.is_set()
-                                  else dict(phase='failed', error=failure))
+                                  else self.failed(failure, context, error=failure_error,
+                                                   video_busy=failure == 'busy_video'))
+                    if fitted is not None:
+                        self.state['fitted'] = fitted
                     self._busy = False
+                    self.context = None
+                self.queue_wake.set()
 
     def infer(self, session, value):
+        context = self.context or Context('generate', value)
         session.send(action='generate', **value)
         cancelled_at = None
-        deadline = time.monotonic() + 600
+        deadline = time.monotonic() + INFERENCE_TIMEOUT
         while True:
             if self.stop.is_set() and cancelled_at is None:
                 session.send(action='cancel')
@@ -376,7 +599,7 @@ class Service:
             if self.session_stop.is_set():
                 return
             if time.monotonic() > deadline:
-                raise TimeoutError('worker_exit')
+                raise TimeoutError('timeout')
             try:
                 row = session.rows.get(timeout=.05)
             except queue.Empty:
@@ -386,9 +609,14 @@ class Service:
             phase = row.get('phase')
             if phase == 'progress':
                 stage, fraction = row.get('stage'), row.get('fraction')
-                if (stage in ('load', 'text', 'encode', 'denoise', 'decode') and type(fraction) in (int, float)
+                if (stage in STAGES and type(fraction) in (int, float)
                         and math.isfinite(fraction) and 0 <= fraction <= 1):
+                    # The limit is for a worker that stops reporting, not for a slow first load.
+                    deadline = time.monotonic() + INFERENCE_TIMEOUT
                     with self.mutex:
+                        if self.state.get('stage') == stage and type(self.state.get('fraction')) in (int, float):
+                            fraction = max(fraction, self.state['fraction'])
+                        context.timing.enter(stage)
                         self.state.update(phase='cancelling' if self.stop.is_set() else 'progress',
                                           stage=stage, fraction=fraction)
             elif phase in ('result', 'error'):
@@ -396,9 +624,7 @@ class Service:
                     result = dict(phase='cancelled')
                 elif phase == 'error':
                     code = row.get('code')
-                    result = dict(phase='failed', error=code if code in ERRORS else 'generation_failed')
-                    if code == 'no_memory':
-                        result['message_zh'] = '内存或显存不足，请降低图像尺寸或减少参考图。'
+                    result = self.failed(code, context, row=row)
                 else:
                     path = Path(value['path'])
                     if row.get('path') != str(path) or path.is_symlink() or not path.is_file():
@@ -414,8 +640,12 @@ class Service:
                     result = dict(phase='complete', file='freevideo-image/' + path.name,
                                   seconds=seconds, plan=row.get('plan'))
                 with self.mutex:
+                    if 'fitted' in self.state:
+                        result['fitted'] = self.state['fitted']
                     self.state = result
                     self._busy = False
+                    self.context = None
+                    self.queue_wake.set()
                 return
 
 
@@ -469,6 +699,17 @@ def register():
         except (OSError, ValueError):
             return web.json_response(dict(error='setup_required'), status=400)
 
+    @server.routes.get('/freevideo/image-gen/report/{report_id}')
+    async def report(request):
+        value = service.report(request.match_info['report_id'])
+        headers = {'Cache-Control': 'no-store'}
+        if value is None:
+            return web.json_response(dict(error='unknown_report'), status=404, headers=headers)
+        from datetime import datetime, timezone
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+        headers['Content-Disposition'] = 'attachment; filename="FreeVideo-report-%s.json"' % stamp
+        return web.json_response(value, headers=headers)
+
     @server.routes.post('/freevideo/image-gen/{action}')
     async def action(request):
         header = request.headers.get('X-FreeVideo-Image', '')
@@ -496,7 +737,15 @@ def register():
             else:
                 result = service.start(name, value)
             return web.json_response(result)
+        except FailureError as error:
+            return web.json_response(error.status, status=400)
         except (ValueError, OSError) as error:
-            codes = {'invalid_request', 'invalid_prompt', 'invalid_dimensions', 'invalid_seed', 'invalid_media',
-                     'too_many_images', 'busy', 'busy_video', 'no_memory', 'pack_missing', 'unknown_job', 'closed'}
-            return web.json_response(dict(error=str(error) if str(error) in codes else 'invalid_request'), status=400)
+            code = str(error)
+            if code in ('unknown_job', 'closed'):
+                result = dict(error=code)
+            else:
+                code = code if code in ERRORS else 'invalid_request'
+                result = dict(phase='failed', error=code, report_id=None, stage='start')
+                if code in MESSAGE_ZH:
+                    result['message_zh'] = MESSAGE_ZH[code]
+            return web.json_response(result, status=400)

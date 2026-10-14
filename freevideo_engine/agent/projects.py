@@ -534,13 +534,17 @@ def run_listen(port, row, *, poll=.25):
         raise JobError('busy', 'The subtitle queue is full; retry shortly') from error
     identity, cancelled = view['id'], False
     row['_phase'] = 'listening'
-    while view['state'] == 'running':
-        if row.get('_cancel') and not cancelled:
-            view, cancelled = queue.cancel(identity), True
-            continue
-        row['_detail'] = json.dumps(dict(fraction=round(view['fraction'], 3)))
-        time.sleep(poll)
-        view = queue.get(identity)
+    try:
+        while view['state'] == 'running':
+            if row.get('_cancel') and not cancelled:
+                view, cancelled = queue.cancel(identity), True
+                continue
+            row['_detail'] = json.dumps(dict(fraction=round(view['fraction'], 3)))
+            time.sleep(poll)
+            view = queue.get(identity)
+    except KeyError as error:
+        # The page's queue forgot this job (its record cap recycles finished ones) before the result was read.
+        raise JobError('listen_failed', 'Listening finished but the subtitle service no longer has the result; retry') from error
     if view['state'] == 'cancelled':
         raise JobError('cancelled', 'Cancelled')
     if view['state'] != 'done':

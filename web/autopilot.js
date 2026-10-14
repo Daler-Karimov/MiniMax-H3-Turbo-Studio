@@ -4,6 +4,7 @@ import { agentConnectCard, connectionLabel } from './agent_connect.js';
 import { about, agentChat, jobName } from './autopilot_chat.js';
 import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
+import { productVersion } from './updates.js';
 import { openSetup } from './setup.js';
 import { openExtendEditor, openStudio, showNodes } from './studio.js';
 import { viewChanged, viewSwitch } from './view_navigation.js';
@@ -44,7 +45,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
     const card = agentConnectCard(t, api, () => inSight() && !card.element.hidden);
     // Leaving for another view waits until this page has closed, so the view underneath is never covered twice.
     const closed = () => dialog.open ? new Promise(done => { dialog.addEventListener('close', done, {once: true}); closeDialog(dialog); }) : null;
-    const chat = agentChat(t, api, {shown: inSight,
+    const chat = agentChat(t, api, {shown: inSight, productVersion,
         // Creations continues the work on the editor timeline; this page gives way first.
         open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
             extend: async (record, options) => { await closed(); return openExtendEditor(record, node, {studio, ...options}); }}),
@@ -63,9 +64,11 @@ export function openAutopilotView(node, {studio = null} = {}) {
         body.dataset.view = talking ? 'chat' : 'connect';
         if (talking) chat.sync();
         if (arrived) chat.input.focus();
-        lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = label.text; lamp.disabled = connected || !last.any;
+        lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = lamp.title = label.text; lamp.setAttribute('aria-label', label.text); lamp.disabled = connected || !last.any;
         const job = talking ? last.current : null;
         now.hidden = !job; line.dataset.on = String(!!job);
+        halt.disabled = !!last.stopping;
+        halt.title = last.stopping ? t('Stopping', '正在停止') : t('Stop all', '全部停止'); halt.setAttribute('aria-label', halt.title);
         if (job) {
             const fraction = last.fraction || 0, running = job.status === 'running';
             currentId = job.id; name.textContent = jobName(job, t); more.textContent = last.active > 1 ? `+${last.active - 1}` : '';

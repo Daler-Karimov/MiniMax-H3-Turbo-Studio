@@ -3,6 +3,7 @@ import { api } from '../../scripts/api.js';
 // Every platform downloads from one release: the latest vX.Y.Z.
 const releasePage = 'https://github.com/FlashML-org/FreeVideo/releases/latest';
 const storageKey = 'freevideo.dismissed-update';
+const CANCEL_FAILURE = {en: 'Cancellation failed. Please use the launcher.', zh: '取消没成功，请在启动器里操作'};
 const listeners = new Set();
 // Launcher phases during which the server may disappear and come back updated.
 const working = new Set(['checking', 'downloading', 'waiting', 'restarting', 'engine']);
@@ -80,10 +81,17 @@ export async function applyUpdate() {
 }
 
 export async function cancelUpdate() {
-    try {
-        const response = await api.fetchApi('/freevideo/updates/cancel', {method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(10000)});
-        if (response.ok) updating = false;
-    } catch { /* The launcher keeps its state; the next poll shows it. */ }
+    failure = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const response = await api.fetchApi('/freevideo/updates/cancel', {method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(10000)});
+            if (!response.ok) throw new Error(response.statusText);
+            updating = false;
+            break;
+        } catch {
+            if (attempt === 1) failure = 'cancel';
+        }
+    }
     publish();
     lastCheck = -Infinity;
     later(800);
@@ -144,7 +152,9 @@ export function createUpdateNotice(cn) {
         const model = launcher?.model || '';
         const busy = updating && (working.has(phase) || !!model || offline);
         let text = '', actions = false;
-        if (busy) {
+        if (failure === 'cancel') {
+            text = t(CANCEL_FAILURE.en, CANCEL_FAILURE.zh);
+        } else if (busy) {
             text = model === 'switching' || (model && offline)
                 ? t('Switching to the faster model… ComfyUI restarts once and this page reconnects by itself.', '正在切换到更快的模型…ComfyUI 会重启一次，页面会自动恢复。')
                 : model === 'waiting' ? t('The faster model is ready. FreeVideo switches after the current video; ComfyUI restarts once.', '更快的模型已下载好，当前视频生成完后自动切换，ComfyUI 会重启一次。')
@@ -158,7 +168,7 @@ export function createUpdateNotice(cn) {
         } else if (failure) {
             text = t('Open the FreeVideo launcher to update, or download the new version.', '请在 FreeVideo 启动器中更新，或下载新版。');
             actions = true;
-        } else if (candidate && dismissed !== identity(candidate)) {
+        } else if (candidate) {
             text = t('FreeVideo update available', 'FreeVideo 有新版本') + ' · ' + displayVersion(candidate);
             if (launcher?.status === 'error' && launcher.error) text += ' · ' + t('last attempt failed', '上次更新未完成');
             actions = true;
@@ -174,7 +184,7 @@ export function createUpdateNotice(cn) {
         const direct = !!launcher && !launcher.manual && !failure;
         apply.hidden = !actions || !direct;
         link.hidden = !actions || direct;
-        dismiss.hidden = !actions;
+        dismiss.hidden = !actions || dismissed === identity(candidate);
         stop.hidden = !(busy && phase === 'waiting' && !offline);
     };
     listeners.add(render); render();

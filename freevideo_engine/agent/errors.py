@@ -116,6 +116,39 @@ ERRORS.update({
 })
 
 
+# Static bilingual image reasons; backend exception strings never enter the API.
+IMAGE_REASONS = {
+    'no_memory': ('Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
+                  '显存不足。在“图像大小…”里缩小后再试。'),
+    'busy_video': ('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。'),
+    'pack_missing': ('Download "Image generation models" in the launcher first.',
+                     '请先在启动器里下载“图像生成模型”。'),
+    'model_unreadable': ('The image generation model files could not be read. Repair them in the launcher and try again.',
+                         '图像生成模型的文件读不出来。在启动器里修复后再试。'),
+    'device_unavailable': ('The graphics card is not available right now. Try again later.',
+                           '显卡暂时用不了，稍后再试。'),
+    'worker_exit': ('Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'),
+    'timeout': ('This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'),
+    'generation_failed': ('Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'),
+    'invalid_media': ('A reference picture is missing or cannot be read. Choose a readable picture.',
+                      '参考图片不存在或读不出来，请选择可读取的图片。'),
+    'invalid_request': ('The picture settings are invalid. Check them and try again.', '图片参数不合法，请检查后重试。'),
+    'busy': ('Another picture is being generated. Try again when it finishes.', '已有一张图在生成，完成后再试。'),
+    'cancelled': ('The picture was cancelled.', '已取消这张图片。'),
+}
+
+
+def image_failure(code, report_id=None):
+    """Only fixed sentences and a validated opaque report ID cross the image boundary."""
+    code = code if isinstance(code, str) else 'generation_failed'
+    en, zh = IMAGE_REASONS.get(code, IMAGE_REASONS['invalid_request'] if code.startswith('invalid_')
+                             or code == 'too_many_images' else IMAGE_REASONS['generation_failed'])
+    valid = isinstance(report_id, str) and re.fullmatch(r'[0-9a-f]{32}', report_id)
+    return dict(reason=dict(en=en, zh=zh), report_id=report_id if valid and code not in (
+        'busy', 'cancelled', 'invalid_request', 'invalid_media', 'invalid_prompt', 'invalid_dimensions',
+        'invalid_seed', 'too_many_images') else None)
+
+
 # Recovery is a function of the committed task and phase, not just an error code.
 IMAGE_ERRORS = {
     'invalid_request': 'The picture request contains invalid fields.',
@@ -131,7 +164,10 @@ IMAGE_ERRORS = {
     'closed': 'The image service has shut down.',
     'image_unavailable': 'The image service is not loaded on this computer.',
     'no_memory': 'There is not enough GPU or system memory for this picture.',
-    'generation_failed': 'The image model could not finish this picture.',
+    'model_unreadable': IMAGE_REASONS['model_unreadable'][0],
+    'device_unavailable': IMAGE_REASONS['device_unavailable'][0],
+    'timeout': IMAGE_REASONS['timeout'][0],
+    'generation_failed': IMAGE_REASONS['generation_failed'][0],
     'worker_exit': 'The image worker stopped before finishing this picture.',
     'cancelled': 'The picture job was cancelled.',
 }
@@ -164,7 +200,16 @@ REPAIR = {
 }
 
 
+# A conversation that is not there: the user may delete one while the agent still works or waits in it.
+SESSION_GONE = ('This conversation does not exist; the user may have deleted it.',
+                'Do not repeat elsewhere what you were saying or doing for it. Call the wait again without a session '
+                '(GET /freevideo/agent/v1/inbox?wait=50; MCP: freevideo_wait without id) and carry on in the session '
+                'it names.')
+
+
 def recovery(code, *, kind=None, stage='request', resumable=True):
+    if kind == 'session' and code == 'not_found':
+        return SESSION_GONE[1]
     if kind == 'image' and code == 'pack_missing':
         return ERRORS[code][3]
     if kind == 'image' and code == 'no_memory':
@@ -204,16 +249,21 @@ def safe_details(value):
 
 
 def build(code, *, details=None, request=None, validation=False, message=None, next_action=None,
-          action_required=True, retry_after_seconds=None, owner=None, kind=None, stage='request', resumable=True):
+          action_required=True, retry_after_seconds=None, owner=None, kind=None, stage='request', resumable=True,
+          report_id=None):
     code = code if code in ERRORS else 'internal_error'
     _, retryable, default_message, _ = ERRORS[code]
     action = recovery(code, kind=kind, stage=stage, resumable=resumable)
     if kind == 'image':
         default_message = IMAGE_ERRORS.get(code, default_message)
+    if kind == 'session' and code == 'not_found':
+        default_message = SESSION_GONE[0]
     result = dict(code=code, message=message if validation and message else default_message,
                   details=(details or []) if validation else safe_details(details or []),
                   retryable=retryable, request_id=request or request_id(),
                   docs='/freevideo/agent/v1/guide#errors')
+    if kind == 'image':
+        result.update(image_failure(code, report_id))
     if action_required:
         result['next'] = next_action if validation and next_action else action
     if code == 'busy':
@@ -233,5 +283,9 @@ def validation(errors, code='invalid_request'):
 
 
 def text(error):
-    return '%s: %s%s' % (error['code'], error['message'],
+    reason = error.get('reason') or {}
+    message = reason.get('en') or error['message']
+    diagnostic = image_failure(error['code'], error.get('report_id'))['report_id'] if reason else None
+    return '%s: %s%s%s' % (error['code'], message,
+                          ' Diagnostic report: /freevideo/image-gen/report/' + diagnostic if diagnostic else '',
                           ' Next: ' + error['next'] if error.get('next') else '')

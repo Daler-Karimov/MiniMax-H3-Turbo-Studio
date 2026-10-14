@@ -11,7 +11,7 @@
 .fv-image-editor [hidden]{display:none!important}
 .fv-image-editor :focus-visible{outline:2px solid var(--fv-accent);outline-offset:2px}
 .fv-image-editor button{font:inherit;color:var(--fv-ink);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-.fv-image-editor button:disabled{opacity:.38;cursor:default}
+.fv-image-editor button:disabled,.fv-image-editor button[aria-disabled=true]{opacity:.38;cursor:default}
 .fv-image-editor input,.fv-image-editor select,.fv-image-editor textarea{font:inherit;color:var(--fv-ink)}
 
 /* Header: name and size, zoom in the middle, history and leave on the right. */
@@ -29,9 +29,9 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
 .fv-ie-button{min-height:var(--fv-h-sm);padding:5px 12px;border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);background:var(--fv-raised);font-weight:var(--fv-medium);white-space:nowrap}
-.fv-ie-button:hover:not(:disabled){background:var(--fv-hover)}
+.fv-ie-button:hover:not(:disabled):not([aria-disabled=true]){background:var(--fv-hover)}
 .fv-ie-primary{background:var(--fv-accent);border-color:var(--fv-accent);color:#08131f;min-width:84px}
-.fv-ie-primary:hover:not(:disabled){background:var(--fv-accent-hover)}
+.fv-ie-primary:hover:not(:disabled):not([aria-disabled=true]){background:var(--fv-accent-hover)}
 .fv-ie-danger{color:var(--fv-danger);border-color:color-mix(in srgb,var(--fv-danger) 60%,transparent)}
 .fv-ie-quiet{background:transparent}
 .fv-ie-active{background:var(--fv-selected)!important;border-color:var(--fv-accent)!important;color:var(--fv-accent)!important}
@@ -85,6 +85,12 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-generation[data-running=true]>.fv-ie-gen-note{white-space:nowrap}
 .fv-ie-generation>.fv-ie-button{grid-column:4;min-height:32px}
 .fv-ie-generation[data-message=true]>.fv-ie-gen-note{max-width:260px}
+/* Image failures use the video's report button and submission card on their own row. */
+.fv-ie-generation[data-failed=true]>.fv-ie-gen-note{grid-column:1/-1;grid-row:2;max-width:none}
+.fv-ie-generation[data-failed=true]>.fv-ie-button{grid-row:1}
+.fv-ie-gen-note>.fv-result-links{display:grid;gap:8px}
+.fv-ie-gen-note .fv-image-failure-reason{color:var(--fv-danger)}
+.fv-ie-gen-note>.fv-result-links>.fv-actions{justify-content:flex-start}
 /* Same accent ramp and easing as the shared generation progress meters. */
 .fv-ie-gen-meter{position:absolute;bottom:0;left:0;right:0;height:2px;overflow:hidden;background:var(--fv-raised)}
 .fv-ie-gen-meter i{display:block;height:100%;background:linear-gradient(90deg,var(--fv-accent),var(--fv-accent-ramp));transition:width .5s var(--fv-ease-out)}
@@ -268,6 +274,8 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
   .fv-ie-generation[data-empty=true]>#fv-ie-gen-ratio{grid-column:2;grid-row:1}
   .fv-ie-generation[data-empty=true]>.fv-ie-button{grid-column:2;grid-row:2}
   .fv-ie-generation[data-empty=true]>.fv-ie-gen-note{grid-column:1/-1;grid-row:3}
+  .fv-ie-generation[data-failed=true]>.fv-ie-gen-note{grid-row:3}
+  .fv-ie-generation[data-failed=true]>.fv-ie-button{grid-row:2}
   .fv-ie-actions .fv-ie-button:not(.fv-ie-primary):not(.fv-ie-danger){padding:5px 9px}
   .fv-ie-popover{left:12px;width:auto}
   .fv-ie-reset{display:none}

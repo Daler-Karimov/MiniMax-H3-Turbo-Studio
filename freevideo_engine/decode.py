@@ -10,21 +10,32 @@ from .offload import LayerOffloader, pin_layer_weights
 from .vae_tiles import TileDecoder, compile_blocks
 
 
+DECODE_LABELS = {
+    'vae_load': 'Loading video VAE',
+    'video_decode': 'Decoding the video',
+    'video_postprocess': 'Processing video colors',
+    'rgb_save': 'Saving decoded video',
+    'audio_load_decode': 'Loading and decoding audio',
+    'audio_save': 'Saving decoded audio',
+    'mp4_save': 'Saving MP4 and audio',
+}
+
+
 @torch.no_grad()
 def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, prefetch=True, tile_group=False,
                    preload=False, pin_weights=False, artifacts_dir=None, phase_callback=None,
                    stream_output=False, stream_weights=False, resident_blocks=0, model_cache=None,
                    linear_compute_cache=False, continuation=None, audio_lead_in_callback=None, output_size=None):
+    def phase(name):
+        if phase_callback is not None:
+            phase_callback(name)
+        print(json.dumps({'event': 'decode_phase', 'phase': DECODE_LABELS[name]}), flush=True)
+    phase('vae_load')
     from diffusers import AutoencoderKLMiniMaxH3
     from diffusers.utils.export_utils import encode_video
     from src.inference.render import PIXEL_MEAN, PIXEL_STD, FPS
 
     started = time.perf_counter()
-    def phase(name):
-        if phase_callback is not None:
-            phase_callback(name)
-    phase('vae_load')
-    print(json.dumps({'event': 'decode_phase', 'phase': 'Loading video VAE'}), flush=True)
     vae = None
     weight_source = None
     compute_cache_metrics = None
@@ -117,7 +128,6 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
     load_seconds = time.perf_counter() - started
     decode_started = time.perf_counter()
     phase('video_decode')
-    print(json.dumps({'event': 'decode_phase', 'phase': 'Decoding the video'}), flush=True)
     offload_stats = None
     rgb_mapping = None
     streamed_timings = {}
@@ -150,10 +160,10 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         gc.collect()
         torch.cuda.empty_cache()
         video_decode_seconds = streamed_timings.get('video_decode_seconds', time.perf_counter() - decode_started)
-        phase('video_postprocess')
         # Bound postprocessing memory by frame chunks; use the same FP32 operations
         # and rounding before converting to uint8. Do this on CPU after decoding.
         if not stream_output:
+            phase('video_postprocess')
             frames = torch.empty((video.shape[2], video.shape[3], video.shape[4], 3), dtype=torch.uint8)
             pixel_mean = torch.tensor(PIXEL_MEAN).view(1, -1, 1, 1, 1)
             pixel_std = torch.tensor(PIXEL_STD).view(1, -1, 1, 1, 1)
@@ -179,7 +189,6 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             artifact_seconds += time.perf_counter() - tick
         audio_start = time.perf_counter()
         phase('audio_load_decode')
-        print(json.dumps({'event': 'decode_phase', 'phase': 'Loading and decoding audio'}), flush=True)
         audio_vae = None
         if model_cache is not None:
             from .resident_models import key, file_identity
@@ -195,6 +204,7 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         audio_vae.eval().requires_grad_(False)
         audio_mean = torch.tensor(audio_vae.config.latents_mean, device='cuda').view(1, -1, 1)
         audio_std = torch.tensor(audio_vae.config.latents_std, device='cuda').view(1, -1, 1)
+        print(json.dumps({'event': 'decode_phase', 'phase': 'Decoding audio'}), flush=True)
         audio = audio_vae.decode(audio_latents * audio_std + audio_mean, return_dict=False)[0]
         audio = audio.float().permute(1, 0, 2)[0].cpu()
         rate = audio_vae.config.sampling_rate
@@ -225,7 +235,6 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         temporary = destination.with_name(destination.stem + '.partial' + destination.suffix)
         encode_started = time.perf_counter()
         phase('mp4_save')
-        print(json.dumps({'event': 'decode_phase', 'phase': 'Saving MP4 and audio'}), flush=True)
         if output_size is not None:
             # The model rendered a larger size; only the picture is scaled.
             from .output_fit import fit_frames

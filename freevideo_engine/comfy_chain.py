@@ -1,4 +1,5 @@
 """Local ComfyUI queue adapter and optional background-chain routes."""
+import asyncio
 import json
 import logging
 import math
@@ -271,7 +272,7 @@ def register(host_factory=None):
                     return response({'error': 'Continuing a video is not available in this version'}, 409)
                 if missing:
                     return response({'error': 'Extending backwards or filling a gap is not available in this version'}, 409)
-            return response({'chain': runner.create(value)})
+            return response({'chain': await asyncio.to_thread(runner.create, value)})
         except ChainBusy as failure:
             return response({'error': str(failure)}, 409)
         except ChainTooLong as failure:

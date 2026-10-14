@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
-import {regenerateResult, upscaleResult} from '../web/studio_queue.js';
+import {regenerateResult, upscaleResult, createSecondPassQueue} from '../web/studio_queue.js';
 import {referenceInputs} from '../web/prompt_references.js';
 import {cleanOptionalPrompt, cleanOptionalWidgets} from '../web/optional_inputs.js';
 
@@ -26,7 +26,7 @@ class Element {
 
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
-    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, rememberedView = null;
+    let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, doneNotifyStarts = 0, rememberedView = null;
     let progressView, progressOptions, realProgressFactory;
     const app = {
         registerExtension(extension) { extensions.push(extension); },
@@ -36,7 +36,8 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
+        secondPassAction: () => new Element('button'),
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
@@ -61,6 +62,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         createProgressConnection: () => ({start() {}, refresh() {}, reset() {}}),
         notifyCompatibility: async () => { compatibilityChecks++; },
         startUpdateChecks: () => { updateChecks++; },
+        startDoneNotify: () => { doneNotifyStarts++; }, askDesktopPermission: () => {},
         installNavigation: callback => installed.push(callback),
         refreshNavigation: () => refreshed++, preferredView: () => rememberedView,
         attachReferencePicker() {}, referenceItems: () => [], syncReferencePrompt() {},
@@ -89,13 +91,16 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { createProgressConnection } from './progress_connection.js';", 'const {createProgressConnection} = globalThis.__freevideoEntryTest;')
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
+            .replace("import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';", 'const {startDoneNotify,askDesktopPermission} = globalThis.__freevideoEntryTest; const DESKTOP_SETTING = "FreeVideo.DoneNotify.Desktop";')
             .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs} = globalThis.__freevideoEntryTest;')
             .replace("import { outputDownloadURL } from './output_download.js';", 'const {outputDownloadURL} = globalThis.__freevideoEntryTest;')
             .replace("import { shareButton } from './share.js';", 'const {shareButton} = globalThis.__freevideoEntryTest;')
             .replace("import { reportFileName } from './report_issue.js';", 'const {reportFileName} = globalThis.__freevideoEntryTest;')
-            .replace("import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';", 'const {rememberPromptDraft,savePromptDraft} = globalThis.__freevideoEntryTest;')
+            .replace("import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';", 'const {rememberPromptDraft,savePromptDraft} = globalThis.__freevideoEntryTest; const trackPromptDraft = () => {}; const watchPromptHistory = () => {}; const promptHistoryRestoring = () => false;')
             .replace("import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';", 'const {cleanOptionalWidgets,cleanOptionalPrompt} = globalThis.__freevideoEntryTest;')
             .replace("import { regenerateResult, upscaleResult } from './studio_queue.js';", 'const {regenerateResult,upscaleResult} = globalThis.__freevideoEntryTest;')
+            .replace("import { regenerateResult, createSecondPassQueue } from './studio_queue.js';", 'const {regenerateResult,createSecondPassQueue} = globalThis.__freevideoEntryTest;')
+            .replace("import { secondPassAction } from './result_actions.js';", 'const {secondPassAction} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
             .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
@@ -107,6 +112,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(installed.length, 1, 'the Create / Nodes navigation must be installed');
         assert.equal(compatibilityChecks, 1);
         assert.equal(updateChecks, 1);
+        assert.equal(doneNotifyStarts, 1);
 
         class GenerateNode {
             constructor() {
@@ -345,11 +351,12 @@ test('main browser entry registers both views and preserves node hooks', async t
                 const activity = progress.snapshot().label;
                 removalNode.freevideoShowProgress({compatibility: {level: 2, name_en: 'Compatible', name_zh: '兼容'}});
                 assert.equal(progress.snapshot().label, activity, 'The node must not replace the activity for settings-only events');
-                assert.match(progress.snapshot().status, /Compatibility setting Compatible|兼容档/);
+                assert.match(progress.snapshot().status, /so far|已进行/, 'pause has priority over a settings-only compatibility notice');
                 removalNode.freevideoShowProgress({phase: 'recovery', retry: {kind: 'ram_pressure'}});
                 assert.match(progress.snapshot().status, /Out of RAM|内存不足/);
                 removalNode.freevideoShowProgress({new_request: true, phase: 'load', received_at: 0});
-                assert.equal(progress.snapshot().status, '', 'A new request clears the old retry and compatibility notice');
+                assert.match(progress.snapshot().status, /so far|已进行/, 'An aged new request clears retry and compatibility but shows its own pause');
+                assert.doesNotMatch(progress.snapshot().status, /Out of RAM|内存不足|Compatibility setting|兼容档/);
                 assert.equal(progress.stall.hidden, false);
                 assert.equal(timers.size, 1);
                 let layoutCalls = 0, timersDuringLayout;

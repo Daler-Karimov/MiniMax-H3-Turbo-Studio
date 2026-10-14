@@ -86,7 +86,8 @@ class JobError(Exception):
     def view(self):
         return errors.build(self.code, details=self.details.get('details'),
                             owner=self.details.get('owner'),
-                            retry_after_seconds=self.details.get('retry_after_seconds'))
+                            retry_after_seconds=self.details.get('retry_after_seconds'),
+                            kind=self.details.get('kind'), report_id=self.details.get('report_id'))
 
 
 class ManagedByProduction(JobError):
@@ -455,6 +456,8 @@ class Jobs:
         # Optional executor hook: called as parent_allowed(row['parent']) before a
         # child with a parent may start. A False answer records the job as cancelled.
         self.parent_allowed = None
+        # Optional: called as session_open(sid) while work for a conversation is committed; raises if it is gone.
+        self.session_open = None
         from .projects import Projects
         # The page keeps its projects under ComfyUI's output folder; loading may already poll project jobs.
         self.projects = Projects(port.output_root)
@@ -591,10 +594,11 @@ class Jobs:
             code = error.get('code', 'internal_error')
             if code == 'invalid_json' and row['kind'] in ('vlm', 'enhance'):
                 code = 'vlm_invalid_json'
-            if code != error.get('code') or not error.get('request_id') or row['kind'] == 'image' and code in IMAGE_ERRORS:
+            if code != error.get('code') or not error.get('request_id') or row['kind'] == 'image':
                 error = errors.build(code, details=error.get('details'),
                     request=row.get('request_id'), action_required=code != 'cancelled',
-                    kind=row['kind'], stage='terminal', resumable=not row['spec'].get('refine_from'))
+                    kind=row['kind'], stage='terminal', resumable=not row['spec'].get('refine_from'),
+                    report_id=error.get('report_id'))
         if error is not None:
             error = dict(error, request_id=row.get('request_id') or error['request_id'])
             if error.get('next'):
@@ -765,6 +769,8 @@ class Jobs:
             if receipt:
                 receipt['jobs'] = [r['id'] for r in rows]
                 rows[0]['receipts'] = [receipt]
+            if self.session_open is not None and rows and rows[0].get('session'):
+                self.session_open(rows[0]['session'])  # Deleting a conversation checks for work under this same lock.
             self.save_batch(rows)
             self.jobs.update({r['id']: r for r in rows})
             return rows, False
@@ -1058,6 +1064,10 @@ class Jobs:
             result['error'] = row['error'] if row['error'].get('request_id') else errors.build(
                 row['error'].get('code'), details=row['error'].get('details'), request=row.get('request_id'),
                 kind=row['kind'], stage='terminal', resumable=not row['spec'].get('refine_from'))
+            if row['kind'] == 'image':
+                result['error'] = errors.build(result['error']['code'], kind='image', stage='terminal',
+                    details=result['error'].get('details'), request=row.get('request_id'),
+                    action_required=result['error']['code'] != 'cancelled', report_id=row['error'].get('report_id'))
             if result['error'].get('next'):
                 result['error'] = dict(result['error'], next=errors.recovery(result['error']['code'], kind=row['kind'],
                     stage='terminal', resumable=not row['spec'].get('refine_from')).replace('{id}', row['id']))
@@ -1434,6 +1444,7 @@ class Jobs:
                     return assets
                 assets = resolve()
                 graph = specs.comfy_prompt(spec, node, prompt=prompt, assets=assets)
+                prompt = graph[node]['inputs']['text']
                 with self.lock:
                     row['inputs'] = dict(media=assets, prompt_chars=len(prompt))
             if row.get('_cancel'):
@@ -1754,7 +1765,7 @@ class Jobs:
             self.finish(row, 'failed', error=dict(code='unknown_job'))
             return
         phase = state.get('phase')
-        if phase in ('starting', 'progress', 'cancelling'):
+        if phase in ('queued', 'starting', 'progress', 'cancelling'):
             row['_phase'] = state.get('stage') if phase == 'progress' else phase
         elif phase == 'complete':
             from PIL import Image
@@ -1772,7 +1783,7 @@ class Jobs:
         else:
             code = state.get('error') or 'generation_failed'
             if not self.wait_image(row, code):
-                self.finish(row, 'failed', error=dict(code=code))
+                self.finish(row, 'failed', error=dict(code=code, report_id=state.get('report_id')))
 
     # Local VLM -----------------------------------------------------------------------------------------
     def start_vlm(self, row):

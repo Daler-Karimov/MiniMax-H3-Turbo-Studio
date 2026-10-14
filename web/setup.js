@@ -13,6 +13,7 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
+const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好。要重装，请先点“检测并预览”。'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
 const failureText = value => {
     const text = String(value || ''), matches = [...text.matchAll(/MODEL_MISMATCH_REPAIR: ([^\r\n]+)/g)];
@@ -48,15 +49,17 @@ export async function openSetup() {
     const rootLabel = node("label", t("FreeVideo installation folder", "FreeVideo 安装目录"));
     const root = node("input"); root.type = "text"; rootLabel.append(root); inputs.append(rootLabel);
     const extraLabel = node("label", t("Additional model folders (optional, one per line)", "其他模型目录（可选，每行一个）"));
-    const extra = node("textarea"); extra.rows = 2; extraLabel.append(extra); inputs.append(extraLabel);
+    const extra = node("textarea"); extra.rows = 4; extraLabel.append(extra); inputs.append(extraLabel);
+    const saveFolders = node('button', t('Save model folders', '保存模型目录'));
+    const folderStatus = node('p'); folderStatus.setAttribute('role', 'status');
+    const folderRow = node('div'); folderRow.className = 'fv-folder-save'; folderRow.append(saveFolders, folderStatus); inputs.append(folderRow);
     const libraries = node("details"); libraries.append(node("summary", t("Automatically detected model folders", "自动发现的模型目录")));
     const paths = node("pre"); libraries.append(paths); inputs.append(libraries);
     const copyLabel = node("label"); copyLabel.className = 'fv-check'; const copy = node("input"); copy.type = "checkbox";
     copyLabel.append(copy, node('span', t("Create independent copies (uses extra disk space)", "创建独立副本（额外占用磁盘）"))); inputs.append(copyLabel);
-    inputs.append(note(t('Models are reused by default.', '默认直接复用已有模型。')));
     const samplingLabel = node('label'); samplingLabel.className = 'fv-check';
     const samplingCaches = node('input'); samplingCaches.type = 'checkbox';
-    const samplingText = node('span', t('Prepare all quality levels (optional)', '提前下载全部质量档位（可选）'));
+    const samplingText = node('span', t('Prepare all quality levels', '提前下载全部质量档位'));
     samplingLabel.append(samplingCaches, samplingText); inputs.append(samplingLabel);
     const downloads = node('section');
     downloads.append(node('h3', t('Downloads', '下载')));
@@ -65,9 +68,8 @@ export async function openSetup() {
     for (const [id, name] of [['auto', t('Auto (recommended)', '自动（推荐）')], ['proxy', t('Proxy only', '仅代理')], ['direct', t('Direct only', '仅直连')]]) {
         const option = node('option', name); option.value = id; proxyMode.append(option);
     }
-    const modeHelp = note('');
     modeLabel.append(proxyMode);
-    downloads.append(modeLabel, modeHelp);
+    downloads.append(modeLabel);
     const sourceLabel = node('label', t('Download source', '下载源'));
     const source = node('select');
     for (const [id, name] of [['auto',t('Automatic','自动选择')],['official','Hugging Face'],['hf-mirror','HF Mirror'],['modelscope','ModelScope']]) {
@@ -76,8 +78,7 @@ export async function openSetup() {
     sourceLabel.append(source); downloads.append(sourceLabel);
     const probeButton = node('button', t('Test source speeds', '重新测速'));
     const sourceStatus = note(''), speeds = node('div');
-    downloads.append(probeButton, sourceStatus, speeds,
-        note(t('Switching applies to the current download; compatible fragments resume. Speed tests do not switch.', '切换立即作用于当前下载，兼容断点会续传。仅测速不切换。')));
+    downloads.append(probeButton, sourceStatus, speeds);
     const auth = node('details');
     auth.append(node('summary', t('Hugging Face token · optional', 'Hugging Face Token · 可选')));
     auth.append(note(t('Use your account’s download quota instead of the anonymous limit. Kept for this session only.', '使用账号下载额度，避开匿名限流。仅本次会话有效。')));
@@ -108,7 +109,10 @@ export async function openSetup() {
     const reserveHelp = note(t('Keep this much additional VRAM free. Applies to new requests; current usage is already accounted for.', '额外保留的空闲显存。对后续请求生效；其他程序当前的占用已单独计入。'));
     resources.append(autoLabel, reserveLabel, reserveHelp, saveReserve, reserveStatus);
     advanced.append(resources);
-    reserveAuto.onchange = () => { reserve.disabled = reserveAuto.checked; };
+    const clearReserveStatus = () => { reserveStatus.textContent = ''; reserveStatus.className = 'fv-muted'; };
+    reserveStatus.setAttribute('aria-live', 'polite');
+    reserve.oninput = clearReserveStatus;
+    reserveAuto.onchange = () => { reserve.disabled = reserveAuto.checked; clearReserveStatus(); };
     // Placement calibration. A measurement, not a setting: it changes nothing
     // about this installation, it reports what this machine measures so the
     // choices that are currently limited to one platform can be settled.
@@ -141,11 +145,10 @@ export async function openSetup() {
     acceptLabel.hidden = true; installation.append(acceptLabel);
     const actions = node("div"); actions.className = "fv-actions";
     const inspect = node("button", t("Detect & review", "检测并预览")); inspect.className = "fv-primary";
-    const use = node("button", t("Use existing installation", "使用已有安装"));
+    const use = node("button", t("Use existing", "使用已有安装"));
     const install = node("button", t("Install / repair", "安装／修复")); install.disabled = true;
-    const cancel = node("button", t("Stop setup", "停止安装")); cancel.disabled = true;
-    const saveFolders = node('button', t('Save model folders', '保存模型目录'));
-    actions.append(saveFolders, inspect, use, install, cancel); installation.append(actions);
+    const cancel = node("button", t("Stop setup", "停止安装")); cancel.hidden = true;
+    actions.append(inspect, use, install, cancel); installation.append(actions);
     // Why Install / repair is unavailable, so it never looks like a broken button.
     const blocked = note(""); blocked.classList.add("fv-setup-why"); blocked.setAttribute("aria-live", "polite"); blocked.hidden = true;
     installation.append(blocked);
@@ -159,7 +162,7 @@ export async function openSetup() {
     document.body.append(dialog); dialog.showModal();
     let savedFolders = "", savedMissing = false;
     let token, planId, busy = false, probeBusy = false, pollTimer, lastPlanId, planErrors = false, planStale = false, ready = false;
-    const fail = error => { installation.open = true; state.textContent = [savedFolders, failureText(error.message)].filter(Boolean).join(" · "); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
+    const fail = error => { installation.open = true; state.textContent = failureText(error.message); state.className = "fv-failure"; state.scrollIntoView({block:'nearest'}); };
     const request = async (action, value) => {
         const response = await api.fetchApi("/freevideo/setup" + (action ? "/" + action : root.value ? '?root='+encodeURIComponent(root.value) : ""), action ? {
             method: "POST", headers: { "Content-Type": "application/json", "X-FreeVideo-Setup": token }, body: JSON.stringify(value || {}),
@@ -191,26 +194,34 @@ export async function openSetup() {
             render(await request('calibrate', {repeats: Number(calibrateRepeats.value)}));
             poll();
             calibration.open = true;
-            calibrateStatus.textContent = t('Running. Progress is below; closing this panel keeps it running.',
-                                            '正在运行。进度见下方；关闭面板不会中断。');
+            calibrateStatus.textContent = t('Running. Closing this panel keeps it running.',
+                                            '正在运行，关闭面板不会中断。');
+            installation.open = true;
+            cancel.scrollIntoView({block: 'center'});
         } catch (error) {
             calibrateStatus.className = 'fv-failure';
             calibrateStatus.textContent = failureText(error.message);
         } finally { calibrateButton.disabled = false; }
     };
     saveReserve.onclick = async () => {
-        if (!reserveAuto.checked && (!reserve.value || !reserve.checkValidity())) { reserve.reportValidity(); return; }
+        clearReserveStatus();
+        if (!reserveAuto.checked && !reserve.value) {
+            reserveStatus.className = 'fv-failure';
+            reserveStatus.textContent = t('Enter a value.', '请输入数值。');
+            reserve.focus();
+            return;
+        }
+        if (!reserveAuto.checked && !reserve.checkValidity()) { reserve.reportValidity(); return; }
         saveReserve.disabled = true;
         try {
             showResources(await request('resources', {[reserveField]: reserveAuto.checked ? null : Number(reserve.value)}));
             reserveStatus.textContent = t('Saved · applies to the next request', '已保存 · 下次生成生效');
-        } catch (error) { reserveStatus.textContent = failureText(error.message); }
+        } catch (error) { reserveStatus.className = 'fv-failure'; reserveStatus.textContent = failureText(error.message); }
         finally { saveReserve.disabled = false; }
     };
     function showDownloads(value) {
         if (!value) return;
         proxyMode.value = value.preferences?.proxy_mode || 'auto';
-        modeHelp.textContent = proxyMode.value === 'proxy' ? t('Use the current proxy. No direct fallback.', '沿用当前代理，不尝试直连。') : proxyMode.value === 'direct' ? t('Download directly, ignoring proxies.', '忽略代理，直接下载。') : t('Compare proxy and direct connections automatically.', '自动测速，择优使用代理或直连。');
         authStatus.textContent = busy ? t('Stop setup to change the token, then resume with retained files.', '先停止安装，再修改 Token 并继续；已下载文件会保留。') :
             value.hf_token_set ? t('Session token set. Existing environment credentials apply when this field is cleared.', '已设置本次 Token；清除后仍可使用环境中已有的凭据。') :
             t('No session token set. Existing environment credentials still apply.', '未填写本次 Token；仍可使用环境中已有的凭据。');
@@ -259,11 +270,12 @@ export async function openSetup() {
     };
     const controls = () => {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
-        cancel.disabled = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
-        const why = busy || (ready && !planId) ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击「检测并预览」更新安装计划。")
-            : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击「检测并预览」。")
-            : !planId ? t("Click Detect & review first. Install / repair becomes available once the plan is ready.", "请先点击「检测并预览」，生成安装计划后即可安装。")
-            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击「安装／修复」。") : "";
+        cancel.hidden = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
+        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击“检测并预览”更新安装计划。")
+            : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击“检测并预览”。")
+            : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
+            : !planId ? ""
+            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击“安装／修复”。") : "";
         blocked.textContent = why; blocked.hidden = !why;
     };
     // A changed setting makes a shown plan outdated: clear it rather than leave it beside a disabled button.
@@ -282,7 +294,7 @@ export async function openSetup() {
     applyToken.onclick = () => setToken(hfToken.value);
     clearToken.onclick = () => setToken('');
     for (const e of [root, extra, copy, samplingCaches]) e.oninput = () => invalidate(true);
-    extra.oninput = () => { if (savedFolders) state.textContent = ""; savedFolders = ""; savedMissing = false; invalidate(true); };
+    extra.oninput = () => { folderStatus.textContent = ""; folderStatus.className = ""; savedFolders = ""; savedMissing = false; invalidate(true); };
     accept.onchange = controls;
     function showPlan(value) {
         plan.replaceChildren();
@@ -312,6 +324,7 @@ export async function openSetup() {
     }
     function render(task) {
         busy = Boolean(task.busy); ready = Boolean(task.ready) || ready && task.status !== 'failed';
+        cancel.textContent = task.action === 'calibrate' ? t('Stop', '停止') : t('Stop setup', '停止安装');
         inputs.hidden = busy; plan.hidden = busy;
         if (task.plan_id && task.plan_id !== lastPlanId) {
             lastPlanId = task.plan_id; planErrors = Boolean(task.plan?.errors?.length); planStale = false;
@@ -323,7 +336,6 @@ export async function openSetup() {
         const p = task.progress || {};
         state.className = task.status === "failed" ? "fv-failure" : task.ready && !savedMissing ? "fv-ready" : "";
         state.textContent = failureText(task.error) || (task.ready ? t("Ready. Generate with your existing workflow.", "准备就绪，可使用现有工作流生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
-        state.textContent = [savedFolders, state.textContent].filter(Boolean).join(" · ");
         const phases = task.phase_progress || {}, valid = Number.isFinite(p.total) && p.total > 0 && Number.isFinite(p.done) && p.done >= 0 && p.done <= p.total;
         overall.hidden = !busy;
         overallBar.max = phases.total > 0 ? phases.total : 1; overallBar.value = phases.done || 0;
@@ -350,16 +362,21 @@ export async function openSetup() {
         const missing = result.missing_libraries || [];
         savedMissing = missing.length > 0;
         savedFolders = !missing.length ? t('Saved.', '已保存。')
-            : missing.length === 1 ? t(`Saved. This folder was not found:\n${missing[0]}`, `已保存。找不到这个目录：\n${missing[0]}`)
-            : t(`Saved. These folders were not found:\n${missing.join('\n')}`, `已保存。找不到这些目录：\n${missing.join('\n')}`);
-        state.textContent = savedFolders; state.className = savedMissing ? '' : 'fv-ready';
-        state.scrollIntoView({block: 'nearest'});
+            : missing.length === 1 ? t('Saved. This folder was not found:', '已保存。找不到这个目录：')
+            : t(`Saved. ${missing.length} folders were not found:`, `已保存。有 ${missing.length} 个目录找不到：`);
+        folderStatus.className = savedMissing ? 'fv-warn' : 'fv-ready';
+        folderStatus.replaceChildren(savedFolders);
+        if (savedMissing) {
+            // The full path is in the box above; show its start and last folder on one line.
+            const first = missing[0], path = node('span', first.length > 44 ? `${first.slice(0, 14)}…${first.slice(-26)}` : first);
+            path.className = 'fv-folder-path'; path.title = first; folderStatus.append(path);
+        }
         return result;
     }
     saveFolders.onclick = async () => {
         invalidate(true); busy = true; controls();
         try { await saveModelFolders(); }
-        catch (error) { fail(error); }
+        catch (error) { savedFolders = ''; savedMissing = false; folderStatus.textContent = failureText(error.message); folderStatus.className = 'fv-failure'; }
         finally { busy = false; controls(); }
     };
     inspect.onclick = async () => {
@@ -382,7 +399,7 @@ export async function openSetup() {
         extra.value = (info.discovery.extra_libraries || []).join("\n");
         showDownloads(info.discovery.downloads);
         showResources(info.discovery.resources);
-        samplingText.textContent = t('Prepare all quality levels (optional)', '提前下载全部质量档位（可选）')
+        samplingText.textContent = t('Prepare all quality levels', '提前下载全部质量档位')
             + (info.discovery.sampling_cache_bytes ? ' · ' + gib(info.discovery.sampling_cache_bytes) : '');
         // New installations prepare every quality level; a ready one adds them only when chosen.
         samplingCaches.checked = !info.discovery.ready;

@@ -75,6 +75,7 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     toggle.setAttribute('aria-label', t('Prompt enhancement', '提示词增强'));
     label.append(toggle, el('span', t('FreeToken enhancement', 'FreeToken 提示词增强')));
     label.title = t('Based on FreeToken. Rewrite locally with reference images, following MiniMax H3 guidelines.', '基于 FreeToken，结合参考图，在本机按 MiniMax H3 规则改写。');
+    const enhancementHint = label.title;
     const tabs = el('div', null, 'fv-enhance-tabs'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', t('Prompt version', '提示词版本'));
     const buttons = {};
     for (const [name, text] of [['original', t('Original', '原文')], ['rewritten', t('Enhanced', '改写')]]) {
@@ -142,15 +143,18 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     }
     function render() {
         toggle.checked = Boolean(versions.value.enabled);
+        label.title = input.disabled ? '' : enhancementHint;
         tabs.hidden = !versions.value.rewritten;
         for (const [name, b] of Object.entries(buttons)) {
             b.setAttribute('aria-pressed', String(versions.value.selected === name));
             b.disabled = input.disabled || (name === 'rewritten' && !versions.value.enabled);
         }
         redo.hidden = !versions.value.enabled || Boolean(running); redo.disabled = input.disabled;
-        redo.title = versions.value.rewritten ? t('Rewrite again', '重新改写') : t('Rewrite', '改写');
-        redo.setAttribute('aria-label', redo.title);
+        const rewriteLabel = versions.value.rewritten ? t('Rewrite again', '重新改写') : t('Rewrite', '改写');
+        redo.title = input.disabled ? '' : rewriteLabel;
+        redo.setAttribute('aria-label', rewriteLabel);
         cancel.hidden = !running || install.hidden === false; cancel.disabled = cancelling;
+        cancel.title = cancelling ? t('Cancelling…', '正在取消…') : '';
         element.dataset.busy = String(Boolean(running));
         element.dataset.enabled = String(Boolean(versions.value.enabled));
     }
@@ -171,7 +175,9 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     }
     async function cancelJob() {
         cancelling = true; consent?.(false); consent = null; render();
-        if (job) await post('cancel', {job});
+        const request = running;
+        try { if (job) await post('cancel', {job}); }
+        catch (error) { if (running === request) { cancelling = false; render(); } throw error; }
     }
     cancel.onclick = () => cancelJob().catch(error => { show(errorText(error), 'error'); });
     async function poll(action, body) {
@@ -181,7 +187,9 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
         if (disposed || cancelling) await post('cancel', {job});
         try {
             for (;;) {
+                if (disposed || cancelling) throw new Error('cancelled');
                 const row = await post('status', {job});
+                if (disposed || cancelling) throw new Error('cancelled');
                 if (row.rewrite_report_id) {
                     node.properties.freevideo_prompt_report = row.rewrite_report_id;
                     node.graph?.change();
@@ -215,12 +223,14 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
             waiting = true; show(errorText({message: 'prompt_required'}), 'note'); input.focus();
             throw new Error('prompt_required');
         }
+        cancelling = false;
         const execute = async () => {
-            cancelling = false;
+            if (disposed || cancelling) throw new Error('cancelled');
             versions.value.useOriginal = false;
             const scene = context(), key = versions.key(scene), original = versions.value.original, edits = versions.value.edits;
             const reply = await api.fetchApi('/freevideo/prompt-vlm');
             const info = await reply.json();
+            if (disposed || cancelling) throw new Error('cancelled');
             if (!reply.ok) throw new Error(info.error);
             token = info.token;
             if (info.ram_bytes) ramBytes = info.ram_bytes;
@@ -246,7 +256,7 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
         running = Promise.resolve().then(execute).catch(error => {
             if (!disposed) show(errorText(error), error?.message === 'cancelled' ? '' : 'error');
             throw error;
-        }).finally(() => { running = null; install.hidden = true; render(); });
+        }).finally(() => { running = null; cancelling = false; install.hidden = true; render(); });
         render();
         return running;
     }

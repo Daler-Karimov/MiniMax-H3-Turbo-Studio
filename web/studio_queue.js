@@ -60,6 +60,21 @@ export async function upscaleResult(api, nodeId, result, currentPrompt) {
     return reply.prompt_id;
 }
 
+// Each preview owns its submission outcome; another preview waits its turn.
+// Only duplicate clicks for the same pending preview share a promise.
+export function createSecondPassQueue(api, nodeId, currentPrompt) {
+    const pending = new Map();
+    let tail = Promise.resolve();
+    return result => {
+        const key = result?.video;
+        if (pending.has(key)) return pending.get(key);
+        const request = tail.catch(() => {}).then(() => upscaleResult(api, typeof nodeId === 'function' ? nodeId() : nodeId, result, currentPrompt))
+            .finally(() => { pending.delete(key); });
+        pending.set(key, request); tail = request;
+        return request;
+    };
+}
+
 export function randomSeed() {
     const bytes = crypto.getRandomValues(new Uint32Array(2));
     return (bytes[0] & 0x1fffff) * 0x100000000 + bytes[1];

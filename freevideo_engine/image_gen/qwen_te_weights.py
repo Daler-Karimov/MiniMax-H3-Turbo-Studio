@@ -14,6 +14,7 @@ from pathlib import Path
 
 import torch
 from safetensors import safe_open
+from .load_progress import TensorProgress
 
 
 _CONVROT = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
@@ -41,11 +42,13 @@ def _row_scales(st, name, rows):
     return scales
 
 
-def _dequantize_vocabulary(st, name, shape, dtype, chunk_rows):
+def _dequantize_vocabulary(st, name, shape, dtype, chunk_rows, reads=None):
     weight = st.get_slice(name + ".weight")
     if list(weight.get_shape()) != list(shape) or weight.get_dtype() != "I8" or shape[1] % 256:
         raise ValueError(f"Expected group-256 int8 vocabulary for {name}")
     scales = _row_scales(st, name, shape[0])
+    if reads is not None:
+        reads.tensors(name + ".weight_scale")
     # Exactly int8_ops.hadamard16: the regular symmetric, orthogonal H256,
     # rather than the Sylvester Hadamard convention used by some quantizers.
     h4 = torch.tensor([[1, 1, 1, -1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]], dtype=torch.float32)
@@ -55,6 +58,8 @@ def _dequantize_vocabulary(st, name, shape, dtype, chunk_rows):
         end = min(start + chunk_rows, shape[0])
         rotated = (weight[start:end].float() * scales[start:end, None]).reshape(-1, shape[1] // 256, 16, 16)
         full[start:end] = (h16 @ rotated @ h16).reshape(-1, shape[1]).to(dtype)
+        if reads is not None:
+            reads.advance((end - start) * shape[1])
     return full
 
 
@@ -92,7 +97,7 @@ def _assign_tensor(model, name, value, dtype):
         module._buffers[leaf] = value
 
 
-def _install_text_weights(model, st, *, dtype, chunk_rows):
+def _install_text_weights(model, st, *, dtype, chunk_rows, reads=None):
     keys = set(st.keys())
     handled = set()
     for key in sorted(k for k in keys if k.endswith(".comfy_quant")):
@@ -100,6 +105,8 @@ def _install_text_weights(model, st, *, dtype, chunk_rows):
         if name.startswith("model.visual.") or name == "lm_head":
             continue
         _quant_metadata(st, name)
+        if reads is not None:
+            reads.tensors(key)
         full_name = _text_name(model, name)
         module = model.get_submodule(full_name)
         shape = module.weight.shape if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)) else ()
@@ -107,7 +114,7 @@ def _install_text_weights(model, st, *, dtype, chunk_rows):
             raise ValueError(f"Quantized target is not Linear/Embedding: {name}")
         if isinstance(module, torch.nn.Embedding):
             module.weight = torch.nn.Parameter(
-                _dequantize_vocabulary(st, name, shape, dtype, chunk_rows), requires_grad=False
+                _dequantize_vocabulary(st, name, shape, dtype, chunk_rows, reads), requires_grad=False
             )
         else:
             from ..int8_ops import Int8Linear
@@ -126,6 +133,8 @@ def _install_text_weights(model, st, *, dtype, chunk_rows):
             replacement.input_dtype = dtype
             parent, _, child = full_name.rpartition(".")
             setattr(model.get_submodule(parent), child, replacement)
+            if reads is not None:
+                reads.tensors(name + ".weight", name + ".weight_scale")
         handled.update({key, name + ".weight", name + ".weight_scale"})
 
     for key in sorted(keys - handled):
@@ -141,13 +150,15 @@ def _install_text_weights(model, st, *, dtype, chunk_rows):
         if leaf == "bias" and hasattr(module, "weight_int8"):
             full_name += ".original"
         _assign_tensor(model, full_name + "." + leaf, st.get_tensor(key), dtype)
+        if reads is not None:
+            reads.tensors(key)
     missing = [name for name, value in model.state_dict().items() if value.is_meta]
     if missing:
         raise ValueError("Missing text encoder tensors: " + ", ".join(missing))
 
 
 def load_text_encoder(path, *, config=None, config_path=None, device="cpu", dtype=torch.bfloat16,
-                      chunk_rows=8192):
+                      chunk_rows=8192, progress=None):
     """Return a Qwen3VLForConditionalGeneration with int8 language projections.
 
     ``config`` accepts a transformers Qwen3VLConfig or its dictionary. Otherwise
@@ -156,6 +167,8 @@ def load_text_encoder(path, *, config=None, config_path=None, device="cpu", dtyp
     ``load_vision(device='cpu')`` method installs only BF16 visual tensors and
     returns that module, allowing the caller's placement policy to own moves.
     CPU supports loading/inspection; Int8Linear execution requires CUDA.
+    ``progress(done_bytes, total_bytes)`` counts language source bytes, including
+    vocabulary chunks, and excludes the deferred vision tensors and logits head.
     """
     from accelerate import init_empty_weights
     from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
@@ -181,7 +194,9 @@ def load_text_encoder(path, *, config=None, config_path=None, device="cpu", dtyp
     model.model.visual = None
     model.lm_head = torch.nn.Identity()
     with safe_open(str(path), framework="pt", device="cpu") as st:
-        _install_text_weights(model, st, dtype=dtype, chunk_rows=chunk_rows)
+        reads = (TensorProgress(st, progress, (key for key in st.keys()
+                 if not key.startswith(("model.visual.", "lm_head.")))) if progress is not None else None)
+        _install_text_weights(model, st, dtype=dtype, chunk_rows=chunk_rows, reads=reads)
     model.eval().requires_grad_(False).to(device=device)
     model_ref = weakref.ref(model)
 

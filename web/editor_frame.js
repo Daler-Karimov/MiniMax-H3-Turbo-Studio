@@ -66,7 +66,11 @@ export function createPictureGuide(host, frame, {state, t}) {
     const unsubscribe = session.subscribe(updateTools);
     updateTools();
     return {update({size, record, clip, preview, playing}) {
-        current = clip; view = {size, record, clip, preview};
+        // The picture renderer owns the final dimensions. Do not overwrite them
+        // with the source size on each transport tick and force layout again.
+        if (view && view.record === record && view.clip === clip && view.preview === preview && view.playing === playing
+            && view.size.width === size.width && view.size.height === size.height) return;
+        current = clip; view = {size, record, clip, preview, playing};
         const show = !preview && !!clip?.source && differentPictureShape(size, record);
         const ratio = size.width / size.height, target = record.width / record.height;
         frame.style.setProperty('--fv-ed-width', String(size.width)); frame.style.setProperty('--fv-ed-height', String(size.height));

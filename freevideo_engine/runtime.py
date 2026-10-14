@@ -292,6 +292,9 @@ class Engine:
         block_bind_seconds = 0.
         upload_submit_seconds = 0.
         block_order = list(range(len(model.transformer_blocks)))
+        from .model_load_progress import PreparedBlocks
+        block_progress = PreparedBlocks(len(block_order))
+        block_progress.report()
         if streamed_source is not None and streamed_source.direct_read:
             # Pins and views are granted in the order blocks are prepared, and
             # the blocks RAM cannot keep are read from the drive every step.
@@ -360,15 +363,9 @@ class Engine:
                 # unpinned bytes are reopened by SafetensorLayers on demand,
                 # rather than accumulating until the first sampling step.
                 prepare_streamed(block, streamed_refiner_count + index - resident_blocks, unread)
-            # A block whose sampling table is computed here, for a step count
-            # without stored tables, takes far longer than a cached one; report
-            # each of those so the load visibly moves.
-            if prepared % 5 == 0 or (adaln_cache and not cache_hit):
-                print(json.dumps({'event': 'prepared_blocks', 'blocks': prepared,
-                                  'adaln_cache': adaln_cache, 'adaln_reused_blocks': table_cache_hits,
-                                  'resident_uploaded_blocks': min(prepared, resident_blocks),
-                                  'phase': 'Load cached blocks and upload resident weights',
-                                  'seconds': time.perf_counter() - started}), flush=True)
+            block_progress.complete(adaln_cache=adaln_cache, adaln_reused_blocks=table_cache_hits,
+                resident_uploaded_blocks=min(prepared, resident_blocks),
+                phase='Load cached blocks and upload resident weights', seconds=time.perf_counter() - started)
         if adaln_cache:
             del embeddings
             self.schedule_hook = model.register_forward_pre_hook(self.cursor.before, with_kwargs=True)
