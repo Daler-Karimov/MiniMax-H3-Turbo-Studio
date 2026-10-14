@@ -223,6 +223,11 @@ export function serialize(record) {
     return value;
 }
 export const duration = record => Math.max(0, ...all(record).map(end));
+// Pixels per second when an edit opens: what is there plus ten seconds of room, between twenty and ninety seconds wide.
+export const openingZoom = (width, record) => {
+    const frames = duration(record), seconds = frames ? Math.min(90, Math.max(20, frames / FPS + 10)) : 90;
+    return width / seconds;
+};
 // An export runs as long as the picture and sound; text after them is not exported.
 export const exportFrames = record => Math.max(0, ...record.tracks.filter(track => ['video', 'audio'].includes(track.kind)).flatMap(track => track.clips).map(end));
 export const find = (record, id) => all(record).find(clip => clip.id === id) ?? null;

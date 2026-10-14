@@ -375,7 +375,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const found = described.filter(clip => clip.start < start).at(-1) || described.at(-1);
         return found ? {text: found.text, before: false} : null;
     }
-    const markHeld = (ids, queued) => { for (const id of ids) tracks?.setProgress(id, {state: 'waiting', fraction: 0, remainingSeconds: null, ...(queued ? {queued: true} : {})}); };
+    // Kept in the progress map too: the tracks may not exist yet when a reopened edit restores its queued parts.
+    const markHeld = (ids, queued) => { for (const id of ids) {
+        const value = {state: 'waiting', fraction: 0, remainingSeconds: null, ...(queued ? {queued: true} : {})};
+        progress.set(id, value); tracks?.setProgress(id, value);
+    } };
     const queuedReady = () => t('Queued. It starts once generation is ready.', '已排队，准备好后自动开始。');
     function hold(selection, text, job = null) {
         const range = selectionRange(selection), selectedIds = selectionClips(selection).map(clip => clip.id), shown = selection === state.selection;
@@ -555,7 +559,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); failures.clear(); progressConnection?.reset();
         mostRecentJob = null; submissionFailure = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
         suppressSave = true; try { state.replace(record); savedContent = content(record); } finally { suppressSave = false; }
-        const width = tracksHost.clientWidth - 148; if (width > 0) state.setZoom(width / 90);
+        const width = tracksHost.clientWidth - 148; if (width > 0) state.setZoom(model.openingZoom(width, record));
         tracks?.setScrollLeft(0);
         // An empty edit opens with one part's length selected at the start, ready to generate.
         const selectInitial = () => { if (!store.generationAvailable) return; initialSelection = state.select({kind: 'range', start: 0,

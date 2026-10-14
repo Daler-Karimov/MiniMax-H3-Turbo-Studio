@@ -392,7 +392,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         // Defer the initial 90-second view until a detached shell is mounted.
         if (!mountedStates.has(state) && scroll.clientWidth) {
             mountedStates.add(state);
-            if (state.zoom === 12) state.setZoom(scroll.clientWidth / 90);
+            if (state.zoom === 12) state.setZoom(model.openingZoom(scroll.clientWidth, state.record));
         }
         const duration = Math.max(model.duration(state.record), state.selection?.kind === 'range' ? state.selection.start + state.selection.frames : 0);
         contentWidth = Math.max(scroll.clientWidth, pixels(duration + 30 * model.FPS));
