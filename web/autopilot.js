@@ -64,7 +64,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
         body.dataset.view = talking ? 'chat' : 'connect';
         if (talking) chat.sync();
         if (arrived) chat.input.focus();
-        lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = label.text; lamp.disabled = connected || !last.any;
+        lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = lamp.title = label.text; lamp.setAttribute('aria-label', label.text); lamp.disabled = connected || !last.any;
         const job = talking ? last.current : null;
         now.hidden = !job; line.dataset.on = String(!!job);
         halt.disabled = !!last.stopping;
