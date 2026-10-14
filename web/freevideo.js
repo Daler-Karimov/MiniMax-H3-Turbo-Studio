@@ -14,6 +14,7 @@ import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';
+import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
 import { regenerateResult, upscaleResult } from './studio_queue.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
@@ -458,6 +459,7 @@ function resultPanel(node) {
         // before the public version added sampling-step widgets.
         const base = this.widgets?.find(w => w.name === 'base_steps');
         if (base && typeof base.value === 'boolean') base.value = 8;
+        cleanOptionalWidgets(this);
         // Workflows saved with the earlier 8 + 2 default move to the 8 + 3 default once.
         if (!args[0]?.properties?.freevideo_refine_v3) {
             const refine = this.widgets?.find(w => w.name === 'refine_steps');
@@ -549,13 +551,13 @@ function resultPanel(node) {
     node.freevideoUpscaleResult = async value => {
         if (node.freevideoUpscaling) return;
         node.freevideoUpscaling = true;
-        try { return await upscaleResult(api, node.id, value, () => app.graphToPrompt()); }
+        try { return await upscaleResult(api, node.id, value, async () => cleanOptionalPrompt(await app.graphToPrompt())); }
         finally { node.freevideoUpscaling = false; }
     };
     node.freevideoRegenerateResult = async value => {
         if (node.freevideoRegenerating) return;
         node.freevideoRegenerating = true;
-        try { return await regenerateResult(api, node.id, value, () => app.graphToPrompt()); }
+        try { return await regenerateResult(api, node.id, value, async () => cleanOptionalPrompt(await app.graphToPrompt())); }
         finally { node.freevideoRegenerating = false; }
     };
     const executed = node.onExecuted;

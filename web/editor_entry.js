@@ -3,6 +3,7 @@ import {openEditor} from './editor.js';
 import {api} from '../../scripts/api.js';
 import {app} from '../../scripts/app.js';
 import {openStudio, showNodes} from './studio.js';
+import {cleanOptionalPrompt} from './optional_inputs.js';
 import {openAutopilot, viewChanged} from './view_navigation.js';
 import {mediaReferences} from './editor_media_references.js';
 function editorPanel(node) {
@@ -13,7 +14,7 @@ function editorPanel(node) {
         references: mediaReferences(node),
         async snapshot() {
             if (node.freevideoEditorLooping?.()) throw new Error('loop_active');
-            const value = structuredClone(await app.graphToPrompt());
+            const value = cleanOptionalPrompt(structuredClone(await app.graphToPrompt()));
             return {node: String(node.id), prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};
         }};
 }

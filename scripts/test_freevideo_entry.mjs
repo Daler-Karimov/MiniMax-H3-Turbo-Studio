@@ -4,6 +4,7 @@ import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
 import {regenerateResult, upscaleResult} from '../web/studio_queue.js';
 import {referenceInputs} from '../web/prompt_references.js';
+import {cleanOptionalPrompt, cleanOptionalWidgets} from '../web/optional_inputs.js';
 
 class Element {
     constructor(tag) {
@@ -35,7 +36,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, referenceInputs, cleanOptionalPrompt, cleanOptionalWidgets,
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
@@ -93,6 +94,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { shareButton } from './share.js';", 'const {shareButton} = globalThis.__freevideoEntryTest;')
             .replace("import { reportFileName } from './report_issue.js';", 'const {reportFileName} = globalThis.__freevideoEntryTest;')
             .replace("import { rememberPromptDraft, savePromptDraft } from './prompt_draft.js';", 'const {rememberPromptDraft,savePromptDraft} = globalThis.__freevideoEntryTest;')
+            .replace("import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';", 'const {cleanOptionalWidgets,cleanOptionalPrompt} = globalThis.__freevideoEntryTest;')
             .replace("import { regenerateResult, upscaleResult } from './studio_queue.js';", 'const {regenerateResult,upscaleResult} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
             .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
