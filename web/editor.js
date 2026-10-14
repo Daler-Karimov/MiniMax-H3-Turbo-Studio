@@ -88,7 +88,17 @@ export function suspendCanvasPointer(canvas) {
 
 // `components` replaces the optional progress module (see loadEditorComponents); tests also pass their generation stand-in here.
 export function openEditor({api, app, from = null, panel = {}, components: given = undefined, onView = view => viewChanged(view)}) {
-    if (opened) { opened.element.focus(); return opened; }
+    if (opened) {
+        const dialog = opened.element;
+        const upper = topDialog();
+        if (upper !== dialog && !dialog.contains(upper) && upper?.querySelector('.fv-view-switch')) {
+            // Re-enter the native modal top layer and keep keyboard routing in
+            // the same order. The restored editor and other views stay alive.
+            if (dialog.open) dialog.close();
+            dialog.parentNode.append(dialog); dialog.showModal();
+        }
+        dialog.focus(); return opened;
+    }
     const t = (en, zh) => String(language()).toLowerCase().startsWith('zh') ? zh : en;
     const returnFocus = document.activeElement;
     const even = value => Math.max(2, Math.floor(value / 2) * 2);
@@ -910,6 +920,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     actions.seekPlayhead = frame => tracks.seekPlayhead(frame);
     function keyboard(event) {
         if (event.isComposing || event.keyCode === 229) return;
+        if (event.target.closest('.fv-ed-library')) return;
         if (!initializing && textTools.keyboard(event)) return;
         if (pictureEdit.keyboard(event)) return;
         if (event.key.toLowerCase() === 'escape' && dismissPopup(event)) return;
@@ -949,7 +960,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             for (let target = event.target; target && target !== element; target = target.parentNode) target.onkeydown?.(event);
             return;
         }
-        if (handleAudioShortcut(event, state, {t, error})) return;
+        const inLibrary = inside && !!event.target.closest('.fv-ed-library');
+        if ((!inLibrary || ['Enter', ' '].includes(event.key)) && handleAudioShortcut(event, state, {t, error})) return;
         if (!inside && transportControls.keyboard(event, {ready: !initializing})) return;
         if (inside) {
             // Preserve the input/library controls' own handlers before shortcuts.
@@ -957,6 +969,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (target.onkeydown?.(event) === false) event.preventDefault();
                 if (event.defaultPrevented) return;
             }
+            if (inLibrary) return;
             if (!event.target.closest('.fv-ed-adjust,.fv-ed-library') && transportControls.keyboard(event, {ready: !initializing})) return;
             if (event.target.closest('.fv-ed-tracks')) { if (!textTools.keyboard(event)) tracks?.keyboard(event); return; }
         }
