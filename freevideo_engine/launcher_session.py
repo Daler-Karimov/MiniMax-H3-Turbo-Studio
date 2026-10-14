@@ -677,7 +677,8 @@ class Session:
         if self.image_installer and self.image_installer.busy:
             return
         # An install is the quiet kind: it stops while a video is generating and carries on afterwards.
-        self.image_installer = image_pack.Installer(root, engine_root=engine, busy=self.generating)
+        if not (self.image_installer and self.image_installer.root == root and self.image_installer.engine_root == engine):
+            self.image_installer = image_pack.Installer(root, engine_root=engine, busy=self.generating)
         self.image_installer.start(action, background=action == 'install')
 
     def generating(self):
@@ -696,23 +697,28 @@ class Session:
 
     def image_pack_view(self):
         from .image_gen import image_pack
-        if not self.installation_engine():
+        from .failure_details import image_pack_failure
+        try:
             total = sum(r['bytes'] for r in image_pack.rows())
+        except image_pack.PackError:
+            total = 0
+        if not self.installation_engine():
             return dict(installable=False, ready=False, state='missing', visible=False, busy=False,
                         downloaded_bytes=0, verified_bytes=0, total_bytes=total, bytes=total,
                         title=self.t(*NAMES['image']), detail=self.t('Not installed', '未安装'),
-                        install={}, can_act=False, removable_bytes=0, repairable=False)
+                        install={}, can_act=False, removable_bytes=0, repairable=False, failure={}, report_id=None)
         root, engine = self._image_location()
         try:
             value = image_pack.status(root)
             removable = image_pack.removal_plan(root)['bytes']
         except (OSError, ValueError, image_pack.PackError):
             value = dict(installable=False, ready=False, state='invalid', downloaded_bytes=0, verified_bytes=0,
-                         total_bytes=sum(r['bytes'] for r in image_pack.rows()), bytes=0)
+                         total_bytes=total, bytes=0)
             removable = 0
         installer = self.image_installer
         active = installer.state() if installer and installer.root == root and installer.engine_root == engine else {}
-        busy = bool(installer and installer.busy)
+        busy = bool(active and installer.busy)
+        failure = {}
         labels = {'missing': ('Not installed', '未安装'), 'partial': ('Paused', '已暂停'),
                   'ready': ('Ready', '已就绪'), 'invalid': ('Needs repair', '需要修复')}
         detail = self.t(*labels[value['state']])
@@ -727,18 +733,23 @@ class Session:
         elif active.get('state') == 'cancelled':
             detail = self.t('Paused', '已暂停')
         elif active.get('state') == 'failed':
-            labels = {'disk_space': ('Not enough disk space', '磁盘空间不足'),
-                      'needs_repair': ('Needs repair', '需要修复'), 'busy': ('In use', '正在使用'),
-                      'unsafe_path': ('Needs repair', '需要修复'), 'busy_video': ('Paused while generating', '生成时暂停'),
-                      'offline': ('No network', '网络不可用'), 'source_failed': ('Download failed', '下载失败')}
-            detail = self.t(*labels.get(active.get('reason'), ('Stopped', '未完成')))
-            repairable = repairable or active.get('reason') in ('needs_repair', 'unsafe_path')
+            failure = image_pack_failure(active.get('reason'), zh=self.language.startswith('zh'))
+            detail = failure['detail']
+            repairable = repairable or active.get('reason') in ('needs_repair', 'integrity_failed')
         blocked = (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy
                    or self.closing or self.engine_updating or self.update_intent or self.upgrade.active or self.model_switch
                    or self.updater and self.updater.busy)
         return dict(value, visible=bool(self.installation_engine()), title=self.t(*NAMES['image']),
                     detail=detail, busy=busy, install=active, can_act=not (blocked or busy), removable_bytes=removable,
-                    repairable=repairable)
+                    repairable=repairable, failure=failure, report_id=active.get('report_id'))
+
+    def image_pack_report(self):
+        if self.image_installer:
+            root, engine = self._image_location()
+            if self.image_installer.root == root and self.image_installer.engine_root == engine:
+                report = self.image_installer.failure_report()
+                return report if isinstance(report, dict) else None
+        return None
 
     def start_image_model_after_install(self):
         """The installer's "also install the image model": once ComfyUI opens, the download runs in the background."""
@@ -984,6 +995,12 @@ class Session:
             value = state.get('error') or ''
             if alias_failure(value) and value not in raw:
                 raw += ('\n' if raw else '') + value
+        pack_report = self.image_pack_report()
+        if pack_report:
+            # The existing ZIP exporter retains launcher/error.txt in full.
+            # Capture the structured, redacted pack snapshot here before a
+            # retry can replace it; collection needs no writable model folder.
+            raw += ('\n\n' if raw else '') + 'Image model diagnostic report:\n' + json.dumps(pack_report, ensure_ascii=False, indent=2)
         return redacted_launcher_error(raw, [(self.token, '<REDACTED>')] if self.token else [])
 
     def export_report(self, output):

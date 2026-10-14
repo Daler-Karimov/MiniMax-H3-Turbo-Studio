@@ -1,5 +1,6 @@
 """Readable, copyable failures for interactive callers. No GPU imports."""
 import json
+import errno
 from pathlib import Path
 import re
 import sys
@@ -10,6 +11,49 @@ from .diagnostics import Redactor
 
 STEP_OUTPUT = '\n\nFull step output:\n'
 QUALITY_LEVELS = (('Light', '轻量'), ('Medium', '标准'), ('High', '精细'), ('Max', '极致'))
+
+
+IMAGE_PACK_FAILURES = {
+    'disk_space': ('Not enough disk space to install the image model.', '磁盘空间不足，无法安装图像模型。'),
+    'offline': ('The network is unavailable; the image model could not be downloaded.', '网络不通，无法下载图像模型。'),
+    'source_failed': ('The download source is unreachable or could not complete the image model download.', '下载源不可达或未能完成图像模型下载。'),
+    'integrity_failed': ('The image model files failed verification; repair them in the launcher.', '图像模型文件校验失败，请在启动器里修复。'),
+    'write_failed': ('The image model files are in use or cannot be written or deleted.', '图像模型文件被占用，或无法写入／删除。'),
+    'invalid_catalog': ('The image model package version is incompatible; update FreeVideo and try again.', '图像模型包版本不匹配，请更新 FreeVideo 后重试。'),
+    'busy': ('Another task is using the image model package; try again when it finishes.', '图像模型包被其他任务占用，完成后再试。'),
+    'busy_video': ('A video is using the graphics card; try again when it finishes.', '视频正在使用显卡，完成后再试。'),
+    'needs_repair': ('The image model files are incomplete or damaged; repair them in the launcher.', '图像模型文件不完整或已损坏，请在启动器里修复。'),
+    'changed': ('The image model files changed during the check; they were kept, so check again.', '图像模型文件在检查期间发生变化，已保留，请重新检查。'),
+    'unsafe_path': ('The image model folder contains a link that cannot be safely changed.', '图像模型目录含有无法安全修改的链接。'),
+    'failed': ('The image model operation stopped; see the diagnostic report for details.', '图像模型操作已停止，详情见诊断报告。'),
+}
+
+
+def image_pack_error_code(error):
+    """Keep specific pack reasons and OS causes through wrapper exceptions."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        reason = getattr(error, 'reason', None)
+        if reason in IMAGE_PACK_FAILURES and reason != 'failed':
+            return reason
+        if isinstance(error, OSError):
+            if error.errno in (errno.ENOSPC, getattr(errno, 'EDQUOT', errno.ENOSPC)) or getattr(error, 'winerror', None) == 112:
+                return 'disk_space'
+            if (isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS, errno.EBUSY, errno.ETXTBSY)
+                    or getattr(error, 'winerror', None) in (5, 32, 33)):
+                return 'write_failed'
+            if isinstance(error, BlockingIOError):
+                return 'busy'
+            if isinstance(error, (ConnectionError, TimeoutError)):
+                return 'offline'
+        error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+    return 'failed'
+
+
+def image_pack_failure(code, *, zh=False):
+    return dict(kind='image-pack', title=('图像模型操作未完成' if zh else 'Image model operation stopped'),
+                detail=IMAGE_PACK_FAILURES.get(code, IMAGE_PACK_FAILURES['failed'])[bool(zh)], action='')
 
 
 def sampling_table_details(value):

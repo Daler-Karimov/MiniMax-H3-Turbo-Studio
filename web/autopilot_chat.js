@@ -3,6 +3,7 @@
 import {agentGet, agentPost} from './agent_session.js';
 import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
 import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
+import {renderImageFailure} from './image_generation.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -137,7 +138,7 @@ function newId() {
 // open(job) shows a finished video in Creations, edit(job) takes it to the editing view. shown() says whether the
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
-export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500} = {}) {
+export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null} = {}) {
     const element = el('section', 'fv-chat'), main = el('div', 'fv-chat-main'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
     log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Conversation', '对话'));
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
@@ -505,7 +506,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             // Jobs without a picture (a check, a prompt) are one quiet line while they run, and nothing after.
             // A picture takes seconds: the same quiet line while it is made, then the picture.
             const card = VIDEOS.includes(job.kind || 'generate') || (job.kind === 'image' && !WORKING.includes(job.status));
-            const next = card ? jobMode(job) + (jobMode(job) === 'done' ? `:${job.play}:${job.thumbnail}:${job.work}` : '')
+            const next = card ? jobMode(job) + (jobMode(job) === 'done' ? `:${job.play}:${job.thumbnail}:${job.work}`
+                : jobMode(job) === 'failed' ? `:${job.error?.code}:${job.error?.report_id}` : '')
                 : WORKING.includes(job.status) ? 'quiet' : 'none';
             if (next !== mode) {
                 mode = next; item.dataset.job = job.id; item.dataset.mode = next.split(':')[0]; item.hidden = next === 'none';
@@ -514,9 +516,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 else if (next.startsWith('done')) apply = done(item, job);
                 else if (next === 'quiet') { item.replaceChildren(el('span', 'fv-chat-dots'), el('span', null, t(...(QUIET[job.kind] || ['Working', '进行中'])))); apply = null; }
                 else if (next === 'stopped') { item.replaceChildren(el('span', null, t('Stopped', '已停止'))); apply = null; }
-                else if (next === 'failed') {
-                    item.replaceChildren(el('span', null, t('Could not generate', '没有生成出来')));
-                    // Trying again says the same sentence to the agent once more; why it failed is the agent's to say.
+                else if (next.startsWith('failed')) {
+                    if (job.kind === 'image') {
+                        const host = el('div');
+                        renderImageFailure(host, {error: job.error?.code || 'generation_failed', report_id: job.error?.report_id}, t,
+                            {productVersion, fetchApi: (path, options) => api.fetchApi(path, options)});
+                        item.replaceChildren(host);
+                    } else item.replaceChildren(el('span', null, t('Could not generate', '没有生成出来')));
                     if (retry) item.append(press('fv-chat-retry', t('Retry', '重试'), retry));
                     apply = null;
                 } else { item.replaceChildren(); apply = null; }

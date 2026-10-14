@@ -75,6 +75,8 @@ class CastError(JobError):
     def view(self):
         value = errors.build(self.code, validation=True, details=[], message=self.message,
                              next_action=self.next_action)
+        if self.code in errors.IMAGE_REASONS:
+            value.update(errors.image_failure(self.code))
         if self.card is not None:
             value['card'] = deepcopy(self.card)
         if self.job is not None:
@@ -586,9 +588,9 @@ class Cast:
                 raise spec.SpecError([schema.diagnostic('/face', 'false for a setting card', True)])
             ready = value.get('source') != 'video' and getattr(self.jobs.port, 'image_ready', lambda: False)()
             source = value.get('source', 'image' if ready else 'video')
-            if source == 'image' and not ready:
-                raise CastError('pack_missing', errors.IMAGE_ERRORS['pack_missing'],
-                                'omit source, or use source video')
+            # An explicit image request goes through the image service even when
+            # its pack is absent: that failure owns a diagnostic report and a
+            # durable job/card, just like a picture requested directly.
             seed = secrets.randbelow(spec.MAX_SEED + 1)
             token = uuid.uuid4().hex[:12]
             if source == 'image':
@@ -725,9 +727,11 @@ class Cast:
                 row = rows[job]
                 if row is None or row['status'] != 'succeeded':
                     code = (row.get('error') or {}).get('code') if row else 'not_found'
+                    code = code or (row['status'] if row else 'not_found')
+                    detail = errors.image_failure(code, (row.get('error') or {}).get('report_id') if row else None)
                     failure = failure or dict(code=code or row['status'], job=job, message=(
                         'The generation was cancelled.' if row and row['status'] == 'cancelled'
-                        else 'The reference picture did not finish.'))
+                        else detail['reason']['en']), **detail)
                     continue
                 folder = 'freevideo/agent/%s/ref-%s' % (identity, job)
                 file = folder + '-0.png'

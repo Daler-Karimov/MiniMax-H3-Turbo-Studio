@@ -120,13 +120,15 @@ def build(value, input_directory):
         if not leaf or folder not in ('', 'freevideo-image') or any(c in name for c in ('\\', ':', '\0')):
             raise ValueError('invalid_media')
         path = (directory / folder / leaf) if folder else directory / leaf
-        if path.is_symlink() or not path.is_file() or path.resolve().parent != (directory / folder if folder else directory):
+        parent = directory / folder if folder else directory
+        if (parent.is_symlink() or path.is_symlink() or not path.is_file()
+                or path.resolve().parent != parent):
             raise ValueError('invalid_media')
         try:
             with Image.open(path) as image:
                 return image.convert('RGBA')
-        except OSError as error:
-            raise ValueError('invalid_media') from error
+        except OSError:
+            raise ValueError('invalid_media') from None
 
     names = [person['image'] for person in people]
     scene_name = value.get('scene_image')
@@ -135,11 +137,17 @@ def build(value, input_directory):
         layout = collage(load(scene_name), [(load(p['image']), p['x'], p['height'], p['feet']) for p in people],
                          width, height)
         folder = directory / 'freevideo-image'
-        folder.mkdir(exist_ok=True)
+        if folder.is_symlink() or folder.resolve().parent != directory:
+            raise ValueError('invalid_media')
         leaf = 'layout-' + uuid.uuid4().hex + '.png'
-        layout.save(folder / leaf)
+        try:
+            folder.mkdir(exist_ok=True)
+            layout.save(folder / leaf)
+        except OSError as error:
+            # A runtime layout failure must reach the service's diagnostic-report
+            # path, rather than being returned as a malformed request.
+            raise ValueError('generation_failed') from error
         names.append('freevideo-image/' + leaf)
-        n = len(people)
         n = len(people)
         prompt = ('%s Image %d is a rough layout with the characters pasted on the scene. Render image %d as one clean '
                   'photograph of the same place with the same people. Keep the scene, keep everyone at exactly the same '

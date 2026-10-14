@@ -332,8 +332,10 @@ class ComfyPort:
             return self.image.start(action, value)['job']
         except ValueError as error:
             from .jobs import IMAGE_ERRORS, IMAGE_WAIT_ERRORS
-            code = str(error) if str(error) in IMAGE_ERRORS else 'invalid_request'
-            raise JobError(code, IMAGE_ERRORS[code], retryable=code in IMAGE_WAIT_ERRORS) from None
+            code = getattr(error, 'code', str(error))
+            code = code if code in IMAGE_ERRORS else 'invalid_request'
+            raise JobError(code, IMAGE_ERRORS[code], retryable=code in IMAGE_WAIT_ERRORS,
+                           kind='image', report_id=getattr(error, 'report_id', None)) from None
 
     def image_status(self, key):
         return self.image.status(key)

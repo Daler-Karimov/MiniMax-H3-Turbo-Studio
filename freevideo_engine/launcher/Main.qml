@@ -890,18 +890,26 @@ ApplicationWindow {
                         objectName: "imagePackCard"
                         visible: !!s.image_pack && s.image_pack.visible
                         Layout.fillWidth: true; padding: 22; spacing: 10
+                        color: s.image_pack.install.state === "failed" ? theme.dangerSubtle : theme.surface
+                        border.color: s.image_pack.install.state === "failed" ? theme.dangerLine : theme.border
                         RowLayout {
                             Layout.fillWidth: true; spacing: 14
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 4
                                 FText { objectName: "imagePackTitle"; text: s.image_pack.title; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                                FText { objectName: "imagePackStatus"; text: s.image_pack.detail; color: theme.muted; Layout.fillWidth: true }
+                                FText { objectName: "imagePackStatus"; visible: s.image_pack.install.state !== "failed"; text: s.image_pack.detail; color: theme.muted; Layout.fillWidth: true }
                             }
                             FText { objectName: "imagePackSize"; text: bytes(s.image_pack.total_bytes).replace(" ", "\u00a0"); color: theme.muted }
                             FButton { objectName: "imagePackInstall"; visible: !s.image_pack.ready && !s.image_pack.busy; text: s.image_pack.downloaded_bytes > 0 ? t("Resume", "继续") : t("Download", "下载"); enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("install") }
                             FButton { objectName: "imagePackCancel"; visible: s.image_pack.busy; text: t("Pause", "暂停"); flat: true; onClicked: backend.imagePackAction("cancel") }
                             FButton { objectName: "imagePackRepair"; visible: s.image_pack.repairable && s.image_pack.downloaded_bytes > 0 && !s.image_pack.busy; text: t("Repair", "修复"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("repair") }
                             FButton { objectName: "imagePackRemove"; visible: s.image_pack.removable_bytes > 0 && !s.image_pack.busy; text: t("Remove", "删除"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("remove") }
+                        }
+                        FText { objectName: "imagePackFailureReason"; visible: s.image_pack.install.state === "failed"; text: s.image_pack.detail; color: theme.danger; Layout.fillWidth: true }
+                        Flow {
+                            visible: s.image_pack.install.state === "failed" && !!s.image_pack.report_id
+                            Layout.fillWidth: true; spacing: 8
+                            FButton { objectName: "imagePackExport"; text: t("Export report", "导出报告"); enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                         }
                         FMeter {
                             objectName: "imagePackProgress"; visible: s.image_pack.busy; Layout.fillWidth: true; active: visible

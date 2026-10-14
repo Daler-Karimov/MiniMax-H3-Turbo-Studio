@@ -9,6 +9,7 @@ import * as commands from './image_commands.js';
 import {FONT_KEYS, fontStack, fontLoaded, loadFont, loadFonts} from './fonts.js';
 import {api} from '../../scripts/api.js';
 import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio} from './image_generation.js';
+import {productVersion} from './updates.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./image_editor.css', import.meta.url).href;
@@ -226,7 +227,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     document.body.append(dialog);
     const generation = createImageGeneration({client: imageGenClient || createImageGenClient(api.fetchApi.bind(api)),
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
-        library, resolve, icon, onRatioChange: setBlankCanvasRatio});
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options)});
 
     // ----- tools ----------------------------------------------------------------
     const TOOLS = [
@@ -517,6 +518,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         clearPanel(optionsBar);
         optionsBar.classList.remove('fv-ie-generation');
         delete optionsBar.dataset.running; delete optionsBar.dataset.message; delete optionsBar.dataset.empty;
+        delete optionsBar.dataset.failed;
         if (tool === 'generate') { generation.mount(optionsBar); return; }
         if (!doc.layers.length) return;
         const add = (...nodes) => optionsBar.append(...nodes);

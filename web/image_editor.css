@@ -85,6 +85,12 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-generation[data-running=true]>.fv-ie-gen-note{white-space:nowrap}
 .fv-ie-generation>.fv-ie-button{grid-column:4;min-height:32px}
 .fv-ie-generation[data-message=true]>.fv-ie-gen-note{max-width:260px}
+/* Image failures use the video's report button and submission card on their own row. */
+.fv-ie-generation[data-failed=true]>.fv-ie-gen-note{grid-column:1/-1;grid-row:2;max-width:none}
+.fv-ie-generation[data-failed=true]>.fv-ie-button{grid-row:1}
+.fv-ie-gen-note>.fv-result-links{display:grid;gap:8px}
+.fv-ie-gen-note .fv-image-failure-reason{color:var(--fv-danger)}
+.fv-ie-gen-note>.fv-result-links>.fv-actions{justify-content:flex-start}
 /* Same accent ramp and easing as the shared generation progress meters. */
 .fv-ie-gen-meter{position:absolute;bottom:0;left:0;right:0;height:2px;overflow:hidden;background:var(--fv-raised)}
 .fv-ie-gen-meter i{display:block;height:100%;background:linear-gradient(90deg,var(--fv-accent),var(--fv-accent-ramp));transition:width .5s var(--fv-ease-out)}
@@ -268,6 +274,8 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
   .fv-ie-generation[data-empty=true]>#fv-ie-gen-ratio{grid-column:2;grid-row:1}
   .fv-ie-generation[data-empty=true]>.fv-ie-button{grid-column:2;grid-row:2}
   .fv-ie-generation[data-empty=true]>.fv-ie-gen-note{grid-column:1/-1;grid-row:3}
+  .fv-ie-generation[data-failed=true]>.fv-ie-gen-note{grid-row:3}
+  .fv-ie-generation[data-failed=true]>.fv-ie-button{grid-row:2}
   .fv-ie-actions .fv-ie-button:not(.fv-ie-primary):not(.fv-ie-danger){padding:5px 9px}
   .fv-ie-popover{left:12px;width:auto}
   .fv-ie-reset{display:none}

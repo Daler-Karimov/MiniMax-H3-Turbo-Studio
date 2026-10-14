@@ -1318,6 +1318,10 @@ def openapi():
                 jobs={'type': 'array', 'items': {'$ref': '#/components/schemas/Job'}})),
             'Error': obj(dict(code=enum(ERRORS),
                 message=string(), details={'type': 'array'}, next=string(), retryable={'type': 'boolean'},
+                reason=obj(dict(en=string(), zh=string()), ('en', 'zh'),
+                           description='Fixed bilingual reason for an image failure.'),
+                report_id={'type': ['string', 'null'], 'pattern': '^[0-9a-f]{32}$',
+                           'description': 'Image diagnostic report ID, or null when no report exists.'},
                 request_id=string(), docs=string(), retry_after_seconds=number(0), card={'type': 'object'}, job=JOB,
                 project={'type': 'object'}, current_revision=number(1, integer=True)),
                 ('code', 'message', 'details', 'retryable', 'request_id', 'docs'))}))

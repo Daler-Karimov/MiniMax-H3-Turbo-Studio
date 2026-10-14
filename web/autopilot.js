@@ -4,6 +4,7 @@ import { agentConnectCard, connectionLabel } from './agent_connect.js';
 import { about, agentChat, jobName } from './autopilot_chat.js';
 import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
+import { productVersion } from './updates.js';
 import { openSetup } from './setup.js';
 import { openExtendEditor, openStudio, showNodes } from './studio.js';
 import { viewChanged, viewSwitch } from './view_navigation.js';
@@ -44,7 +45,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
     const card = agentConnectCard(t, api, () => inSight() && !card.element.hidden);
     // Leaving for another view waits until this page has closed, so the view underneath is never covered twice.
     const closed = () => dialog.open ? new Promise(done => { dialog.addEventListener('close', done, {once: true}); closeDialog(dialog); }) : null;
-    const chat = agentChat(t, api, {shown: inSight,
+    const chat = agentChat(t, api, {shown: inSight, productVersion,
         // Creations continues the work on the editor timeline; this page gives way first.
         open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
             extend: async (record, options) => { await closed(); return openExtendEditor(record, node, {studio, ...options}); }}),
