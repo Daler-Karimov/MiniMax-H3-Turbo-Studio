@@ -13,7 +13,7 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
-const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好；要重装请先点「检测并预览」'};
+const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好。要重装，请先点“检测并预览”。'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
 const failureText = value => {
     const text = String(value || ''), matches = [...text.matchAll(/MODEL_MISMATCH_REPAIR: ([^\r\n]+)/g)];
@@ -54,10 +54,9 @@ export async function openSetup() {
     const paths = node("pre"); libraries.append(paths); inputs.append(libraries);
     const copyLabel = node("label"); copyLabel.className = 'fv-check'; const copy = node("input"); copy.type = "checkbox";
     copyLabel.append(copy, node('span', t("Create independent copies (uses extra disk space)", "创建独立副本（额外占用磁盘）"))); inputs.append(copyLabel);
-    inputs.append(note(t('Models are reused by default.', '默认直接复用已有模型。')));
     const samplingLabel = node('label'); samplingLabel.className = 'fv-check';
     const samplingCaches = node('input'); samplingCaches.type = 'checkbox';
-    const samplingText = node('span', t('Prepare all quality levels (optional)', '提前下载全部质量档位（可选）'));
+    const samplingText = node('span', t('Prepare all quality levels', '提前下载全部质量档位'));
     samplingLabel.append(samplingCaches, samplingText); inputs.append(samplingLabel);
     const downloads = node('section');
     downloads.append(node('h3', t('Downloads', '下载')));
@@ -66,9 +65,8 @@ export async function openSetup() {
     for (const [id, name] of [['auto', t('Auto (recommended)', '自动（推荐）')], ['proxy', t('Proxy only', '仅代理')], ['direct', t('Direct only', '仅直连')]]) {
         const option = node('option', name); option.value = id; proxyMode.append(option);
     }
-    const modeHelp = note('');
     modeLabel.append(proxyMode);
-    downloads.append(modeLabel, modeHelp);
+    downloads.append(modeLabel);
     const sourceLabel = node('label', t('Download source', '下载源'));
     const source = node('select');
     for (const [id, name] of [['auto',t('Automatic','自动选择')],['official','Hugging Face'],['hf-mirror','HF Mirror'],['modelscope','ModelScope']]) {
@@ -77,8 +75,7 @@ export async function openSetup() {
     sourceLabel.append(source); downloads.append(sourceLabel);
     const probeButton = node('button', t('Test source speeds', '重新测速'));
     const sourceStatus = note(''), speeds = node('div');
-    downloads.append(probeButton, sourceStatus, speeds,
-        note(t('Switching applies to the current download; compatible fragments resume. Speed tests do not switch.', '切换立即作用于当前下载，兼容断点会续传。仅测速不切换。')));
+    downloads.append(probeButton, sourceStatus, speeds);
     const auth = node('details');
     auth.append(node('summary', t('Hugging Face token · optional', 'Hugging Face Token · 可选')));
     auth.append(note(t('Use your account’s download quota instead of the anonymous limit. Kept for this session only.', '使用账号下载额度，避开匿名限流。仅本次会话有效。')));
@@ -145,7 +142,7 @@ export async function openSetup() {
     acceptLabel.hidden = true; installation.append(acceptLabel);
     const actions = node("div"); actions.className = "fv-actions";
     const inspect = node("button", t("Detect & review", "检测并预览")); inspect.className = "fv-primary";
-    const use = node("button", t("Use existing installation", "使用已有安装"));
+    const use = node("button", t("Use existing", "使用已有安装"));
     const install = node("button", t("Install / repair", "安装／修复")); install.disabled = true;
     const cancel = node("button", t("Stop setup", "停止安装")); cancel.disabled = true;
     const saveFolders = node('button', t('Save model folders', '保存模型目录'));
@@ -223,7 +220,6 @@ export async function openSetup() {
     function showDownloads(value) {
         if (!value) return;
         proxyMode.value = value.preferences?.proxy_mode || 'auto';
-        modeHelp.textContent = proxyMode.value === 'proxy' ? t('Use the current proxy. No direct fallback.', '沿用当前代理，不尝试直连。') : proxyMode.value === 'direct' ? t('Download directly, ignoring proxies.', '忽略代理，直接下载。') : t('Compare proxy and direct connections automatically.', '自动测速，择优使用代理或直连。');
         authStatus.textContent = busy ? t('Stop setup to change the token, then resume with retained files.', '先停止安装，再修改 Token 并继续；已下载文件会保留。') :
             value.hf_token_set ? t('Session token set. Existing environment credentials apply when this field is cleared.', '已设置本次 Token；清除后仍可使用环境中已有的凭据。') :
             t('No session token set. Existing environment credentials still apply.', '未填写本次 Token；仍可使用环境中已有的凭据。');
@@ -273,11 +269,11 @@ export async function openSetup() {
     const controls = () => {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
         cancel.disabled = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
-        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击「检测并预览」更新安装计划。")
-            : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击「检测并预览」。")
+        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击“检测并预览”更新安装计划。")
+            : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击“检测并预览”。")
             : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
-            : !planId ? t("Click Detect & review first. Install / repair becomes available once the plan is ready.", "请先点击「检测并预览」，生成安装计划后即可安装。")
-            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击「安装／修复」。") : "";
+            : !planId ? ""
+            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击“安装／修复”。") : "";
         blocked.textContent = why; blocked.hidden = !why;
     };
     // A changed setting makes a shown plan outdated: clear it rather than leave it beside a disabled button.
@@ -397,7 +393,7 @@ export async function openSetup() {
         extra.value = (info.discovery.extra_libraries || []).join("\n");
         showDownloads(info.discovery.downloads);
         showResources(info.discovery.resources);
-        samplingText.textContent = t('Prepare all quality levels (optional)', '提前下载全部质量档位（可选）')
+        samplingText.textContent = t('Prepare all quality levels', '提前下载全部质量档位')
             + (info.discovery.sampling_cache_bytes ? ' · ' + gib(info.discovery.sampling_cache_bytes) : '');
         // New installations prepare every quality level; a ready one adds them only when chosen.
         samplingCaches.checked = !info.discovery.ready;
