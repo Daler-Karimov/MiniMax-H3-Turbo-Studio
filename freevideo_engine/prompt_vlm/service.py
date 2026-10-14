@@ -570,8 +570,9 @@ class Service:
             releasing = result_received_at[0] if result_received_at else time.monotonic()
             if child.poll() is None:
                 # Killing only the Linux supervisor bypasses its descendant
-                # cleanup. Stop the owned group/Windows Job and wait instead.
-                processes.stop(child, grace=5)
+                # cleanup. Stop the owned group/Windows Job and wait instead;
+                # the worker finishes its current GPU operation and exits.
+                processes.stop(child, grace=15)
             child.wait()
             writer.join(timeout=5)
             session.close()
