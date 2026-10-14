@@ -11,7 +11,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     add.textContent = '+';
     const menu = el('div', 'fv-ed-ref-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
     const picker = el('input'); picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true; picker.hidden = true;
-    root.append(chips, add, menu, picker);
+    root.append(add, chips, menu, picker);
     let shown = false, busy = false, working = false, opener = null, disposed = false, entries = [];
     const active = () => source.rows().map((row, index) => ({row, index})).filter(({row}) => row.enabled !== false);
     const isImage = file => IMAGE.test(file || '');
@@ -35,7 +35,10 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     function open(anchor, items) {
         menu.replaceChildren(...items); menu.hidden = false; opener = anchor;
         add.setAttribute('aria-expanded', String(anchor === add));
-        menu.style.left = Math.max(0, anchor.offsetLeft || 0) + 'px';
+        // Under the clicked thumbnail, pulled back inside the bar when that is near its right edge.
+        const bar = (root.offsetParent || root.parentNode)?.getBoundingClientRect?.(), at = anchor.getBoundingClientRect?.();
+        if (bar && at) menu.style.left = Math.min(Math.max(0, at.left - bar.left), Math.max(0, bar.width - Math.min(menu.offsetWidth || 260, 260) - 4)) + 'px';
+        else menu.style.left = Math.max(0, anchor.offsetLeft || 0) + 'px';
         entries[0]?.focus();
     }
     // Every button of the open menu, in order, for the arrow keys.
@@ -55,7 +58,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
         working = true; update();
         try {
             for (const file of files) {
-                if (source.rows().length >= MAX) break;
+                if (active().length >= MAX) break;
                 const result = await source.upload(file);
                 write([...source.rows(), {file: result.file, role: 'reference', enabled: true}]);
             }
@@ -111,7 +114,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
         root.hidden = !shown || !source.available();
         if ((root.hidden || busy) && !menu.hidden) close(false);
         // The panel holds at most MAX pictures: a full list greys the plus out rather than ignoring a click.
-        const full = source.rows().length >= MAX;
+        const full = active().length >= MAX;
         // While a part is being made the controls stay clickable and say why they do nothing.
         add.disabled = working;
         add.setAttribute('aria-disabled', String(busy || full));
@@ -128,7 +131,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     }
     add.onclick = () => {
         if (busy) { notify(sentence(waitText())); return; }
-        if (source.rows().length >= MAX) { notify(sentence(fullText())); return; }
+        if (active().length >= MAX) { notify(sentence(fullText())); return; }
         if (!menu.hidden && opener === add) close(); else open(add, addMenu()); };
     picker.onchange = () => addFiles(Array.from(picker.files));
     // Keys stay in the menu: Escape closes it only, and the arrows move through it.

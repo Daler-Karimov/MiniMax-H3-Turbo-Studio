@@ -5,6 +5,7 @@ import {imageGenerationSupported} from './image_generation.js';
 export const MAX_REFERENCES = 32;
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 export const isImageFile = file => IMAGE.test(file || '');
+const inUse = rows => rows.filter(row => row.enabled !== false).length;
 export const ROLES = ['reference', 'first', 'last'];
 const upstream = (node, name) => {
     const input = node?.inputs?.find(i => i.name === name);
@@ -24,6 +25,9 @@ export function mediaReferences(node) {
         rows: read,
         write(rows) {
             const field = widget(), owner = media();
+            // The limit counts pictures in use; when the list would grow past it, the oldest spare ones go first.
+            for (let at = rows.findIndex(row => row.enabled === false); rows.length > MAX_REFERENCES && at >= 0;
+                at = rows.findIndex(row => row.enabled === false)) rows.splice(at, 1);
             if (!field || rows.length > MAX_REFERENCES) throw new Error('references');
             field.value = JSON.stringify(rows);
             owner.graph?.change?.();
@@ -53,13 +57,13 @@ export function mediaReferences(node) {
         // The image editor opens on a blank picture the shape of the video, ready to generate one; a saved one is added as a reference.
         async newImage({target, t}) {
             const rows = read();
-            if (rows.length >= MAX_REFERENCES) return null;
+            if (inUse(rows) >= MAX_REFERENCES) return null;
             const library = rows.filter(row => isImageFile(row.file)).map(row => ({file: row.file, label: (row.source || row.file).split('/').pop()}));
             const outcome = await openImageEditor({target, role: 'reference', t, resolve: file => this.url(file), upload: file => this.upload(file), library});
             if (!outcome?.blob) return null;
             const result = await this.upload(new File([outcome.blob], outcome.name, {type: outcome.blob.type}));
             const latest = read();
-            if (latest.length >= MAX_REFERENCES) return null;
+            if (inUse(latest) >= MAX_REFERENCES) return null;
             latest.push({file: result.file, role: 'reference', enabled: true, edit: outcome.edit}); this.write(latest);
             return result.file;
         },
