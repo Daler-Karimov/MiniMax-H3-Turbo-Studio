@@ -25,6 +25,7 @@ import {isolateDialogKeys, topDialog} from './dialog_keys.js';
 import {createBlockNotes, describedTrack} from './editor_notes.js';
 import {createFirstRunGuide} from './first_run_guide.js';
 import {createEditorFailures} from './editor_failure.js';
+import {fitEditorHeader} from './editor_header_fit.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -177,6 +178,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
     headerActions.append(exportBox, button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     top.append(brand, navigation, headerActions);
+    const headerFit = fitEditorHeader(top, brand, title, navigation, headerActions);
     const menu = el('div', 'fv-ed-name-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
     // Up and Down move through the name box and the items; Home and End go to either end.
     menu.onkeydown = event => {
@@ -448,7 +450,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return !!state.record.id;
     }
     function updateTop() {
-        title.replaceChildren(el('span', '', state.record.name || new Date().toLocaleDateString()), icon('m4 6 4 4 4-4')); title.title = state.record.name;
+        const name = state.record.name || new Date().toLocaleDateString();
+        if (title.firstElementChild?.textContent !== name) { title.replaceChildren(el('span', '', name), icon('m4 6 4 4 4-4')); headerFit.check(); }
+        title.title = state.record.name;
         exportButton.classList.toggle('fv-primary', !!model.exportFrames(state.record) && !state.selection && !jobActive() && !exportStatus);
         const running = exportPreparing || ['running', 'queued'].includes(exportStatus?.state);
         if (['running', 'queued'].includes(exportStatus?.state)) exportButton.textContent = t(`Export ${Math.round((exportStatus.fraction || 0) * 100)}%`, `导出 ${Math.round((exportStatus.fraction || 0) * 100)}%`);
@@ -1183,7 +1187,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 }
                 rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); toolbarMore.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
-                audio.dispose();
+                audio.dispose(); headerFit.dispose();
                 listeners.splice(0).forEach(remove => remove());
                 for (const node of [element, ...element.querySelectorAll('*')]) for (const name of ['onclick', 'ondblclick', 'oninput', 'onchange', 'onkeydown', 'ondragstart']) node[name] = null;
                 unsubscribe(); stopSources(); library?.dispose(); genbar.dispose(); tracks?.dispose(); stopExport?.();
