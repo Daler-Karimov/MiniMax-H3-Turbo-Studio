@@ -892,6 +892,8 @@ def production_response():
             cast_reference=CAST_REFERENCE, cast_omitted=dict(type='array', items=string()),
             cast_voice_omitted=dict(type='array', items=string()),
             cast_missing=dict(type='array', items=string()),
+            cast_pictures_each=dict(type=['integer', 'null'], description='Pictures each person carries in this shot: six or three by graphics card class, fewer (down to three) when this device cannot hold the starting number at the shot length.'),
+            cast_note=dict(type=['string', 'null'], description='One sentence saying so, only when it was reduced from the starting number.'),
             takes=dict(type='array', items=dict(type='object', properties=dict(take=number(1, integer=True), job=REF,
                 task={'oneOf': [JOB, {'type': 'null'}]}, generation=number(0, integer=True), seed=number(0, integer=True),
                 stale={'type': 'boolean'}, error={'type': ['object', 'null']},

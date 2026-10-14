@@ -101,6 +101,13 @@ class ComfyPort:
         cache = getattr(self.server, '_freevideo_capabilities', None)
         return cache.get(_query(query)) if hasattr(cache, 'get') else dict(UNAVAILABLE)
 
+    def prepared_precision(self):
+        """'int8' or 'fp8', the family of the model setup prepared for this machine; None while unknown."""
+        cache = getattr(self.server, '_freevideo_capabilities', None)
+        snapshot = getattr(cache, 'snapshot', None)
+        saved = snapshot[0].get('prepared_format', 'int8') if snapshot else None
+        return next((p for p in ('int8', 'fp8') if isinstance(saved, str) and saved.startswith(p)), None)
+
     def output_summary(self, relative):
         from .jobs import library_id
         from ..comfy_library import _report

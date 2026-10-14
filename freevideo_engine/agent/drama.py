@@ -62,7 +62,16 @@ CAPTIONED = 3  # the score of a take with unwanted captions
 CARD = re.compile(r'c[0-9a-f]{12}')  # characters.<key>.card names a cast library card
 # How a shot carries its cast cards. Change these after the reference tests; nothing else needs to.
 PICTURE_ORDER = ('sheet', 'front', 'three_quarter', 'face')  # then any other label, in card order
-PICTURES_EACH = 3
+PICTURES_EACH = 6
+PICTURES_LEAST = 3  # What a person carried before six: a device that cannot hold more still shoots with these.
+# Six pictures cost extra time on every step. A class of machine starts from six only when it was measured at 25%
+# extra or less on every step, cold and warm: (card memory tier in GiB, people in the shot, weight precision).
+# Everything else, and everything unmeasured, starts from three. Only Linux is measured. Two people went 45-79% over
+# at 8 to 24 GiB, so only one-person classes can ever be listed. No class has passed yet.
+SIX_PICTURES_CLASSES = frozenset()
+SIX_PICTURES_TIERS_GIB = (8, 10, 12, 16, 20, 24, 32)  # measured card sizes; a card takes the largest one it reaches
+SIX_PICTURES_SYSTEMS = ('Linux',)
+TIER_SLACK_GIB = .5  # A "24 GB" card reports a little under 24 GiB.
 MAX_VOICES = 3      # voice clips per shot, the model limit
 MAX_REFERENCES = 32
 
@@ -289,17 +298,18 @@ def subject_definitions(subjects):
     return 'subject_definitions: ' + ' '.join(parts)
 
 
-def _pictures(card):
+def _pictures(card, each=PICTURES_EACH):
     rank = {label: i for i, label in enumerate(PICTURE_ORDER)}
     rows = sorted(enumerate(card.get('images') or []), key=lambda r: (rank.get(r[1]['label'], len(rank)), r[0]))
-    return [row['media'] for _, row in rows[:PICTURES_EACH]]
+    return [row['media'] for _, row in rows[:each]]
 
 
-def cast_references(play, shot, cards, *, continues=False):
+def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
     """Which cast cards a shot carries, as references and a prompt prefix.
 
     cards maps a card ID to the current card, or None once it is gone. The same
-    function serves plan previews and the moment a take is submitted.
+    function serves plan previews and the moment a take is submitted. each is
+    the most pictures one person carries; pictures_each says what was used.
     cast_reference: None (no character in the shot has a card), 'own' (the shot
     names its own first frame or references), 'missing' (a card was deleted),
     'partial' (not everyone fit) or 'cards'. 'omitted' lists people left out
@@ -310,7 +320,7 @@ def cast_references(play, shot, cards, *, continues=False):
     characters = play.get('characters', {})
     keys = [k for k in cast(play, shot) if isinstance(characters[k].get('card'), str)]
     result = dict(cast_reference=None, people=[], omitted=[], voice_omitted=[], missing=[], references=[],
-                  prefix=None, subjects=[], cards={})
+                  prefix=None, subjects=[], cards={}, pictures_each=each, clip_seconds=[])
     if not keys:
         return result
     if shot.get('first') is not None or shot.get('references'):
@@ -327,7 +337,7 @@ def cast_references(play, shot, cards, *, continues=False):
         if card is None:
             result['missing'].append(key)
             continue
-        images = _pictures(card)
+        images = _pictures(card, each)
         if continues:
             if images and len(chosen) < specs.CONTINUED_PICTURES:
                 chosen.append((key, card, images[:1], False))
@@ -349,6 +359,7 @@ def cast_references(play, shot, cards, *, continues=False):
         result['references'].extend(dict(item) for item in images)
         if voice:
             clips.append(dict(card['voice']['clip']))
+            result['clip_seconds'].append(card['voice'].get('end', 15.) - card['voice'].get('start', 0.))
         person = characters[key]
         subject = dict(name=person.get('name') or key, description=card.get('description'),
                        pictures=(picture + 1, picture + len(images)) if images else None,
@@ -365,6 +376,27 @@ def cast_references(play, shot, cards, *, continues=False):
     result['cast_reference'] = ('missing' if result['missing'] else
                                 'partial' if result['omitted'] or result['voice_omitted'] else 'cards')
     return result
+
+
+def pictures_start(machine, people=1):
+    """Pictures a person carries before the length check: six for a measured class, else three.
+    machine is a capability table's `machine` row; a missing or unreadable one is unmeasured."""
+    try:
+        if machine['system'] in SIX_PICTURES_SYSTEMS:
+            vram = float(machine['vram_gib']) + TIER_SLACK_GIB
+            tier = max((t for t in SIX_PICTURES_TIERS_GIB if t <= vram), default=None)
+            if tier is not None and (tier, people, machine['precision']) in SIX_PICTURES_CLASSES:
+                return PICTURES_EACH
+    except (KeyError, TypeError, ValueError):
+        pass
+    return PICTURES_LEAST
+
+
+def pictures_note(each, cut=True):
+    """One sentence when the length check carried fewer pictures than this device started from; otherwise None."""
+    if each is None or each >= PICTURES_EACH or not cut:
+        return None
+    return 'Each person carries %d pictures in this shot; this device cannot hold more at this length.' % each
 
 
 PROMPT_LIMIT = 20000

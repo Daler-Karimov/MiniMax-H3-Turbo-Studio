@@ -721,7 +721,9 @@ def view(state):
         latest = next((t for t in reversed(shot['takes']) if 'cast_reference' in t), {})
         row.update(cast_reference=latest.get('cast_reference'), cast_omitted=deepcopy(latest.get('cast_omitted', [])),
                    cast_voice_omitted=deepcopy(latest.get('cast_voice_omitted', [])),
-                   cast_missing=deepcopy(latest.get('cast_missing', [])))
+                   cast_missing=deepcopy(latest.get('cast_missing', [])),
+                   cast_pictures_each=latest.get('cast_pictures_each'),
+                   cast_note=drama.pictures_note(latest.get('cast_pictures_each'), latest.get('cast_pictures_cut', True)))
         row['takes'] = []
         for take in shot['takes']:
             item = {key: deepcopy(take[key]) for key in ('take', 'job', 'generation', 'seed', 'state', 'stale',
