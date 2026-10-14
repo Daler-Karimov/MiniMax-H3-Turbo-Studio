@@ -169,6 +169,8 @@ export async function openSetup() {
         const unified = value && Object.hasOwn(value, 'ram_reserve_gib');
         reserveField = unified ? 'ram_reserve_gib' : 'gpu_reserve_gib';
         reserveSummary.textContent = unified ? t('Reserved unified memory', '预留统一内存') : t('Reserved VRAM', '预留显存');
+        // Mac generation shares unified memory and has no compatibility levels.
+        compatibility.hidden = unified;
         reserveLabel.firstChild.textContent = reserveSummary.textContent;
         reserve.min = unified ? '1' : '0.2';
         reserveAuto.checked = value?.[reserveField] == null;
