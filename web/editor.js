@@ -71,6 +71,11 @@ function exportErrorText(value, t) {
     // A bare status code means nothing to the user; the server's own words do.
     return message ? t(`Export failed: ${message}`, `导出时出错：${message}`) : t('Export failed. Try again.', '导出时出错，请再试一次。');
 }
+// The save route's own messages are internal English, so only a full disk is named.
+function saveErrorText(value, t) {
+    return value?.reason === 'disk_full' ? t('Saving changes failed: the disk is full. Free some space, then export again.', '保存改动时出错：磁盘空间不够，空出空间后再导出。')
+        : t('Saving changes failed. Please export again.', '保存改动时出错，请再导出一次。');
+}
 function restoreGeneration(record, before, prepared) {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const entries = value => new Map(value.tracks.flatMap(track => track.clips.map(clip => [clip.id, {track: track.id, clip}])));
@@ -260,11 +265,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接着生成的每一段至少 10 秒，请加长一些。');
             notify(text); return {ok: false, reason: code, say: text};
         }
-        if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range'].includes(code)) {
+        if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range', 'no_audio'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
             const said = {busy: t('This part is generating.', '这一段正在生成。'), locked: t('This track is locked.', '这条轨道已锁定。'),
                 text: t('Write a description first.', '先写一句描述。'), overlap: t('That spot is taken. Use an empty spot.', '这里已经有片段了，请放到空白处。'),
-                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。')}[code];
+                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。'),
+                no_audio: t('This clip has no sound. Please choose one with sound.', '这个素材没有声音，请选一段有声音的。')}[code];
             if (said) notify(said);
             return {ok: false, reason: code};
         }
@@ -443,10 +449,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await queue.flush();
         }
         if (disposed || closing || epoch !== projectEpoch) return false;
-        if (queue.dirty) {
-            notify(t('Changes could not be saved after three tries. Check disk space, then export again.', '改动没有保存成功，已重试三次。请检查磁盘空间后再导出。'));
-            return false;
-        }
+        if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return false; }
         return !!state.record.id;
     }
     function updateTop() {

@@ -66,7 +66,7 @@ export function createAudioIntegration({state, player, t, error, adjust, library
     const unregisterMenu = () => { unregisterItem?.(); unregisterItem = null; stopMenu(); };
     const stopMenu = state.subscribe(event => { if (event.type === 'record') syncMenu(); });
     syncMenu();
-    const detachPicker = library && store ? attachReplacePicker({state, library, store, actions: integration.actions, t}) : null;
+    const detachPicker = library && store ? attachReplacePicker({state, library, store, actions: integration.actions, t, error}) : null;
     const showJunction = () => { if (value.junction) { adjust?.element.querySelector('[data-adjust-tab="audio"]').click(); adjust?.open(); } };
     if (adjust) {
         unregister = adjust.register('audio', {

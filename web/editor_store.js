@@ -5,6 +5,11 @@ const clockDefault = {now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(
 const copy = value => structuredClone(value);
 const memoryProjects = new Map();
 const errorFor = response => Object.assign(new Error('editor_request'), {status: response.status});
+// A failed save keeps the server's reason so the page can say what went wrong.
+async function saveFailure(response) {
+    let body = null; try { body = await response.json(); } catch {}
+    return Object.assign(errorFor(response), body && typeof body === 'object' ? {reason: body.reason, response: body} : {});
+}
 const post = value => ({method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(value)});
 export const sourceKey = source => source ? `${source.kind}:${source.id}` : null;
 import {chainRoute, createPoller, interpolate, capabilityPoints} from './chain_support.js';
@@ -57,7 +62,7 @@ export function createSaveQueue({write, read, onSaved = () => {}, onConflict = (
     initial = null, getRecord = null, copySuffix = ' (copy)', session = null, create = null, attempt: resumedAttempt = null}) {
     const owner = session || holdSession();
     let pending = null, inFlight = null, timer = null, heartbeat = null, meta = null, retry = 0, disposed = false;
-    let memory = false, memoryNoticed = false, lastSaved = initial && copy(initial), failed = false, copied = false, retained = false;
+    let memory = false, memoryNoticed = false, lastSaved = initial && copy(initial), failed = false, failure = null, copied = false, retained = false;
     let createOperation = create || (initial?.id ? null : operationId());
     let attempt = resumedAttempt && copy(resumedAttempt);
     const localKey = owner.session;
@@ -108,7 +113,7 @@ export function createSaveQueue({write, read, onSaved = () => {}, onConflict = (
                     }
                     attempt = null; pending = {...latest, ...meta}; retain(pending); retry = 0; return;
                 }
-                if (!response.ok) throw errorFor(response);
+                if (!response.ok) throw await saveFailure(response);
                 const saved = (await response.json()).project;
                 if (disposed) return;
                 attempt = null;
@@ -119,7 +124,7 @@ export function createSaveQueue({write, read, onSaved = () => {}, onConflict = (
                 if (pending) retain({...pending, ...meta});
                 else { saveOutbox(localKey, null); retained = false; clock.clearTimeout(heartbeat); heartbeat = null; }
             } catch (error) {
-                failed = true;
+                failed = true; failure = error;
                 if (!disposed) {
                     retain({...(pending || sent), ...(meta || {})});
                     schedule(Math.min(30000, 1000 * 2 ** retry++)); onError(error);
@@ -154,6 +159,8 @@ export function createSaveQueue({write, read, onSaved = () => {}, onConflict = (
         get recovery() { return {project: copy({...(pending || attempt?.project), ...(meta || {})}), baseline: copy(lastSaved), create: createOperation, attempt: copy(attempt)}; },
         dispose({discard = false} = {}) { disposed = true; clock.clearTimeout(timer); timer = null; clock.clearTimeout(heartbeat); heartbeat = null; if (discard) saveOutbox(localKey, null); if (!session) owner.dispose(); },
         get dirty() { return !!pending || !!attempt || !!inFlight; },
+        // Why the last write failed, while that failure still stands.
+        get failure() { return failed ? failure : null; },
         get locallyRetained() { return retained; },
     };
 }
