@@ -623,7 +623,20 @@ def register():
             data.extend(chunk)
             if len(data) > limit:
                 raise JobError('too_large', 'Body exceeds limit', limit_bytes=limit)
-        return json.loads(data.decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(json.JSONDecodeError('Nonfinite JSON', '', 0)))
+        text = data.decode('utf-8')
+        value = json.loads(text, parse_constant=lambda _: (_ for _ in ()).throw(json.JSONDecodeError('Nonfinite JSON', '', 0)))
+        if '\\u' in text:
+            # An escape may spell half of a character pair. No file or page can hold that text, and the
+            # script runtime behind the editing rules ends the whole program on it.
+            try:
+                json.dumps(value, ensure_ascii=False).encode('utf-8')
+            except UnicodeEncodeError:
+                row = contract.diagnostic('/', 'text made of whole characters', None)
+                row.update(got='half of a character pair', next='Send whole characters and retry.',
+                           message='The body holds half of a character pair (a lone \\ud800 to \\udfff escape); '
+                                   'no text can be stored that way.')
+                raise specs.SpecError(row) from None
+        return value
 
     async def body(request, **ignored):
         return request[body_key]

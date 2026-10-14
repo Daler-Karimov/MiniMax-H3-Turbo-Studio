@@ -319,6 +319,11 @@ class ScriptRuntime:
         return context
 
     def _text(self, name, request):
+        try:
+            request.encode('utf-8')
+        except UnicodeEncodeError:
+            # QuickJS ends the whole program on half of a character pair, wherever the text came from.
+            raise ValueError('The text holds half of a character pair') from None
         with self._lock:
             if self._context is None:
                 self._context = self._fresh()
