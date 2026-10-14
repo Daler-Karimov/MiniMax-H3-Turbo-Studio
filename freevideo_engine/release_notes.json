@@ -1,37 +1,58 @@
 {
   "schema": 1,
-  "product_version": "0.4.2",
+  "product_version": "0.4.3",
   "en": {
-    "summary": "Adds optional image generation models: generate and edit pictures, make several views for character cards, and let the agent use them. Also fixes several install and launcher issues.",
+    "summary": "LAN access settings of offline-package installations are kept when the launcher is reopened, and the agent no longer replies after a job is stopped on the page. Also includes several fixes; the image generation models can now be downloaded and installed normally.",
     "changes": [
-      "Adds optional image generation models. \"Generate with AI\" in the media panel makes a picture from one sentence on a blank canvas, and \"Edit this\" in the image editor changes the current picture, with up to two more pictures from your media as references.",
-      "With the image generation models installed, character cards start from a front view and use it as the reference for three-quarter, side, back and close-up views; scene cards are made the same way.",
-      "The agent can generate or edit pictures and add them to your media, and can first make a frame with people placed as described, then generate the video from it.",
-      "Setup can install the image generation models at the same time (about 16 GB), and existing installs can download them in the background from the launcher; the download pauses while a video is generating.",
-      "Online installs into a folder the system code page cannot spell, such as a Chinese folder on an English system, no longer fail at the kernel check.",
-      "On Linux, when the system compiler is newer than the installed GPU toolkit supports, setup now uses a compatible compiler instead of stopping while building the GPU attention component.",
-      "When a Windows security feature blocks files FreeVideo needs, the error card now says so and notes that the setting may need to be changed in Windows.",
-      "After a launcher error, an address or path being typed in the settings is no longer reset to its previous value.",
-      "When the agent makes a film, a shot that continues the previous one is at least 10 seconds long, 10 seconds by default; a length this computer cannot make in one run is reported before generation starts.",
-      "In AI Autopilot, the conversation list updates as soon as a job starts or stops, and switching conversations quickly stays on the one selected."
+      "With an offline-package installation, LAN access and its port now stay as set after the launcher is reopened.",
+      "After a job is stopped on the page, the agent adds no message about it and does not retry on its own.",
+      "When the agent asks for a video length this computer cannot make, it now gets a clear explanation instead of an error.",
+      "The image generation models can now be downloaded and installed normally."
     ]
   },
   "zh": {
-    "summary": "新增可选的图像生成模型，可以生成和修改图片，为角色卡生成多个角度，Agent 也能使用；并修复了几处安装和启动器的问题。",
+    "summary": "用离线包安装时，局域网访问的设置在重开启动器后保留；在页面上停止任务后，Agent 不再另外回复；另有几处修复，图像生成模型现在可以正常下载和安装。",
     "changes": [
-      "新增可选的图像生成模型。素材面板的“AI 生成”可以在空白画布上用一句话生成一张图；图片编辑器里的“改这张”可以修改当前图片，还可以再选最多两张素材图作参考。",
-      "装有图像生成模型时，角色卡先生成正面像，再以它为参考生成四分之三侧面、侧面、背面和脸部特写；场景卡也用它生成。",
-      "Agent 可以生成或修改图片并放进素材，也可以先按描述的人物站位生成一张首帧，再用它生成视频。",
-      "安装时可以选择同时安装图像生成模型（约 16 GB）；已经安装 FreeVideo 的，可以在启动器里下载，下载在后台进行，生成视频时自动暂停。",
-      "英文系统上在线安装到中文文件夹时，内核检查不再因为路径无法识别而失败。",
-      "Linux 上系统编译器比 GPU 工具包支持的版本更新时，安装会换用兼容的编译器，不再停在编译 GPU 注意力加速组件这一步。",
-      "Windows 的安全功能拦下运行所需的文件时，错误卡会说明原因，并提示可能需要在 Windows 中调整这项设置。",
-      "启动器出错后，设置里正在输入的地址或路径不再被换回原值。",
-      "Agent 拍片时，接上一镜的镜头每段至少 10 秒，没写长度时默认 10 秒；这台电脑一次生成不了的长度会在开始前说明。",
-      "“AI 全自动”里任务开始或停止后，对话列表立刻更新；快速切换对话时停在所选的那一段。"
+      "用离线包安装时，局域网访问的开关和端口在重开启动器后保持不变。",
+      "在页面上停止任务后，Agent 不再另外回复，也不会自行重试。",
+      "Agent 请求的视频长度超出这台电脑能做的范围时，会收到明确的说明，不再出错。",
+      "图像生成模型现在可以正常下载和安装。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.2",
+      "en": {
+        "summary": "Adds optional image generation models: generate and edit pictures, make several views for character cards, and let the agent use them. Also fixes several install and launcher issues.",
+        "changes": [
+          "Adds optional image generation models. \"Generate with AI\" in the media panel makes a picture from one sentence on a blank canvas, and \"Edit this\" in the image editor changes the current picture, with up to two more pictures from your media as references.",
+          "With the image generation models installed, character cards start from a front view and use it as the reference for three-quarter, side, back and close-up views; scene cards are made the same way.",
+          "The agent can generate or edit pictures and add them to your media, and can first make a frame with people placed as described, then generate the video from it.",
+          "Setup can install the image generation models at the same time (about 16 GB), and existing installs can download them in the background from the launcher; the download pauses while a video is generating.",
+          "Online installs into a folder the system code page cannot spell, such as a Chinese folder on an English system, no longer fail at the kernel check.",
+          "On Linux, when the system compiler is newer than the installed GPU toolkit supports, setup now uses a compatible compiler instead of stopping while building the GPU attention component.",
+          "When a Windows security feature blocks files FreeVideo needs, the error card now says so and notes that the setting may need to be changed in Windows.",
+          "After a launcher error, an address or path being typed in the settings is no longer reset to its previous value.",
+          "When the agent makes a film, a shot that continues the previous one is at least 10 seconds long, 10 seconds by default; a length this computer cannot make in one run is reported before generation starts.",
+          "In AI Autopilot, the conversation list updates as soon as a job starts or stops, and switching conversations quickly stays on the one selected."
+        ]
+      },
+      "zh": {
+        "summary": "新增可选的图像生成模型，可以生成和修改图片，为角色卡生成多个角度，Agent 也能使用；并修复了几处安装和启动器的问题。",
+        "changes": [
+          "新增可选的图像生成模型。素材面板的“AI 生成”可以在空白画布上用一句话生成一张图；图片编辑器里的“改这张”可以修改当前图片，还可以再选最多两张素材图作参考。",
+          "装有图像生成模型时，角色卡先生成正面像，再以它为参考生成四分之三侧面、侧面、背面和脸部特写；场景卡也用它生成。",
+          "Agent 可以生成或修改图片并放进素材，也可以先按描述的人物站位生成一张首帧，再用它生成视频。",
+          "安装时可以选择同时安装图像生成模型（约 16 GB）；已经安装 FreeVideo 的，可以在启动器里下载，下载在后台进行，生成视频时自动暂停。",
+          "英文系统上在线安装到中文文件夹时，内核检查不再因为路径无法识别而失败。",
+          "Linux 上系统编译器比 GPU 工具包支持的版本更新时，安装会换用兼容的编译器，不再停在编译 GPU 注意力加速组件这一步。",
+          "Windows 的安全功能拦下运行所需的文件时，错误卡会说明原因，并提示可能需要在 Windows 中调整这项设置。",
+          "启动器出错后，设置里正在输入的地址或路径不再被换回原值。",
+          "Agent 拍片时，接上一镜的镜头每段至少 10 秒，没写长度时默认 10 秒；这台电脑一次生成不了的长度会在开始前说明。",
+          "“AI 全自动”里任务开始或停止后，对话列表立刻更新；快速切换对话时停在所选的那一段。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.1",
       "en": {
