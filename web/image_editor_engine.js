@@ -10,7 +10,12 @@
 // Every edit is an entry in a list, so a saved document reopens from the
 // original image with each step still in place.
 
-import {fontCSS, fontLoaded, loadFonts} from './fonts.js';
+import {fontCSS as bundledFontCSS, fontLoaded, loadFonts} from './fonts.js';
+// A blocked font must not turn otherwise readable text into the bundled box glyph.
+const fontCSS = (name, weight, size) => {
+    const css = bundledFontCSS(name, weight, size);
+    return fontLoaded(name, weight) ? css : css.replace('"FreeVideo Box"', 'sans-serif');
+};
 
 export const BLENDS = ['source-over', 'multiply', 'screen', 'overlay', 'soft-light', 'darken', 'lighten',
     'color-dodge', 'color-burn', 'difference'];
@@ -117,8 +122,7 @@ export const rasterKinds = new Set(['image', 'paint']);
 export const textFonts = doc => doc.layers.filter(l => l.kind === 'text').map(l => [l.text.font, l.text.weight]);
 export const textFontsLoaded = doc => textFonts(doc).every(([name, weight]) => fontLoaded(name, weight));
 
-// Native size of a text block, from the same font settings it is drawn with. The font must
-// be loaded (textFonts): measuring before that would use another font's metrics.
+// Native size of a text block, using the same bundled or fallback font as drawing.
 export function measureText(text) {
     const ctx = document.createElement('canvas').getContext('2d');
     ctx.font = fontCSS(text.font, text.weight, text.size);
@@ -970,7 +974,7 @@ export class Renderer {
     loaded(file) { return this.images.get(file)?.value; }
     async preload(doc) {
         for (const l of doc.layers) if (l.src) { const img = await this.image(l.src); this.images.get(l.src).value = img; }
-        await loadFonts(textFonts(doc));
+        await loadFonts(textFonts(doc)).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
     }
     // Raster of a layer at scale × its native pixels, edits applied (before
     // adjustments and mask), reusing the cached prefix of its edits. exact: for a saved
@@ -1120,7 +1124,7 @@ export class Renderer {
         return out;
     }
     text(layer, scale) {
-        const key = `${layer.id}@${scale}#text`, look = JSON.stringify([layer.text, layer.nw, layer.nh]);
+        const key = `${layer.id}@${scale}#text`, look = JSON.stringify([layer.text, layer.nw, layer.nh, fontCSS(layer.text.font, layer.text.weight, layer.text.size)]);
         const cached = this.layers.get(key);
         if (cached?.look === look) return cached.canvas;
         const t = layer.text, c = canvas(layer.nw * scale, layer.nh * scale), ctx = c.getContext('2d');

@@ -176,6 +176,7 @@ class ImageRunner:
         self.dit_stack.set_resident(plan.dit_resident_layers)
         self.te_stack.set_resident(plan.te_resident_layers)
         self.generator.vae_tile = plan.vae_tiling
+        self.generator.vae_tile_size = plan.vae_tile_size
         return self.generator.generate(prompt, width=width, height=height, seed=seed,
                                        reference_images=reference_images, progress=progress, cancel=cancel)
 

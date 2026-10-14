@@ -145,7 +145,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         doc = commands.setRatio(doc, 'video', target);
     }
     // Text draws with the fonts that ship with FreeVideo; the text tool starts in bold sans.
-    await Promise.all([renderer.preload(doc), loadFont('sans', 700)]);
+    await Promise.all([renderer.preload(doc), loadFont('sans', 700).catch(error => console.warn('FreeVideo image editor font unavailable; using fallback fonts.', error))]);
     // A text box measured with other fonts (or by another renderer) fits its text again,
     // keeping its place and scale. It is part of opening, not a change to undo or save.
     doc = {...doc, layers: doc.layers.map(l => {
@@ -667,7 +667,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             v => setTextFont(layer.id, {font: v}), t('Font', '字体'));
         font.group.id = 'fv-ie-font'; font.group.classList.add('fv-ie-fonts');
         for (const b of font.group.children) b.style.fontFamily = fontStack(b.dataset.value);
-        loadFonts(FONT_KEYS.map(k => [k, 400])).catch(() => {});
+        loadFonts(FONT_KEYS.map(k => [k, 400])).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
         const size = el('input'); size.type = 'number'; size.min = '6'; size.max = '2000'; size.value = String(Math.round(layer.text.size)); size.id = 'fv-ie-font-size';
         size.onchange = () => commit(updateText(layer.id, {size: clamp(Number(size.value) || 12, 6, 2000)}));
         const color = el('input'); color.type = 'color'; color.value = layer.text.color; color.id = 'fv-ie-text-color';
@@ -697,7 +697,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (!fontLoaded(next.font, next.weight)) {
             message(t('Preparing the font…', '正在准备字体…'));
             try { await loadFont(next.font, next.weight); }
-            catch { message(t('The font could not be loaded. Reload the page and try again.', '字体加载失败，请刷新页面后重试。')); renderProps(); return; }
+            catch (error) { console.warn('FreeVideo image editor font unavailable; using fallback fonts.', error); }
             message('');
         }
         if (dialog.open && doc.layers.some(l => l.id === id)) commit(updateText(id, patch));
@@ -1507,6 +1507,6 @@ export async function openImageEditor({source = null, name = source || '', targe
     select(!doc.layers.length ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
     (save.disabled ? stage : save).focus();
     // The other fonts load in the background, so switching to one is immediate.
-    loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(() => {});
+    loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
     return result;
 }

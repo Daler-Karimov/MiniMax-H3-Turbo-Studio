@@ -53,6 +53,12 @@ _ENCODE_BASE = 2.7 * GiB          # prompt length, not image size, drives this s
 _DENOISE_BASE, _DENOISE_PER_MP = 1.06 * GiB, 0.554 * GiB
 _DECODE_BASE, _DECODE_PER_MP = 2.10 * GiB, 0.15 * GiB
 _UNTILED_DECODE_PER_MP = 6.5 * GiB   # decoding the whole image at once instead of in tiles
+# Decoding in 512-pixel tiles (256 overlap) keeps the decoder's padded tile edges
+# out of tall pictures, where 256-pixel tiles left coloured vertical lines and a
+# grid texture. A fixed-latent B200 sweep measured +1.43 GiB of decoder workspace;
+# reserve 1.6 GiB. A card that cannot afford it decodes in 256-pixel tiles as before.
+SMALL_VAE_TILE, LARGE_VAE_TILE = 256, 512
+_LARGE_TILE_DECODE_EXTRA = 1.6 * GiB
 # Reference images, about 1 MP each after resizing. Their tokens are recomputed at
 # every step (the pipeline keeps no prefix key/value cache: it would hold about
 # 2 GiB per reference on the card, and the extra compute is about 1 s per image on
@@ -87,12 +93,14 @@ class ImagePlan:
     te_streamed_bytes: int
     link_floor_seconds: object
     reasons: list = field(default_factory=list)
+    vae_tile_size: int = SMALL_VAE_TILE
 
     def to_dict(self):
         return dict(self.__dict__)
 
 
-def stage_peaks(shape, dit_resident, te_resident, *, width, height, reference_pixels=0, vae_tiling=True):
+def stage_peaks(shape, dit_resident, te_resident, *, width, height, reference_pixels=0, vae_tiling=True,
+                vae_tile_size=SMALL_VAE_TILE):
     """Largest allocation of each stage for a given residency (bytes)."""
     mp = width * height / 1e6
     ref_mp = reference_pixels / 1e6
@@ -102,6 +110,8 @@ def stage_peaks(shape, dit_resident, te_resident, *, width, height, reference_pi
     decode = _DECODE_BASE + _DECODE_PER_MP * mp + resident
     if not vae_tiling:
         decode += _UNTILED_DECODE_PER_MP * mp
+    elif vae_tile_size > SMALL_VAE_TILE:
+        decode += _LARGE_TILE_DECODE_EXTRA
     if ref_mp:
         encode += max(_REF_ENCODE_FLOOR, _REF_ENCODE_PER_MP * ref_mp - _REF_ENCODE_OFFSET)
         denoise += _REF_DENOISE_PER_MP * ref_mp
@@ -127,11 +137,15 @@ def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, heigh
     reasons = []
     kwargs = dict(width=width, height=height, reference_pixels=reference_pixels)
 
+    tile_size = LARGE_VAE_TILE
+
     def peak(kd, kt, tiling=True):
-        return max(stage_peaks(shape, kd, kt, vae_tiling=tiling, **kwargs).values())
+        return max(stage_peaks(shape, kd, kt, vae_tiling=tiling, vae_tile_size=tile_size, **kwargs).values())
 
     kd = kt = 0
     tiling = True
+    if peak(0, 0) > limit:
+        tile_size = SMALL_VAE_TILE
     feasible = peak(0, 0) <= limit
     if not feasible:
         reasons.append('even full streaming with a tiled VAE needs %.1f GiB beyond the %.1f GiB budget' % (
@@ -146,7 +160,7 @@ def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, heigh
         # Untiled decoding is faster; take it only when it fits beside the same residency.
         if peak(kd, kt, tiling=False) <= limit:
             tiling = False
-    peaks = stage_peaks(shape, kd, kt, vae_tiling=tiling, **kwargs)
+    peaks = stage_peaks(shape, kd, kt, vae_tiling=tiling, vae_tile_size=tile_size, **kwargs)
 
     streamed_dit = (shape.dit_blocks - kd) * shape.dit_block_bytes
     streamed_te = (shape.te_layers - kt) * shape.te_layer_bytes
@@ -169,4 +183,4 @@ def plan_image(*, gpu_budget_bytes, host_available_bytes=None, width=1024, heigh
                      host_mode=host_mode, feasible=feasible and host_mode != 'insufficient',
                      peak_allocated_bytes=max(peaks.values()), stage_peaks=peaks, margin_bytes=margin,
                      dit_streamed_bytes_per_step=streamed_dit, te_streamed_bytes=streamed_te,
-                     link_floor_seconds=floor, reasons=reasons)
+                     link_floor_seconds=floor, reasons=reasons, vae_tile_size=tile_size)

@@ -8,6 +8,7 @@ import errno
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -471,7 +472,12 @@ def node_target(root):
             if (path / 'freevideo-launcher.json').is_file() or (code.is_file() and 'FreeVideoGenerate' in code.read_text(encoding='utf-8')):
                 found.append(path)
     if len(found) > 1:
-        raise ValueError('Multiple FreeVideo node installations found. Keep one enabled before installing.')
+        managed = [path for path in found if (path / 'freevideo-launcher.json').is_file()]
+        if len(managed) != 1:
+            raise ValueError('Multiple FreeVideo node installations found. Keep one enabled before installing.')
+        logging.getLogger(__name__).warning('Multiple FreeVideo node installations found; using %s with '
+            'freevideo-launcher.json and leaving the other folders unchanged.', plain(managed[0]))
+        found = managed
     target = found[0] if found else parent / 'FreeVideo'
     if target.exists() and not found and any(target.iterdir()):
         raise ValueError('custom_nodes/FreeVideo already contains unrelated files. Choose another ComfyUI or rename that folder first.')
@@ -520,10 +526,10 @@ def deploy(root, source, engine):
     target.mkdir(parents=True, exist_ok=True)
     entry = target / '__init__.py'
     old = entry.read_bytes() if entry.is_file() else None
-    if (old and previous.get('entry_sha256') and hashlib.sha256(old).hexdigest() != previous['entry_sha256']
+    if (old is not None and previous.get('entry_sha256') and hashlib.sha256(old).hexdigest() != previous['entry_sha256']
             and not checkout_entry(old, target)):
-        raise ValueError(f'The managed FreeVideo entry point ({plain(entry)}) was edited. Changes are retained; '
-                         'undo them or delete that file before updating.')
+        logging.getLogger(__name__).warning('The managed FreeVideo entry point (%s) was edited; '
+            'backing it up in launcher/backups before restoring the loader.', plain(entry))
     # The small loader may be replaced; all original checkout files remain intact.
     code = ("# Installed by FreeVideo launcher. Original entry points are retained in the engine launcher/backups folder.\n"
             "import importlib.util as _util\nimport json as _json\nfrom pathlib import Path as _Path\nimport sys as _sys\n"
@@ -534,7 +540,7 @@ def deploy(root, source, engine):
             "_spec = _util.spec_from_file_location(__name__ + '._engine', _source / '__init__.py', submodule_search_locations=[str(_source)])\n"
             "_engine = _util.module_from_spec(_spec)\n_sys.modules[_spec.name] = _engine\n_spec.loader.exec_module(_engine)\n"
             "WEB_DIRECTORY = str(_source / 'web')\ncomfy_entrypoint = _engine.comfy_entrypoint\n").encode()
-    if old and old != code:
+    if old is not None and old != code:
         backup = engine / 'launcher' / 'backups' / (target.name + '-' + hashlib.sha256(old).hexdigest()[:12] + '-init.py')
         backup.parent.mkdir(parents=True, exist_ok=True)
         if not backup.exists():
@@ -800,9 +806,12 @@ class Controller:
             source = Path(plain(resolved(receipt['source'])))
             if (receipt.get('protocol') != PROTOCOL or Path(plain(resolved(receipt['engine_root']))) != engine
                     or not io_path(source / 'freevideo_engine/comfy_nodes.py').is_file()
-                    or not io_path(source / '__init__.py').is_file()
-                    or hashlib.sha256((receipt_path.parent / '__init__.py').read_bytes()).hexdigest() != receipt.get('entry_sha256')):
+                    or not io_path(source / '__init__.py').is_file()):
                 return False
+            entry = receipt_path.parent / '__init__.py'
+            if hashlib.sha256(entry.read_bytes()).hexdigest() != receipt.get('entry_sha256'):
+                logging.getLogger(__name__).warning('The managed FreeVideo entry point (%s) differs from '
+                    'entry_sha256; continuing with the saved installation.', plain(entry))
             installation(source, {'FREEVIDEO_HOME': str(engine)})
             python = (record.get('python') or values.get('python') or
                       managed_python(engine, Path(descriptor['root'])) or descriptor.get('python'))

@@ -162,10 +162,8 @@ class Productions:
                     raise ValueError('Invalid execution receipts')
                 record['receipts'] = operation_receipts.load(record['receipts'])
                 json.dumps(record, allow_nan=False)
-                checked = production.plan(dict(screenplay=state['screenplay'],
-                    takes_per_shot=state['takes_per_shot'], director=state['director']))
-                if [s['id'] for s in state['shots']] != [s['id'] for s in checked['preview']['shots']]:
-                    raise ValueError('Invalid shot receipts')
+                request = dict(screenplay=state['screenplay'],
+                    takes_per_shot=state['takes_per_shot'], director=state['director'])
                 for ref, child in record['children'].items():
                     schema.validate(schema.REF, ref)
                     if child['status'] not in DONE:
@@ -174,10 +172,15 @@ class Productions:
                     raise ValueError('Invalid submission marker')
                 production.view(state)
                 try:
+                    checked = production.plan(request)
+                    if [s['id'] for s in state['shots']] != [s['id'] for s in checked['preview']['shots']]:
+                        raise JobError('internal_error', 'Saved shots differ from the current plan')
                     production.advance(deepcopy(state), deepcopy(record['children']), now=state['updated_at'])
-                except production.ProductionError as error:
+                except (production.ProductionError, JobError) as error:
                     # A readable record that cannot advance yet is kept, never renamed away.
                     record['stalled'] = self._stalled(error)
+                    logging.getLogger(__name__).warning('Kept a readable production receipt stalled (%s)',
+                                                        record['stalled']['code'])
                 self.records[state['id']] = record
             except (ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError, OSError):
                 path.replace(path.with_name(path.name + '.bad-' + uuid.uuid4().hex))

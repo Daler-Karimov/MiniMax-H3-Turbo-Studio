@@ -43,8 +43,11 @@ def launcher_root():
     return Path(home) / 'FreeVideo-launcher'
 
 
+NOTICE_FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')
+
+
 def source_files(root):
-    names = ['pyproject.toml', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'MANIFEST.in', '__init__.py',
+    names = ['pyproject.toml', 'README.md', 'MANIFEST.in', '__init__.py',
              'freevideo', 'setup.sh', 'test.sh',
              'freevideo.ps1', 'setup.ps1', 'test.ps1', 'freevideo.cmd', 'setup.cmd', 'test.cmd',
              'scripts/bootstrap_linux.sh', 'scripts/windows_app.py', 'scripts/build_windows.py',
@@ -52,6 +55,8 @@ def source_files(root):
     # Older deployed Windows payloads may predate the optional Mac entry points.
     files_optional = ('scripts/build_macos.py', 'scripts/macos_app.py')
     names += [name for name in files_optional if (root / name).is_file()]
+    # Notice and licence files are carried when present; a launcher never fails to start without one.
+    names += [name for name in NOTICE_FILES if (root / name).is_file()]
     files = [root / name for name in names]
     files += [p for folder in ('freevideo_engine', 'constraints', 'web', 'example_workflows')
               for p in (root / folder).rglob('*')
@@ -78,7 +83,7 @@ def matching_source(bundled, installed):
         return True
     try:
         for path in source_files(bundled):
-            if path.name == 'comfyui.json':
+            if path.name == 'comfyui.json' or path.relative_to(bundled).as_posix() in NOTICE_FILES:
                 continue
             other = installed / path.relative_to(bundled)
             if not other.is_file() or path.read_bytes() != other.read_bytes():

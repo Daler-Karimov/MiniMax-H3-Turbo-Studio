@@ -1,7 +1,7 @@
 import {api} from '../../scripts/api.js';
 import {closeDialog} from './motion.js';
 import {effortFor, effortName} from './sampling_effort.js';
-import {fontCSS, loadFont} from './fonts.js';
+import {fontCSS as bundledFontCSS, fontLoaded, loadFont} from './fonts.js';
 import {shareLayout} from './share_layout.js';
 
 const css=document.createElement('link'); css.rel='stylesheet'; css.href=new URL('./share.css',import.meta.url).href; document.head.append(css);
@@ -27,10 +27,9 @@ async function withGraph(blob,graph){
 const tint=(hex,alpha)=>{const v=parseInt(hex.slice(1),16);return `rgba(${v>>16},${v>>8&255},${v&255},${alpha})`;};
 let opened;
 
-// Deterministic Canvas rendering in FreeVideo's bundled sans (load it first: shareFonts), never a
-// font of the computer; no external resources or user prompt are included. The image window
-// preserves every pixel.
-export const shareFonts=()=>Promise.all([loadFont('sans',400),loadFont('sans',700)]);
+// Prefer bundled sans, but keep the card usable when optional font files are blocked.
+export const shareFonts=()=>Promise.all([loadFont('sans',400),loadFont('sans',700)]).catch(error=>console.warn('FreeVideo share fonts unavailable; using fallback fonts.',error));
+const fontCSS=(name,weight,size)=>{const css=bundledFontCSS(name,weight,size);return fontLoaded(name,weight)?css:css.replace('"FreeVideo Box"','sans-serif');};
 
 export function drawShareCard(canvas,frame,logo,record,t) {
     const g=record.geometry||{}, shape=shareLayout(g.width||frame?.naturalWidth||1344,g.height||frame?.naturalHeight||768);
@@ -49,7 +48,7 @@ export function drawShareCard(canvas,frame,logo,record,t) {
     if(frame)ctx.drawImage(frame,...shape.rect);
     const fit=(text,weight,size,max)=>{while(size>12){ctx.font=fontCSS('sans',weight,size);if(ctx.measureText(text).width<=max)break;size--;}return ctx.measureText(text).width;};
     const logoWidth=wide?156:140, logoTop=wide?y+H/2-26:y+30;
-    ctx.drawImage(logo,pad,logoTop,logoWidth,logoWidth*337/2016);
+    if(logo)ctx.drawImage(logo,pad,logoTop,logoWidth,logoWidth*337/2016);
     const seconds=g.seconds||g.frames/(g.fps||24);
     ctx.font=fontCSS('sans',400,14);ctx.fillStyle='#6f8399';ctx.textAlign=wide?'left':'right';
     ctx.fillText(`${g.width} × ${g.height}${Number.isFinite(seconds)?' · '+seconds.toFixed(1)+' s':''}`,wide?pad:w-pad,wide?y+H/2+24:y+46);
@@ -157,9 +156,9 @@ export async function openShare(record,t){
         const response=await api.fetchApi('/freevideo/share?'+new URLSearchParams({id}),{signal:abort.signal});
         if(!response.ok)throw new Error(t('This saved video is unavailable.','这个已保存的视频暂时无法读取。'));
         metadata=await response.json();
-        [first,logo]=await Promise.all([image(api.apiURL('/freevideo/share/frame?'+new URLSearchParams({id}))),image(new URL('./assets/freevideo.svg',import.meta.url).href)]);
+        [first,logo]=await Promise.all([image(api.apiURL('/freevideo/share/frame?'+new URLSearchParams({id}))),image(new URL('./assets/freevideo.svg',import.meta.url).href).catch(error=>{console.warn('FreeVideo share logo unavailable; continuing without it.',error);return null;})]);
         if(disposed)return;
-        await shareFonts();if(document.fonts?.ready)await document.fonts.ready;
+        await shareFonts();if(document.fonts?.ready)await document.fonts.ready.catch(error=>console.warn('FreeVideo share fonts unavailable; using fallback fonts.',error));
         shape=drawShareCard(canvas,null,logo,metadata,t);template=canvas.toDataURL('image/png').split(',')[1];
         preview.style.aspectRatio=`${shape.width}/${shape.height}`;
         player.style.cssText=`left:${shape.rect[0]/shape.width*100}%;top:0;width:${shape.rect[2]/shape.width*100}%;height:${shape.rect[3]/shape.height*100}%`;

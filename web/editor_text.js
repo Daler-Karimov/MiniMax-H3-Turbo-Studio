@@ -145,8 +145,8 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             const file=el('input');file.type='file';file.accept='.srt';file.hidden=true;
             const importButton=button(t('Import subtitle file','导入字幕文件'),{onClick:()=>file.click()});importButton.classList.add('fv-ed-import-srt');
             // Only a file that cannot be read says so; a refused edit (a locked track) flashes red like any other.
-            file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text);}catch{actions.notify?.(t('Could not read this subtitle file','读不出这个字幕文件'));return;}finally{file.value='';}
-                if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));}};
+            file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;const result={};try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text,result);}catch{actions.notify?.(t('Could not read this subtitle file','读不出这个字幕文件'));return;}finally{file.value='';}
+                if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));if(result.truncated)actions.notify?.(t('Only the first 500 subtitles were imported.','只导入了前 500 条字幕。'));}};
             // Shown only where this computer can recognise speech.
             const hear=button(t('Auto subtitles','自动字幕'),{onClick:toggleSpeech});hear.classList.add('fv-ed-auto-subtitles');for(const b of speech.buttons)if(!b.isConnected)speech.buttons.delete(b);speech.buttons.add(hear);speechLabel(speech.busy?speech.shown:null);
             host.append(importButton,hear,file);

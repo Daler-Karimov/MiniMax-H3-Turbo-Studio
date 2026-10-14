@@ -1344,7 +1344,8 @@ class QwenImageVAE(nn.Module):
         return DecoderOutput(sample=out)
 
     # Copied from diffusers.models.autoencoders.autoencoder_kl_wan.AutoencoderKLWan.decode
-    def decode(self, z: torch.Tensor, return_dict: bool = True, *, tile: bool | None = None) -> DecoderOutput | torch.Tensor:
+    def decode(self, z: torch.Tensor, return_dict: bool = True, *, tile: bool | None = None,
+               tile_size: int | None = None, tile_stride: int | None = None) -> DecoderOutput | torch.Tensor:
         r"""
         Decode a batch of images.
 
@@ -1359,8 +1360,15 @@ class QwenImageVAE(nn.Module):
                 returned.
         """
         previous_tiling = self.use_tiling
+        previous_tiles = (self.tile_sample_min_height, self.tile_sample_min_width,
+                          self.tile_sample_stride_height, self.tile_sample_stride_width)
         if tile is not None:
             self.use_tiling = tile
+        if tile_size is not None:
+            # Larger decoding tiles keep the decoder's padded tile edges out of the picture;
+            # encoding keeps its own profile so the latents do not depend on the card.
+            self.tile_sample_min_height = self.tile_sample_min_width = int(tile_size)
+            self.tile_sample_stride_height = self.tile_sample_stride_width = int(tile_stride or tile_size // 2)
         try:
             if self.use_slicing and z.shape[0] > 1:
                 decoded_slices = [self._decode(z_slice).sample for z_slice in z.split(1)]
@@ -1369,6 +1377,8 @@ class QwenImageVAE(nn.Module):
                 decoded = self._decode(z).sample
         finally:
             self.use_tiling = previous_tiling
+            (self.tile_sample_min_height, self.tile_sample_min_width,
+             self.tile_sample_stride_height, self.tile_sample_stride_width) = previous_tiles
 
         if not return_dict:
             return (decoded,)
@@ -1504,9 +1514,11 @@ class QwenImageVAE(nn.Module):
         # Split z into overlapping tiles and decode them separately.
         # The tiles have an overlap to avoid seams between tiles.
         rows = []
-        for i in range(0, height, tile_latent_stride_height):
+        # Stop once a tile already covers the edge: a redundant narrow last tile has little
+        # context and leaves coloured seams.
+        for i in range(0, max(0, height - tile_latent_min_height) + tile_latent_stride_height, tile_latent_stride_height):
             row = []
-            for j in range(0, width, tile_latent_stride_width):
+            for j in range(0, max(0, width - tile_latent_min_width) + tile_latent_stride_width, tile_latent_stride_width):
                 self.clear_cache()
                 time = []
                 for k in range(num_frames):
@@ -1531,7 +1543,9 @@ class QwenImageVAE(nn.Module):
                     tile = self.blend_v(rows[i - 1][j], tile, blend_height)
                 if j > 0:
                     tile = self.blend_h(row[j - 1], tile, blend_width)
-                result_row.append(tile[:, :, :, :tile_sample_stride_height, :tile_sample_stride_width])
+                keep_height = tile_sample_stride_height if i < len(rows) - 1 else sample_height - i * tile_sample_stride_height
+                keep_width = tile_sample_stride_width if j < len(row) - 1 else sample_width - j * tile_sample_stride_width
+                result_row.append(tile[:, :, :, :keep_height, :keep_width])
             result_rows.append(torch.cat(result_row, dim=-1))
         dec = torch.cat(result_rows, dim=3)[:, :, :, :sample_height, :sample_width]
 

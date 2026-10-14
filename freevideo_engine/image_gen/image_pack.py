@@ -9,6 +9,7 @@ or an optional busy callback. The CLI writes atomic, read-only status snapshots.
 from collections import deque
 from contextlib import ExitStack, contextmanager
 import json
+import logging
 from pathlib import Path, PurePosixPath
 import re
 import signal
@@ -185,12 +186,34 @@ def _owned_intact(path, stamp):
         stamp.get(k) == v for k, v in provision.file_identity(path, stamp).items())
 
 
+# The notice written next to the weights. The text lives here; licenses/NOTICE.txt carries the same words
+# for people reading the source and is never needed at run time.
+NOTICE_TEXT = (b'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi '
+               b'Laboratory Technology Co., Ltd. All Rights Reserved.\n')
+
+
 def _notice():
-    return (Path(__file__).parent / 'licenses' / 'NOTICE.txt').read_bytes()
+    return NOTICE_TEXT
 
 
 def _notice_ready(path):
-    return path.is_file() and path.stat().st_size == len(_notice()) and path.read_bytes() == _notice()
+    """Informational only: a missing or different notice never makes the pack unusable."""
+    try:
+        return path.is_file() and path.read_bytes() == NOTICE_TEXT
+    except OSError:
+        return False
+
+
+def _write_notice(folder, owned):
+    """Put the notice into the model folder when possible; a failure is logged and the install goes on."""
+    notice = _path(folder, 'NOTICE.txt')
+    try:
+        if notice.exists():
+            return   # present (ours or the user's own text): left as it is
+        notice.write_bytes(NOTICE_TEXT)
+        _own(folder, owned, notice)
+    except Exception as error:
+        logging.warning('[FreeVideo] Could not write the image model notice: %s', error)
 
 
 def status(root=None):
@@ -213,7 +236,7 @@ def status(root=None):
     notice = _path(folder, 'NOTICE.txt')
     notice_ready = _notice_ready(notice)
     total = sum(r['bytes'] for r in files)
-    available = not missing and notice_ready
+    available = not missing
     return dict(installable=True, ready=available, total_bytes=total, verified_bytes=verified_bytes,
                 downloaded_bytes=downloaded, bytes=sum(r['bytes'] for r in files if not r['ready']),
                 remaining_bytes=sum(r['bytes'] - r['downloaded_bytes'] for r in files if not r['ready']),
@@ -363,13 +386,7 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
             plan = _download_plan(engine_root)
             plan.update(quiet=True, resource_check=check)
             owned = _read(folder, OWNERSHIP)
-            notice = _path(folder, 'NOTICE.txt')
-            if notice.exists() and not _notice_ready(notice):
-                # Preserve an unexpected text rather than overwriting it.
-                model_repair.rename_noreplace(notice, notice.with_name('NOTICE.txt.replaced-' + str(time.time_ns())))
-            if not notice.exists():
-                notice.write_bytes(_notice())
-                _own(folder, owned, notice)
+            _write_notice(folder, owned)
             done = 0
             pending_prefixes = 0
             if _background is not None:
