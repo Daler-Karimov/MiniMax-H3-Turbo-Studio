@@ -163,6 +163,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     const tooltip = create('div', 'fv-ed-drag-label');
     tooltip.hidden = true; tooltip.setAttribute('role', 'status');
     const popover = create('div', 'fv-ed-clip-popover'); popover.hidden = true;
+    let failedPopoverId = null;
     const zoomBar = create('div', 'fv-ed-track-zoom fv-ed-zoom');
     const zoomOut = create('button', '', '−'), zoomIn = create('button', '', '+');
     zoomOut.type = zoomIn.type = 'button';
@@ -443,6 +444,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         item.component?.update(value);
     }
     function renderRecord() {
+        const openFailure = !popover.hidden && failedPopoverId;
         selectGestures.finish(null, true);
         cachedPlan = ''; popover.hidden = true;
         const record = state.record, retained = new Set(), tracks = displayTracks(record);
@@ -496,10 +498,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                     && (right.pending === null || model.continuesBefore(state.record, right.id));
                 item.element.classList.toggle('fv-ed-joined-left', attached(track.clips[index - 1], clip));
                 item.element.classList.toggle('fv-ed-joined-right', attached(clip, track.clips[index + 1]));
-                if (visual === 'failed' && track.kind === 'video') item.status.replaceChildren(icon('warning'));
+                const failureText = visual === 'failed' ? actions.failureText?.(clip.id) || actions.reasonText?.(clip.reason) || clip.reason || t('Generation failed', '生成时出错') : '';
+                if (visual === 'failed') item.status.replaceChildren(icon('warning'), create('span', 'fv-ed-clip-failure-reason', failureText));
                 else item.status.replaceChildren();
                 const status = {planned: t('Not generated yet', '还没生成'), running: t('Generating', '正在生成'),
-                    done: t('Complete', '完成'), failed: t('Unsuccessful', '没成功')}[visual];
+                    done: t('Complete', '完成'), failed: failureText}[visual];
                 const seconds = Math.round(clip.frames / model.FPS);
                 item.element.title = '';
                 item.element.setAttribute('aria-label', t(`${name}, clip ${index + 1}, ${seconds} s, ${status}`,
@@ -526,6 +529,8 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         addAudio.setAttribute('aria-label', addAudio.textContent);
         content.style.height = `${top - 6}px`; playhead.style.height = `${top - 24}px`;
         layout();
+        const failure = openFailure && clips.get(openFailure);
+        if (failure && model.clipState(failure.clip) === 'failed' && state.selection?.ids?.includes(openFailure)) failedPopover(failure);
         if (gesture?.type === 'move' && pointerEvent) updatePointer(pointerEvent);
     }
     function showGuide(frame) { guide.hidden = frame == null; if (frame != null) guide.style.left = `${pixels(frame)}px`; }
@@ -563,14 +568,18 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         renderSelection();
     }
     function failedPopover(item) {
-        const reason = create('p', '', actions.reasonText?.(item.clip.reason) || t('Could not generate', '没能生成'));
+        failedPopoverId = item.clip.id;
+        const reason = create('p', '', actions.failureText?.(item.clip.id) || actions.reasonText?.(item.clip.reason) || item.clip.reason || t('Generation failed', '生成时出错'));
+        const report = create('button', 'fv-ed-clip-report', t('Download diagnostic report', '下载诊断报告')); report.type = 'button';
+        report.onclick = event => { event.stopPropagation(); popover.hidden = true;
+            Promise.resolve(actions.downloadFailure?.(item.clip.id)).catch(error => actions.editError?.(error)); };
         const retry = create('button', '', t('Retry', '重试')); retry.type = 'button';
         retry.onclick = () => { popover.hidden = true;
-            Promise.resolve().then(() => actions.retry?.(item.clip.id)).catch(error => actions.editError?.(error)); };
-        popover.replaceChildren(reason, retry); popover.hidden = false;
+            Promise.resolve().then(() => actions.retry?.(item.clip.id)).catch(error => actions.editError?.(error, 'generate')); };
+        popover.replaceChildren(reason, report, retry); popover.hidden = false;
         const bounds = element.getBoundingClientRect(), clipBounds = item.element.getBoundingClientRect();
-        popover.style.left = `${clamp(clipBounds.left - bounds.left, 8, Math.max(8, bounds.width - 248))}px`;
-        popover.style.top = `${Math.min(clipBounds.bottom - bounds.top + 4, bounds.height - 96)}px`;
+        popover.style.left = `${clamp(clipBounds.left - bounds.left, 8, Math.max(8, bounds.width - 288))}px`;
+        popover.style.top = `${Math.max(8, Math.min(clipBounds.bottom - bounds.top + 4, bounds.height - popover.getBoundingClientRect().height - 8))}px`;
     }
     function clickSelection(event) {
         if (event.range) return;

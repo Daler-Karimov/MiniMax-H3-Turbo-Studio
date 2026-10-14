@@ -39,6 +39,7 @@
 .fv-ed-clip[data-state=failed]{border:1px solid color-mix(in srgb,var(--fv-warning) 60%,transparent);background:color-mix(in srgb,var(--fv-warning) 12%,transparent);cursor:grab}
 .fv-ed-clip-status{position:absolute;left:10px;right:4px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;overflow:hidden;color:var(--fv-warning);pointer-events:none}
 .fv-ed-clip-status svg{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.fv-ed-clip-failure-reason{overflow:hidden;text-overflow:ellipsis}
 .fv-ed-clip[data-busy=true]{cursor:default}
 .fv-ed-trim-handle{position:absolute;top:50%;width:4px;height:20px;border-radius:2px;transform:translateY(-50%);background:var(--fv-accent);cursor:ew-resize;z-index:2;opacity:0;pointer-events:auto}
 .fv-ed-trim-start{left:-2px}
@@ -66,9 +67,11 @@
 .fv-ed-zoom-slider{width:64px;height:24px;margin:0;accent-color:var(--fv-accent);cursor:pointer}
 .fv-ed-track-zoom .fv-ed-fit{padding:0 7px;white-space:nowrap;font-size:12px;margin-left:4px}
 .fv-ed-drag-label{position:absolute;z-index:9;padding:4px 7px;background:var(--fv-card);color:var(--fv-ink);border:1px solid var(--fv-border);border-radius:6px;font-size:12px;white-space:pre;line-height:1.5;pointer-events:none}
-.fv-ed-clip-popover{position:absolute;z-index:10;width:240px;max-width:calc(100% - 16px);padding:10px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-card)}
+.fv-ed-clip-popover{position:absolute;z-index:10;width:280px;max-width:calc(100% - 16px);padding:10px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-card)}
 .fv-ed-clip-popover p{margin:0 0 8px;font-size:13px}
 .fv-ed-clip-popover button{min-height:32px;padding:4px 10px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-raised);cursor:pointer}
+.fv-ed-clip-popover button+button{margin-left:6px}
+.fv-ed-clip-popover{max-height:calc(100% - 16px);overflow:auto}
 .fv-ed-track-view [hidden]{display:none!important}
 @media(max-width:520px){.fv-ed-track-view{--fv-ed-head-width:32px}.fv-ed-track-head span{display:none}.fv-ed-track-zoom{right:8px}.fv-ed-clip-status{left:5px;font-size:11px}}
 @media(forced-colors:active){.fv-ed-clip,.fv-ed-selection,.fv-ed-gesture-preview{border-color:Highlight}.fv-ed-playhead,.fv-ed-snap-line{background:CanvasText}}

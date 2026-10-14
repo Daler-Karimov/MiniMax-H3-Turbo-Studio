@@ -18,6 +18,11 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     host.append(hint, note, input, generate, cancel, resume);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
     input.after(firstFrame.element);
+    const failure = el('div', 'fv-ed-gen-failure fv-result-links'), failureBar = el('div', 'fv-ed-failure-actions fv-actions');
+    const failureReason = el('span', 'fv-ed-failure-reason'); failureReason.setAttribute('role', 'status');
+    const report = el('button', 'fv-ed-failure-report fv-action fv-action-secondary', t('Download diagnostic report', '下载诊断报告')); report.type = 'button';
+    failureBar.append(failureReason, report); failure.append(failureBar); failure.hidden = true; host.append(failure);
+    let failureId = null, downloading = false;
     // Reference pictures for a part that starts fresh: thumbnails and a small "+" before the description.
     const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: actions.error, notify: actions.references.notify}) : null;
     if (references) input.before(references.element);
@@ -25,6 +30,18 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     // Which parts are generating, or how the job ended: a "Queued" line goes once this moves on.
     const progressKey = () => ['done', 'failed', 'cancelled', 'interrupted'].includes(status?.state) ? status.state
         : (status?.blocks || []).filter(block => block.state === 'running').map(block => block.id).join(',');
+    async function downloadFailure(id = failureId) {
+        if (disposed || downloading || id !== failureId) return;
+        downloading = true; report.disabled = true;
+        try {
+            // A failed part offers its report on the part itself; the submit tip then hangs under this line's sentence.
+            await actions.downloadFailureReport?.(id, {bar: failureBar, anchor: report.hidden ? failureReason : report, t,
+                current: () => !disposed && failureId === id && !failure.hidden});
+        } catch (value) {
+            say(t(`Downloading the diagnostic report failed: ${value.message || value}`, `下载诊断报告时出错：${value.message || value}`));
+        } finally { downloading = false; report.disabled = false; }
+    }
+    report.onclick = () => downloadFailure();
     function say(text, queued = false) {
         if (disposed) return;
         queuedAt = text && queued ? progressKey() : null;
@@ -35,6 +52,15 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         if (disposed) return;
         if (queuedAt != null && progressKey() !== queuedAt) say('');
         const current = ++serial, selection = previewSelection || state.selection;
+        const selectedFailure = !previewSelection && actions.selectedFailure?.();
+        if (failureId !== (selectedFailure?.id || null)) {
+            failure.querySelector('.fv-report-tip')?.remove();
+            failureId = selectedFailure?.id || null;
+        }
+        failure.hidden = !selectedFailure;
+        failureReason.textContent = selectedFailure?.text || '';
+        // Only a press that never became a part has no part to carry the report button.
+        report.hidden = selectedFailure?.id !== 'submission';
         const running = ['queued', 'running', 'cancelling'].includes(status?.state);
         const selected = !!selection && (!!previewSelection || (actions.supportedSelection?.() ?? true));
         // While a part generates, choosing another place offers Generate again; it is queued behind.
@@ -98,12 +124,13 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             if (result?.say) say(result.say, !!result.queued);
             if (result?.focus) { pressing.delete(key); render(); input.disabled = false; input.focus(); }
         }
-        // A specific reason has already been said; a general one is added only when there was none.
-        catch (error) { if (!actions.error(error) && !note.textContent) say(t('Could not start. Try again.', '没能开始，请重试。')); }
+        // A specific reason is said once; the planning limits are already shown above.
+        catch (error) { const result = actions.error(error, 'generate'); if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say);
+            else if (!result && !note.textContent) say(t('Could not start. Try again.', '没能开始，请重试。')); }
         finally { pressing.delete(key); render(); }
     };
     cancel.onclick = () => (!previewSelection && actions.selectionHeld?.() ? Promise.resolve(actions.unhold()).then(render) : actions.cancel()).catch(actions.error);
-    resume.onclick = () => actions.resume().catch(actions.error);
+    resume.onclick = () => actions.resume().catch(value => actions.error(value, 'generate'));
     const unsubscribe = state.subscribe(event => {
         if (event.type === 'selection' && state.selection?.kind === 'range') {
             if (state.rangeText === null) state.setRangeText(input.value);
@@ -117,7 +144,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         if (event.type === 'selection' || event.type === 'record') render();
     });
     render();
-    return {element: host, say, getText() { return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
+    return {element: host, say, downloadFailure, getText() { return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
         dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); references?.dispose(); }};
 }
 
