@@ -27,7 +27,10 @@ export function mergeConversations(state, data, status = 200) {
     for (const row of data.conversations) {
         if (typeof row?.id !== 'string' || !row.id || typeof row.title !== 'string' || !row.title.trim() || seen.has(row.id)) continue;
         seen.add(row.id);
+        const cover = typeof row.cover === 'string' && row.cover.startsWith('/') && !row.cover.startsWith('//')
+            && !/[\\\s\u0000-\u001f\u007f]/.test(row.cover) ? row.cover : null;
         conversations.push({id: row.id, title: row.title, updated_at: row.updated_at,
+            cover,
             running: Math.max(0, Math.floor(Number(row.running) || 0))});
         if (conversations.length === 50) break;
     }

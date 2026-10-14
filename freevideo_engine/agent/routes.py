@@ -956,12 +956,32 @@ def register():
     @guarded
     async def chat_list(request):
         def read():
+            from urllib.parse import quote
             store = work_sessions()
             here = chat_session(store)
             rows = store.history(chat['client']) if here else []
-            active = [r.get('session') for r in jobs.rows() if r['status'] in ACTIVE]
+            listed = {row['id'] for row in rows}
+            running, covers = {}, {}
+            # One job snapshot supplies both counts and the first completed video, without reading session logs or files.
+            for job in jobs.rows():
+                sid = job.get('session')
+                if sid not in listed:
+                    continue
+                if job['status'] in ACTIVE:
+                    running[sid] = running.get(sid, 0) + 1
+                if job['status'] != 'succeeded' or job['kind'] == 'image':
+                    continue
+                work = (job.get('result') or {}).get('library_id')
+                if not isinstance(work, str) or not work:
+                    continue
+                finished = job.get('finished_at')
+                order = (finished if finished is not None else job['created_at'], job['created_at'], job['id'])
+                if sid not in covers or order < covers[sid][0]:
+                    covers[sid] = (order, work)
             return dict(agent=agent_state(), here=here,
-                        conversations=[dict(row, running=active.count(row['id'])) for row in rows])
+                        conversations=[dict(row, running=running.get(row['id'], 0),
+                                            cover='/freevideo/library/thumbnail?id=' + quote(covers[row['id']][1], safe='')
+                                            if row['id'] in covers else None) for row in rows])
         return reply(await asyncio.to_thread(read))
 
     @routes.post('/freevideo/agent/chat/new')

@@ -12,6 +12,9 @@
 .fv-studio .fv-chat-conversations button:focus-visible{outline-offset:-2px}
 .fv-studio .fv-chat-conversation[aria-current]{background:var(--fv-raised);border-color:var(--fv-accent-dim)}
 .fv-chat-conversation span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Fit the cover inside the existing row padding without changing the title's line height. */
+.fv-chat-cover{flex:none;width:48px;height:27px;margin-block:-4px;overflow:hidden;border-radius:var(--fv-chats-radius);background:color-mix(in srgb,var(--fv-ink) 7%,transparent)}
+.fv-chat-cover img{display:block;width:100%;height:100%;object-fit:cover}
 /* The row button keeps its full frame; the inset action only takes space from the title. */
 .fv-chat-conversation-row{position:relative;min-width:0;display:flex;align-items:center;border-radius:var(--fv-chats-radius)}
 .fv-chat-conversation-row:is(:hover,:focus-within,[data-menu-open=true]){background:var(--fv-raised)}

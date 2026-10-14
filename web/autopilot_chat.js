@@ -284,12 +284,29 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (!node) {
                 const container = el('div', 'fv-chat-conversation-row');
                 const button = press('fv-chat-conversation', null, () => chooseChat(row.id)), dot = el('i', 'fv-chat-running'), title = el('span');
-                button.dataset.session = row.id; dot.setAttribute('aria-hidden', 'true'); button.append(dot, title);
+                // Every row keeps the cover frame so titles line up whether or not a picture loads.
+                const frame = el('i', 'fv-chat-cover');
+                button.dataset.session = row.id; dot.setAttribute('aria-hidden', 'true'); frame.setAttribute('aria-hidden', 'true');
+                button.append(dot, frame, title);
                 const more = press('fv-chat-more', null, () => openMenu(row.id));
                 more.title = t('More', '更多'); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-controls', menu.id);
                 more.append(glyph('M5 12h.01M12 12h.01M19 12h.01', 3.5));
                 more.addEventListener('focusout', leaveMenu); container.append(button, more);
-                listNodes.set(row.id, node = {row: container, button, dot, title, more});
+                listNodes.set(row.id, node = {row: container, button, dot, frame, title, more, cover: null, image: null});
+            }
+            if (node.cover !== row.cover) {
+                node.image?.remove(); node.image = null; node.cover = row.cover;
+                delete node.row.dataset.coverError;
+                if (row.cover) {
+                    const image = el('img');
+                    image.alt = ''; image.setAttribute('aria-hidden', 'true'); image.loading = 'lazy'; image.decoding = 'async';
+                    image.width = 48; image.height = 27;
+                    image.onerror = () => {
+                        if (node.image !== image) return;
+                        image.hidden = true; node.row.dataset.coverError = 'true';
+                    };
+                    node.image = image; image.src = row.cover; node.frame.append(image);
+                }
             }
             node.row.dataset.temporary = String(!!row.temporary);
             node.title.textContent = row.title; node.button.title = row.title; node.dot.hidden = row.running <= 0;
