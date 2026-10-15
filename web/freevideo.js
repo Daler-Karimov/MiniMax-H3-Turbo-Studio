@@ -73,7 +73,7 @@ function mediaKind(name) {
     throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
 }
 
-const referenceHelp = () => text('When one input receives several images, each counts as one reference.', '一个接口接入多张图片时，每张各算一个参考素材。');
+const referenceHelp = () => text('Each reference image counts as one media item.', '每张参考图片各占一个素材名额。');
 // Input names stay English like every other node's; the panel's chips are translated.
 const referenceSocket = index => `Reference image ${index + 1}`;
 const referenceLabel = index => text(`Reference image ${index + 1}`, `参考图片 ${index + 1}`);
@@ -184,7 +184,7 @@ function mediaPanel(node, mount = null) {
         try {
             outcome = await openImageEditor({source, name: source, target: videoSize(), edit: original.edit || agent?.edit || null, role: original.role,
                 t: text, resolve: viewURL, upload: uploadOne, library, tool});
-        } catch (error) { message(text('The image could not be opened for editing.', '这张图片无法打开编辑。'), true); return; }
+        } catch (error) { message(text('This image cannot be edited right now; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
         if (!outcome) return;
         // The cards may have changed meanwhile; find this one again by its file.
         const rows = read(), at = rows.findIndex(row => row.file === file);
@@ -202,8 +202,8 @@ function mediaPanel(node, mount = null) {
             if (index < 0) return;
             const hasOriginal = outcome.edit.layers.some(layer => layer.id === 'base');
             latest[index] = {...latest[index], file: result.file, ...(hasOriginal ? {source} : {}), edit: outcome.edit}; update(latest);
-            message(hasOriginal ? text(`Saved the edited image, ${outcome.width}×${outcome.height}. The original is kept.`,
-                `已保存编辑后的图片（${outcome.width}×${outcome.height}），原图保留。`) : '');
+            message(hasOriginal ? text('The edited image is saved, and the original is kept.',
+                '编辑后的图片已保存，原图已保留。') : '');
         } catch (error) { message(error.message, true); }
         finally { node.isUploading = false; add.disabled = false; addAudio.disabled = false; }
     }
@@ -215,7 +215,7 @@ function mediaPanel(node, mount = null) {
         try {
             outcome = await openImageEditor({target: videoSize(), role: role.value, t: text,
                 resolve: viewURL, upload: uploadOne, library});
-        } catch { message(text('The image could not be opened for editing.', '这张图片无法打开编辑。'), true); return; }
+        } catch { message(text('This image cannot be edited right now; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
         if (!outcome?.blob || read().length >= 32) return;
         node.isUploading = true; add.disabled = addAudio.disabled = generateImage.disabled = true;
         try {
@@ -252,8 +252,8 @@ function mediaPanel(node, mount = null) {
         const audioRefs = active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'audio').length + Number(linked('reference_audio'));
         const refs = active.filter(row => row.role === "reference").length + referenceInputs.filter(linked).length + Number(linked('reference_audio'));
         audioHelp.hidden = !audioRefs;
-        audioHelp.textContent = text('Use <Audio 1>, <Audio 2>, … in your prompt to guide the generated voice, music or rhythm. A clip is cut to the generated length, up to 15 seconds. Set accompanying images to Reference.',
-            '在提示词中用 <Audio 1>、<Audio 2> 等标签引导生成的音色、音乐或节奏。片段只取与生成视频等长的部分，最长 15 秒；搭配的图片请选择“参考”用途。');
+        audioHelp.textContent = text('Use <Audio 1>, <Audio 2> in your prompt to guide voice, music or rhythm; up to the first 15 s is used. Set accompanying images to Reference.',
+            '在提示词里用 <Audio 1>、<Audio 2> 参考音色、音乐或节奏，最多取前 15 秒；搭配的图片选“参考”。');
         connections.replaceChildren();
         for (const [name, label] of [['first', text('First frame', '首帧')], ['last', text('Last frame', '尾帧')], ...referenceInputs.map((name, index) => [name, referenceLabel(index)]), ['reference_audio', text('Reference audio', '参考音频')]]) {
             if (!linked(name)) continue;
@@ -263,9 +263,9 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
+        message(refs > 32 ? text('There are more than 32 references; remove some before generating.', '参考素材超过 32 个，可移除部分后再生成。') : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Drop or paste files, or connect images and audio on the left.", "可拖入、粘贴文件，或连接左侧的图片和音频。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
         if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
-        if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media will come from the connected nodes.\nNo upload is needed.', '素材由已连接的节点提供。\n无需上传文件。'), 'fv-connected-card'));
+        if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media comes from the connected inputs; no upload is needed.', '素材来自已连接的输入，无需上传。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
             const card = el("div", undefined, "fv-card"); card.dataset.enabled = String(row.enabled !== false);
             const top = el("div", undefined, "fv-row");
@@ -315,8 +315,8 @@ function mediaPanel(node, mount = null) {
                 const length = el("div", "", "fv-note"); length.hidden = true; card.append(length);
                 preview.onloadedmetadata = () => {
                     if (!(preview.duration > 15.05) || !Number.isFinite(preview.duration)) return;
-                    length.textContent = text(`${preview.duration.toFixed(1)} s: cut to the generated length when used, at most the first 15 s`,
-                        `时长 ${preview.duration.toFixed(1)} 秒：生成时按视频时长截取前段，最多前 15 秒`);
+                    length.textContent = text(`Audio length: ${preview.duration.toFixed(1)} s; uses up to the first 15 s within the video length.`,
+                        `音频长 ${preview.duration.toFixed(1)} 秒，最多取前 15 秒且不超过视频时长。`);
                     length.hidden = false;
                 };
             }
@@ -487,13 +487,13 @@ function resultPanel(node) {
         const size = onGPU ? ` · ${(value.gpu_bytes_after / 2 ** 30).toFixed(1)} GiB` : '';
         const percent = ` · ${Math.min(100, Math.floor(100 * value.done_bytes / value.bytes))}%`;
         note.textContent = value.purpose === 'upscale'
-            ? (value.state === 'reading' ? text('Preparing the files the second pass reads', '正在预读二采要用的模型文件') + percent
-                : value.state === 'ready' ? text('Second-pass files warmed · no VRAM reserved', '二采要用的模型文件已预热 · 不占用显存') : '')
-            : value.state === 'loading' ? text('Preparing text encoder on GPU in background', '正在后台预加载文本编码器到 GPU') + size
-            : value.state === 'partial' ? text('Text encoder partially prepared on GPU', '文本编码器已部分预加载到 GPU') + size
-            : value.state === 'reading' ? text('Preparing encoder files', '正在预读编码器文件') + percent
-            : value.state === 'ready' ? (onGPU ? text('Text encoder ready on GPU', '文本编码器已在 GPU 就绪') + size
-                : text('Encoder files warmed · no VRAM reserved', '编码器文件已预热 · 不占用显存')) : '';
+            ? (value.state === 'reading' ? text('Preparing model files', '正在准备模型文件') + percent
+                : value.state === 'ready' ? text('Model files ready', '模型文件已就绪') : '')
+            : value.state === 'loading' ? text('Preparing the prompt model', '正在准备提示词模型') + size
+            : value.state === 'partial' ? text('Prompt model still preparing', '提示词模型仍在准备') + size
+            : value.state === 'reading' ? text('Preparing the prompt model', '正在准备提示词模型') + percent
+            : value.state === 'ready' ? (onGPU ? text('Prompt model ready', '提示词模型已就绪') + size
+                : text('Prompt model ready', '提示词模型已就绪')) : '';
         node.freevideoPrewarm = note.textContent;
         window.dispatchEvent(new CustomEvent('freevideo-prewarm', {detail: {node: node.id, label: note.textContent}}));
     };
@@ -520,7 +520,7 @@ function resultPanel(node) {
             links.append(link);
         }
         links.append(shareButton(value, text));
-        links.append(el("span", value.result_cache_hit ? text("Reused previous result", "已复用上次结果") : value.conditioning_cache_hit ? text("Input cache reused", "已复用输入缓存") : text("Inputs encoded", "已编码输入"), "fv-mode"));
+        links.append(el("span", value.result_cache_hit ? text("Reused previous result", "已复用上次结果") : value.conditioning_cache_hit ? text("Previous inputs reused", "已使用上次的输入") : text("Inputs ready", "输入已准备好"), "fv-mode"));
         if (value.preview) {
             links.append(secondPassAction(text, async () => {
                 try { await node.freevideoUpscaleResult(value); }
@@ -538,7 +538,7 @@ function resultPanel(node) {
         }
         panel.append(stats, links, progress.stall, progress.report);
         for (const row of value.reference_trims || []) panel.append(el("div", referenceTrimText(row, text), "fv-note fv-trim-note"));
-        if (value.low_memory && !value.result_cache_hit) resultNotes.push(el("div", text('This video used the low-memory mode for this GPU, so it took longer than usual. A lower resolution or a shorter video runs faster.', '这段视频使用了省显存方式，所以比平时慢。降低分辨率或缩短时长会更快。'), "fv-note"));
+        if (value.low_memory && !value.result_cache_hit) resultNotes.push(el("div", text('Generation was slow; try a lower resolution or shorter video.', '生成较慢，可降低分辨率或缩短时长后再试。'), "fv-note"));
         if (value.thermal && !value.result_cache_hit) resultNotes.push(el("div", thermalText(value.thermal, text), "fv-note"));
         const shared = value.shared_gpu && !value.result_cache_hit ? sharedGpuText(value.shared_gpu, text) : '';
         if (shared) resultNotes.push(el("div", shared, "fv-note"));
@@ -550,9 +550,6 @@ function resultPanel(node) {
         }
         panel.append(...resultNotes);
         warn();
-        panel.title = (unified
-            ? text("Unified memory: device capacity. Process RAM is not total GPU memory, ", "统一内存为设备总量；进程内存不代表 GPU 内存总占用，")
-            : text("VRAM: engine allocator peak. RAM: measured request processes, ", "显存为引擎分配器峰值，内存为请求进程实测，")) + (value.ram_metric || "unknown");
         fitPanel();
     };
     node.freevideoUpscaleResult = createSecondPassQueue(api, () => node.id, async () => cleanOptionalPrompt(await app.graphToPrompt()));
@@ -662,7 +659,7 @@ app.registerExtension({
             return;
         }
         if (!["FreeVideoMedia", "FreeVideoGenerate", "FreeVideoLoRAStack"].includes(nodeData.name)) return;
-        if (nodeData.name === "FreeVideoGenerate") nodeType.prototype.freevideoStarterPrompt = nodeData.input?.required?.text?.[1]?.default || '';
+        if (nodeData.name === "FreeVideoGenerate") { const spec = nodeData.input?.required?.text?.[1] || {}; nodeType.prototype.freevideoStarterPrompt = spec.default || ''; nodeType.prototype.freevideoStarterShown = spec.placeholder || spec.default || ''; }
         const created = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const result = created?.apply(this, arguments);
@@ -689,15 +686,15 @@ app.registerExtension({
                 if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
-                    quality.label = text('Two-pass acceleration', '二次采样加速');
-                    quality.tooltip = text('Usually faster: generate at a lower resolution, then upscale and finish sampling at the target size.', '通常更快：先以低分辨率生成，再放大到目标分辨率完成采样，缩短生成时间。');
+                    quality.label = text('Two-step generation', '两步生成');
+                    quality.tooltip = text('Usually faster: generates at a lower resolution, then upscales and refines.', '通常更快：先用低分辨率生成，再放大细化。');
                 }
-                for (const [name, en, zh] of [['base_steps', 'First-pass steps', '一采步数'], ['refine_steps', 'Second-pass steps', '二采步数']]) {
+                for (const [name, en, zh] of [['base_steps', 'First-pass steps', '首轮步数'], ['refine_steps', 'Refine steps', '细化步数']]) {
                     const steps = this.widgets?.find(w => w.name === name);
                     if (steps) {
                         steps.label = text(en, zh);
-                        steps.tooltip = text('Changing sampling steps may reduce generation quality. Defaults: 8 + 3. Other second-pass counts must be fewer than first-pass steps.',
-                            '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；其他二采步数需小于一采步数。');
+                        steps.tooltip = text('Changing steps may lower quality. Default: 8 first-pass and 3 refine steps; refine steps must be fewer.',
+                            '修改步数可能降低质量。默认首轮 8 步、细化 3 步；细化步数要少于首轮。');
                     }
                 }
                 for (const widget of this.widgets || []) {

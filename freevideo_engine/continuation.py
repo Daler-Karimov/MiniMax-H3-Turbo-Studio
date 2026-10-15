@@ -35,7 +35,7 @@ SIZE_MISMATCH = 'Use the same width and height as the previous video.'
 # Every refusal starts with UNSUPPORTED, then says what to change.
 UNSUPPORTED = 'Continue from video cannot be used with these settings.'
 UNSUPPORTED_DEVICE = UNSUPPORTED + ' Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".'
-UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on "Two-pass acceleration" and turn off the first-pass preview.'
+UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on "Two-step generation" and turn off the first-pass preview.'
 UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear either "Second pass of preview" or "Continue from video".'
 UNSUPPORTED_MEDIA = UNSUPPORTED + ' Connect up to 3 pictures as references, and remove video, audio and pre-encoded inputs.'
 # A continued part keeps the cast's pictures, one per person and at most three people in a frame.

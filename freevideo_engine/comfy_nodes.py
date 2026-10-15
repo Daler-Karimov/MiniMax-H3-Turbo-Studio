@@ -6,7 +6,7 @@ from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
 from . import comfy_bridge
 from .comfy_continuation import optional_text, request_options
-from .default_prompt import DEFAULT_PROMPT
+from .default_prompt import DEFAULT_PROMPT, DEFAULT_PROMPT_DISPLAY
 
 References = io.Custom('FREEVIDEO_REFERENCES')
 LoRAs = io.Custom('FREEVIDEO_LORAS')
@@ -22,7 +22,7 @@ class FreeVideoGenerate(io.ComfyNode):
             description='Generate a video with audio using your FreeVideo installation. Memory placement, '
                         'caches and validated optimizations are automatic. Outputs and diagnostics are retained.',
             inputs=[
-                io.String.Input('text', display_name='Prompt', multiline=True, default=DEFAULT_PROMPT,
+                io.String.Input('text', display_name='Prompt', multiline=True, default=DEFAULT_PROMPT, placeholder=DEFAULT_PROMPT_DISPLAY,
                     tooltip='Describe the scene, motion, dialogue, sound and music.'),
                 io.Int.Input('width', default=1344, min=256, max=4096, step=32),
                 io.Int.Input('height', default=768, min=256, max=4096, step=32),
@@ -42,7 +42,7 @@ class FreeVideoGenerate(io.ComfyNode):
                             'When it is connected, the prompt and media inputs are not used. '
                             'Conditioning from generic CLIP nodes is rejected.'),
                 Media.Input('media', optional=True, tooltip='Unified Media panel: keyframes or ordered references.'),
-                io.Boolean.Input('two_pass', display_name='Two-pass acceleration', default=True, optional=True,
+                io.Boolean.Input('two_pass', display_name='Two-step generation', default=True, optional=True,
                     tooltip='Usually faster: generate at a lower resolution, then upscale and finish sampling at the target size.'),
                 io.Int.Input('base_steps', display_name='First-pass steps', default=8, min=1, max=32, optional=True,
                     tooltip='Default: 8. Changing sampling steps may reduce generation quality.'),
@@ -50,8 +50,8 @@ class FreeVideoGenerate(io.ComfyNode):
                     tooltip='Default: 3. Three steps use the independent refinement schedule. Changing sampling steps may reduce generation quality.'),
                 io.Boolean.Input('force_regenerate', display_name='Force regeneration', default=False, optional=True,
                     tooltip='Generate again even when an identical completed video is saved locally.'),
-                io.Boolean.Input('preview', display_name='Two-pass: preview first pass', default=False, optional=True,
-                    tooltip='Part of two-pass acceleration: pause after the half-resolution first pass and save it as a preview. '
+                io.Boolean.Input('preview', display_name='Two-step: preview first', default=False, optional=True,
+                    tooltip='Part of two-step generation: pause after the half-resolution first pass and save it as a preview. '
                             'Run the second pass from the result when it looks right; it continues from the same latents.'),
                 io.String.Input('refine_from', display_name='Second pass of preview', default='', optional=True, advanced=True,
                     socketless=True, tooltip='Set by the Run second pass button: the preview video to continue. '
@@ -92,7 +92,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 from .two_pass import validate_steps
                 validate_steps(base_steps, refine_steps, two_pass)
                 if preview and not two_pass:
-                    return 'Preview first needs two-pass acceleration.'
+                    return 'Preview first needs two-step generation.'
             comfy_bridge.installation()
         except (OSError, ValueError, KeyError) as error:
             from .continuation import UNSUPPORTED
@@ -123,7 +123,7 @@ class FreeVideoGenerate(io.ComfyNode):
         notes = []
         if options.get('continue_from') and not two_pass:
             two_pass = True
-            notes.append('Continuing a video needs "Two-pass acceleration", so it is on for this part.')
+            notes.append('Continuing a video needs "Two-step generation", so it is on for this part.')
         if options.get('continue_from') and preview:
             preview = False
             notes.append('A continued part is made in full, without stopping at the preview.')

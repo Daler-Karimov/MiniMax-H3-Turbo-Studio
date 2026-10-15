@@ -492,12 +492,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
     syncReferencePrompt(node, t);
     // An untouched node shows its starter prompt as a placeholder and generates it.
     // Once something was typed, an emptied box stays empty and asks for a scene.
-    const starter = node.freevideoStarterPrompt || '';
+    const starter = node.freevideoStarterPrompt || '', starterShown = node.freevideoStarterShown || starter;
     const untouched = () => Boolean(starter) && value(node, 'text') === starter;
     const shown = text => starter && text === starter ? '' : String(text || '');
     const prompt = el('textarea'); prompt.value = shown(value(node, 'text')); prompt.setAttribute('aria-label', t('Prompt', '提示词'));
     prompt.dataset.fvGuide = 'describe';
-    const placeholder = () => { prompt.placeholder = extension.source ? extendText(t, 'prompt') : untouched() ? starter : t('Describe the scene… Type @ to reference media', '描述画面… 输入 @ 引用素材'); };
+    const placeholder = () => { prompt.placeholder = extension.source ? extendText(t, 'prompt') : untouched() ? starterShown : t('Describe the scene… Type @ to reference media', '描述画面… 输入 @ 引用素材'); };
     placeholder();
     prompt.disabled = linked(node, 'text'); prompt.oninput = () => { set(node, 'text', prompt.value); placeholder(); };
     const promptEditor = el('div', null, 'fv-prompt-editor'); promptEditor.append(prompt);
