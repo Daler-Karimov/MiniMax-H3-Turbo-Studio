@@ -244,6 +244,14 @@ def create_ui(session, *, show=True):
             self.invoke(session.remove_folder, index)
 
         @Slot(str)
+        def setLanPassword(self, value):
+            self.invoke(session.change_lan_password, value)
+
+        @Slot()
+        def removeLanPassword(self):
+            self.invoke(session.change_lan_password, None)
+
+        @Slot(str)
         def copy(self, value):
             app.clipboard().setText(value)
 

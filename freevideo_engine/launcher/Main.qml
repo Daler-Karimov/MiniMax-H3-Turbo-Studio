@@ -15,6 +15,9 @@ ApplicationWindow {
     Connections { target: backend; function onChanged() { win.s = backend.state } }
     property bool settingsOpen: false
     property bool terminalOpen: false
+    property bool lanPasswordEditing: false
+    function firstLanLink() { return s.access_links && s.access_links.length ? s.access_links[0] : "" }
+    property bool lanPasswordShown: false
     property bool confirmArchives: false  // the in-place "delete the imported ZIPs?" step
     property bool archivesExpanded: false
     property string settingsTab: "downloads"
@@ -1106,10 +1109,35 @@ ApplicationWindow {
                             Layout.fillWidth: true; title: t("Local network", "局域网")
                             FSwitch { objectName: "lanAccessSwitch"; Layout.fillWidth: true; text: t("LAN access", "局域网访问"); checked: !!s.form.lan_access; enabled: !s.busy; onToggled: backend.edit("lan_access", checked) }
                             FText { objectName: "lanAccessMessage"; text: s.lan_message || ""; visible: !!text; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                            FText { objectName: "lanAccessHint"; text: t("When on, other devices on the same network can open FreeVideo with the link below. Anyone with the link can use it, so keep it private.", "开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。拿到链接的人都能使用，请勿公开。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                            FText { objectName: "lanFirewallHint"; visible: Qt.platform.os === "windows"; text: t("If Windows asks about the firewall the first time, choose Allow.", "Windows 首次询问防火墙权限时，请选择“允许”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "lanAccessHint"; text: s.lan_password_set ? t("When on, other devices on the same network can open FreeVideo with the link below and enter the password the first time.", "开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo，第一次打开时要输入密码。") : t("When on, other devices on the same network can open FreeVideo with the link below. Anyone with the link can use it, so keep it private.", "开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。拿到链接的人都能使用，请勿公开。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            // The Chinese line breaks after the comma, keeping the second half whole.
+                            Flow {
+                                objectName: "lanFirewallHint"
+                                visible: Qt.platform.os === "windows" && !!s.form.lan_access && !(s.lan_qr && s.lan_qr.length > 0)
+                                Layout.fillWidth: true
+                                FText { text: t("Windows will ask for permission. Check \"Private networks\", then click \"Allow access\".", "Windows 会弹出确认框，"); color: theme.muted; font.pixelSize: theme.micro; width: Math.min(implicitWidth, parent.width); wrapMode: Text.WordWrap }
+                                FText { text: "请勾选“专用网络”，再点“允许访问”。"; visible: s.zh; color: theme.muted; font.pixelSize: theme.micro; width: Math.min(implicitWidth, parent.width); wrapMode: Text.WordWrap }
+                            }
+                            GridLayout {
+                                id: lanQrRow; objectName: "lanQrRow"
+                                visible: !!s.lan_qr && s.lan_qr.length > 0
+                                Layout.fillWidth: true; columnSpacing: 16; rowSpacing: 12
+                                // The minimum launcher width stacks the code above its text.
+                                columns: width < 460 ? 1 : 2
+                                FQrCode { objectName: "lanQr"; rows: s.lan_qr || []; Layout.alignment: Qt.AlignTop }
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 10
+                                    FText { objectName: "lanQrHint"; text: t("Connect your phone to the same Wi-Fi, then scan with its camera. You can also copy the link to another device.", "手机连同一个 Wi-Fi 后用相机扫码，也可以复制链接到其他设备打开。"); Layout.fillWidth: true }
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 8
+                                        FField { objectName: "lanQrLink"; Layout.fillWidth: true; readOnly: true; text: firstLanLink(); onTextChanged: cursorPosition = 0; Component.onCompleted: cursorPosition = 0 }
+                                        FButton { objectName: "lanQrCopy"; text: t("Copy link", "复制链接"); onClicked: backend.copy(firstLanLink()) }
+                                    }
+                                }
+                            }
                             Repeater {
-                                model: s.access_links || []
+                                // More than one network address: the others stay available.
+                                model: (s.access_links || []).slice(1)
                                 delegate: RowLayout {
                                     required property string modelData
                                     Layout.fillWidth: true; spacing: 8
@@ -1117,6 +1145,55 @@ ApplicationWindow {
                                     FButton { text: t("Copy link", "复制链接"); onClicked: backend.copy(modelData) }
                                 }
                             }
+                            FDivider { visible: lanPasswordRow.visible }
+                            ColumnLayout {
+                                id: lanPasswordRow; objectName: "lanPasswordRow"
+                                onVisibleChanged: if (!visible) lanPasswordEditing = false
+                                visible: !!s.form.lan_access && !!s.lan_password_available
+                                Layout.fillWidth: true; spacing: 10
+                                GridLayout {
+                                    Layout.fillWidth: true; columnSpacing: 12; rowSpacing: 8
+                                    columns: width < 460 ? 1 : 2
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        FText { text: t("Password", "密码"); Layout.fillWidth: true }
+                                        FText { text: t("Optional. Once set, other devices enter it the first time they open FreeVideo. Not needed on this computer.", "可选。设置后，其他设备第一次打开时要输入，本机不用。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                                    }
+                                    RowLayout {
+                                        visible: !lanPasswordEditing
+                                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter; spacing: 8
+                                        FText { objectName: "lanPasswordStatus"; text: s.lan_password_set ? t("On", "已设置") : t("Not set", "未设置"); color: theme.muted }
+                                        FButton { objectName: "lanPasswordSet"; visible: !s.lan_password_set; text: t("Set password", "设置密码"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: !lanPasswordEditing; onClicked: { lanPasswordEditing = true; lanPasswordShown = false; lanPasswordInput.text = ""; lanPasswordInput.forceActiveFocus() } }
+                                        FButton { objectName: "lanPasswordChange"; visible: s.lan_password_set; text: t("Change", "修改"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: !lanPasswordEditing; onClicked: { lanPasswordEditing = true; lanPasswordShown = false; lanPasswordInput.text = ""; lanPasswordInput.forceActiveFocus() } }
+                                        FButton { objectName: "lanPasswordRemove"; visible: s.lan_password_set; text: t("Remove", "移除"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: { lanPasswordEditing = false; backend.removeLanPassword() } }
+                                    }
+                                }
+                                GridLayout {
+                                    objectName: "lanPasswordEditor"
+                                    visible: lanPasswordEditing; Layout.fillWidth: true; columnSpacing: 8; rowSpacing: 8
+                                    columns: width < 460 ? 1 : 2
+                                    FField {
+                                        id: lanPasswordInput; objectName: "lanPasswordField"; Layout.fillWidth: true
+                                        echoMode: lanPasswordShown ? TextInput.Normal : TextInput.Password
+                                        rightPadding: 40
+                                        Accessible.name: t("Password", "密码")
+                                        onAccepted: if (text.length >= (s.lan_password_min || 6)) lanPasswordSave.clicked()
+                                        FButton {
+                                            objectName: "lanPasswordEye"; flat: true; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                            width: 36; height: parent.height - 8; leftPadding: 0; rightPadding: 0
+                                            Accessible.name: lanPasswordShown ? t("Hide", "隐藏") : t("Show", "显示")
+                                            contentItem: FIcon { kind: lanPasswordShown ? "eyeoff" : "eye"; ink: theme.muted; implicitWidth: 16; implicitHeight: 16 }
+                                            onClicked: lanPasswordShown = !lanPasswordShown
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter; spacing: 8
+                                        FButton { objectName: "lanPasswordCancel"; text: t("Cancel", "取消"); onClicked: { lanPasswordEditing = false; lanPasswordInput.text = "" } }
+                                        FButton { id: lanPasswordSave; objectName: "lanPasswordSave"; primary: true; text: t("Save", "保存"); enabled: lanPasswordInput.text.length >= (s.lan_password_min || 6); onClicked: { backend.setLanPassword(lanPasswordInput.text); lanPasswordInput.text = ""; lanPasswordEditing = false } }
+                                    }
+                                }
+                            }
+                            FText { objectName: "lanRemedyHint"; visible: Qt.platform.os === "windows" && !!s.form.lan_access; text: t("Phone can't open it? Set this computer's Wi-Fi to \"Private\", then in Windows Security allow Python on private networks under \"Allow an app through firewall\".", "手机打不开？请把电脑连的 Wi-Fi 设为“专用网络”，并在 Windows 安全中心的“允许应用通过防火墙”里勾选 Python 的“专用”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         }
                         FGroup {
                             Layout.fillWidth: true; title: t("Storage", "存储")
@@ -1217,8 +1294,8 @@ ApplicationWindow {
                         FGroup {
                             Layout.fillWidth: true; title: t("ComfyUI address", "ComfyUI 地址")
                             FField { objectName: "listenAddress"; Layout.fillWidth: true; value: s.form.url; enabled: !s.form.lan_access; onEditingFinished: backend.edit("url", text) }
-                            FText { objectName: "listenAddressHint"; text: t("With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.", "填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                            FText { visible: Qt.platform.os === "windows"; text: t("If Windows asks about the firewall the first time, choose Allow.", "Windows 首次询问防火墙权限时，请选择“允许”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "listenAddressHint"; text: s.lan_password_set ? t("With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the password.", "填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不用密码就能打开 FreeVideo。") : t("With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.", "填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { visible: Qt.platform.os === "windows"; text: t("Windows will ask for permission. Check \"Private networks\", then click \"Allow access\".", "Windows 会弹出确认框，请勾选“专用网络”，再点“允许访问”。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                         }
                         FGroup {
                             Layout.fillWidth: true; title: t("Folders · optional", "目录 · 可选"); enabled: !s.portable

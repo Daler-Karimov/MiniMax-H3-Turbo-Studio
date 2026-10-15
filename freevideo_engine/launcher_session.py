@@ -1,5 +1,6 @@
 """Widget-independent state for the Qt launcher; uses the existing installer."""
 from copy import deepcopy
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -42,6 +43,15 @@ ARCHIVE_FAILURES = {
 }
 
 
+
+@lru_cache(maxsize=4)
+def _qr_rows(text):
+    from .qr_code import encode
+    try:
+        return [''.join('1' if cell else '0' for cell in row) for row in encode(text)]
+    except ValueError:
+        return []
+
 class Session:
     # A launcher started from an offline package (portable_launcher.PortableSession).
     bundled = False
@@ -62,6 +72,7 @@ class Session:
     release_details = None
     adaln_thread = adaln_result = adaln_found = None
     adaln_polled = 0.
+    lan_synced = 0.
     adaln_hidden = adaln_retry = False
     # The source whose earlier copies were removed once ComfyUI ran it.
     old_versions_retired = None
@@ -1541,9 +1552,25 @@ class Session:
                                  self.t('Try again', '再试一次') if self.adaln_retry else self.t('Delete', '删除')),
                     later_text=self.t('Not now', '暂不删除'))
 
+    def sync_lan_from_store(self):
+        """Follow a LAN switch changed from the page's phone panel (it writes the shared settings)."""
+        now = time.monotonic()
+        if now - self.lan_synced < RECEIPT_POLL_SECONDS or not self.selected:
+            return
+        if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
+            return  # edit() would refuse and tell the user the app is busy; follow the store once it is idle
+        self.lan_synced = now
+        saved = self.store.read().get('installation') or {}
+        if (saved.get('root') != self.selected.get('root') or saved.get('engine') != self.selected.get('engine')
+                or type(saved.get('lan_access')) is not bool):
+            return
+        if saved['lan_access'] != (self.form.get('lan_access') is True):
+            self.edit('lan_access', saved['lan_access'])
+
     def tick(self):
         if isinstance(self.controller, Controller) and not self.controller.busy:
             self.controller.poll_access_proxy()
+            self.sync_lan_from_store()
         self._finish_archives()
         imported = self.importer.state
         if not self.importer.busy and imported is not self.imported_batch:
@@ -1880,6 +1907,46 @@ class Session:
                      terms=self.t(*value['terms']) if value['terms'] else '', url=value['link'], file=is_file(value['link']))
                 for value in rows or [MODEL]]
 
+    def lan_qr_rows(self):
+        """The first access link as rows of '0'/'1' for the settings page to draw."""
+        links = self.controller.access_links
+        if self.controller.state.get('status') != 'open' or not isinstance(links, list) or not links:
+            return []
+        return _qr_rows(str(links[0]))
+
+    def lan_password_state(self):
+        """(supported, set) for the optional LAN password; unsupported without the access module."""
+        engine = (self.controller.selection or {}).get('engine')
+        try:
+            from . import lan_password
+            return True, bool(engine) and bool(lan_password.is_set(engine))
+        except (ImportError, OSError):
+            return False, False
+
+    def lan_password_min(self):
+        try:
+            from . import lan_password
+            return int(getattr(lan_password, 'MIN_LENGTH', 6))
+        except (ImportError, OSError, TypeError, ValueError):
+            return 6
+
+    def change_lan_password(self, text=None):
+        """Set or change the password (text), or remove it (None). Other devices must sign in again."""
+        engine = (self.controller.selection or {}).get('engine')
+        if not engine:
+            return
+        from . import lan_password
+        if text is None:
+            lan_password.remove(engine)
+        else:
+            text = str(text)
+            least = self.lan_password_min()
+            if len(text) < least:
+                raise ValueError(self.t('Use at least %d characters.' % least, '至少 %d 个字符。' % least))
+            lan_password.set_password(engine, text)
+        # The links change with the password; do not wait for the next poll.
+        self.controller.access_polled = 0
+
     def snapshot(self):
         from .failure_details import REPAIR_KINDS, launcher_failure, redacted_launcher_error, display_launcher_error
         from .launcher_copy import display, progress_view, source_name
@@ -2093,6 +2160,8 @@ class Session:
             url=(self._browser_url(row.get('url', '')) if row.get('status') == 'open' else ''), shortcut=shortcut,
             access_links=(list(self.controller.access_links) if row.get('status') == 'open'
                           and isinstance(self.controller.access_links, list) else []),
+            lan_qr=self.lan_qr_rows(), lan_password_set=self.lan_password_state()[1],
+            lan_password_available=self.lan_password_state()[0], lan_password_min=self.lan_password_min(),
             lan_message=(self.t('LAN access has stopped. Turn it on again.', '局域网访问已停止，请重新开启。')
                          if row.get('lan_status') == 'stopped' else
                          self.t('No LAN address found. Connect to Wi-Fi or a wired network first.', '未找到局域网地址，请先连接 Wi-Fi 或有线网络。')
