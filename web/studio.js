@@ -16,7 +16,7 @@ import { animateDetails, closeDialog } from './motion.js';
 import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
-import { createStudioQueue, randomSeed } from './studio_queue.js';
+import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
@@ -1346,6 +1346,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (!extension.source && !prompt.disabled && !prompt.value.trim() && !untouched()) { prompt.focus(); status.textContent = t('Describe your scene first.', '请先描述画面。'); return; }
         const chosenMode = runMode, batchCount = chosenMode === 'batch' ? Number(count.value) : 1;
         const originalSeed = value(node, 'seed'), seedMode = mode.value;
+        // A request that is not accepted leaves the node mode as the user had it; a retry turns it on again.
+        // Once the server has taken a request it stays taken; only a request it never took is undone.
+        let held = null, accepted = false;
+        const onAccepted = () => { accepted = true; };
         try {
             lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
             capturing = true; updateRunButton(); status.dataset.error = 'false'; runOptions.open = false;
@@ -1364,6 +1368,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             // Only serialization briefly locks the editor. Network submission
             // and all GPU execution leave the next draft fully editable.
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = true;
+            held = turnNodeOn(node);
             const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(structuredClone(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
             if (!snapshot) { status.textContent = t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。'); return; }
@@ -1371,11 +1376,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;
             if (lengthPlan?.count > 1) {
-                const chain = await chainController.start(snapshot, lengthOptions);
+                const chain = await chainController.start(snapshot, lengthOptions, {onAccepted});
                 if (disposed) return;
                 if (!chain) { if (source) throw new Error(extendText(t, 'unavailable')); lengthControl.fallback(); if (!seconds.reportValidity()) return;
-                    await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex}); }
-            } else await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex});
+                    await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted}); }
+            } else await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted});
             // Preserve draft changes made while the POST was in flight.
             if (chosenMode === 'single' && !linked(node, 'seed') && value(node, 'seed') === originalSeed) {
                 const max = Number.MAX_SAFE_INTEGER;
@@ -1384,9 +1389,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
                     ? (originalSeed <= 0 ? max : originalSeed - 1) : originalSeed;
                 set(node, 'seed', next); seed.value = next;
             }
-            if (!queueController.state().error) status.textContent = '';
+            if (!queueController.state().error) status.textContent = held
+                ? t('The FreeVideo node was off in Nodes view. It has been turned back on.', 'FreeVideo 节点在节点视图里是关闭的，已自动打开。') : '';
         } catch (error) { showQueueError(createErrorReport(error, {stage: 'submission', node, graph: app.graph})); }
         finally {
+            if (accepted) held?.done(); else held?.restore();
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;
             updateRunButton();

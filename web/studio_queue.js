@@ -3,6 +3,35 @@
 import {fetchQueueRead, detectBrowserExtension} from './browser_extension.js';
 const clone = value => structuredClone(value);
 
+// ComfyUI leaves a muted (2) or bypassed (4) node out of the request. The creation panel is where
+// the node is used, so a request from it turns the node back on; true when it was off.
+export function enableNode(node) {
+    // Every request that wants the node on takes over from an earlier request's claim on its mode,
+    // whether or not the node still needs switching.
+    if (node) node.freevideoNodeOn = null;
+    if (node?.mode !== 2 && node?.mode !== 4) return false;
+    node.mode = 0;
+    node.graph?.change?.(); node.setDirtyCanvas?.(true, true);
+    return true;
+}
+
+// Like enableNode, for a request that may still fail: restore() puts the user's mode back, but only
+// if nothing else has touched the node since (a hand edit, another request) and only once.
+export function turnNodeOn(node) {
+    const prior = node?.mode;
+    if (!enableNode(node)) return null;
+    const token = node.freevideoNodeOn = {};
+    const release = () => { if (node.freevideoNodeOn === token) { node.freevideoNodeOn = null; return true; } return false; };
+    return {
+        done: release,
+        restore() {
+            if (!release() || node.mode !== 0) return;
+            node.mode = prior;
+            node.graph?.change?.(); node.setDirtyCanvas?.(true, true);
+        },
+    };
+}
+
 // Repeat the completed request, not an editor draft changed while it was running.
 // Comfy's local history owns the prompt/media graph; no new server endpoint.
 export async function regenerateResult(api, nodeId, result, currentPrompt) {
@@ -152,6 +181,7 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
             throw formatError(error, prompt);
         }
         remember(reply.prompt_id);
+        session.onAccepted?.();
         if (session.repeat) {
             session.waiting = reply.prompt_id;
             // Stop may be clicked while the server is acknowledging submission.
@@ -199,13 +229,13 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
         })().catch(error => { fail(error); throw error; }).finally(() => { refreshing = null; schedule(); });
         return refreshing;
     }
-    async function start(snapshot, {count = 1, repeat = false, seedIndex = -1} = {}) {
+    async function start(snapshot, {count = 1, repeat = false, seedIndex = -1, onAccepted = null} = {}) {
         if (submitting) throw new Error('submitting');
         if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('invalid_count');
         if (repeat && loop?.active) throw new Error('loop_active');
         if (!snapshot.output?.[nodeId]) throw new Error('missing_node');
         if ((repeat || count > 1) && !Number.isSafeInteger(snapshot.output[nodeId].inputs.seed)) throw new Error('linked_seed');
-        const session = {snapshot: clone(snapshot), seedIndex, repeat, active: repeat, completed: 0, waiting: null, sending: true};
+        const session = {snapshot: clone(snapshot), seedIndex, repeat, active: repeat, completed: 0, waiting: null, sending: true, onAccepted};
         if (repeat) loop = session;
         submitting = true; lastError = null; publish();
         try {

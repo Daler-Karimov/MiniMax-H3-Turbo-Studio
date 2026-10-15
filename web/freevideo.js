@@ -17,7 +17,7 @@ import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
 import { cleanOptionalWidgets, cleanOptionalPrompt, optionalInputValue } from './optional_inputs.js';
-import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
+import { regenerateResult, createSecondPassQueue, enableNode } from './studio_queue.js';
 import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
@@ -552,11 +552,11 @@ function resultPanel(node) {
         warn();
         fitPanel();
     };
-    node.freevideoUpscaleResult = createSecondPassQueue(api, () => node.id, async () => cleanOptionalPrompt(await app.graphToPrompt()));
+    node.freevideoUpscaleResult = createSecondPassQueue(api, () => node.id, async () => { enableNode(node); return cleanOptionalPrompt(await app.graphToPrompt()); });
     node.freevideoRegenerateResult = async value => {
         if (node.freevideoRegenerating) return;
         node.freevideoRegenerating = true;
-        try { return await regenerateResult(api, node.id, value, async () => cleanOptionalPrompt(await app.graphToPrompt())); }
+        try { return await regenerateResult(api, node.id, value, async () => { enableNode(node); return cleanOptionalPrompt(await app.graphToPrompt()); }); }
         finally { node.freevideoRegenerating = false; }
     };
     const executed = node.onExecuted;

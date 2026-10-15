@@ -178,7 +178,7 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
     recover();
     return {
         get active() { return active(); }, get state() { return chain; },
-        async start(snapshot, options) {
+        async start(snapshot, options, {onAccepted = null} = {}) {
             if (disposed || active()) throw new Error('chain_busy');
             submitting = true; epoch++;
             try {
@@ -187,6 +187,7 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
                 const value = (await json(chainRoute(), post(body), true))?.chain;
                 if (!value) return null;
                 if (!value.id) throw new Error('chain_missing');
+                onAccepted?.();
                 const inputs = snapshot.output[String(node.id)].inputs;
                 submitting = false; adopt(value, {width: inputs.width, height: inputs.height, seconds: options.seconds});
                 return value;
