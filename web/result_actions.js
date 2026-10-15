@@ -83,10 +83,10 @@ function deleteAction(t, remove) {
     const label = document.createElement('span'); label.textContent = t('Delete', '删除');
     summary.append(icon('trash'), label);
     const panel = document.createElement('div'); panel.className = 'fv-menu fv-confirm';
-    const title = document.createElement('strong'); title.textContent = t('Delete this creation?', '删除这条作品？');
+    const title = document.createElement('strong'); title.textContent = t('Delete this creation?', '删除这个作品？');
     const hint = document.createElement('small');
-    hint.textContent = t('The video, its generation records and preview data are removed. This cannot be undone.',
-        '视频、生成记录和预览数据都会删除，无法恢复。');
+    hint.textContent = t('The video and its files will be deleted.',
+        '视频和相关文件都会删除。');
     const problem = document.createElement('small'); problem.className = 'fv-confirm-problem'; problem.hidden = true;
     const row = document.createElement('div'); row.className = 'fv-confirm-actions';
     const cancel = action('button', t('Cancel', '取消'), null, 'fv-action-secondary');
