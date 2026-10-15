@@ -75,8 +75,12 @@ GUIDE = {
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
         'Otherwise it uses as few parts as possible, each at least 10 s; how many depends on how long this computer can generate in one run, and the parts continue and join automatically. '
         'Multiple blocks or continue_from need two-pass text generation: quality "light" '
-        'or sampling.two_pass=true, no preview and no media. '
+        'or sampling.two_pass=true and no preview. Their only media is media.references with at most 3 pictures, '
+        'which every continuing part also sees (keeps the same people); first_frame_reference then gives way to them. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
+        'For a video in several parts, part_prompts gives each part its own description in order (as many as '
+        'chain_plan.blocks from POST /plan), so each part continues the story instead of replaying it; '
+        'without it FreeVideo splits prompt itself. '
         'A continue_from job saves a new video that holds only the added part; to hand the user one video, '
         'insert both into a project and export it.',
         'first_frame_reference (default false) reduces drift in a continued video: each continuing part also '
@@ -530,7 +534,9 @@ GUIDE['cast'] = [
     'Changes need the revision you read (body revision or If-Match); stale_revision returns the current card in '
     'error.card. Fields the user changed return changed_by_user: keep the user\'s version.',
     'Film with a card by setting characters.<key>.card. Cards are read when each take is submitted. Shots that '
-    'continue the previous one carry no references (cast_reference inherited); POST /drama/plan shows each shot\'s cast. '
+    'continue the previous one carry one card picture per person (a person alone: the sheet and a face close-up) for '
+    'at most 3 people, and keep the voices of the previous shot; POST /drama/plan shows each shot\'s cast. '
+    'A shot\'s own references replace the card pictures; references=[] sends none. '
     'A shot with a carded character is at most 15 s; continue it in the next shot to go longer.',
     'POST /cast/{id}/generate makes reference pictures from the description as a normal job (face=true adds a close-up). '
     'It defaults to the installed image model, otherwise video frames (labels guessed, label_guess). '

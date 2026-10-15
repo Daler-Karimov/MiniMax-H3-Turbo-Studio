@@ -5,6 +5,23 @@ from .continuation import (INVALID_FILE, INVALID_FRAMES, LEAD_IN_SAMPLES,
                            LEAD_IN_FADE, LEAD_IN_RATE)
 
 
+_EMPTY_TEXT = frozenset(('none', 'null', 'undefined', 'nan'))
+
+
+def optional_text(value, default=''):
+    """Return an optional text input, or default when it was not given.
+
+    A missing optional widget can arrive as None, a blank string or the word a
+    script or an older workflow wrote for "nothing" ("None", "null",
+    "undefined", "NaN"). Other values are returned unchanged for the caller's
+    own checks, so a real value is never reinterpreted.
+    """
+    if value is None or isinstance(value, str) and (
+            not value.strip() or value.strip().lower() in _EMPTY_TEXT):
+        return default
+    return value
+
+
 def request_frames(value):
     """Translate the node's duration sentinel into the bridge's optional count."""
     if type(value) is not int or value != 0 and (value < 39 or (value - 5) % 17):
@@ -49,6 +66,7 @@ def resolve_continue_from(value, output_directory, input_directory):
 
 def request_options(continue_from='', frames=0):
     count = request_frames(frames)
+    continue_from = optional_text(continue_from)
     if not isinstance(continue_from, str):
         raise ValueError(INVALID_FILE)
     previous = None

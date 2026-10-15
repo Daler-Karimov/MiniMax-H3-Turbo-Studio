@@ -514,6 +514,11 @@ class LayerOffloader:
             self.hooks.append(layer.register_forward_hook(
                 lambda module, args, result, index=index: self._after(index), always_call=True))
 
+    @property
+    def at_boundary(self):
+        """No layer pass is open, so the next pass can start; False after a failure inside one."""
+        return not (self.expected or self.pending or self.host_pending)
+
     def cache_between_steps(self, max_bytes, *, max_layers=None, allow_growth=True):
         """Retain affordable device planes until this sampling pass closes.
 

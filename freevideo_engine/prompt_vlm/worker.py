@@ -343,6 +343,8 @@ def run(folder, value, *, stats=None):
     stats = {} if stats is None else stats
     if value.get('mode') == 'ask':
         return ask(folder, value, stats)
+    if value.get('mode') == 'split':
+        return split(folder, value, stats)
     return rewrite(folder, value, stats)
 
 
@@ -407,6 +409,62 @@ def rewrite(folder, value, stats):
     rewritten = validate_output(text, value)
     stats['stage'] = 'complete'
     emit(phase='complete', text=rewritten, diagnostics=dict(stats))
+
+
+def split(folder, value, stats):
+    """One description per part of a long video; text leaves only via stdout."""
+    from .rules import SPLIT_RETRY, split_instruction, split_user_text, validate_split
+    count = len(value['seconds'])
+    limit = min(2 * OUTPUT_TOKENS - 200, 600 + 300 * count)  # Within the cache reserved for a rewrite and its retry.
+    stats.update(stage='imports', pid=os.getpid(), mode='split', part_count=count, dtype='bfloat16',
+                 attention='sdpa', kv_cache='dynamic', backend='transformers', accelerations=[],
+                 persistent_model=False)
+    torch, checkpoint = begin(stats)
+    from transformers import AutoProcessor
+    checkpoint('preprocess')
+    preparing = time.monotonic()
+    processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
+    messages = [{'role': 'system', 'content': split_instruction(value)},
+                {'role': 'user', 'content': [{'type': 'text', 'text': split_user_text(value)}]}]
+    inputs = tokenize(processor, messages)
+    if inputs.input_ids.shape[-1] > 6500:
+        raise ValueError('context_length')
+    stats.update(input_tokens=int(inputs.input_ids.shape[-1]), preprocess_seconds=time.monotonic() - preparing)
+    model, device = load_model(folder, torch, stats, checkpoint)
+    loaded = time.monotonic()
+    checkpoint('prefill', 'splitting')
+    shown = [0.]
+    def on_token(timing):
+        stats.update(output_tokens=timing['output_tokens'], decode_seconds=timing['decode_seconds'])
+        if time.monotonic() - shown[0] > .5:
+            checkpoint('decode', 'splitting')
+            shown[0] = time.monotonic()
+    ids, _ = generate(torch, model, inputs.to(device), limit, loaded, on_token)
+    answers = [processor.decode(ids, skip_special_tokens=True)] if len(ids) < limit else []
+    stats.update(split_seconds=time.monotonic() - loaded, output_tokens=len(ids))
+    parts = None
+    try:
+        parts = validate_split(answers[0], value, strict=True)
+    except (ValueError, IndexError):
+        # One more try with the rules restated; resending the wrong answer would not fit the cache.
+        retry = [messages[0], {'role': 'user', 'content': [{'type': 'text', 'text': (
+            split_user_text(value) + '\n\n' + SPLIT_RETRY)}]}]
+        retry_inputs = tokenize(processor, retry)
+        if retry_inputs.input_ids.shape[-1] + limit <= stats.get('kv_positions', 10 ** 9):
+            ids, _ = generate(torch, model, retry_inputs.to(device), limit, time.monotonic(), lambda timing: None)
+            stats.update(split_retry=True, retry_output_tokens=len(ids), split_seconds=time.monotonic() - loaded)
+            if len(ids) < limit:
+                answers.insert(0, processor.decode(ids, skip_special_tokens=True))
+        for strict in (True, False):
+            for answer in answers:
+                try:
+                    parts = parts or validate_split(answer, value, strict=strict)
+                except ValueError:
+                    pass
+        if parts is None:
+            raise ValueError('split_failed')
+    stats['stage'] = 'complete'
+    emit(phase='complete', parts=parts, diagnostics=dict(stats))
 
 
 def ask(folder, value, stats):

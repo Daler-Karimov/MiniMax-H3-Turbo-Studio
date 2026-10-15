@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -135,9 +136,14 @@ def continuation_problems(spec, prefix='', *, editor=None):
         problems.append(dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got)))
     if spec['preview']:
         problems.append(schema.diagnostic(prefix + '/preview', 'false' + why, True))
-    if spec['media']:
-        problems.append(schema.diagnostic(prefix + '/media', 'none' + why + ' (continue_from carries the previous video)',
+    others = [key for key, value in spec['media'].items() if key != 'references' and value]
+    pictures = spec['media'].get('references') or []
+    if others:
+        problems.append(schema.diagnostic(prefix + '/media', 'only references' + why + ' (continue_from carries the previous video)',
                                           None))
+    elif len(pictures) > specs.CONTINUED_PICTURES or not all(specs.still_picture(item) for item in pictures):
+        problems.append(schema.diagnostic(prefix + '/media/references', 'at most %d pictures%s' % (specs.CONTINUED_PICTURES, why),
+                                          len(pictures)))
     return problems
 
 
@@ -154,6 +160,24 @@ def cut_problems(spec, seconds, prefix='', *, editor=None):
                                 '%.3f s video' % seconds, None)
     got = 'a cut at %02d:%06.3f' % divmod(late[0], 60)
     return [dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got))]
+
+
+def part_prompt_problems(spec, prefix=''):
+    """part_prompts gives one description per planned part; the chain backend refuses any other count."""
+    if spec['kind'] != 'generate' or not spec.get('part_prompts'):
+        return []
+    from ..chain_plan import PlanError, plan
+    try:
+        count = len(plan(spec['seconds'], max_frames=single_frame_limit(spec),
+                         continued=bool(spec.get('continue_from')))['blocks'])
+    except PlanError:
+        return []  # parts_problems names the length.
+    given = len(spec['part_prompts'])
+    if given == count:
+        return []
+    allowed = '%d description%s, one for each of the chain_plan.blocks POST /plan gives for %g s' % (
+        count, '' if count == 1 else 's', spec['seconds'])
+    return [schema.diagnostic(prefix + '/part_prompts', allowed, given)]
 
 
 def _continued_part_problem(seconds, chain):
@@ -592,15 +616,21 @@ class Jobs:
     def finish(self, row, status, *, result=None, error=None, save=True):
         if error is not None:
             code = error.get('code', 'internal_error')
+            report_id = error.get('report_id')
             if code == 'invalid_json' and row['kind'] in ('vlm', 'enhance'):
                 code = 'vlm_invalid_json'
+            reason_zh = errors.failure_reason(dict(error, code=code))
             if code != error.get('code') or not error.get('request_id') or row['kind'] == 'image':
                 error = errors.build(code, details=error.get('details'),
                     request=row.get('request_id'), action_required=code != 'cancelled',
                     kind=row['kind'], stage='terminal', resumable=not row['spec'].get('refine_from'),
                     report_id=error.get('report_id'))
+                if row['kind'] == 'image':
+                    reason_zh = error['error_zh']
         if error is not None:
-            error = dict(error, request_id=row.get('request_id') or error['request_id'])
+            error = dict(error, request_id=row.get('request_id') or error['request_id'], error_zh=reason_zh)
+            if row['kind'] != 'image' and isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+                error['report_id'] = report_id
             if error.get('next'):
                 error['next'] = errors.recovery(error['code'], kind=row['kind'], stage='terminal',
                     resumable=not row['spec'].get('refine_from')).replace('{id}', row['id'])
@@ -726,6 +756,7 @@ class Jobs:
                                                work=self.continued_work(normalized),
                                                planned=self.planned_parts(normalized, rows)))
                 problems.extend(cut_problems(normalized, normalized.get('seconds'), prefix, editor=editor))
+                problems.extend(part_prompt_problems(normalized, prefix))
                 try:
                     self.port.check(normalized)
                 except specs.SpecError as error:
@@ -1068,6 +1099,11 @@ class Jobs:
                 result['error'] = errors.build(result['error']['code'], kind='image', stage='terminal',
                     details=result['error'].get('details'), request=row.get('request_id'),
                     action_required=result['error']['code'] != 'cancelled', report_id=row['error'].get('report_id'))
+            else:
+                result['error'] = dict(result['error'], error_zh=errors.failure_reason(row['error']))
+                report_id = row['error'].get('report_id')
+                if isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+                    result['error']['report_id'] = report_id
             if result['error'].get('next'):
                 result['error'] = dict(result['error'], next=errors.recovery(result['error']['code'], kind=row['kind'],
                     stage='terminal', resumable=not row['spec'].get('refine_from')).replace('{id}', row['id']))
@@ -1464,6 +1500,10 @@ class Jobs:
                     # Planned as a continuation, so the new video is as long as the request says.
                     payload.update(after=dict(work=self.port.output_relative(self.source_video(spec['continue_from']))),
                                    text=prompt, seed=spec['seed'])
+                if spec.get('part_prompts') and 'seconds' in payload:
+                    # Each part plays its own description, with the same LoRA trigger words the whole prompt gets.
+                    from ..lora_triggers import apply_triggers
+                    payload['texts'] = [apply_triggers(text, spec.get('loras', [])) for text in spec['part_prompts']]
                 self.start_chain(row, payload=payload)
         work = asyncio.create_task(asyncio.to_thread(prepare))
         try:
@@ -1696,6 +1736,10 @@ class Jobs:
                     reason = self.port.generation_error(history, chain['node'])
             except Exception as error:
                 self.log_poll_failure(row, error)
+        try:
+            report_id = (self.port.progress(chain['node']) or {}).get('report_id')
+        except Exception:
+            report_id = None
         code = reason.get('code', 'generation_failed')
         if code not in ('insufficient_memory', 'out_of_memory', 'generation_failed'):
             code = 'generation_failed'
@@ -1718,8 +1762,12 @@ class Jobs:
                        'POST /freevideo/agent/v1/jobs/%s/resume to retry unfinished work.' % row['id'])
         if code == 'insufficient_memory' and reason.get('alternatives'):
             next_action = 'Use the alternatives in details to lower size or duration, then POST /freevideo/agent/v1/jobs.'
-        return chain_error(code, errors.ERRORS[code][2], next_action, details=[detail],
-                           retryable=code != 'insufficient_memory').view()
+        failure = dict(chain_error(code, errors.ERRORS[code][2], next_action, details=[detail],
+                           retryable=code != 'insufficient_memory').view(),
+                    error_zh=errors.failure_reason(dict(code=code, message=message)))
+        if isinstance(report_id, str) and re.fullmatch(r'[a-f0-9]{32}', report_id):
+            failure['report_id'] = report_id
+        return failure
 
     # Local image generation ----------------------------------------------------------------------------
     def wait_image(self, row, code, *, waiting_for=None):
@@ -1781,7 +1829,9 @@ class Jobs:
         elif phase == 'cancelled':
             self.finish(row, 'cancelled', error=dict(code='cancelled'))
         else:
-            code = state.get('error') or 'generation_failed'
+            failure = state.get('error')
+            code = failure.get('code') if isinstance(failure, dict) else failure
+            code = code or 'generation_failed'
             if not self.wait_image(row, code):
                 self.finish(row, 'failed', error=dict(code=code, report_id=state.get('report_id')))
 

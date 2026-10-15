@@ -1,5 +1,5 @@
 // One whole-video estimate and the same five rows in Studio and the node view.
-import { saveReport } from './report_issue.js';
+import { saveReport, reportIssue, showReportTip } from './report_issue.js';
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./generation_progress.css', import.meta.url).href;
 document.head.append(css);
@@ -94,6 +94,9 @@ const STALL_SECONDS_BY_PHASE = Object.freeze({
     starting: 180, encoding: 180, load: 180, sampling: 180, refinement: 180,
     latent_upscale: 180, sample_finalize: 180, decode: 180, save: 180,
     dependencies: 180, recovery: 180, other: 180,
+    // A long video's part descriptions: the server waits at most 10 min for the model and
+    // writes for at most 15 min, then falls back to the whole description on its own.
+    describe: 1500,
 });
 // Normal stage sentences keep the sampling step or a download's size and speed.
 // After 15 s of engine silence SUBACTIVITY names the work without counts.
@@ -101,6 +104,7 @@ const STALL_SECONDS_BY_PHASE = Object.freeze({
 // Stage words the product already uses: settings say 一采 / 二采, results say 解码.
 const ACTIVITY = {
     prepare: ['Preparing', '正在准备'],
+    describe: ['Writing part descriptions', '正在写各段描述'],
     prompt: ['Encoding the prompt', '正在编码提示词'],
     combined: ['Encoding the prompt and references', '正在编码提示词和参考素材'],
     load: ['Loading the video model', '正在载入视频模型'],
@@ -194,7 +198,7 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         return steps('pass1', twoPass ? 'first' : 'single', step, count);
     }
     const key = labelActivities.get(message.label) || {
-        starting: 'prepare', prepare: 'prepare', prediction: 'prepare', encoding: 'combined',
+        starting: 'prepare', prepare: 'prepare', prediction: 'prepare', describe: 'describe', encoding: 'combined',
         load: 'load', decode: 'decode', save: 'save',
     }[phase] || labelActivities.get(message.stage);
     if (!key) return null;
@@ -349,6 +353,59 @@ export function estimatedFraction(state, overall, stateAge, overallAge) {
     return candidate;
 }
 
+// The video's report download, also used by Agent failure cards. A task that
+// failed before creating an engine report supplies the shared redacted summary.
+export function createDiagnosticReportControl(t, {api = null, fallback = null, tip = false, version = null,
+    label = () => t('Download report', '下载报告')} = {}) {
+    if (tip) {
+        const href = new URL('./result_actions.css', import.meta.url).href;
+        if (![...document.head.querySelectorAll('link')].some(link => link.href === href)) {
+            const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.append(style);
+        }
+    }
+    const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
+    let reportId = null, revision = 0;
+    report.textContent = label();
+    function updateReport(message) {
+        if (message.new_request === true || message.overall?.reset === true || message.reset === true && !message.phase) {
+            reportId = null; revision++; report.hidden = true;
+        }
+        if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
+            if (reportId !== message.report_id) { revision++; report.disabled = false; report.textContent = label(); }
+            reportId = message.report_id;
+        }
+        report.hidden = !reportId && !fallback;
+        return reportId;
+    }
+    async function fetchReport() {
+        if (reportId) {
+            const path = `/freevideo/report/${reportId}`;
+            const response = await (api ? api.fetchApi(path) : fetch(path));
+            if (!response.ok) throw new Error('Report unavailable');
+            return response.blob();
+        }
+        if (fallback) return fallback();
+        throw new Error('Report unavailable');
+    }
+    async function downloadReport() { saveReport(await fetchReport()); }
+    report.onclick = async () => {
+        if (report.disabled || report.hidden) return;
+        const current = revision;
+        report.disabled = true; report.textContent = t('Preparing report…', '正在整理报告…');
+        try {
+            await downloadReport();
+            if (current === revision) {
+                report.textContent = label();
+                if (tip && report.isConnected) showReportTip(report.parentElement, report, t, {mode: 'downloaded',
+                    submit: () => reportIssue(fetchReport, typeof version === 'function' ? version() : version, {save: false})});
+            }
+        } catch {
+            if (current === revision) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
+        } finally { if (current === revision) report.disabled = false; }
+    };
+    return {report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null};
+}
+
 export function createGenerationProgress(t, now = () => Date.now(), {compact = false, api = null, onLayout = null} = {}) {
     const element = el('section', 'fv-generation-progress'); element.hidden = true;
     if (compact) element.classList.add('fv-generation-compact');
@@ -361,8 +418,12 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     heading.append(count);
     const track = el('div', 'fv-generation-track'), fill = el('div', 'fv-generation-fill');
     track.setAttribute('role', 'progressbar'); track.setAttribute('aria-valuemin', '0'); track.append(fill);
+    // The sampler's newest coarse frames; decorative, so it carries no text.
+    const frames = el('img', 'fv-generation-frames'); frames.alt = ''; frames.hidden = true;
+    frames.decoding = 'async'; frames.setAttribute('aria-hidden', 'true'); frames.draggable = false;
     const times = el('div', 'fv-generation-times');
-    const elapsed = el('span', ''), eta = el('span', ''); times.append(elapsed, eta);
+    const elapsed = el('span', ''), eta = el('span', 'fv-generation-eta'); times.append(elapsed, eta);
+    const late = el('div', 'fv-generation-late'); late.hidden = true;
     const status = el('div', 'fv-generation-status'); status.hidden = true;
     const compatibilityNote = el('div', 'fv-generation-compatibility'); compatibilityNote.hidden = true;
     const live = el('div', 'fv-generation-live');
@@ -371,8 +432,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     stall.setAttribute('role', 'status');
     const stallText = el('span', ''); stall.append(stallText);
     const trims = new Map();
-    element.append(heading, track, label, mini, times, compatibilityNote, status, live);
-    let recovery = '', lowMemory = false, compatibility = null, samplingPlan = {}, secondPass = false, references = false;
+    element.append(heading, track, label, mini, frames, times, late, compatibilityNote, status, live);
+    let recovery = '', lowMemory = false, compatibility = null, samplingPlan = {}, secondPass = false, references = false, splitFailed = null;
     let hasHeartbeat = false;
     // Mac: the unified-memory notice of this request, and whether its first pass has ended.
     let memoryTight = null, firstPassOver = false;
@@ -422,42 +483,49 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     const fraction = value => Math.min(1, Math.max(0, value));
     const newRequest = message => message.new_request === true || message.overall?.reset === true
         || (message.reset === true && !message.phase);
-    const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
-    let reportId = null;
-    const reportLabel = () => t('Download report', '下载报告');
-    report.textContent = reportLabel();
-    function updateReport(message) {
-        if (newRequest(message)) { reportId = null; report.hidden = true; }
-        if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
-            if (reportId !== message.report_id) { report.disabled = false; report.textContent = reportLabel(); }
-            reportId = message.report_id; report.hidden = false;
-        }
-        // The saved video's request record is different from the redacted
-        // diagnostic download. Keep this token available after completion;
-        // only a new request clears it.
-        return reportId;
+    const diagnostic = createDiagnosticReportControl(t, {api});
+    const {report, updateReport, fetchReport, downloadReport} = diagnostic;
+    // The newest frame picture. Any failure leaves the page as it was without one.
+    // `framesToken` changes whenever a pending fetch stops being wanted, so a late answer is dropped.
+    let framesKey = '', framesUrl = null, framesLoading = null, framesToken = 0;
+    function clearFrames() {
+        framesKey = ''; framesLoading = null; framesToken++; frames.hidden = true;
+        if (framesUrl) { URL.revokeObjectURL(framesUrl); framesUrl = null; }
+        frames.removeAttribute('src');
     }
-    // The redacted diagnostic export; throws when it is unavailable.
-    async function fetchReport() {
-        const id = reportId;
-        if (!id) throw new Error('Report unavailable');
-        const path = `/freevideo/report/${id}`;
-        const response = await (api ? api.fetchApi(path) : fetch(path));
-        if (!response.ok) throw new Error('Report unavailable');
-        return response.blob();
+    // In a wide column each frame is 64 px high; a narrow one keeps the picture's own size.
+    function fitFrames() {
+        const width = (element.parentElement || element).clientWidth;
+        frames.dataset.wide = width > 480 ? 'true' : 'false';
     }
-    async function downloadReport() { saveReport(await fetchReport()); }
-    report.onclick = async () => {
-        if (!reportId || report.disabled) return;
-        const id = reportId;
-        report.disabled = true; report.textContent = t('Preparing report…', '正在整理报告…');
-        try {
-            await downloadReport();
-            if (id === reportId) report.textContent = reportLabel();
-        } catch {
-            if (id === reportId) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
-        } finally { if (id === reportId) report.disabled = false; }
-    };
+    function updateFrames(message, id) {
+        const value = message.frame_preview;
+        fitFrames();
+        const usable = value && typeof value === 'object' && Number.isInteger(value.serial) && value.serial > 0
+            && Number.isInteger(value.frames) && value.frames > 0 && value.frames <= 8;
+        if (!usable || !id || ['complete', 'failed', 'cancelled'].includes(message.phase)) { if (framesKey || framesLoading) clearFrames(); return; }
+        const key = `${id}:${value.serial}`;
+        if (key === framesKey || key === framesLoading) return;
+        framesLoading = key;
+        const token = ++framesToken;
+        const path = `/freevideo/frame-preview/${id}`;
+        (async () => {
+            try {
+                const response = await (api ? api.fetchApi(path) : fetch(path));
+                if (!response.ok) throw new Error('No picture');
+                const blob = await response.blob();
+                if (framesToken !== token) return;
+                const url = URL.createObjectURL(blob);
+                const old = framesUrl;
+                frames.onload = () => { fitFrames(); if (framesUrl === url) frames.hidden = false; try { onLayout?.(); } catch {} };
+                frames.onerror = () => { if (framesUrl === url) clearFrames(); };
+                framesUrl = url; framesKey = key; frames.src = url;
+                if (old) URL.revokeObjectURL(old);
+            } catch {
+                if (framesToken === token) clearFrames();
+            }
+        })();
+    }
     const hasCount = value => Number.isInteger(value.total) && value.total > 0 && Number.isInteger(value.done)
         && value.done >= 0 && value.done <= value.total;
 
@@ -513,7 +581,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         const threshold = Math.max(floor, valid(typical) ? 2 * typical : 0);
         const shown = !ended && age >= threshold;
         const wasShown = !stall.hidden;
-        const hasReport = reportId !== null;
+        const hasReport = diagnostic.hasReport();
         // The separate notice never adds another clock or blocks the run.
         if (shown && (stall.hidden || hasReport !== stallHasReport)) {
             const first = t('No progress for a while. Generation is still running, so you can keep waiting.',
@@ -679,7 +747,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         const progressText = [paused ? pauseText : '', decodeEta].filter(Boolean).join(t(' · ', '，'));
         const level = ended ? '' : recovery ? 'retry' : paused ? 'pause'
             : lowMemory ? 'memory' : memoryTight ? 'unified-memory' : automatic ? 'automatic'
-                : compatibility && compatibility.level > 0 ? 'compatibility' : trims.size ? 'notice' : '';
+                : compatibility && compatibility.level > 0 ? 'compatibility' : trims.size ? 'notice'
+                    : splitFailed && !progressText ? 'split' : '';
         const explanation = {retry: recovery,
             pause: progressText,
             memory: t('This video uses a memory-saving mode, so it takes longer than usual but will finish.',
@@ -695,7 +764,10 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             compatibility: compatibility ? t(`Compatibility setting ${compatibility.name_en} is on, so generation is slower than usual.`,
                 `已开启兼容性设置（${compatibility.name_zh}档），生成会比平时慢。`) : '',
             automatic: compatibilityText,
-            notice: trimStatus([...trims.values()], t)}[level] || (!ended ? progressText : '');
+            notice: trimStatus([...trims.values()], t),
+            // A long video whose part descriptions could not be written: the server's own words stay in the report.
+            split: splitFailed === 'model_missing' ? t('Prompt model not installed. Every part uses the same description.', '未安装提示词模型，各段用同一段描述')
+                : t('Every part uses the same description.', '各段用同一段描述')}[level] || (!ended ? progressText : '');
         if (status.textContent !== explanation) status.textContent = explanation;
         status.hidden = !explanation; status.dataset.level = level;
         const announcements = [];
@@ -786,7 +858,11 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             }
         }
         remainingAt = now();
+        // The editor's bar reads this number, so both places always show the same time.
         eta.hidden = remainingSeconds === null;
+        // Past the shown time the line says so once, instead of a number that only shrinks.
+        late.hidden = !(remainingSeconds === null && remainingRetired && !ended);
+        late.textContent = late.hidden ? '' : t('Taking longer than expected', '比预计久，仍在生成');
         const etaText = remainingSeconds === null ? '' : remainingSeconds >= 60
             ? t(`About ${Math.ceil(remainingSeconds / 60)}\u00a0min left`, `预计还需约 ${Math.ceil(remainingSeconds / 60)}\u00a0分钟`)
             : t('Less than a minute left', '预计还需不到 1\u00a0分钟');
@@ -795,6 +871,10 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         if (eta.textContent !== etaText && (!initial || !eta.textContent || now() - etaChangedAt >= 5000)) {
             eta.textContent = etaText; etaChangedAt = now();
         }
+        // The bar takes the number behind the words on screen: while the shown minutes wait out their
+        // spacing, the seconds wait with them.
+        if (remainingSeconds === null) delete eta.dataset.seconds;
+        else if (eta.textContent === etaText) eta.dataset.seconds = String(Math.ceil(remainingSeconds));
         elapsed.hidden = false; times.hidden = elapsed.hidden && eta.hidden;
         drawStall(age, ended);
         drawActivity(age, ended);
@@ -803,7 +883,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // A finished first-pass preview is not the finished video.
     const savedText = () => state.label === 'Preview saved' ? t('Preview saved', '预览已保存') : t('Video saved', '视频已保存');
     function update(message) {
-        updateReport(message);
+        updateFrames(message, updateReport(message));
         // Older servers may still forward this diagnostic-only event. It is
         // not a stage change or something the user needs to act on.
         if (message.warning === 'ram_budget_warning' && !message.phase) return;
@@ -828,7 +908,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             pauseAnnounced = false; lastExplanation = ''; announcedMessages.clear();
             live.textContent = ''; status.textContent = ''; resetRemaining(); lastActivity = null; resetMini();
             stopCount(); countShown = null;
-            recovery = ''; lowMemory = false; compatibility = null; references = false; trims.clear();
+            recovery = ''; lowMemory = false; compatibility = null; references = false; trims.clear(); splitFailed = null;
             memoryTight = null; firstPassOver = false;
             samplingPlan = {}; secondPass = false; hasHeartbeat = false;
             detail = null; localShare = null; workShares.clear(); decodeMinutes = null; decodeMinutesAt = -Infinity;
@@ -873,6 +953,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             completedSteps = Math.max(completedSteps, message.done);
         if (message.low_memory && typeof message.low_memory === 'object') lowMemory = true;
         if (message.compatibility && typeof message.compatibility === 'object') compatibility = message.compatibility;
+        if (message.chain && typeof message.chain === 'object') splitFailed = typeof message.chain.split_failed === 'string' ? message.chain.split_failed : null;
         // Whether the request has reference media (first or last frame, references).
         if (typeof message.references === 'boolean') references = message.references;
         if (message.reference_trimmed || REFERENCE_WORK.has(message.label)) references = true;
@@ -960,7 +1041,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         tick(); if (timer === null) timer = setInterval(tick, 250);
     }
     function hide() {
-        element.hidden = true; status.hidden = true; recovery = ''; placeholder = false; elapsedLead = 0; trims.clear(); lowMemory = false; compatibility = null; references = false; hasHeartbeat = false;
+        clearFrames();
+        element.hidden = true; status.hidden = true; recovery = ''; placeholder = false; elapsedLead = 0; trims.clear(); lowMemory = false; compatibility = null; references = false; hasHeartbeat = false; splitFailed = null;
         compatibilityNote.hidden = true; compatibilityNote.textContent = '';
         memoryTight = null; firstPassOver = false;
         elapsedShown = 0;
@@ -987,6 +1069,6 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             mini_fraction: visible && !mini.hidden && miniMode === 'determinate' ? miniShown : null,
             mini_shimmer: visible && !mini.hidden && miniShimmer};
     }
-    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null, update, hide, dispose: hide,
+    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: diagnostic.hasReport, update, hide, dispose: hide,
         noticeCount: () => trims.size, stallShown: () => !stall.hidden, percentShown: () => !heading.hidden, snapshot};
 }

@@ -97,6 +97,10 @@ def main():
                           help='With --continue-from: also give the model the first frame of the whole film as a '
                                'reference picture. Reduces drift over many parts; holds framing and motion close to '
                                'the opening, so leave it off when later parts should move away from it')
+    generate.add_argument('--hide-tail', action='store_true',
+                          help='Generate and discard 34 extra frames for dialogue segments.')
+    generate.add_argument('--voice-reference', action='store_true',
+                          help='With --continue-from: use the opening six seconds as a voice reference when the prompt has dialogue')
     generate.add_argument('--continue-anchor', type=Path, metavar='IMAGE',
                           help='Experimental: a reference picture of your own for a continuation, with no prompt note')
     generate.add_argument('--allocator-limit-gib', type=float,

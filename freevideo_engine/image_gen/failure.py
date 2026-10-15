@@ -19,7 +19,7 @@ NO_REPORT = frozenset(('busy', 'invalid_request', 'cancelled'))
 STAGES = ('start', 'load', 'text', 'encode', 'denoise', 'decode')
 KINDS = ('generate', 'edit', 'cast', 'compose', 'download', 'install')
 MESSAGE_ZH = {
-    'no_memory': '显存不足。在“图像大小…”里缩小后再试。',
+    'no_memory': '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。',
     'busy_video': '视频正在生成，完成后再试。',
     'busy': '已有一张图在生成，请等它完成。',
     'pack_missing': '请先在启动器里下载“图像生成模型”。',

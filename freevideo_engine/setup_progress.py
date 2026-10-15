@@ -3,6 +3,7 @@ import math
 import time
 
 from .launcher_copy import size_text
+from .model_status import NAMES
 
 
 def number(value):
@@ -97,7 +98,7 @@ def transfer_parts(done, total, rate, decimal_sizes=False):
 
 
 def progress_text(event, zh=False, *, decimal_sizes=False):
-    """One activity line for the launcher; step counts and ETAs remain in worker events/logs."""
+    """One activity line for the launcher, including known transfer and scan counts."""
     t = lambda en, cn: cn if zh else en
     activity, name = event.get('activity'), event.get('name') or ''
     if activity == 'count':
@@ -117,13 +118,21 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
     if activity == 'resume':
         return t('The connection dropped; resuming the download and keeping what was already downloaded',
                  '连接中断，正在继续下载，已下载的部分会保留')
-    if activity == 'check':
-        return t('Checking ', '正在校验 ') + name
-    if activity == 'copy':
-        return t('Copying ', '正在复制 ') + name
+    if activity in ('check', 'copy'):
+        # Mid-sentence, a model family name starts in lower case in English; Chinese has no space after the verb.
+        name = name[:1].lower() + name[1:] if any(name == en for en, _ in NAMES.values()) else name
+        parts = [t('Checking ', '正在校验') + name if activity == 'check'
+                 else t('Copying ', '正在复制') + name]
+        done, total = event.get('done'), event.get('total')
+        if event.get('unit') == 'bytes' and number(done) and number(total) and total > 0 and done <= total:
+            parts.extend(transfer_parts(done, total, event.get('rate'), decimal_sizes))
+        return ' · '.join(parts)
     if activity == 'note':
-        # A fixed description of the step (already translated with the event), and its speed if any.
-        return ' · '.join([name] + transfer_parts(0, 0, event.get('rate'), decimal_sizes))
+        parts = [name]
+        scanned = event.get('scanned')
+        if number(scanned) and scanned > 0:
+            parts.append(t('{:,} checked', '已查看 {} 项').format(scanned))
+        return ' · '.join(parts + transfer_parts(0, 0, event.get('rate'), decimal_sizes))
     if activity == 'download':
         total = event.get('total') if event.get('unit') == 'bytes' else 0
         return ' · '.join([t('Downloading ', '正在下载 ') + name] +

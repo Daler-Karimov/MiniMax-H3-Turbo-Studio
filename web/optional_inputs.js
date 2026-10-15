@@ -2,11 +2,21 @@
 // shape. A workflow restored from an older version, or a widget list that moved,
 // can leave an empty or missing value in them, and Comfy then rejects the whole
 // request. Keep each of them to a value the server accepts.
-const DEFAULTS = {continue_from: '', frames: 0, first_frame_reference: false};
+const DEFAULTS = {refine_from: '', continue_from: '', frames: 0, first_frame_reference: false};
+
+// The words a script, an older workflow or String(null) leaves behind for "not given".
+const EMPTY_WORDS = new Set(['none', 'null', 'undefined', 'nan']);
+
+// Text of an optional input, or '' when it was not given.
+export function optionalText(value) {
+    if (typeof value !== 'string') return '';
+    const text = value.trim();
+    return !text || EMPTY_WORDS.has(text.toLowerCase()) ? '' : value;
+}
 
 export function optionalInputValue(name, value) {
     if (name === 'frames') return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-    if (name === 'continue_from') return typeof value === 'string' ? value : '';
+    if (name === 'refine_from' || name === 'continue_from') return optionalText(value);
     if (name === 'first_frame_reference') return value === true;
     return value;
 }

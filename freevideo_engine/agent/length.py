@@ -1,4 +1,5 @@
 """Studio capability limits for Agent generation plans, without hardware probing."""
+import json
 import time
 
 # A size asked for the first time is worked out in the background in about 0.1 s. The plan that asks first
@@ -6,9 +7,12 @@ import time
 WAIT_SECONDS = 3.
 
 
-def capability_table(port, spec, *, wait=0.):
+def capability_table(port, spec, *, wait=0., references=None, task=None):
+    """references: panel metadata rows (see capabilities.normalize_references) for a layout other than the default."""
     query = dict(width=str(spec['width']), height=str(spec['height']),
-                 task=spec['task'], adapters='1' if spec['loras'] else '0')
+                 task=task or spec['task'], adapters='1' if spec['loras'] else '0')
+    if references is not None:
+        query['references'] = json.dumps(references, separators=(',', ':'))
     deadline = time.monotonic() + wait
     try:
         while True:

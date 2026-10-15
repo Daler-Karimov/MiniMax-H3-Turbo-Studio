@@ -6,7 +6,7 @@ import {saveReport, reportIssue, showReportTip} from './report_issue.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
-    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading',
+    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading', checking: 'checking',
     token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', seed: 'seed',
     stage: 'stage', fraction: 'fraction', file: 'file', error: 'error', name: 'name', subfolder: 'subfolder',
     states: {queued: 'waiting', starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
@@ -81,6 +81,8 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
                 ...(phase === 'cancelled' ? {error: 'cancelled'} : {})};
         },
         cancel: job => post('cancel', {[p.job]: job}),
+        // The prompts and sizes of a new character's five pictures (the Agent's cards use the same ones).
+        castViews: async description => (await post('cast-views', {description})).views,
         async upload(file) {
             // ComfyUI's existing image upload stores this at input/<unique name>.
             // FreeVideo's media upload uses subdirectories the image worker rejects.
@@ -105,8 +107,8 @@ export function imagePackMessage(info, t) {
 }
 export function imageGenError(code, info, t) {
     const reasons = {
-        no_memory: ['Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
-            '显存不足。在“图像大小…”里缩小后再试。'],
+        no_memory: ['Not enough GPU memory, even at the smallest size. Close other apps using the GPU, then try again.',
+            '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。'],
         busy_video: ['A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。'],
         busy: ['An image is already being generated. Try again when it finishes.', '已有一张图在生成，完成后再试。'],
         model_unreadable: ['The image generation model files could not be read. Repair them in the launcher and try again.',
@@ -189,7 +191,8 @@ export function renderImageFailure(host, {error, report_id} = {}, t,
     bar.append(anchor); card.append(bar);
     return card;
 }
-function imagePackUnavailableMessage(info, t) {
+export function imagePackUnavailableMessage(info, t) {
+    if (info?.[IMAGE_GEN_PROTOCOL.checking]) return t('Checking. Available when finished.', '正在检查，完成后可用。');
     return info?.[IMAGE_GEN_PROTOCOL.downloading]
         ? t('Downloading. Available when finished.', '正在下载，完成后可用。') : imagePackMessage(info, t);
 }
@@ -287,7 +290,7 @@ export function imageGenProgress(stage, fraction, withImages = false) {
 // An epoch rejects late uploads/status/results. A generate response arriving
 // after Stop still has to be cancelled, even though its job was not known yet.
 export function createImageGenSession({client, prepare, apply, onChange = () => {},
-    schedule = setTimeout, unschedule = clearTimeout,
+    schedule = setTimeout, unschedule = clearTimeout, store = null,
     visible = () => globalThis.document?.visibilityState !== 'hidden'}) {
     let epoch = 0, timer = null, infoTimer = null, disposed = false, checking = null;
     let state = {info: null, checking: false, running: false, job: null, fraction: 0, stage: '', error: '', report_id: null,
@@ -296,6 +299,7 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
     const failed = error => error.code === 'cancelled' ? {error: '', report_id: null, stage: ''}
         : {error: error.code || 'generation_failed', report_id: error.report_id || null, stage: error.stage || ''};
     const cancelJob = job => Promise.resolve().then(() => client.cancel(job)).catch(() => {});
+    const forget = () => { try { store?.clear(); } catch { /* the job is only not resumed after a reload */ } };
     function scheduleInfo() {
         unschedule(infoTimer); infoTimer = null;
         if (disposed || state.info?.installed) return;
@@ -314,13 +318,11 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
         })();
         return checking;
     }
-    async function start(request) {
-        if (state.running || disposed || !request.prompt.trim() || !state.info?.installed) return;
-        const current = ++epoch;
-        emit({running: true, job: null, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
+    // One job from its first status to the result. A job taken up again after the page was
+    // reloaded (``resumed``) that the service no longer knows ends quietly: there is nothing to say.
+    function track(current, job, context, withImages, resumed = false) {
         const alive = () => current === epoch && !disposed;
-        let withImages = false;
-        async function poll(job, context) {
+        async function poll() {
             try {
                 const row = await client.status(job);
                 if (!alive()) return;
@@ -330,43 +332,98 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
                 if (row.state === 'done') {
                     if (!row.file) throw failure();
                     await apply(row, context, alive);
-                    if (alive()) emit({running: false, job: null, fraction: 1, stage: '', waiting: ''});
+                    if (alive()) { forget(); emit({running: false, job: null, fraction: 1, stage: '', waiting: ''}); }
                 } else if (row.state === 'error') throw failure(row.error, row);
-                else timer = schedule(() => { timer = null; void poll(job, context); }, IMAGE_GEN_POLL_MS);
+                else timer = schedule(() => { timer = null; void poll(); }, IMAGE_GEN_POLL_MS);
             } catch (error) {
                 if (alive()) {
+                    forget();
+                    if (resumed && (error.code === 'unknown_job' || error.code === 'reload')) {
+                        emit({running: false, job: null, fraction: 0, stage: '', waiting: ''});
+                        return;
+                    }
                     void cancelJob(job);
                     emit({running: false, job: null, waiting: '', ...failed(error)});
                 }
             }
         }
+        timer = schedule(() => { timer = null; void poll(); }, IMAGE_GEN_POLL_MS);
+    }
+    async function start(request) {
+        if (state.running || disposed || !request.prompt.trim() || !state.info?.installed) return;
+        const current = ++epoch;
+        emit({running: true, job: null, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
+        const alive = () => current === epoch && !disposed;
         try {
             const {context, images = []} = await prepare(request, alive);
             if (!alive()) return;
-            withImages = images.length > 0;
+            const withImages = images.length > 0;
             const row = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images});
             const {job} = row;
             if (!job) throw failure(row.error, row);
             if (row.fitted) emit({fitted: row.fitted});
             if (!alive()) { await cancelJob(job); return; }
             emit({job});
-            timer = schedule(() => { timer = null; void poll(job, context); }, IMAGE_GEN_POLL_MS);
+            try { store?.save({job, context, withImages}); } catch { /* the job is only not resumed after a reload */ }
+            track(current, job, context, withImages);
         } catch (error) {
             if (alive()) emit({running: false, job: null, ...failed(error)});
         }
     }
+    // The page was reloaded while a picture was being made: follow the same job and place its result.
+    function resume({job, context, withImages = false}) {
+        if (state.running || disposed || !job || !context) return false;
+        const current = ++epoch;
+        emit({running: true, job, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
+        track(current, job, context, withImages, true);
+        return true;
+    }
     function cancel() {
         ++epoch; unschedule(timer); timer = null;
         const job = state.job;
+        forget();
         emit({running: false, job: null, stage: '', fraction: 0, error: '', report_id: null, waiting: '', fitted: null});
         return job ? cancelJob(job) : Promise.resolve();
     }
-    return {check, start, cancel, clearError: () => emit({error: '', report_id: null}), state: () => state,
+    return {check, start, resume, cancel, clearError: () => emit({error: '', report_id: null}), state: () => state,
         dispose() { disposed = true; unschedule(infoTimer); infoTimer = null; return cancel(); }};
 }
 
+// The job being made, kept for this tab only so that a reloaded page can follow it and place the
+// result. Only what placing needs is kept (never the document), and a record for another editor or
+// older than the service keeps its results is left alone.
+export const IMAGE_JOB_KEEP_MS = 30 * 60 * 1000;
+export function imageJobStore(key, storage = globalThis.sessionStorage, now = Date.now, name = 'freevideo.imageGenJob') {
+    return {
+        save({job, context, withImages}) {
+            const {layer, selection} = context;
+            const keep = layer && {id: layer.id, cx: layer.cx, cy: layer.cy, w: layer.w, h: layer.h,
+                rotation: layer.rotation, flipX: layer.flipX, flipY: layer.flipY};
+            storage.setItem(name, JSON.stringify({key, job, withImages: !!withImages, at: now(), context: {
+                mode: context.mode, doc: {width: context.doc.width, height: context.doc.height},
+                layer: keep || null, selection: selection || null}}));
+        },
+        load() {
+            try {
+                const record = JSON.parse(storage.getItem(name) || 'null');
+                if (!record || record.key !== key || typeof record.job !== 'string' || !record.context?.doc
+                    || !(now() - record.at < IMAGE_JOB_KEEP_MS)) return null;
+                return record;
+            } catch { return null; }
+        },
+        // Only this editor's own record: closing another picture's editor leaves it alone.
+        clear() {
+            try {
+                let record = null;
+                try { record = JSON.parse(storage.getItem(name) || 'null'); } catch { /* unreadable: drop it */ }
+                if (!record || record.key === key) storage.removeItem(name);
+            } catch { /* nothing kept */ }
+        },
+    };
+}
+
 export function createImageGeneration({client, renderer, t, getDoc, getSelection, commit, el, button, segmented,
-    library = [], resolve = file => file, icon = () => '', onRatioChange, productVersion, fetchApi}) {
+    library = [], resolve = file => file, icon = () => '', onRatioChange, productVersion, fetchApi, resumeKey = null}) {
     let mode = 'edit', prompt = '', mounted = null, references = [];
     let promptRequired = false, attentionTimer = null;
     const copies = new Map();
@@ -378,7 +435,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
         return new Promise((done, fail) => canvas.toBlob(b => b ? done(b) : fail(failure()), 'image/png'));
     }
-    const session = createImageGenSession({client,
+    let store = null;
+    try { if (resumeKey != null && globalThis.sessionStorage) store = imageJobStore(resumeKey); } catch { /* no storage */ }
+    const session = createImageGenSession({client, store,
         prepare: async (request, alive) => {
             const context = generationContext(getDoc(), getSelection(), request.mode);
             const images = request.mode === 'edit' ? [await uploadGenerationReference(renderer, client, context, alive),
@@ -392,6 +451,8 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             commit(insertGenerationResult(getDoc(), {src: result.file, nw: image.naturalWidth, nh: image.naturalHeight}, context, t));
         }, onChange: update,
     });
+    const saved = store?.load();
+    const resumed = saved && session.resume(saved) ? saved : null;
     const limit = () => referenceLimit(session.state().info);
     const chosen = () => mode === 'edit' ? references.slice(0, limit() - 1) : [];
     function clearAttention() {
@@ -556,5 +617,8 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
     }
     return {mount, unmount() { clearAttention(); promptRequired = false; mounted = null; },
         selected: () => session.check(), cancel: session.cancel,
+        // The blank canvas a reloaded generation was started on, to be set again by the editor.
+        resumedCanvas: resumed?.context?.mode === 'new'
+            ? {width: resumed.context.doc.width, height: resumed.context.doc.height} : null,
         dispose() { clearAttention(); return session.dispose(); }, state: session.state};
 }

@@ -29,6 +29,17 @@ export function readChainResult(chain) {
         error: failedJoin ? chain.output_error || 'join_failed' : chain.error || chain.blocks?.find(block => block.state === 'failed')?.error || null};
 }
 
+// Before the first part starts the server writes one description per part; until then no part can be changed.
+export function chainSplit(chain) {
+    const split = chain?.split;
+    return {writing: ['pending', 'running'].includes(split?.state), reason: split?.state === 'failed' ? split.reason || 'failed' : null};
+}
+export function chainParts(chain) {
+    const writing = chainSplit(chain).writing;
+    return (chain?.blocks || []).map((block, index) => ({id: block.id, index, text: block.inputs?.text ?? '',
+        editable: !writing && block.state === 'pending' && block.prompt_id == null}));
+}
+
 export function sumPartEstimates(plan, estimate) {
     if (!plan || plan.count < 2 || typeof estimate !== 'function') return null;
     const values = plan.blocks.map(block => estimate(block.frames));
@@ -80,10 +91,10 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
         if (Object.keys(overall).length) Object.assign(overall, {status: 'running', reset: false, estimated: false, sampling_time_weighted: true});
         previous = overall;
         lastMessage = {...lastMessage, ...message};
-        const phase = readChainResult(chain).joining ? 'save'
+        const phase = readChainResult(chain).joining ? 'save' : chain.split?.state === 'running' ? 'describe'
             : ['complete', 'failed', 'cancelled'].includes(lastMessage.phase) ? 'prepare' : lastMessage.phase || 'prepare';
         onProgress({...lastMessage, phase, result: null, reset: false, new_request: fresh,
-            chain: {id: chain.id, ...position}, overall}, chain);
+            chain: {id: chain.id, ...position, split_failed: chainSplit(chain).reason}, overall}, chain);
     }
     function deliver(value, fresh = false) {
         if (disposed) return false;
@@ -182,6 +193,14 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
             } finally { submitting = false; }
         },
         refresh,
+        // The reply carries the whole chain, so the part shows the words the server keeps.
+        async setText(block, text) {
+            if (!chain) throw new Error('chain_missing');
+            const id = chain.id, version = epoch;
+            const value = (await json(chainRoute(id, `blocks/${encodeURIComponent(block)}/text`), post({text})))?.chain;
+            if (value?.id === id && version === epoch && !disposed) deliver(value);
+            return value;
+        },
         async cancel() {
             if (!chain) return;
             await changeState('cancel', {});

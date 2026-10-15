@@ -12,6 +12,7 @@ from pathlib import Path
 import os
 import time
 
+from . import frame_preview
 from .macos_conditions import BLOCK_SECONDS_SCOPE, runtime_conditions
 from .sampling_progress import SamplingProgress
 
@@ -555,7 +556,10 @@ class Engine:
                 sampling_specs = [row for row in self.specs
                                   if not row[2].startswith('token_refiner.refiner_blocks.')]
                 with self._sampling_weights(sampling_specs, retention) as residency, \
-                        progress.layers(self.model.transformer_blocks):
+                        progress.layers(self.model.transformer_blocks), \
+                        frame_preview.observing(latent_frames=canvas['latent_frames'], frame_h=height // 32,
+                                                frame_w=width // 32, step_offset=progress_offset,
+                                                total=progress_total if progress_total is not None else active_steps):
                     self.residency = residency
                     video, audio = sampler(self.model, prompt, tags, canvas['frames'], self.steps,
                                           seed, 'mps', step_seconds=durations,

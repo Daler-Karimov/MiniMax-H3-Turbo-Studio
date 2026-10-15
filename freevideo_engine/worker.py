@@ -85,6 +85,10 @@ def generate(request, resident=None):
                    'torch_num_threads': torch.get_num_threads()}}}
     save(request['metrics'], metrics)
     try:
+        from .continuation import validate_hide_tail
+        hide_tail_frames = validate_hide_tail(request.get('hide_tail_frames', 0))
+        if hide_tail_frames:
+            metrics['hide_tail_frames'] = hide_tail_frames
         if 'sampling_plan' in request:
             from .two_pass import plan
             expected = plan(request['geometry'], request['sampling_plan']['requested'],
@@ -97,23 +101,25 @@ def generate(request, resident=None):
             metrics['sampling_plan'] = expected
         continuation = request.get('continuation')
         if continuation is not None:
-            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED,
+            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED_DEVICE,
                                        validate_audio_context, AUDIO_CONTEXT_DEFAULT)
             # A plan that fell back to one pass on a small canvas still has
             # the two-pass flag set and keeps its continuation; an explicit
             # single-pass request does not.
             validate_route(task=request['engine_options'].get('task', 't2va'),
                            anchor=bool(continuation.get('anchor')),
+                           **(dict(sound=True, media=dict(references=[continuation['sound']]))
+                              if continuation.get('sound') else {}),
                            two_pass=bool(request.get('sampling_plan', {}).get('requested')),
                            preview=request.get('preview', False), refine_from=request.get('resume_first_pass'))
             if isinstance(getattr(torch.version, 'hip', None), str):
-                raise ValueError(UNSUPPORTED)
+                raise ValueError(UNSUPPORTED_DEVICE)
             continuation = dict(continuation,
                 audio_context=validate_audio_context(continuation.get('audio_context', AUDIO_CONTEXT_DEFAULT)))
             request['continuation'] = continuation
             request['engine_options'] = dict(request['engine_options'],
                 adaln_task=ANCHOR_ADALN_TASK if continuation.get('anchor') else ADALN_TASK)
-            metrics['continuation'] = summary(continuation)
+            metrics['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
             metrics['audio_context'] = continuation['audio_context']
         metrics['device_memory'] = device_memory_report(request['gpu_budget_bytes'], request.get('allocator_limit_bytes'),
             reserve_bytes=request.get('gpu_reserve_bytes', 0), capacity_trial=request.get('capacity_trial', False))
@@ -238,7 +244,7 @@ def generate(request, resident=None):
                 return
             try:
                 from .continuation import tail
-                first_tail = tail(video)
+                first_tail = tail(video, **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}))
             except Exception as error:
                 tail_failure(error)
                 first_tail = None
@@ -251,7 +257,7 @@ def generate(request, resident=None):
                 **({'continuation_tail_callback': restore_tail} if continuable else {}))
             metrics.update(sampled, phase='decode', decode_phase='latent_transfer')
             if continuation is not None:
-                metrics['continuation'] = summary(continuation)
+                metrics['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
             save(request['metrics'], metrics)
             print(json.dumps(dict(event='decode_resume', sampling_source_attempt=metrics['sampling_source_attempt'])), flush=True)
             fit_decoder()
@@ -299,6 +305,9 @@ def generate(request, resident=None):
                 decode_read_ahead.start(drive_idle=getattr(engine, 'drive_idle', False) is True)
             from .sampling_memory import SamplingMemory
             memory_diagnostics = SamplingMemory(torch, Path(request['output']).with_suffix('.sampling-memory.json')).start()
+            from . import frame_preview
+            if not request.get('capacity_trial', False):
+                frame_preview.configure(Path(request['output']).parent)
             def sample_finalize_phase(name):
                 metrics.update(phase='sample_finalize', sample_finalize_phase=name)
                 save(request['metrics'], metrics)
@@ -319,7 +328,8 @@ def generate(request, resident=None):
                     try:
                         from .continuation import tail_data
                         continuation_data = tail_data(first_tail, latents, audio, canvas,
-                            request['sampling_plan'], manifest, continuation)
+                            request['sampling_plan'], manifest, continuation,
+                            **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}))
                     except Exception as error:
                         tail_failure(error)
                         continuation_data = None
@@ -579,6 +589,7 @@ def generate(request, resident=None):
                         gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
                         budget_refresh=refresh_budget if live_budget is not None else None)
             finally:
+                frame_preview.clear()
                 metrics['sampling_memory'] = memory_diagnostics.close()
             metrics.update(sampled)
             metrics.pop('sample_metrics_scope', None)
@@ -634,6 +645,7 @@ def generate(request, resident=None):
                 # Older retained sampling tails predate the predecessor binding.
                 continuation_data['metadata']['source_id'] = continuation['source_id']
         metrics.update(decode_to_file(latents, audio, request['output'], base=base, artifacts_dir=artifacts,
+                                     **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}),
                                      **({'continuation': continuation} if continuation is not None else {}),
                                      **({'audio_lead_in_callback': keep_audio_lead_in}
                                         if continuation is not None and continuation_data is not None else {}),
@@ -652,6 +664,16 @@ def generate(request, resident=None):
                             'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
                         raise
                     metrics['first_frame_kept'] = dict(saved=False, error=type(error).__name__)
+                try:
+                    from .continuation import chain_first_sound
+                    sound = chain_first_sound(continuation, continuation.get('source_video'))
+                    if sound is not None:
+                        continuation_data['metadata']['first_sound'] = sound
+                except Exception as error:
+                    if isinstance(error, MemoryError) or type(error).__name__ in (
+                            'OutOfMemoryError', 'CancelledError', 'InterruptProcessingException'):
+                        raise
+                    metrics['first_sound_kept'] = dict(saved=False, error=type(error).__name__)
             try:
                 from .continuation_store import save as save_continuation
                 metrics['continuation_store'] = dict(save_continuation(request['output'], continuation_data), saved=True)

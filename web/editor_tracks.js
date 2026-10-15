@@ -39,11 +39,11 @@ export function insertionPoint(clips, frame, exceptIds = []) {
     return {frame: edge === 'start' ? hit.start : hit.start + hit.frames, hit: hit.id, edge};
 }
 
+// A range starts where it was pressed (ends there when drawn leftwards); its length is whole seconds, at least two.
 export function rangeParameters(anchor, frame, tracks = ['v1', 'a1'], fps = model.FPS) {
-    const first = Math.max(0, Math.round(anchor / fps) * fps);
-    const last = Math.max(0, Math.round(frame / fps) * fps);
-    const start = Math.min(first, last);
-    return {kind: 'range', start, frames: Math.max(2 * fps, Math.abs(last - first)), tracks: [...tracks]};
+    const from = Math.max(0, Math.round(anchor)), to = Math.max(0, Math.round(frame));
+    const frames = Math.max(2 * fps, Math.round(Math.abs(to - from) / fps) * fps);
+    return {kind: 'range', start: to < from ? Math.max(0, from - frames) : from, frames, tracks: [...tracks]};
 }
 
 export function moveParameters(clip, anchor, frame, points, zoom) {
@@ -743,21 +743,23 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 gesture.selection = {...original, start: aligned.frame};
             } else {
                 aligned = snap(frame, dragPoints(frame), state.zoom);
-                const end = original.start + original.frames, at = Math.round(aligned.frame / model.FPS) * model.FPS;
-                const start = gesture.edge === 'start' ? Math.min(end - 2 * model.FPS, at) : original.start;
-                const stop = gesture.edge === 'end' ? Math.max(start + 2 * model.FPS, at) : end;
-                gesture.selection = capRange({kind: 'range', start, frames: stop - start, tracks: original.tracks}, gesture.edge === 'start');
+                // The edge held still stays exactly where it is; the dragged one follows the pointer by whole seconds.
+                const end = original.start + original.frames, fixed = gesture.edge === 'start' ? end : original.start;
+                const drawn = rangeParameters(fixed, gesture.edge === 'start' ? Math.min(aligned.frame, end - 2 * model.FPS) : Math.max(aligned.frame, fixed), original.tracks);
+                gesture.selection = capRange(drawn, gesture.edge === 'start');
             }
             previewSelection = gesture.selection; showGuide(aligned.guide); renderSelection();
             hint(gesture.selection, event, false, gesture.type === 'rangeMove');
             if (gesture.type === 'rangeMove' && gesture.rangeBlocked) tooltip.hidden = true;
         } else if (gesture.type === 'range') {
             const aligned = snap(frame, points, state.zoom);
-            const drawn = rangeParameters(gesture.anchor, aligned.frame);
+            // Where it was pressed, drawn to a clip edge, marker or the playhead nearby.
+            gesture.from ??= snap(gesture.anchor, points, state.zoom).frame;
+            const drawn = rangeParameters(gesture.from, aligned.frame);
             // Drawn from a clip's end, the range starts exactly there.
             if (gesture.flush != null && aligned.frame > gesture.flush) Object.assign(drawn, {start: gesture.flush,
                 frames: Math.max(2 * model.FPS, Math.round((aligned.frame - gesture.flush) / model.FPS) * model.FPS)});
-            gesture.selection = capRange(drawn, aligned.frame < gesture.anchor);
+            gesture.selection = capRange(drawn, aligned.frame < gesture.from);
             previewSelection = gesture.selection; showGuide(aligned.guide);
             renderSelection(); hint(gesture.selection, event);
         } else if (gesture.type === 'move') {

@@ -62,7 +62,17 @@ CAPTIONED = 3  # the score of a take with unwanted captions
 CARD = re.compile(r'c[0-9a-f]{12}')  # characters.<key>.card names a cast library card
 # How a shot carries its cast cards. Change these after the reference tests; nothing else needs to.
 PICTURE_ORDER = ('sheet', 'front', 'three_quarter', 'face')  # then any other label, in card order
-PICTURES_EACH = 3
+PICTURES_EACH = 6
+PICTURES_LEAST = 3  # What a person carried before six: a device that cannot hold more still shoots with these.
+# Six pictures cost extra time on every step. A class of machine starts from six only when it was measured at 25%
+# extra or less on every step, cold and warm: (card memory tier in GiB, people in the shot, weight precision).
+# Everything else, and everything unmeasured, starts from three. Only Linux is measured. Two people went 45-79% over
+# at 8 to 24 GiB, so only one-person classes can ever be listed. No class has passed yet.
+SIX_PICTURES_CLASSES = frozenset()
+SIX_PICTURES_TIERS_GIB = (8, 10, 12, 16, 20, 24, 32)  # measured card sizes; a card takes the largest one it reaches
+SIX_PICTURES_SYSTEMS = ('Linux',)
+TIER_SLACK_GIB = .5  # A "24 GB" card reports a little under 24 GiB.
+CONTINUED_ORDER = ('face', 'front', 'three_quarter')  # a continuing shot's picture for each person
 MAX_VOICES = 3      # voice clips per shot, the model limit
 MAX_REFERENCES = 32
 
@@ -150,16 +160,16 @@ def check(play):
                 validate(specs._int, shot[field], path + '/' + field, low, high)
         if 'seconds' in shot:
             validate(specs._number, shot['seconds'], path + '/seconds', 1.625, 60.)
-        modes = int(shot.get('first') is not None) + int(bool(shot.get('continue'))) + int('references' in shot)
-        if modes > 1:
-            problem(path, 'first, continue and references are mutually exclusive')
+        # A continuing shot starts from the previous one and may add reference pictures, never a first frame.
+        if shot.get('first') is not None and (shot.get('continue') or shot.get('references')):
+            problem(path, 'first is exclusive with continue and references')
         # Continuing a shot, or one longer than one 15 s block, needs two-pass text generation.
         seconds = shot.get('seconds', play.get('seconds'))
         long = isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 15
         if ((shot.get('continue') or long) and play.get('quality') in specs.QUALITY
                 and not specs.QUALITY[play['quality']][0] and all(p['path'] != '/quality' for p in problems)):
             problem('/quality', '"light" (two-pass) when a shot continues another or is longer than 15 s')
-        if long and (shot.get('first') is not None or 'references' in shot):
+        if long and (shot.get('first') is not None or shot.get('references') and not shot.get('continue')):
             problem(path + '/seconds', 'at most 15 with a first frame or references')
         elif long and not shot.get('continue') and _carded(play, shot):
             # Cast cards travel as references, which one generation of at most 15 s carries.
@@ -171,9 +181,13 @@ def check(play):
             refs = shot['references']
             if not isinstance(refs, list) or len(refs) > 32:
                 problem(path + '/references', 'must be a list of at most 32 items')
+            elif shot.get('continue') and len(refs) > specs.CONTINUED_PICTURES:
+                problem(path + '/references', 'at most %d pictures when the shot continues' % specs.CONTINUED_PICTURES)
             if isinstance(refs, list):
                 for j, ref in enumerate(refs):
-                    validate(specs.media_item, ref, path + '/references/%d' % j)
+                    validate(specs.media_item, ref, path + '/references/%d' % j, image=bool(shot.get('continue')))
+                    if shot.get('continue') and not specs.still_picture(ref):
+                        problem(path + '/references/%d' % j, 'must be a picture when the shot continues')
         if 'cast' in shot:
             if not isinstance(shot['cast'], list):
                 problem(path + '/cast', 'must be a list of character names')
@@ -261,7 +275,9 @@ def prompt(play, shot):
 def subject_definitions(subjects):
     """The prompt prefix tying cast cards to their reference tags; the one place its wording lives.
 
-    subjects: [{'name', 'description', 'pictures': (first, last) or None, 'audio': number or None}]."""
+    subjects: [{'name', 'description', 'pictures': (first, last), a list of such pairs, or None, 'audio': number or None}].
+    The page writes the same prompt from the same wording (web/cast_mention.js); tests/fixtures/subject_definitions.json
+    holds the cases both sides must reproduce exactly."""
     parts = []
     for number, subject in enumerate(subjects, 1):
         text = '<Subject %d> is %s' % (number, subject['name'])
@@ -269,9 +285,12 @@ def subject_definitions(subjects):
         text += (': %s.' % description) if description else '.'
         tags = []
         if subject.get('pictures'):
-            first, last = subject['pictures']
-            pictures = '<Picture %d>' % first if first == last else '<Picture %d> to <Picture %d>' % (first, last)
-            tags.append('%s show%s its appearance' % (pictures, 's' if first == last else ''))
+            # One (first, last) pair, or several when the person's pictures are not side by side.
+            ranges = [subject['pictures']] if isinstance(subject['pictures'][0], int) else subject['pictures']
+            pictures = ', '.join('<Picture %d>' % a if a == b else '<Picture %d> to <Picture %d>' % (a, b)
+                                 for a, b in ranges)
+            single = len(ranges) == 1 and ranges[0][0] == ranges[0][1]
+            tags.append('%s show%s its appearance' % (pictures, 's' if single else ''))
         if subject.get('audio'):
             tags.append('<Audio %d> is its voice' % subject['audio'])
         if tags:
@@ -280,32 +299,50 @@ def subject_definitions(subjects):
     return 'subject_definitions: ' + ' '.join(parts)
 
 
-def _pictures(card):
+def _pictures(card, each=PICTURES_EACH):
     rank = {label: i for i, label in enumerate(PICTURE_ORDER)}
     rows = sorted(enumerate(card.get('images') or []), key=lambda r: (rank.get(r[1]['label'], len(rank)), r[0]))
-    return [row['media'] for _, row in rows[:PICTURES_EACH]]
+    return [row['media'] for _, row in rows[:each]]
 
 
-def cast_references(play, shot, cards, *, continues=False):
+def _continued_pictures(card, alone):
+    """The pictures a continuing shot carries for one person.
+
+    Alone in the shot: the sheet, then a close face (else the front view), because a sheet
+    alone makes the face too small. With others: one picture, face > front > three_quarter."""
+    by = {}
+    for item in card.get('images') or []:
+        by.setdefault(item['label'], item['media'])
+    rest = [item['media'] for item in card.get('images') or [] if item['label'] not in CONTINUED_ORDER]
+    ordered = [by[label] for label in CONTINUED_ORDER if label in by] + rest
+    if not alone:
+        return ordered[:1]
+    sheet = by.get('sheet')
+    close = by.get('face') or by.get('front') or next((m for m in ordered if m is not sheet), None)
+    return [m for m in (sheet, close) if m is not None] or ordered[:1]
+
+
+def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
     """Which cast cards a shot carries, as references and a prompt prefix.
 
     cards maps a card ID to the current card, or None once it is gone. The same
-    function serves plan previews and the moment a take is submitted.
-    cast_reference: None (no character in the shot has a card), 'inherited'
-    (continues the previous shot), 'own' (the shot names its own first frame or
-    references), 'missing' (a card was deleted), 'partial' (not everyone fit)
-    or 'cards'. 'omitted' lists people left out entirely; 'voice_omitted' lists
-    people whose pictures are carried but whose voice did not fit."""
+    function serves plan previews and the moment a take is submitted. each is
+    the most pictures one person carries; pictures_each says what was used.
+    cast_reference: None (no character in the shot has a card), 'own' (the shot
+    names its own first frame or references; an empty list means no pictures), 'missing' (a card was deleted),
+    'partial' (not everyone fit) or 'cards'. 'omitted' lists people left out
+    entirely; 'voice_omitted' lists people whose pictures are carried but whose
+    voice did not fit. A shot that continues the previous one carries one picture
+    per person (face, else front, else three-quarter; a lone person gets the sheet and
+    then a face close-up) for at most CONTINUED_PICTURES people, and no voice clip: its voices carry on from the previous shot."""
     characters = play.get('characters', {})
     keys = [k for k in cast(play, shot) if isinstance(characters[k].get('card'), str)]
     result = dict(cast_reference=None, people=[], omitted=[], voice_omitted=[], missing=[], references=[],
-                  prefix=None, subjects=[], cards={})
+                  prefix=None, subjects=[], cards={}, pictures_each=each, clip_seconds=[])
     if not keys:
         return result
-    if continues:
-        result['cast_reference'] = 'inherited'
-        return result
-    if shot.get('first') is not None or 'references' in shot:
+    # A references list, even an empty one, is the shot's own choice: cards are added only when it is left out.
+    if shot.get('first') is not None or isinstance(shot.get('references'), list):
         result['cast_reference'] = 'own'
         return result
     spoken = {}
@@ -313,13 +350,21 @@ def cast_references(play, shot, cards, *, continues=False):
         spoken[line['who']] = spoken.get(line['who'], 0) + 1
     # People with more lines come first when not everyone fits; ties keep the order of appearance.
     chosen, pictures, voices = [], 0, 0
+    alone = continues and sum(1 for k in keys if cards.get(characters[k]['card']) is not None
+                              and _pictures(cards[characters[k]['card']])) == 1
     for key in sorted(keys, key=lambda k: -spoken.get(k, 0)):
         identity = characters[key]['card']
         card = cards.get(identity)
         if card is None:
             result['missing'].append(key)
             continue
-        images = _pictures(card)
+        images = _pictures(card, each)  # a continuing shot ignores each: it carries at most 2, within the 3 it may hold
+        if continues:
+            if images and len(chosen) < specs.CONTINUED_PICTURES:
+                chosen.append((key, card, _continued_pictures(card, alone), False))
+            else:
+                result['omitted'].append(key)
+            continue
         voice = card.get('voice') is not None and voices < MAX_VOICES
         if pictures + len(images) + voices + voice > MAX_REFERENCES:
             result['omitted'].append(key)
@@ -335,6 +380,7 @@ def cast_references(play, shot, cards, *, continues=False):
         result['references'].extend(dict(item) for item in images)
         if voice:
             clips.append(dict(card['voice']['clip']))
+            result['clip_seconds'].append(card['voice'].get('end', 15.) - card['voice'].get('start', 0.))
         person = characters[key]
         subject = dict(name=person.get('name') or key, description=card.get('description'),
                        pictures=(picture + 1, picture + len(images)) if images else None,
@@ -351,6 +397,27 @@ def cast_references(play, shot, cards, *, continues=False):
     result['cast_reference'] = ('missing' if result['missing'] else
                                 'partial' if result['omitted'] or result['voice_omitted'] else 'cards')
     return result
+
+
+def pictures_start(machine, people=1):
+    """Pictures a person carries before the length check: six for a measured class, else three.
+    machine is a capability table's `machine` row; a missing or unreadable one is unmeasured."""
+    try:
+        if machine['system'] in SIX_PICTURES_SYSTEMS:
+            vram = float(machine['vram_gib']) + TIER_SLACK_GIB
+            tier = max((t for t in SIX_PICTURES_TIERS_GIB if t <= vram), default=None)
+            if tier is not None and (tier, people, machine['precision']) in SIX_PICTURES_CLASSES:
+                return PICTURES_EACH
+    except (KeyError, TypeError, ValueError):
+        pass
+    return PICTURES_LEAST
+
+
+def pictures_note(each, cut=True):
+    """One sentence when the length check carried fewer pictures than this device started from; otherwise None."""
+    if each is None or each >= PICTURES_EACH or not cut:
+        return None
+    return 'Each person carries %d pictures in this shot; this device cannot hold more at this length.' % each
 
 
 PROMPT_LIMIT = 20000

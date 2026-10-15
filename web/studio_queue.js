@@ -124,6 +124,16 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
         if (!response.ok) throw new Error('cancel_failed');
         return response.json();
     }
+    // The page changes its list only after the server says where the request now is.
+    async function moveFirst(id) {
+        const response = await api.fetchApi('/freevideo/queue/first', {method: 'POST',
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify({prompt_id: id, node_id: nodeId})});
+        if (!response.ok) throw new Error('move_failed');
+        const reply = await response.json();
+        if (reply.status === 'unavailable') throw new Error('move_failed');
+        await refresh();
+        return reply;
+    }
     async function submit(session, randomized) {
         let seed = session.snapshot.output[nodeId].inputs.seed;
         if (randomized) {
@@ -176,7 +186,8 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
         if (!response.ok) throw new Error('queue_unavailable');
         const queue = await response.json();
         running = (queue.queue_running || []).filter(matches).map(entry)[0] || null;
-        pending = (queue.queue_pending || []).filter(matches).map(entry);
+        // Comfy returns its heap array; the queue number gives the real running order.
+        pending = (queue.queue_pending || []).filter(matches).sort((a, b) => a[0] - b[0]).map(entry);
         for (const row of [running, ...pending]) if (row) remember(row.id);
         await advanceLoop(); publish();
     }
@@ -223,7 +234,7 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
     api.addEventListener('execution_interrupted', onFailure);
     api.addEventListener('executed', onExecuted);
     return {
-        state, refresh, start, stopLoop,
+        state, refresh, start, stopLoop, moveFirst,
         subscribe(listener) { listeners.add(listener); listener(state()); schedule(); return () => { listeners.delete(listener); schedule(); }; },
         async cancel(id) {
             if (loop?.waiting === id) { loop.active = false; publish(); }

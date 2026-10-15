@@ -10,16 +10,18 @@ import { startUpdateChecks } from './updates.js';
 import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';
+import { expandCast } from './cast_mention.js';
 import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
-import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
+import { cleanOptionalWidgets, cleanOptionalPrompt, optionalInputValue } from './optional_inputs.js';
 import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
 import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
+import { createCastLibrary } from './cast_library.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -130,6 +132,8 @@ function mediaPanel(node, mount = null) {
     }
     role.value = 'reference';
     toolbar.append(add, generateImage, addAudio, role, picker, audioPicker); panel.append(toolbar, mode, note, audioHelp, connections, cards);
+    const cast = createCastLibrary({api, text, viewURL, uploadOne});
+    panel.prepend(cast.element);
     const read = () => {
         const rows = JSON.parse(serialized.value || "[]");
         if (!Array.isArray(rows) || rows.length > 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
@@ -238,6 +242,11 @@ function mediaPanel(node, mount = null) {
         try { rows = read(); } catch (error) { message(error.message, true); return; }
         const active = rows.filter(row => row.enabled !== false);
         const linked = name => node.inputs?.find(i => i.name === name)?.link != null;
+        // A Generate node that continues a video takes these keyframes as pictures, so they may sit beside references.
+        const continuing = (node.outputs?.[0]?.links || []).some(id => {
+            const target = node.graph?.getNodeById(node.graph?.links[id]?.target_id);
+            return target?.type === 'FreeVideoGenerate' && optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '';
+        });
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
         const audioRefs = active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'audio').length + Number(linked('reference_audio'));
@@ -254,7 +263,7 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) || first > 1 || last > 1));
+        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
         if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
         if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media will come from the connected nodes.\nNo upload is needed.', '素材由已连接的节点提供。\n无需上传文件。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
@@ -262,7 +271,7 @@ function mediaPanel(node, mount = null) {
             const top = el("div", undefined, "fv-row");
             const enabled = el("input"); enabled.type = "checkbox"; enabled.checked = row.enabled !== false;
             enabled.setAttribute("aria-label", text("Use media", "使用素材")); enabled.onchange = () => { rows[index].enabled = enabled.checked; update(rows); };
-            const label = el("span", (row.source || row.file).split("/").pop(), "fv-file"); label.title = row.file;
+            const label = el("span", row.cast?.name || (row.source || row.file).split("/").pop(), "fv-file"); label.title = row.file;
             const select = el("select"); select.setAttribute("aria-label", text("Media role", "素材用途"));
             const kind = mediaKind(row.file);
             for (const [value, title] of (kind === "image" ? [["reference", text("Reference", "参考")], ["first", text("First frame", "首帧")], ["last", text("Last frame", "尾帧")]] : [["reference", text("Reference", "参考")]])) {
@@ -349,7 +358,7 @@ function mediaPanel(node, mount = null) {
     panel.ondragover = event => { event.preventDefault(); event.stopPropagation(); };
     panel.ondrop = event => { event.preventDefault(); event.stopPropagation(); upload(event.dataTransfer.files); };
     panel.onpaste = event => { if (event.clipboardData?.files.length) { event.preventDefault(); event.stopPropagation(); upload(event.clipboardData.files); } };
-    const dispose = () => window.removeEventListener('freevideo-media', changed);
+    const dispose = () => { window.removeEventListener('freevideo-media', changed); cast.destroy(); };
     if (mount) { mount.append(panel); render(); return dispose; }
     node.freevideoCreateMediaEditor = target => mediaPanel(node, target);
     node.addDOMWidget("freevideo_media", "freevideo_media", panel, {serialize: false, getMinHeight: () => 300, getMaxHeight: () => 520});
@@ -675,6 +684,9 @@ app.registerExtension({
                     force.type = 'hidden'; force.computeSize = () => [0, -4]; force.draw = () => {};
                     force.value = false; force.serializeValue = () => false;
                 }
+                // Characters mentioned with @ travel as <Subject N> plus their definitions; the draft keeps the typed names.
+                const prompt = this.widgets?.find(w => w.name === 'text');
+                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
                     quality.label = text('Two-pass acceleration', '二次采样加速');

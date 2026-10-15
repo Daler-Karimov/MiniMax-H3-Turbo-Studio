@@ -65,6 +65,16 @@ def _rows(error):
     return rows
 
 
+def pictures_each(resolved):
+    """Pictures per person a shot used; None when no card was carried."""
+    return resolved['pictures_each'] if resolved['people'] else None
+
+
+def pictures_cut(resolved):
+    """True when the length check took pictures away from what this device starts with."""
+    return bool(resolved['people'] and resolved.get('pictures_cut'))
+
+
 class MaterialRejected(JobError):
     """External callers named material the content-only boundary does not admit: the job validation error."""
     status = 422
@@ -140,12 +150,28 @@ def _safe_error(error):
     rows = [_safe_row(row) for row in details] if isinstance(details, list) and details else []
     if rows and all(rows):
         result.update(details=rows, message='; '.join(row['message'] for row in rows))
-    return result
+    return dict(result, error_zh=errors.failure_reason(error))
+
+
+def failure(view):
+    """The current failure, excluding old takes superseded by a usable take."""
+    if view.get('stalled'):
+        return view['stalled'], None
+    join = view.get('join') or {}
+    if join.get('state') in ('failed', 'interrupted') and join.get('error'):
+        return join['error'], join.get('task')
+    for shot in view.get('shots', []):
+        if shot['state'] == 'failed':
+            take = next((t for t in reversed(shot['takes']) if t.get('error') and not t['stale']), {})
+            if take:
+                return take['error'], take.get('task')
+    return None, None
 
 
 class Productions:
     def __init__(self, jobs):
         self.jobs = jobs
+        self._machine = None  # the capability table's machine row, once known
         self.directory = jobs.directory / 'productions'
         self.records = {}
         self.changed = threading.Condition(jobs.lock)
@@ -194,7 +220,7 @@ class Productions:
 
     def _stalled(self, error):
         code = error.code if isinstance(getattr(error, 'code', None), str) and error.code in errors.ERRORS else 'internal_error'
-        return dict(code=code, message=errors.ERRORS[code][2], at=iso(self.jobs.clock()))
+        return errors.with_reason(dict(code=code, message=errors.ERRORS[code][2], at=iso(self.jobs.clock())))
 
     def _save(self, record):
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -343,11 +369,13 @@ class Productions:
         problems = []
         for i, (row, source, shot) in enumerate(zip(result['preview']['shots'], play['shots'], state['shots'])):
             # The same resolution a take gets when it is submitted, with the cards as they are now.
-            resolved = drama.cast_references(play, source, cards, continues=shot['continues'])
+            first = next((t for s, t in self._takes(state) if s is shot), None)
+            resolved = self._carry(play, source, cards, first and first['spec'], continues=shot['continues'])
             row['prompt'] = drama.with_cast(row['prompt'], resolved)
             row.update(cast_reference=resolved['cast_reference'], cast=resolved['people'],
                        cast_omitted=resolved['omitted'], cast_voice_omitted=resolved['voice_omitted'],
-                       cast_missing=resolved['missing'],
+                       cast_missing=resolved['missing'], cast_pictures_each=pictures_each(resolved),
+                       cast_note=drama.pictures_note(pictures_each(resolved), pictures_cut(resolved)),
                        references=len(resolved['references']))
             try:
                 spec._text(row['prompt'], '/screenplay/shots/%d/prompt' % i, 20000)
@@ -374,9 +402,8 @@ class Productions:
                 item['continue_from'] = dict(from_job='j000000000000')
             if item.get('continue_from', {}).get('ref'):
                 item['continue_from'] = dict(from_job='j000000000000')
-            resolved = drama.cast_references(state['screenplay'],
-                state['screenplay']['shots'][shot['index'] - 1], self._current(state['screenplay']),
-                continues=shot['continues'])
+            resolved = self._carry(state['screenplay'], state['screenplay']['shots'][shot['index'] - 1],
+                                   self._current(state['screenplay']), item, continues=shot['continues'])
             if resolved['references']:
                 item['media'] = dict(references=deepcopy(resolved['references']))
             estimate, revision = generation_estimate(self.jobs.port, spec.normalize(item, port=self.jobs.port))
@@ -588,7 +615,7 @@ class Productions:
         value = production.view(record['state'])
         tasks = record.get('tasks', {})
         def contextual(error, join=False):
-            error = deepcopy(error)
+            error = errors.with_reason(deepcopy(error))
             if error and 'next' in error:
                 action = self._context_next(record, join)
                 if action:
@@ -604,9 +631,11 @@ class Productions:
             ref = record['state']['current_join']
             join = next(j for j in record['state']['joins'] if j['ref'] == ref)
             value['join'].update(ref=ref, task=tasks.get(ref), error=contextual(join['error'], True))
-        value['stalled'] = deepcopy(record.get('stalled'))
+        value['stalled'] = errors.with_reason(deepcopy(record.get('stalled')))
         value['progress'] = self._progress(record)
         value['over_budget'] = self._elapsed_budget(value['progress'])
+        error, _ = failure(value)
+        value['error_zh'] = errors.failure_reason(error) if error else None
         return value
 
     def get(self, identity, *, since=None, wait=0, compact=True):
@@ -625,9 +654,15 @@ class Productions:
         changed = record['state']['revision'] != since
         if not changed and compact:
             progress = self._progress(record)
-            return dict(id=identity, revision=since, changed=False, status=record['state']['status'],
+            value = dict(id=identity, revision=since, changed=False, status=record['state']['status'],
                         paused=deepcopy(record['state'].get('paused')), fraction=progress['fraction'],
                         elapsed_seconds=progress['elapsed_seconds'])
+            state = record['state']
+            join = next((j for j in state['joins'] if j['ref'] == state['current_join']), None)
+            error, _ = failure(dict(stalled=record.get('stalled'), join=join, shots=state['shots']))
+            if error:
+                value['error_zh'] = errors.failure_reason(error)
+            return value
         return dict(self._view(record), changed=changed)
 
     async def get_async(self, identity, *, since=None, wait=0, compact=True):
@@ -676,7 +711,7 @@ class Productions:
                 shot = next((s for s in view['shots'] if s['chosen'] is None), view['shots'][-1])
                 result.append(dict(id=view['id'], title=view['title'], status=view['status'], revision=view['revision'],
                     shot=shot['index'], shots=len(view['shots']), next=view['todo'][0] if view['todo'] else None,
-                    paused=view['paused'], stalled=view['stalled'], session=record.get('session')))
+                    paused=view['paused'], stalled=view['stalled'], session=record.get('session'), error_zh=view['error_zh']))
             return result
 
     def _mutate(self, action, identity, *, by, ref=None, client=None, **values):
@@ -885,7 +920,9 @@ class Productions:
                     saved.update(cast=dict(resolved['cards']), cast_reference=resolved['cast_reference'],
                                  cast_omitted=list(resolved['omitted']),
                                  cast_voice_omitted=list(resolved['voice_omitted']),
-                                 cast_missing=list(resolved['missing']))
+                                 cast_missing=list(resolved['missing']),
+                                 cast_pictures_each=pictures_each(resolved),
+                                 cast_pictures_cut=pictures_cut(resolved))
                 self._save(marker)  # Durable before Jobs may accept it.
                 self.jobs.submit(item, client='production:' + identity, parent=dict(production=identity, ref=ref))
             except spec.SpecError as error:
@@ -908,8 +945,8 @@ class Productions:
         """Read the cast cards now, at submission: later takes and reshoots use the cards as they are then."""
         play = state['screenplay']
         shot = next(s for s in state['shots'] if any(t['job'] == take['job'] for t in s['takes']))
-        resolved = drama.cast_references(play, play['shots'][shot['index'] - 1], self._current(play),
-                                         continues=shot['continues'])
+        resolved = self._carry(play, play['shots'][shot['index'] - 1], self._current(play), item,
+                               continues=shot['continues'])
         if resolved['cast_reference'] is None:
             return resolved
         if resolved['references']:
@@ -918,6 +955,79 @@ class Productions:
         item['metadata'] = dict(item.get('metadata') or {}, cast=dict(resolved['cards']),
                                 cast_reference=resolved['cast_reference'])
         return resolved
+
+    def _carry(self, play, shot, cards, item, *, continues):
+        """The cast a shot carries: this device's starting number of pictures a person (six for a measured
+        class of card, people and precision, else three), fewer where it cannot hold them, down to three. Plan
+        previews and submissions both come here, so they agree."""
+        if continues:
+            # A continuing shot carries one picture a person whatever the device holds.
+            resolved = drama.cast_references(play, shot, cards, continues=True, each=drama.PICTURES_LEAST)
+            resolved.update(pictures_each=None, pictures_cut=False)
+            return resolved
+        people = len(drama.cast_references(play, shot, cards, continues=continues, each=drama.PICTURES_LEAST)['people'])
+        start = each = self._pictures_start(item, people)
+        while True:
+            resolved = drama.cast_references(play, shot, cards, continues=continues, each=each)
+            if each <= drama.PICTURES_LEAST or item is None or not self._too_long(item, resolved):
+                resolved['pictures_cut'] = each < start
+                return resolved
+            each -= 1
+
+    def _pictures_start(self, item, people):
+        """Where the picture count starts for this many people on this machine, from the capability table's
+        graphics card, system and precision. Any canvas names the same machine, so a shot without a take asks
+        about the default canvas."""
+        if self._machine is None:
+            from .length import capability_table
+            width, height = spec.canvas_size(item or {})
+            table = capability_table(self.jobs.port, dict(width=width, height=height, task='ref2va', loras=False), wait=3.)
+            if table.get('status') != 'ready':
+                return drama.pictures_start(None)  # Not worked out yet: three, and the next ask looks again.
+            precision = getattr(self.jobs.port, 'prepared_precision', lambda: None)()
+            # The machine does not change while this server runs.
+            self._machine = dict(table.get('machine') or {}, precision=precision if isinstance(precision, str) else None)
+        return drama.pictures_start(self._machine, people)
+
+    def _too_long(self, item, resolved):
+        """True when this device cannot generate the shot with these references. A table that is not ready
+        (still computing, unavailable) or lacks this canvas says False and keeps the pictures; a ready table
+        that admits no length at this canvas, or a limit this shot's length cannot be planned under, says True."""
+        pictures = sum(p['pictures'] for p in resolved['people'])
+        if not pictures:
+            return False
+        try:
+            from ..chain_plan import PlanError, plan as chain_plan
+            from .length import capability_table
+            media = dict(references=deepcopy(resolved['references']))
+            normalized = spec.normalize(dict(deepcopy(item), media=media))
+            rows = ([dict(kind='image', width=normalized['width'], height=normalized['height'])] * pictures
+                    + [dict(kind='audio', seconds=seconds) for seconds in resolved['clip_seconds']])
+            table = capability_table(self.jobs.port, normalized, wait=3., references=rows,
+                                     task='ref2va_av' if resolved['clip_seconds'] else 'ref2va')
+            if table.get('status') != 'ready':
+                return False
+            index = next((i for i, row in enumerate(table.get('sizes', []))
+                          if (row['width'], row['height']) == (normalized['width'], normalized['height'])), None)
+            tiers = table.get('tiers', {})
+            tier = tiers.get(normalized['quality'])
+            if tier is None:
+                tier = next((row for row in tiers.values()
+                             if row.get('steps') == normalized['base_steps'] and row.get('two_pass') == normalized['two_pass']
+                             and (not normalized['two_pass'] or normalized['refine_steps'] == 3)), None)
+            maxima = tier.get('max_frames') if tier else None
+            if index is None or not isinstance(maxima, list) or index >= len(maxima):
+                return False
+            limit = maxima[index]
+            if limit is None:
+                return True  # no length at all fits at this canvas with these pictures
+            try:
+                chain_plan(normalized['seconds'], max_frames=limit, continued=bool(normalized.get('continue_from')))
+            except PlanError:
+                return True
+            return False
+        except Exception:  # The limit is advisory: a failure here keeps the pictures and lets the job decide.
+            return False
 
     def _current(self, play):
         """Cards as they are now; a card deleted since the film started is None (the shot uses text)."""

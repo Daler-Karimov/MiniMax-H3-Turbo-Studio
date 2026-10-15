@@ -64,7 +64,8 @@ export function promptPrestart(api, nodeId, enabled, alive = () => true) {
 
 // An empty box is never rewritten, the untouched starter prompt included:
 // enhancement waits for the user's own scene.
-export function createPromptEnhancer({node, input, editor, api, context, setText, t, starter = '', onReport = () => {}, onChange = () => {}}) {
+// `prepare` turns the user's text into what the model reads (character mentions written out with their pictures).
+export function createPromptEnhancer({node, input, editor, api, context, setText, t, starter = '', prepare = text => text, onReport = () => {}, onChange = () => {}}) {
     const saved = node.properties?.freevideo_prompt_versions;
     // Drafts saved before the starter became a placeholder hold it as the original.
     const versions = new PromptVersions(starter && saved?.original === starter ? {...saved, original: ''} : saved, input.value);
@@ -248,7 +249,7 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
                 }
                 await poll('install', {accept_download: true});
             }
-            const result = await poll('rewrite', {text: original, ...scene});
+            const result = await poll('rewrite', {text: prepare(original), ...scene});
             if (disposed || cancelling) throw new Error('cancelled');
             if (edits !== versions.value.edits || !versions.accept(key, context(), result.text)) throw new Error('stale');
             apply(); show('');

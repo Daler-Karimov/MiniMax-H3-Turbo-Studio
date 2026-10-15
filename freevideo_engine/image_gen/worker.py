@@ -142,10 +142,25 @@ def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None
                     except Exception:
                         # Diagnostics must not replace the inference exception.
                         pass
-                result = dict(phase='error', code=code, stage=context.timing.stage,
+                reload = not getattr(runner, 'at_boundary', lambda: True)()
+                result = dict(phase='error', code=code, stage=context.timing.stage, reloaded=reload,
                               seconds=context.timing.seconds(), stages=context.timing.snapshot(), plan=plan,
                               error=exception_details(error, context.redactor, code))
             finally:
+                if result is not None and result.get('reloaded'):
+                    # A failure inside a layer pass leaves the weights streamer part-way through it and the
+                    # next request would be refused; the model is loaded again for that one.
+                    with redirect_stdout(sys.stderr):
+                        try:
+                            runner.close()
+                        except Exception as error:
+                            print('image runner close failed: %s' % type(error).__name__, file=sys.stderr, flush=True)
+                    runner = None
+                    import gc
+                    gc.collect()
+                    torch = sys.modules.get('torch')
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 with inbox.mutex:
                     inbox.busy = False
                     if result is not None:

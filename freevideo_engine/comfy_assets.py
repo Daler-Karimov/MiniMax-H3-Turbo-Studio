@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from . import launcher_bridge
+from .comfy_continuation import optional_text
 from .monitoring import thermal_slowdown, shared_gpu_note, worker_gpu
 from .paths import data_root
 from .support_report import encoder_sizes
@@ -30,6 +31,7 @@ REFERENCE_INPUTS = ('reference', *(f'reference_{i}' for i in range(2, 9)))
 
 def resolve_loras(serialized, names, resolve, previous=None):
     """Resolve a UI stack through Comfy's registered libraries, never raw paths."""
+    serialized = optional_text(serialized, '[]')
     if not isinstance(serialized, str) or len(serialized) > 128 * 1024:
         raise ValueError('Invalid LoRA selection')
     rows = json.loads(serialized)
@@ -64,6 +66,7 @@ def media_kind(filename):
 
 
 def resolve_assets(serialized, input_directory):
+    serialized = optional_text(serialized, '[]')
     if not isinstance(serialized, str) or len(serialized) > 128 * 1024:
         raise ValueError('Invalid media selection')
     rows = json.loads(serialized)
@@ -101,9 +104,31 @@ def resolve_assets(serialized, input_directory):
             result.setdefault('references', []).append({'kind': kind, 'path': str(path)})
         else:
             raise ValueError('Media role must be first, last or reference')
-    if result.get('references') and any(name in result for name in ('first', 'last')):
-        raise ValueError('Use first/last frames or references in this request. Disable unused media cards.')
+    # Mixing keyframes and references is checked when the video is made (comfy_media.export):
+    # a part that continues a video uses its keyframes as pictures.
     return result
+
+
+def continued_assets(serialized):
+    """The panel rows a continued part uses: enabled image references in panel order, at most three.
+
+    Its frames and sounds stay in the panel for parts that start fresh, but never reach a continued part's checks."""
+    from .continuation import PICTURES_MAX
+    try:
+        rows = json.loads(serialized)
+    except (TypeError, ValueError):
+        return '[]'
+    kept = []
+    for row in rows if isinstance(rows, list) else ():
+        if (isinstance(row, dict) and row.get('enabled', True) is True and row.get('role') == 'reference'
+                and isinstance(row.get('file'), str)):
+            try:
+                image = media_kind(row['file']) == 'image'
+            except ValueError:
+                image = False
+            if image and len(kept) < PICTURES_MAX:
+                kept.append(dict(file=row['file'], role='reference'))
+    return json.dumps(kept)
 
 
 def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None, **images):
@@ -126,9 +151,6 @@ def connect_assets(assets, *, first=None, last=None, reference=None, reference_a
     if count > 32:
         raise ValueError(f'There are {count} references and the limit is 32. '
                          'For a long image batch, connect a clip to the Reference node\'s video input; a clip counts as one reference.')
-    if count and any(
-            name in result or name in connected for name in ('first', 'last')):
-        raise ValueError('Choose keyframes or references; disable the unused inputs')
     if connected:
         result['_connected'] = connected
     return result
@@ -162,6 +184,10 @@ def output_summary(report, relative_video):
                 video=relative_video.as_posix(), report=relative_video.with_suffix(
                     '.debug.json' if report.get('diagnostic_file') == relative_video.with_suffix('.debug.json').name
                     else '.request.json').as_posix())
+    if type(report.get('output_frames')) is int and report['output_frames'] > 0:
+        # Resource reports keep the generated canvas; result cards show only saved frames.
+        result['geometry'].update(frames=report['output_frames'],
+                                  seconds=report['output_frames'] / (result['geometry'].get('fps') or 24))
     checkpoint = encoding.get('checkpoint') or {}
     sizes = checkpoint.get('bytes'), checkpoint.get('expected_bytes')
     # Reports are read back from disk; a malformed one gets no notice rather than failing the library.

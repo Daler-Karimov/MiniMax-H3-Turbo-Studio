@@ -1,9 +1,10 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
-import {agentGet, agentPost} from './agent_session.js';
+import {agentGet, agentPost, retryAgentPost} from './agent_session.js';
 import {isolateDialogKeys, routeDialogKey} from './dialog_keys.js';
 import {closeDialog} from './motion.js';
-import { estimatedFraction, remainingAbove, remainingShown } from './generation_progress.js';
+import { estimatedFraction, remainingAbove, remainingShown, createDiagnosticReportControl } from './generation_progress.js';
+import {createErrorReport} from './error_panel.js';
 import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 import {renderImageFailure} from './image_generation.js';
 
@@ -19,9 +20,26 @@ function glyph(path, width = 2.2) {
 const press = (cls, text, action) => { const b = el('button', cls, text); b.type = 'button'; b.onclick = action; return b; };
 let chatNumber = 0;
 
-const WORKING = ['running', 'queued', 'waiting'], VIDEOS = ['generate', 'assemble'];
+const WORKING = ['running', 'queued', 'waiting', 'cancelling'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
 const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Polishing', '润色中']};
+const SEND_ATTEMPTS = 3, WAIT_FOR_AGENT = ['not_connected', 'not_listening'];
+const GENERIC_FAILURE_ZH = '处理任务时出错，未能完成结果';
+// A listening/connection race is queued; other 4xx refusals never repeat automatically.
+const sendRefused = (error, response) => error?.code === 'session_full' || error?.retryable === false
+    || response?.status >= 400 && response.status < 500 && !WAIT_FOR_AGENT.includes(error?.code);
+async function sendError(response) {
+    if (!response) return null;
+    try { return (await (response.clone?.() || response).json())?.error || null; }
+    catch { return null; }
+}
+// Sends and failure cards use the same public reason, including the engine's Chinese mapping.
+function failureReason(value, t) {
+    const error = value.error, reason = error?.error_zh || value.error_zh;
+    if (error?.code === 'session_full' && (!reason || reason === GENERIC_FAILURE_ZH))
+        return t('This conversation is full. Start a new chat.', '这个对话已达到消息数量上限，请新建对话');
+    return t(error?.message || 'The task failed.', reason || GENERIC_FAILURE_ZH);
+}
 
 export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
@@ -78,6 +96,7 @@ const SAVING = ['decode', 'finishing', 'assembling'], stepped = p => p.phase ===
 // The one line that says where a job is. No step count is written unless the engine gave one.
 export function jobLine(job, t) {
     const p = job.progress || {};
+    if (job.status === 'cancelling') return t('Stopping', '正在停止');
     if (job.status !== 'running') return t('Queued', '排队中');
     if (stepped(p)) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
     if (SAVING.includes(p.phase)) return t('Saving', '保存中');
@@ -110,14 +129,14 @@ export function jobParts(job) {
     return Array.from({length: block.total}, (_, i) => i < (block.done || 0) ? 1 : i === block.index - 1 ? inside : 0);
 }
 
-export const emptyChat = () => ({session: undefined, items: new Map(), jobs: {}, confirms: {}, last: 0, read: 0, agent: {}, current: null, active: 0});
+export const emptyChat = () => ({session: undefined, items: new Map(), jobs: {}, failures: {}, confirms: {}, last: 0, read: 0, agent: {}, current: null, active: 0});
 // One answer from the server folded into what the page already has: entries add up by their number, jobs are
 // replaced by id (a card keeps its last state after the server stops listing its job), and so are the answers to its questions.
 export function chatMerge(state, data) {
     const items = new Map(state.items);
-    for (const item of data.items || []) if (['message', 'job', 'confirm'].includes(item.type) && Number.isFinite(item.seq)) items.set(item.seq, item);
+    for (const item of data.items || []) if (['message', 'job', 'confirm', 'production', 'cast'].includes(item.type) && Number.isFinite(item.seq)) items.set(item.seq, item);
     const read = Math.max(state.read, Number(data.read_seq) || 0, ...(data.items || []).filter(item => item.read === true).map(item => item.seq));
-    return {session: data.session ?? null, items, jobs: {...state.jobs, ...(data.jobs || {})}, confirms: {...state.confirms, ...(data.confirms || {})}, read,
+    return {session: data.session ?? null, items, jobs: {...state.jobs, ...(data.jobs || {})}, failures: data.failures || {}, confirms: {...state.confirms, ...(data.confirms || {})}, read,
         last: Math.max(state.last, Number(data.last_seq) || 0, ...items.keys()), agent: data.agent || {},
         current: data.current || null, active: Number(data.active) || 0};
 }
@@ -222,6 +241,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '对 Agent 说'));
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
     form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
+    const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status'); main.insertBefore(notice, form);
+    function say(text) { notice.textContent = text; notice.hidden = !text; }
 
     let dismissImage = null;
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
@@ -433,7 +454,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         }
     }
     function chooseChat(session, focus = false) {
-        closeMenu();
+        closeMenu(); say('');
         showDraft(session); rememberSelection(session);
         selectedSession = session; selection++; pinned = true; away = null;
         conversations = selectConversation(conversations, session); renderConversations();
@@ -512,7 +533,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     // Whether the reader is at the newest entry. It holds while the conversation is out of sight, which forgets where it was scrolled.
     let pinned = true;
     const closed = new AbortController();
-    const nodes = new Map(), answers = new Map(), stopping = new Set(), stopErrors = new Map(), retrying = new Set(), confirming = new Set(), confirmErrors = new Map();
+    const nodes = new Map(), answers = new Map(), stopping = new Set(), retrying = new Set(), confirming = new Set(), confirmErrors = new Map();
     let bulkStopping = false;
     const cardKey = (session, id) => JSON.stringify([session, id]);
     // The fraction each job shows: the estimate, never backwards, short of 100% until the video is saved.
@@ -539,19 +560,20 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
     const inSelectedChat = () => !creating && (!selectedSession || selectedSession === state.session);
+    const composeAllowed = () => inSelectedChat() && state.agent.connected === true;
     const sendingAllowed = () => inSelectedChat() && canSend(state);
 
     const draftSending = () => pending.some(entry => entry.sending && entry.draft && entry.draft === drafts.get(draftSession));
-    async function cancelJob(job, session) {
-        if (stopping.has(job.id)) return;
-        stopping.add(job.id); stopErrors.delete(job.id); render(); report();
-        try {
-            const response = await agentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
-            if (!response.ok) throw await requestError(response);
-        } catch (error) {
-            stopping.delete(job.id);
-            stopErrors.set(job.id, {session, text: t('Could not stop "' + jobName(job, t) + '": ', '没有停止“' + jobName(job, t) + '”：') + reason(error)});
-        }
+    async function cancelJobs(ids) {
+        if (!ids.length) { say(t('No tasks are running.', '当前没有在运行的任务')); return; }
+        ids = ids.filter(id => !stopping.has(id));
+        if (!ids.length) return;
+        say(t('Stopping…', '正在停止…'));
+        ids.forEach(id => stopping.add(id)); render(); report();
+        const results = await Promise.all(ids.map(id => retryAgentPost(api, '/freevideo/agent/activity/cancel', {id})));
+        results.forEach((response, index) => { if (!response?.ok) stopping.delete(ids[index]); });
+        if (results.some(response => !response?.ok)) say(t('Stopping failed after a retry. If still running, click again.', '停止没成功，已重试；仍在运行请再点一次'));
+        else say('');
         if (!stopped) { render(); report(); void poll(); }
     }
     async function retryJob(key, text) {
@@ -601,10 +623,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const middle = el('div', 'fv-chat-where'), parts = el('div', 'fv-chat-parts'), line = el('p', 'fv-chat-line'), part = el('span'), step = el('span'); line.append(part, step);
         middle.append(parts, line);
         const foot = el('div', 'fv-chat-actions'), left = el('span', 'fv-chat-left');
-        const session = state.session;
-        const stop = press('fv-chat-stop', null, () => void cancelJob(job, session));
-        const error = el('p', 'fv-chat-error'); error.setAttribute('role', 'alert');
-        foot.append(left, stop); info.append(head, middle, foot, error); item.replaceChildren(box, info);
+        const stop = press('fv-chat-stop', null, () => void cancelJobs([job.id]));
+        foot.append(left, stop); info.append(head, middle, foot); item.replaceChildren(box, info);
         const said = {};
         // The number rides on the water, and goes under the line once there is no room left above it.
         const level = next => {
@@ -629,9 +649,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const where = cardLine(said, next, t);
             part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : where;
             step.textContent = cells.length ? where : '';
-            error.textContent = stopErrors.get(next.id)?.text || ''; error.hidden = !error.textContent;
-            const going = stopping.has(next.id);
-            stop.disabled = going; stop.textContent = going ? t('Stopping', '正在停止') : t('Stop', '停止');
+            const going = stopping.has(next.id) || next.status === 'cancelling';
+            stop.disabled = going; stop.textContent = going ? t('Stopping…', '正在停止…') : t('Stop', '停止');
+            stop.setAttribute('aria-busy', String(going));
             stop.setAttribute('aria-label', t('Stop ', '停止 ') + jobName(next, t));
         };
     }
@@ -661,6 +681,24 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (job.play) {
                 // The video plays inside its frame, with its sound; the line under it follows and can be dragged.
                 let video = null;
+                let playing = false, loadRetried = false;
+                const playbackFailure = () => {
+                    if (item.dataset.mode !== 'done') return;
+                    playback.textContent = t('Cannot play right now. Open it in Creations.', '暂时播放不了，可在作品库中打开'); playback.hidden = false;
+                    show.textContent = t('Open in Creations', '在作品库打开'); if (!show.parentNode) foot.append(show);
+                    if (!foot.parentNode) info.append(foot);
+                };
+                const playback = el('p', 'fv-chat-playback'); playback.hidden = true; info.append(playback);
+                const play = async () => {
+                    if (playing) return;
+                    playing = true; box.dataset.loading = 'true';
+                    try { await video.play(); playback.hidden = true; }
+                    catch {
+                        if (loadRetried) playbackFailure();
+                        else try { loadRetried = true; video.load(); await video.play(); playback.hidden = true; } catch { playbackFailure(); }
+                    }
+                    finally { playing = false; delete box.dataset.loading; }
+                };
                 const toggle = press('fv-chat-play', null, () => {
                     if (!video) {
                         video = el('video'); video.playsInline = true; video.src = api.apiURL(job.play);
@@ -669,10 +707,15 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                         video.onloadedmetadata = () => shape(video.videoWidth, video.videoHeight);
                         video.ontimeupdate = () => { if (video.duration) seek.value = String(Math.round(video.currentTime / video.duration * 1000)); };
                         video.onplay = video.onpause = video.onended = () => { box.dataset.playing = String(!video.paused && !video.ended); label(); };
+                        video.onerror = () => {
+                            if (playing) return;
+                            if (loadRetried) { playbackFailure(); return; }
+                            loadRetried = true; video.load(); void play();
+                        };
                         seek.oninput = () => { if (video.duration) video.currentTime = seek.value / 1000 * video.duration; };
                         box.prepend(video); box.append(seek); box.dataset.video = 'true';
                     }
-                    if (video.paused || video.ended) void video.play().catch(() => {}); else video.pause();
+                    if (video.paused || video.ended) { loadRetried = false; void play(); } else video.pause();
                 });
                 const label = () => toggle.setAttribute('aria-label', (box.dataset.playing === 'true' ? t('Pause ', '暂停 ') : t('Play ', '播放 ')) + jobName(job, t));
                 label(); box.append(toggle);
@@ -693,27 +736,43 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         return {element: item, update(job, {latest, retry, key}) {
             // Jobs without a picture (a check, a prompt) are one quiet line while they run, and nothing after.
             // A picture takes seconds: the same quiet line while it is made, then the picture.
-            const card = VIDEOS.includes(job.kind || 'generate') || (job.kind === 'image' && !WORKING.includes(job.status));
+            const card = VIDEOS.includes(job.kind || 'generate') || (['image', 'production', 'cast'].includes(job.kind) && !WORKING.includes(job.status));
             const next = card ? jobMode(job) + (jobMode(job) === 'done' ? `:${job.play}:${job.thumbnail}:${job.work}`
-                : jobMode(job) === 'failed' ? `:${job.error?.code}:${job.error?.report_id}` : '')
+                : jobMode(job) === 'failed' && job.kind === 'image' ? `:${job.error?.code}:${job.error?.report_id}` : '')
                 : WORKING.includes(job.status) ? 'quiet' : 'none';
             if (next !== mode) {
                 mode = next; item.dataset.job = job.id; item.dataset.mode = next.split(':')[0]; item.hidden = next === 'none';
                 if (job.kind === 'image') item.dataset.kind = 'image'; else delete item.dataset.kind;
-                if (next !== 'working') { stopping.delete(job.id); stopErrors.delete(job.id); }
+                if (!WORKING.includes(job.status)) stopping.delete(job.id);
                 if (next === 'working') apply = working(item, job);
                 else if (next.startsWith('done')) apply = done(item, job);
-                else if (next === 'quiet') { item.replaceChildren(el('span', 'fv-chat-dots'), el('span', null, t(...(QUIET[job.kind] || ['Working', '进行中'])))); apply = null; }
-                else if (next === 'stopped') { item.replaceChildren(el('span', null, t('Stopped', '已停止'))); apply = null; }
-                else if (next.startsWith('failed')) {
-                    if (job.kind === 'image') {
-                        const host = el('div');
-                        renderImageFailure(host, {error: job.error?.code || 'generation_failed', report_id: job.error?.report_id}, t,
-                            {productVersion, fetchApi: (path, options) => api.fetchApi(path, options)});
-                        item.replaceChildren(host);
-                    } else item.replaceChildren(el('span', null, t('Could not generate', '没有生成出来')));
+                else if (next === 'quiet') {
+                    const label = el('span'); item.replaceChildren(el('span', 'fv-chat-dots'), label);
+                    apply = next => { label.textContent = stopping.has(next.id) || next.status === 'cancelling'
+                        ? t('Stopping', '正在停止') : t(...(QUIET[next.kind] || ['Working', '进行中'])); };
+                }
+                else if (next === 'stopped' && (!job.error || job.kind === 'image')) { item.replaceChildren(el('span', null, t('Stopped', '已停止'))); apply = null; }
+                else if (next.startsWith('failed') && job.kind === 'image') {
+                    // Picture failures name their step with the picture's own report card.
+                    const host = el('div');
+                    renderImageFailure(host, {error: job.error?.code || 'generation_failed', report_id: job.error?.report_id}, t,
+                        {productVersion, fetchApi: (path, options) => api.fetchApi(path, options)});
+                    item.replaceChildren(host);
                     if (retry) item.append(press('fv-chat-retry', t('Retry', '重试'), retry));
                     apply = null;
+                }
+                else if (next === 'failed' || next === 'stopped') {
+                    const reason = el('p'), actions = el('div', 'fv-chat-actions fv-actions'), links = el('div', 'fv-result-links');
+                    let current = job;
+                    const diagnostic = createDiagnosticReportControl(t, {api, tip: true, version: productVersion,
+                        label: () => t('Download diagnostic report', '下载诊断报告'),
+                        fallback: () => new Blob([JSON.stringify(createErrorReport({error: current.error, exception_type: current.error?.code,
+                            details: current.error?.request_id}, {stage: 'execution'}), null, 2)], {type: 'application/json'})});
+                    actions.append(diagnostic.report);
+                    if (retry) actions.append(press('fv-chat-retry', t('Retry', '重试'), retry));
+                    links.append(actions); item.replaceChildren(reason, links);
+                    apply = next => { current = next; reason.textContent = failureReason(next, t);
+                        diagnostic.updateReport({report_id: next.report_id}); };
                 } else { item.replaceChildren(); apply = null; }
             }
             apply?.(job, latest);
@@ -771,7 +830,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         item.setAttribute('role', 'status'); item.setAttribute('aria-label', t('Thinking', '正在思考')); item.append(mark);
         return {element: item, update() {}};
     }
-    const MAKE = {error: () => { const element = el('li', 'fv-chat-error'); element.setAttribute('role', 'alert'); return {element, update(text) { element.textContent = text; }}; }, hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
+    const MAKE = {hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
 
     function render(follow = false) {
         const entries = chatEntries(state), ids = new Set(entries.map(entry => entry.id).filter(Boolean));
@@ -792,12 +851,16 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 const text = lastUser?.text;
                 const key = cardKey(state.session, job.id);
                 wanted.push([`s:${entry.seq}`, 'job', job, {latest: entry === finished, key, retry: text ? () => retryJob(key, text) : null}]);
+                const failure = state.failures[entry.entity];
+                if (failure) wanted.push([`e:${entry.seq}`, 'job', failure]);
+            } else if (entry.type === 'production' || entry.type === 'cast') {
+                const failure = state.failures[entry.entity];
+                if (failure) wanted.push([`s:${entry.seq}`, 'job', failure]);
             } else wanted.push([`s:${entry.seq}`, 'confirm', entry]);
         }
         for (const entry of localPending) wanted.push([`m:${entry.id}`, 'user', {...entry, taken: false}]);
         if (!said) wanted.push(['examples', 'examples', null]);
         // The agent has the sentence, or is waiting for one, and has not answered yet.
-        for (const [id, error] of stopErrors) if (error.session !== state.session) wanted.push([`stop:${id}`, 'error', error.text]);
         const tail = localPending.at(-1) || entries.at(-1);
         if (tail?.type !== 'job' && tail?.type !== 'confirm' && (localPending.some(entry => !entry.error) || !tail?.error && tail?.role === 'user') && state.agent.connected === true
             && (state.agent.listening !== false || tail.taken === true)) wanted.push(['dots', 'dots', null]);
@@ -814,7 +877,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const sendable = sendingAllowed();
         input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
         input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to continue', '请在 Agent 里让它继续') : t('Message the agent…', '对 Agent 说…');
-        sendButton.disabled = !sendable || draftSending() || !input.value.trim();
+        sendButton.disabled = !composeAllowed() || draftSending() || !input.value.trim();
         if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
         else if (log.children.length > before) down.hidden = false;
@@ -847,34 +910,63 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             stopping: bulkStopping, any: state.items.size > 0 || pending.some(entry => entry.session === state.session)});
     }
     function acknowledge(entry) {
-        entry.acknowledged = true; entry.error = null;
+        entry.acknowledged = true; entry.error = null; entry.automatic = false;
+        if (entry.session === state.session) say('');
         unsaidSessions.delete(entry.session);
         if (entry.draft && drafts.get(entry.session) === entry.draft) {
             drafts.delete(entry.session);
             if (draftSession === entry.session) { input.value = ''; grow(); }
         }
     }
-    async function send(text, original = null, draft = null) {
+    const waitingNotice = code => (code ? code === 'not_listening' : state.agent.connected === true)
+        ? t('Not sent: Agent is not listening yet. It will send automatically once listening resumes.', '没发出去：Agent 还没在听，继续监听后会自动发送')
+        : t('Not sent: Agent is not connected. It will send automatically once connected.', '没发出去：Agent 还没连接，连接后会自动发送');
+    async function send(text, original = null, draft = null, automatic = false) {
         text = String(text).trim();
-        original ||= pending.find(entry => entry.session === (state.session ?? null) && entry.text === text && (entry.error || entry.sending));
-        if (!text || !sendingAllowed() || original?.sending || original && original.session !== state.session) return false;
+        original ||= pending.find(entry => entry.session === (state.session ?? null) && entry.text === text && (entry.error || entry.sending || entry.automatic));
+        if (!text || original?.sending || original && original.session !== state.session) return false;
+        if (!inSelectedChat()) {
+            say(creating ? t('Creating a new chat…', '正在新建对话…') : t('Loading this chat. Please send again shortly.', '正在读取对话，请稍后再发一次'));
+            return false;
+        }
         const entry = original || {id: newId(), text, session: state.session ?? null, draft};
         if (draft) entry.draft = draft;
         if (!original) pending.push(entry);
-        entry.sending = true; entry.retried = !!original; entry.error = null; render(true); report();
+        if (!automatic) entry.attempts = 0;
+        if (!sendingAllowed()) {
+            entry.automatic = true; entry.error = waitingNotice();
+            say(entry.error); render(); report(); return false;
+        }
+        entry.sending = true; entry.retried = !!original; entry.error = null; entry.automatic = false; render(true); report();
         try {
             const body = {id: entry.id, text: entry.text};
             if (conversations.supported === true && entry.session) body.session = entry.session;
-            const response = await agentPost(api, '/freevideo/agent/chat', body);
-            if (!response.ok) throw await requestError(response);
-            const value = await response.json().catch(() => ({}));
-            acknowledge(entry);
-            if (!entry.session && value.session) entry.session = value.session;
-            if (!stopped) { void poll(); void readConversations(true); }
-            return true;
-        } catch (error) {
+            entry.attempts++;
+            const response = await retryAgentPost(api, '/freevideo/agent/chat', body, {retry: async response => {
+                if (stopped || entry.acknowledged || sendRefused(await sendError(response), response) || entry.attempts >= SEND_ATTEMPTS) return null;
+                entry.attempts++; return body;
+            }});
             if (entry.acknowledged) return true;
-            entry.error = t('Could not send: ', '没有发送成功：') + reason(error);
+            if (response?.ok) {
+                const value = await response.json().catch(() => ({}));
+                acknowledge(entry);
+                if (!entry.session && value.session) entry.session = value.session;
+                if (!stopped) { void poll(); void readConversations(true); }
+                return true;
+            }
+            const error = await sendError(response), refused = sendRefused(error, response);
+            const waiting = !refused && (WAIT_FOR_AGENT.includes(error?.code) || !error && state.agent.connected !== true);
+            const exhausted = entry.attempts >= SEND_ATTEMPTS;
+            entry.automatic = waiting && !exhausted;
+            const explanation = refused || error && !waiting ? t('Not sent: ', '没发出去：') + failureReason({error}, t)
+                : exhausted ? t('Not sent: tried 3 times. Automatic sending stopped; please send again.', '没发出去：已尝试 3 次，已停止自动发送，请再发一次')
+                : waiting ? waitingNotice(error?.code) : t('The network is unstable. Retried; please send again.', '网络不稳，已重试，请再发一次');
+            entry.error = waiting ? explanation : t('Could not send: ', '没有发送成功：') + (error?.message || explanation);
+            if (entry.session === state.session) {
+                if (waiting && error?.code === 'not_connected') state = {...state, agent: {connected: false, name: null}};
+                if (waiting && error?.code === 'not_listening') state = {...state, agent: {...state.agent, listening: false}};
+                say(explanation);
+            }
             return false;
         } finally {
             entry.sending = false;
@@ -886,9 +978,19 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // At most five lines; the box scrolls after that.
         const line = (typeof getComputedStyle === 'function' && parseFloat(getComputedStyle(input).lineHeight)) || 22;
         input.style.height = `${Math.min(input.scrollHeight, Math.round(line * 5) + 14)}px`;
-        sendButton.disabled = !sendingAllowed() || draftSending() || !input.value.trim();
+        sendButton.disabled = !composeAllowed() || draftSending() || !input.value.trim();
     }
-    input.addEventListener('input', () => { saveDraft(); grow(); if (unsaidSessions.has(draftSession)) renderConversations(); });
+    input.addEventListener('input', () => {
+        saveDraft();
+        // Editing a queued draft cancels its automatic delivery. Its original message remains available for manual retry.
+        for (const entry of pending) if (entry.automatic && entry.session === draftSession && entry.draft !== drafts.get(draftSession)) {
+            entry.automatic = false;
+            entry.error = t('Not sent: the queued draft changed. Retry to send the original.', '没发出去：排队草稿已修改，原消息需手动重试');
+            say('');
+        }
+        if (!input.value.trim()) say('');
+        grow(); if (unsaidSessions.has(draftSession)) renderConversations();
+    });
     // Enter sends, Shift+Enter starts a new line; Enter that confirms an input-method candidate does neither.
     input.addEventListener('keydown', event => {
         if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
@@ -898,7 +1000,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         event.preventDefault();
         const text = input.value;
         const draft = saveDraft();
-        if (!text.trim() || !sendingAllowed() || draftSending()) return;
+        if (!text.trim() || !composeAllowed() || draftSending()) return;
         const failed = pending.find(entry => entry.session === state.session && entry.draft === draft && entry.error);
         void send(text, failed, draft);
     });
@@ -968,6 +1070,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const idle = state.agent.connected !== true && !state.active;
         timer = setTimeout(poll, (idle ? Math.max(interval, 3000) : interval) * Math.min(4, 1 + failures));
         render(); report();
+        if (sendingAllowed()) for (const entry of [...pending]) {
+            if (entry.session !== state.session || !entry.automatic || entry.sending || entry.acknowledged) continue;
+            await send(entry.text, entry, entry.draft, true);
+            if (!sendingAllowed() || stopped) break;
+        }
     }
     // Between reads the estimate keeps moving, on the cards and in the page's header alike.
     const moving = setInterval(() => {
@@ -990,10 +1097,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         },
         async stopAll() {
             if (bulkStopping) return;
-            const jobs = new Map(Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => [job.id, {job, session: state.session}]));
-            for (const id of away?.ids || []) if (!jobs.has(id)) jobs.set(id, {job: away.jobs[id], session: away.session});
+            const ids = [...new Set([...Object.values(state.jobs).filter(job => WORKING.includes(job.status)).map(job => job.id), ...(away?.ids || [])])];
             bulkStopping = true; report();
-            try { await Promise.all([...jobs.values()].map(({job, session}) => cancelJob(job, session))); }
+            try { await cancelJobs(ids); }
             finally { bulkStopping = false; if (!stopped) { report(); void poll(); } }
         },
         stop() { closeMenu(); stopped = true; dismissImage?.(); closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;

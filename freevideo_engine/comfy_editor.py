@@ -5,6 +5,7 @@ creations, and their names, contents and decoding errors are never logged.
 """
 import asyncio
 import copy
+import errno
 import hashlib
 import json
 import logging
@@ -46,6 +47,11 @@ _TRANSCODING = threading.Lock()
 _FAILED_IMPORTS = {}  # terminal statuses awaiting writable storage
 _HEADERS = {'Cache-Control': 'no-store'}
 _LOG = logging.getLogger(__name__)
+
+
+def _disk_full(error):
+    # The page names a full disk; other write errors stay a plain retry.
+    return {'reason': 'disk_full'} if getattr(error, 'errno', None) == errno.ENOSPC else {}
 
 
 class Conflict(ValueError):
@@ -1173,8 +1179,8 @@ def register():
                     return web.json_response(dict(error='Editor request is too large'), status=413, headers=_HEADERS)
                 except FileNotFoundError:
                     return web.json_response(dict(error='Editor item unavailable'), status=404, headers=_HEADERS)
-                except OSError:
-                    return web.json_response(dict(saved=False, retry=True), status=503, headers=_HEADERS)
+                except OSError as error:
+                    return web.json_response(dict(saved=False, retry=True, **_disk_full(error)), status=503, headers=_HEADERS)
                 except (ValueError, TypeError, KeyError, RecursionError):
                     return web.json_response(dict(error='Invalid editor request'), status=400, headers=_HEADERS)
                 except Exception:
@@ -1205,9 +1211,9 @@ def register():
             result = await asyncio.to_thread(save, root(), body.get('project'), body.get('create'), body.get('operation'))
         except MissingProject:
             raise
-        except OSError:
+        except OSError as error:
             # A missing staging directory is a retryable write error, not 404.
-            return web.json_response(dict(saved=False, retry=True), status=503, headers=_HEADERS)
+            return web.json_response(dict(saved=False, retry=True, **_disk_full(error)), status=503, headers=_HEADERS)
         return web.json_response(dict(project=result), headers=_HEADERS)
 
     @endpoint('get', '/freevideo/editor/sources')

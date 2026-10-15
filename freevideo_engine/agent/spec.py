@@ -9,6 +9,8 @@ from .length import single_frame_limit
 QUALITY, ASPECTS = contract.QUALITY, contract.ASPECTS
 KINDS = tuple(contract.KINDS)
 FRAMES = ('first', 'last')
+# A part that continues a video carries at most this many reference pictures, and no other reference media.
+CONTINUED_PICTURES = 3
 MAX_SEED = contract.generate()['properties']['seed']['maximum']
 JOB_ID = re.compile(contract.JOB['pattern'].strip('^$'))
 LIBRARY_ID = re.compile(contract.SAVED['pattern'].strip('^$'))
@@ -142,6 +144,19 @@ def generation_media(value):
     return result
 
 
+def still_picture(item):
+    """A reference that is one picture: a frame of a video, or a picture file."""
+    if isinstance(item, str):
+        item = {'file': item}
+    if not isinstance(item, dict):
+        return False
+    if 'frame' in item:
+        return True
+    from ..comfy_assets import EXTENSIONS
+    source = item.get('file') or item.get('path')
+    return isinstance(source, str) and source.lower().endswith(tuple(EXTENSIONS['image']))
+
+
 def task(media):
     if media.get('references'):
         return 'ref2va'
@@ -191,6 +206,8 @@ def normalize(value, *, port=None):
                 result['continue_from'] = dict(value['continue_from'])
             if value['first_frame_reference']:
                 result['first_frame_reference'] = True
+            if value.get('part_prompts'):
+                result['part_prompts'] = list(value['part_prompts'])
             result['loras'] = [dict(name=row, strength=1.) if isinstance(row, str) else {'strength': 1., **row}
                                for row in value['loras']]
             if port is not None:

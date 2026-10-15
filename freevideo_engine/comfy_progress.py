@@ -1,6 +1,7 @@
 """Transient progress snapshots for reopened ComfyUI tabs; no request inputs."""
 from copy import deepcopy
 from pathlib import Path
+import heapq
 import threading
 import time
 import uuid
@@ -71,7 +72,8 @@ class ProgressState:
                 'sampling_plan', 'bytes_per_second', 'block', 'blocks', 'elapsed_seconds', 'step_elapsed_seconds',
                 'estimated_step_seconds', 'remaining_seconds', 'display_fraction',
                 'estimated', 'uniform_remaining_steps', 'overall', 'retry', 'warning', 'kernel_cache_note',
-                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain')
+                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain',
+                'frame_preview')
         value = deepcopy({key: message[key] for key in keys if key in message})
         if isinstance(message.get('prediction'), dict):
             # The UI only needs a history marker, not the resource forecast.
@@ -197,6 +199,24 @@ class ReportDownloads:
         return path.read_bytes()
 
 
+    def preview(self, token):
+        """The newest frame preview picture of a registered run, or KeyError."""
+        from .frame_preview import FILE
+        from .diagnostics import is_link
+        with self.lock:
+            output = self.runs.get(token)
+        if output is None:
+            raise KeyError('Unknown run')
+        path = output.parent / FILE
+        if is_link(output.parent) or path.is_symlink() or not path.is_file():
+            raise KeyError('No preview')
+        with path.open('rb') as stream:
+            data = stream.read(2 * 1024 * 1024 + 1)
+        if not data or len(data) > 2 * 1024 * 1024:
+            raise KeyError('No preview')
+        return data
+
+
 REPORTS = ReportDownloads()
 
 
@@ -242,6 +262,30 @@ def cancel_request(queue, prompt_id, node_id, interrupt):
         return 'finished'
 
 
+def move_request_first(queue, prompt_id, node_id, protected=lambda prompt_id: False):
+    """Put exactly this waiting FreeVideo request ahead of every other waiting one.
+
+    Comfy runs the smallest queue number first, so the request takes a number
+    below the current smallest. Everything else keeps its relative order.
+    """
+    with queue.mutex:
+        waiting = queue.queue
+        row = next((row for row in waiting if row[1] == prompt_id
+                    and row[2].get(str(node_id), {}).get('class_type') == 'FreeVideoGenerate'), None)
+        if row is None:
+            running = any(item[1] == prompt_id for item in queue.currently_running.values())
+            return 'running' if running else 'finished'
+        if protected(prompt_id):
+            return 'unavailable'
+        if row is min(waiting):
+            return 'first'
+        index = next(i for i, item in enumerate(waiting) if item is row)
+        waiting[index] = (min(item[0] for item in waiting) - 1,) + tuple(row[1:])
+        heapq.heapify(waiting)
+        queue.server.queue_updated()
+        return 'moved'
+
+
 def register():
     import asyncio
     from aiohttp import web
@@ -265,6 +309,15 @@ def register():
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
             'Content-Disposition': 'attachment; filename="FreeVideo-report-%s.json"' % time.strftime('%Y%m%d-%H%M%S')})
 
+    @server.routes.get('/freevideo/frame-preview/{report_id}')
+    async def frame_preview(request):
+        try:
+            data = await asyncio.to_thread(REPORTS.preview, request.match_info['report_id'])
+        except (KeyError, OSError):
+            raise web.HTTPNotFound(text='') from None
+        return web.Response(body=data, content_type='image/jpeg', headers={
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
     @server.routes.get('/freevideo/progress')
     async def progress(request):
         return web.json_response({'progress': STATE.snapshot()},
@@ -279,3 +332,14 @@ def register():
         import nodes
         return web.json_response({'status': cancel_request(server.prompt_queue, prompt_id,
             node_id, nodes.interrupt_processing)})
+
+    @server.routes.post('/freevideo/queue/first')
+    async def queue_first(request):
+        value = await request.json()
+        prompt_id, node_id = value.get('prompt_id'), value.get('node_id')
+        if not isinstance(prompt_id, str) or not prompt_id or not isinstance(node_id, str):
+            return web.json_response({'error': 'A request and node ID are required'}, status=400)
+        from . import comfy_chain
+        runner = comfy_chain.RUNNER
+        return web.json_response({'status': move_request_first(server.prompt_queue, prompt_id, node_id,
+            runner.owns if runner is not None else (lambda prompt_id: False))})

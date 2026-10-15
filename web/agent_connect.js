@@ -43,15 +43,22 @@ export function agentConnectCard(t, api, shown = () => true) {
     const arrow = el('span', 'fv-agent-connect-arrow', '→'); arrow.setAttribute('aria-hidden', 'true');
     actions.append(button, arrow, el('span', 'fv-agent-connect-hint', t('Paste to your agent', '粘贴给 Agent')));
     const sentence = el('p', 'fv-agent-sentence'); sentence.hidden = true;
-    body.append(mark, title, subtitle, actions, sentence);
+    const status = el('p', 'fv-agent-connect-status', t('Getting the connection address…', '正在获取连接地址…')); status.setAttribute('role', 'status');
+    body.append(mark, title, subtitle, actions, sentence, status);
 
-    let feedback = false, text = '';
+    let feedback = false, text = '', failures = 0;
     let timer, feedbackTimer, controller, generation = 0;
     const active = () => body.isConnected && shown();
-    const render = () => { label.textContent = feedback ? t('Copied', '已复制') : t('Copy', '复制'); };
+    const render = () => {
+        label.textContent = !text && failures >= 3 ? t('Could not get address. Retry', '获取失败，重试') : feedback ? t('Copied', '已复制') : t('Copy', '复制');
+        button.disabled = !text && failures < 3;
+        button.title = !text && failures < 3 ? t('Getting the connection address…', '正在获取连接地址…') : '';
+        status.hidden = !!text; status.textContent = !text && failures < 3 ? t('Getting the connection address…', '正在获取连接地址…') : '';
+    };
     render();
 
     button.onclick = async () => {
+        if (!text) { failures = 0; render(); await load(); return; }
         try { await navigator.clipboard.writeText(text); sentence.hidden = true; }
         catch {
             sentence.textContent = text; sentence.hidden = false;
@@ -77,20 +84,21 @@ export function agentConnectCard(t, api, shown = () => true) {
             // The sentence carries no parameter: the server gives the agent the language this card showed.
             const response = await api.fetchApi('/freevideo/agent/connect?lang=' + t('en', 'zh'), {cache: 'no-store', signal: request.signal});
             const connect = response.ok ? await response.json() : null;
-            if (current !== generation || !connect?.address) return;
+            if (current !== generation) return;
+            if (!connect?.address) throw new Error('Missing address');
             text = connectionSentence(connect.address, t);
-            button.disabled = false;
-        } catch { /* Try again while the card is in sight. */ }
+            failures = 0; render();
+        } catch { if (current === generation) { failures++; render(); } }
         finally {
             if (current === generation) {
                 controller = null;
-                if (!text && active()) timer = setTimeout(load, 3000);
+                if (!text && active() && failures < 3) timer = setTimeout(() => { timer = null; void load(); }, 3000);
             }
         }
     }
     function sync() {
         if (!active()) { stop(); return; }
-        if (!text && !controller && !timer) load();
+        if (!text && failures < 3 && !controller && !timer) load();
     }
     // Resolves to whether this FreeVideo has the Agent interface on; a surface shows nothing when it is off.
     const enabled = agentInterfaceEnabled(api);

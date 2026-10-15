@@ -235,18 +235,18 @@ def local_model_ui(message):
     label = {'scan': 'Find existing models', 'verify': 'Verify local model', 'copy': 'Copy local model',
              'link': 'Reuse local model', 'ready': 'Existing models checked'}.get(phase, 'Check local models')
     detail = message.get('file', '')
+    scanned = done if phase == 'scan' else 0
     if phase == 'scan':
         detail = '%d files / folders scanned' % done
         done = 0
     elif phase in ('verify', 'copy'):
         detail = '%.1f / %.1f MiB · %.1f MiB/s · %s' % (done/2**20, total/2**20, (rate or 0)/2**20, detail)
     return dict(kind='task_end' if phase == 'ready' else 'progress', key='local-models',
-                # The card names the step; byte counts, speed and scan counts stay in the detail.
                 activity={'verify': 'check', 'copy': 'copy', 'scan': 'note'}.get(phase, ''),
                 name=((message.get('name') or message.get('file', '')) if phase in ('verify', 'copy')
                       else 'Finding existing models' if phase == 'scan' else ''), unit='bytes',
                 label=label, detail=detail, state='complete' if phase == 'ready' else 'running',
-                done=done, total=total, elapsed_seconds=message.get('elapsed_seconds', 0),
+                done=done, total=total, rate=rate, scanned=scanned, elapsed_seconds=message.get('elapsed_seconds', 0),
                 remaining_seconds=(total-done)/rate if total and rate and phase in ('verify', 'copy') else None)
 
 

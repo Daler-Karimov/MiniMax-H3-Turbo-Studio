@@ -26,6 +26,7 @@ import {createBlockNotes, describedTrack} from './editor_notes.js';
 import {createFirstRunGuide} from './first_run_guide.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
+import {optionalText} from './optional_inputs.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -70,6 +71,11 @@ function exportErrorText(value, t) {
         .find(text => typeof text === 'string' && text.trim() && text !== 'editor_request')?.trim().split(/[\r\n]+/)[0];
     // A bare status code means nothing to the user; the server's own words do.
     return message ? t(`Export failed: ${message}`, `导出时出错：${message}`) : t('Export failed. Try again.', '导出时出错，请再试一次。');
+}
+// The save route's own messages are internal English, so only a full disk is named.
+function saveErrorText(value, t) {
+    return value?.reason === 'disk_full' ? t('Saving changes failed: the disk is full. Free some space, then export again.', '保存改动时出错：磁盘空间不够，空出空间后再导出。')
+        : t('Saving changes failed. Please export again.', '保存改动时出错，请再导出一次。');
 }
 function restoreGeneration(record, before, prepared) {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -260,11 +266,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接着生成的每一段至少 10 秒，请加长一些。');
             notify(text); return {ok: false, reason: code, say: text};
         }
-        if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range'].includes(code)) {
+        if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range', 'no_audio'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
             const said = {busy: t('This part is generating.', '这一段正在生成。'), locked: t('This track is locked.', '这条轨道已锁定。'),
                 text: t('Write a description first.', '先写一句描述。'), overlap: t('That spot is taken. Use an empty spot.', '这里已经有片段了，请放到空白处。'),
-                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。')}[code];
+                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。'),
+                no_audio: t('This clip has no sound. Please choose one with sound.', '这个素材没有声音，请选一段有声音的。')}[code];
             if (said) notify(said);
             return {ok: false, reason: code};
         }
@@ -313,9 +320,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const start = Math.min(...clips.map(clip => clip.start));
         return {start, frames: Math.max(...clips.map(clip => clip.start + clip.frames)) - start};
     }
-    // Whether the part about to be made starts fresh instead of continuing footage: only then can pictures guide it.
-    function startsFresh() {
-        const range = selectionRange(); if (!range) return false;
+    // How the part about to be made starts: 'fresh' (pictures can guide it), 'continues' (from the footage before it) or null.
+    function partStart() {
+        const range = selectionRange(); if (!range) return null;
         try {
             const selected = selectionClips();
             const planned = selected.length && selected.every(clip => clip.pending && !clip.source)
@@ -323,8 +330,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 : model.planRange(state.record, {...range, target: 'both', text: 'x', maxSeconds: capability.maxSeconds, maxFollowSeconds: capability.maxFollowSeconds});
             const ids = planned.tracks[0].clips.filter(clip => clip.start >= range.start && clip.start < range.start + range.frames
                 && clip.pending && !['queued', 'running'].includes(clip.pending)).map(clip => clip.id);
-            return ids.length > 0 && model.generationBefore(model.prepare(planned, ids), ids).some(before => before == null);
-        } catch (value) { if (value instanceof model.EditError) return false; throw value; }
+            if (!ids.length) return null;
+            return model.generationBefore(model.prepare(planned, ids), ids).some(before => before == null) ? 'fresh' : 'continues';
+        } catch (value) { if (value instanceof model.EditError) return null; throw value; }
     }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
     // Parts pressed while they cannot be sent yet: the engine is still starting, or they continue a part
@@ -443,10 +451,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await queue.flush();
         }
         if (disposed || closing || epoch !== projectEpoch) return false;
-        if (queue.dirty) {
-            notify(t('Changes could not be saved after three tries. Check disk space, then export again.', '改动没有保存成功，已重试三次。请检查磁盘空间后再导出。'));
-            return false;
-        }
+        if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return false; }
         return !!state.record.id;
     }
     function updateTop() {
@@ -470,7 +475,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!value.node || !value.prompt?.[value.node]) throw new Error('missing_node');
         const inputs = value.prompt[value.node].inputs;
         Object.assign(inputs, state.record.settings || {}, capability.generationSize || generationSize(state.record));
-        // The media panel's pictures guide a part that starts fresh (generate() drops them when every part continues footage);
+        // The media panel's pictures guide every part (the engine keeps only the references for a part that continues);
         // without a panel to show them they stay out of the request.
         if (!panel.references?.available()) delete inputs.media;
         delete inputs.continue_from; delete inputs.continue_to;
@@ -727,9 +732,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return before || model.rangeParts(state.record, {...range, ...capability}).length > 1;
         },
-        // Pictures that guide a new part: the creative panel's media rows, shown while the part starts fresh.
+        // Pictures that guide a new part: the creative panel's media rows; a part that continues shows only its references.
         references: panel.references ? {source: panel.references, notify, size: () => capability.generationSize || generationSize(state.record),
-            visible: () => store.generationAvailable && actions.supportedSelection() && startsFresh()} : null,
+            visible: () => store.generationAvailable && actions.supportedSelection() ? partStart() : null} : null,
         setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
@@ -765,8 +770,6 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 submittedSelection = shown && state.selection === selection ? state.select({kind: 'clip', ids}) : state.selection; await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
                 const request = model.generationRequest(prepared, ids, {text, paths});
-                // Pictures guide parts that start fresh; a request whose parts all continue footage carries none.
-                if (!request.blocks.some(block => !block.after)) delete frozen.prompt[frozen.node].inputs.media;
                 const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
                 // Parts made at another size than the edit's have that size's limit.
@@ -1225,7 +1228,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                         has_video: true, has_audio: true, path: work.video, missing: false, thumbnail: '/freevideo/library/thumbnail?' + new URLSearchParams({id})}});
                 }
             } else {
-                let id; try { id = localStorage.getItem('fv-editor-last'); } catch {}
+                let id; try { id = optionalText(localStorage.getItem('fv-editor-last')); } catch {}
                 let draft; try { draft = globalThis.sessionStorage?.getItem('fv-editor-draft'); } catch { draft = lastDraft; }
                 if (draft?.startsWith('draft:')) key = draft;
                 else if (id) { record = await store.load(id); if (record) key = id; }

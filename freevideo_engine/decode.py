@@ -25,7 +25,10 @@ DECODE_LABELS = {
 def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, prefetch=True, tile_group=False,
                    preload=False, pin_weights=False, artifacts_dir=None, phase_callback=None,
                    stream_output=False, stream_weights=False, resident_blocks=0, model_cache=None,
-                   linear_compute_cache=False, continuation=None, audio_lead_in_callback=None, output_size=None):
+                   linear_compute_cache=False, continuation=None, audio_lead_in_callback=None, output_size=None,
+                   hide_tail_frames=0):
+    from .continuation import validate_hide_tail
+    validate_hide_tail(hide_tail_frames)
     def phase(name):
         if phase_callback is not None:
             phase_callback(name)
@@ -171,6 +174,9 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
                 chunk = (video[:, :, start:start + 8].float() * pixel_std + pixel_mean).clamp_(0, 1)
                 frames[start:start + chunk.shape[2]] = (chunk[0].permute(1, 2, 3, 0) * 255).round().to(torch.uint8)
             del video
+        if hide_tail_frames:
+            kept_frames = len(frames) - hide_tail_frames
+            frames = frames[:kept_frames]
         if continuation is not None:
             from .continuation import OVERLAP_FRAMES
             frames = frames[OVERLAP_FRAMES:]
@@ -181,12 +187,17 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             tick = time.perf_counter()
             artifacts_dir = Path(artifacts_dir)
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-            if not stream_output or continuation is not None:
-                # A streamed mapping still contains the overlap. Replace its
+            if not stream_output or continuation is not None or hide_tail_frames:
+                # A streamed mapping still contains overlap/hidden frames. Replace its
                 # retained artifact after the mapping closes, below.
                 rgb_path = artifacts_dir / ('rgb-new.npy' if stream_output else 'rgb.npy')
                 np.save(rgb_path, frames.numpy() if hasattr(frames, 'numpy') else frames, allow_pickle=False)
             artifact_seconds += time.perf_counter() - tick
+        elif stream_output and hide_tail_frames:
+            # render_rgb also retains a mapping when no explicit artifacts directory was requested.
+            import numpy as np
+            np.save(directory / 'rgb-new.npy', frames.numpy() if hasattr(frames, 'numpy') else frames,
+                    allow_pickle=False)
         audio_start = time.perf_counter()
         phase('audio_load_decode')
         audio_vae = None
@@ -212,6 +223,9 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             if audio_lead_in_callback is not None:
                 from .continuation import capture_audio_lead_in
                 audio_lead_in_callback(capture_audio_lead_in(audio, continuation, rate))
+        if hide_tail_frames:
+            audio = audio[:, :round(kept_frames * 40 / 24) * 800]
+        if continuation is not None:
             audio = audio[:, continuation['audio_latents'] * 800:]
         del audio_vae, audio_mean, audio_std
         gc.collect()
@@ -248,8 +262,9 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
         if rgb_mapping is not None:
             del frames
             rgb_mapping._mmap.close()
-            if continuation is not None and artifacts_dir and (artifacts_dir / 'rgb-new.npy').is_file():
-                (artifacts_dir / 'rgb-new.npy').replace(artifacts_dir / 'rgb.npy')
+            retained = Path(artifacts_dir) if artifacts_dir else directory
+            if (continuation is not None or hide_tail_frames) and (retained / 'rgb-new.npy').is_file():
+                (retained / 'rgb-new.npy').replace(retained / 'rgb.npy')
     return {'vae_load_seconds': load_seconds, 'video_decode_seconds': video_decode_seconds,
             'vae_linear_compute_cache': linear_compute_cache, 'vae_compute_cache_preparation': compute_cache_metrics,
             'resident_vae_cache_hit': vae_cache_hit, 'resident_audio_vae_cache_hit': audio_cache_hit,

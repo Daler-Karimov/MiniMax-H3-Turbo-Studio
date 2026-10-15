@@ -26,6 +26,10 @@ INVALID_ERRORS = frozenset(('invalid_request', 'invalid_prompt', 'invalid_dimens
                             'invalid_media', 'too_many_images'))
 
 
+class WorkerIdleExit(RuntimeError):
+    """The worker closed itself after its idle timeout before it answered anything."""
+
+
 class Worker:
     """One reader owns each pipe; stderr is drained without retaining user text."""
     def __init__(self, process):
@@ -110,6 +114,7 @@ class Service:
         spec = image_pack.catalog()
         ready = image_pack.ready(machine['model_root'])
         return dict(ready=ready, model=spec['repo'],
+                    checking=not ready and image_pack.checking(machine['model_root']),
                     downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
                     max_images=MAX_IMAGES)
@@ -126,7 +131,9 @@ class Service:
         seed = value.get('seed')
         if seed is not None and (type(seed) is not int or not -2**63 <= seed < 2**64):
             raise ValueError('invalid_seed')
-        images = value.get('images', [])
+        images = value.get('images')
+        if images is None:
+            images = []
         if not isinstance(images, list):
             raise ValueError('invalid_media')
         if len(images) > MAX_IMAGES:
@@ -524,6 +531,16 @@ class Service:
                         return
                     if self.video_busy():
                         raise BlockingIOError('busy_video')
+                    def respawn():
+                        nonlocal session
+                        session.process.wait()
+                        session.close()
+                        session = Worker(self.spawn(root, machine, env, descriptor))
+                        with self.mutex:
+                            self.worker = session
+                            self.process = session.process
+                            self.worker_restarts += 1
+
                     session = Worker(self.spawn(root, machine, env, descriptor))
                     with self.mutex:
                         self.worker = session
@@ -540,14 +557,17 @@ class Service:
                                     break
                             continue
                         if session.process.poll() == 0:
-                            session.process.wait()
-                            session.close()
-                            session = Worker(self.spawn(root, machine, env, descriptor))
-                            with self.mutex:
-                                self.worker = session
-                                self.process = session.process
-                                self.worker_restarts += 1
-                        self.infer(session, value)
+                            respawn()
+                        try:
+                            self.infer(session, value)
+                        except WorkerIdleExit:
+                            # The request reached a worker that was already unloading after
+                            # its idle timeout and was never read. Nothing ran: send it to a
+                            # fresh worker once; a second exit is reported as a failure.
+                            if self.stop.is_set() or self.session_stop.is_set():
+                                raise
+                            respawn()
+                            self.infer(session, value)
                 finally:
                     # Keep the parent's lease until the whole owned process tree exits.
                     if session is not None:
@@ -585,9 +605,56 @@ class Service:
                     self.context = None
                 self.queue_wake.set()
 
+    def shrink(self, value, row, context):
+        """After a memory error while working on the picture, step the size down for one more try.
+
+        The ladder is the one start-up fitting uses (32-pixel grid, 512 pixels at the least);
+        the step grows with the size so a big canvas needs few tries. False at the smallest size.
+        """
+        if (row.get('code') != 'no_memory' or row.get('stage') in ('load', 'text', 'encode')
+                or self.stop.is_set() or self.session_stop.is_set()):
+            return False
+        width, height = value['width'], value['height']
+        long, short = max(width, height), min(width, height)
+        # A worker that had to load the model again costs seconds per try; take bigger steps then.
+        side = long - max(32, long // (8 if row.get('reloaded') else 16) // 32 * 32)
+
+        def fitted(length):
+            return (short * length + long * 16) // (long * 32) * 32
+
+        if side < 512 or fitted(side) < 512:
+            # The step would jump past the least size: try that size itself before giving up.
+            side = next((n for n in range(512, long, 32) if fitted(n) >= 512), None)
+            if side is None:
+                return False
+        other = fitted(side)
+        value['width'], value['height'] = (side, other) if width >= height else (other, side)
+        with self.mutex:
+            fitted = self.state.get('fitted') or {}
+            requested = fitted.get('requested') or dict(width=width, height=height)
+            self.state['fitted'] = dict(width=value['width'], height=value['height'], requested=requested)
+            self.state.update(phase='progress', stage='start', fraction=0)
+        context.update_request(value)
+        return True
+
+    @staticmethod
+    def worker_gone(session, heard):
+        """The error for a worker pipe that ended; it carries the exit code for the report."""
+        try:
+            code = session.process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            code = None
+        if code == 0 and not heard:
+            return WorkerIdleExit('worker_exit (exit code 0, before any answer)')
+        return RuntimeError('worker_exit' if code is None else 'worker_exit (exit code %d)' % code)
+
     def infer(self, session, value):
         context = self.context or Context('generate', value)
-        session.send(action='generate', **value)
+        heard = False
+        try:
+            session.send(action='generate', **value)
+        except OSError:
+            raise self.worker_gone(session, heard)
         cancelled_at = None
         deadline = time.monotonic() + INFERENCE_TIMEOUT
         while True:
@@ -605,7 +672,8 @@ class Service:
             except queue.Empty:
                 continue
             if row is None:
-                raise RuntimeError('worker_exit')
+                raise self.worker_gone(session, heard)
+            heard = True
             phase = row.get('phase')
             if phase == 'progress':
                 stage, fraction = row.get('stage'), row.get('fraction')
@@ -622,6 +690,11 @@ class Service:
             elif phase in ('result', 'error'):
                 if self.stop.is_set() or row.get('code') == 'cancelled':
                     result = dict(phase='cancelled')
+                elif phase == 'error' and self.shrink(value, row, context):
+                    # The memory estimate was optimistic for this machine: same worker, next size down.
+                    session.send(action='generate', **value)
+                    deadline = time.monotonic() + INFERENCE_TIMEOUT
+                    continue
                 elif phase == 'error':
                     code = row.get('code')
                     result = self.failed(code, context, row=row)
@@ -730,7 +803,10 @@ def register():
             if not isinstance(value, dict):
                 raise ValueError('invalid_request')
             name = request.match_info['action']
-            if name == 'status':
+            if name == 'cast-views':
+                from .cast_views import page_views
+                result = page_views(value.get('description'))
+            elif name == 'status':
                 result = service.status(value.get('job'))
             elif name == 'cancel':
                 result = service.cancel(value.get('job'))

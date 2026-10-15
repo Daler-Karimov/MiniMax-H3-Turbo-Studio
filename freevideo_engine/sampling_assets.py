@@ -221,6 +221,50 @@ def retire_superseded(machine):
     return result
 
 
+def select(manifest, sampling, task, catalog=None):
+    """The published tables one request samples with; the single selection rule.
+
+    prepare() fetches exactly these and pending() reports them without touching disk.
+    """
+    from . import adaln_assets as assets
+    from .refine_schedule import COMMUNITY
+    weights = assets.weight_identity(manifest)
+    kind = 'i2va' if task in ('i2va', 'l2va', 'fl2va', 'ref2va') else task
+    def needed(table):
+        count = len(table['identity']['timesteps'])
+        return (count == 3 and sampling.get('refine_schedule') == COMMUNITY if refinement(table)
+                else count == sampling['base_steps'])
+    return kind, [t for t in (tables() if catalog is None else catalog) if t.get('task') == kind
+                  and needed(t) and t['identity']['weights'] == weights]
+
+
+def pending(root, machine, sampling, task):
+    """Read-only: table files this request would download. Nothing is written,
+    moved or fetched; a file of the right size counts as present (prepare()
+    hashes it once and downloads again if it does not match)."""
+    from . import adaln_assets as assets
+    cache = Path(machine['cache'])
+    try:
+        manifest = json.loads(io_path(cache / 'manifest.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    _, selected = select(manifest, sampling, task)
+    shared = cache_root(machine['model_root'])
+    missing = []
+    for table in selected:
+        for row in table['files']:
+            for folder in (cache, shared):
+                path = assets.asset_path(folder, row['file'])
+                try:
+                    if io_path(path).stat().st_size == row['bytes']:
+                        break
+                except OSError:
+                    pass
+            else:
+                missing.append(dict(table=table, row=row))
+    return missing
+
+
 def prepare(root, machine, sampling, task, *, progress, interrupted=None, environ=None):
     """Fetch only this request's missing tables before starting its timer."""
     from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
@@ -228,20 +272,12 @@ def prepare(root, machine, sampling, task, *, progress, interrupted=None, enviro
     import threading
     from . import adaln_assets as assets, network, provision
     from .monitoring import save
-    from .refine_schedule import COMMUNITY
     cache = Path(machine['cache'])
     if not (cache / 'manifest.json').is_file():
         return dict(seconds=0., downloaded_bytes=0)  # Generation reports an invalid installation.
     manifest = json.loads((cache / 'manifest.json').read_text(encoding='utf-8'))
-    weights = assets.weight_identity(manifest)
-    kind = 'i2va' if task in ('i2va', 'l2va', 'fl2va', 'ref2va') else task
-    def needed(table):
-        count = len(table['identity']['timesteps'])
-        return (count == 3 and sampling.get('refine_schedule') == COMMUNITY if refinement(table)
-                else count == sampling['base_steps'])
     catalog = tables()
-    selected = [t for t in catalog if t.get('task') == kind
-                and needed(t) and t['identity']['weights'] == weights]
+    kind, selected = select(manifest, sampling, task, catalog)
     root = Path(root)
     shared = cache_root(machine['model_root'])
     ledger = root / 'verified-models.json'

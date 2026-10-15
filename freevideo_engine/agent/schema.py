@@ -57,7 +57,7 @@ SLUG = string(64, pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 REF = string(128, pattern=r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
              description='Idempotency key; reuse only with the same request content. Batch row refs also name dependencies.')
 FILE = string(1024, pattern=r'^(?!/)(?!.*(?:\\|:))(?!.*(?:^|/)\.\.(?:/|$)).+$')
-FRAME = {'oneOf': [enum(('first', 'last')), number(0)]}
+FRAME = {'oneOf': [enum(('first', 'last')), number(0, 86400)]}  # Seconds into the video; the bound keeps it a float.
 WAIT = number(0, default=0, description='x-clamp caps accepted wait values at 25 seconds without rejecting larger values.', **{'x-clamp': 25})
 CLIENT_WAIT = number(0, 25, default=25)
 # Waiting for the user's words is longer: a person types slowly, and each wait is one tool call.
@@ -162,11 +162,14 @@ def generate(*, local=False):
         first_frame_reference={'type': 'boolean', 'default': False, 'description':
             'Reduces drift over a continued video: every continuing part also sees the first frame of the whole '
             'video. It holds framing and motion close to that frame.'},
+        part_prompts=array(string(20000), 1, 5, description='One description per part of a video made in several '
+            'parts, in order, so each part plays its own share of the story. The count must equal the '
+            'chain_plan.blocks POST /plan gives for this length. Omitted: FreeVideo splits prompt into parts before the first part.'),
         takes=number(1, 8, integer=True, default=1), **common()),
         allOf=[{'if': {'required': ['refine_from'], 'properties': {'refine_from': {'type': 'string'}}},
                 'then': {'properties': {k: False for k in ('prompt', 'width', 'height', 'aspect', 'megapixels',
                     'seconds', 'seed', 'quality', 'sampling', 'media', 'loras', 'preview', 'continue_from',
-                    'first_frame_reference')}},
+                    'first_frame_reference', 'part_prompts')}},
                 'else': {'required': ['prompt']}},
                {'if': {'anyOf': [{'required': [k]} for k in ('aspect', 'megapixels')]},
                 'then': {'not': {'anyOf': [{'required': [k]} for k in ('width', 'height')]}}},
@@ -510,7 +513,7 @@ def cast_view():
         description=nullable(string(1000)), revision=number(1, integer=True),
         images=array(picture, 0, 6), candidates=array(picture, 0, 6),
         generating=nullable(generating), generated=nullable(generated),
-        generate_error=nullable(obj(dict(code=string(), job=JOB, message=string()), ('code', 'job', 'message')))),
+        generate_error=nullable(obj(dict(code=string(), job=JOB, message=string(), error_zh=string()), ('code', 'job', 'message')))),
         ('id', 'kind', 'name', 'revision', 'images', 'candidates', 'generating')), additionalProperties=True)
 
 
@@ -856,8 +859,8 @@ def drama_route_table():
 CAST_REFERENCE = {'enum': [None, 'cards', 'partial', 'missing', 'inherited', 'own'],
                   'description': 'How the shot carries cast cards: cards; partial (cast_omitted did not fit at all, or '
                                  'cast_voice_omitted came without their voice); missing '
-                                 '(a card was deleted, cast_missing shoot from text); inherited (continues the '
-                                 'previous shot); own (the shot names its own first frame or references); null.'}
+                                 '(a card was deleted, cast_missing shoot from text); inherited (a film made before continuing '
+                                 'shots carried cards); own (the shot names its own first frame or references); null.'}
 
 
 def production_response():
@@ -889,6 +892,8 @@ def production_response():
             cast_reference=CAST_REFERENCE, cast_omitted=dict(type='array', items=string()),
             cast_voice_omitted=dict(type='array', items=string()),
             cast_missing=dict(type='array', items=string()),
+            cast_pictures_each=dict(type=['integer', 'null'], description='Pictures each person carries in this shot: six or three by graphics card class, fewer (down to three) when this device cannot hold the starting number at the shot length.'),
+            cast_note=dict(type=['string', 'null'], description='One sentence saying so, only when it was reduced from the starting number.'),
             takes=dict(type='array', items=dict(type='object', properties=dict(take=number(1, integer=True), job=REF,
                 task={'oneOf': [JOB, {'type': 'null'}]}, generation=number(0, integer=True), seed=number(0, integer=True),
                 stale={'type': 'boolean'}, error={'type': ['object', 'null']},
@@ -1084,8 +1089,9 @@ def cross_issues(schema, value, path):
         if value.get('scene_image') and not value.get('people'):
             bad('scene_image', 'omitted unless people is supplied', value['scene_image'])
     if kind == 'generate':
-        if value.get('continue_from') and value.get('media'):
-            bad('media', 'omitted when continue_from is supplied', value['media'])
+        if value.get('continue_from') and isinstance(value.get('media'), dict) and any(
+                v is not None for k, v in value['media'].items() if k != 'references'):
+            bad('media', 'only references when continue_from is supplied', value['media'])
         if value.get('refine_from') is None:
             custom = value.get('sampling', {})
             two, base, refine = QUALITY[value.get('quality', 'light')]
@@ -1332,7 +1338,8 @@ def openapi():
                 report_id={'type': ['string', 'null'], 'pattern': '^[0-9a-f]{32}$',
                            'description': 'Image diagnostic report ID, or null when no report exists.'},
                 request_id=string(), docs=string(), retry_after_seconds=number(0), card={'type': 'object'}, job=JOB,
-                project={'type': 'object'}, current_revision=number(1, integer=True)),
+                project={'type': 'object'}, current_revision=number(1, integer=True),
+                error_zh=string()),
                 ('code', 'message', 'details', 'retryable', 'request_id', 'docs'))}))
 
 

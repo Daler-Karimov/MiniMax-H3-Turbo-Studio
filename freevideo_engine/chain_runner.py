@@ -212,6 +212,30 @@ class ChainRunner:
                 self.wake.set()
             return self._view(record)
 
+    def set_text(self, chain_id, block_id, text):
+        """The description of a part that has not started; the user's own words, used as written."""
+        if not isinstance(text, str) or not text.strip() or len(text) > 20000:
+            raise ValueError('Text must be a nonempty string of at most 20000 characters')
+        with self.lock:
+            record = self.records[chain_id]
+            block = next((row for row in record['blocks'] if row['id'] == block_id), None)
+            if block is None:
+                raise KeyError(block_id)
+            if (record.get('split') or {}).get('state') in ('pending', 'running'):
+                raise ChainBusy('The descriptions of the parts are not written yet')
+            if block['state'] != 'pending' or block['prompt_id'] is not None:
+                raise ChainBusy('This part has already started')
+            previous = block['inputs']['text']
+            block['inputs']['text'] = text
+            try:
+                from .lora_triggers import apply_chain_triggers
+                apply_chain_triggers(record)
+            except Exception:
+                block['inputs']['text'] = previous
+                raise ValueError('Text must be at most 20000 characters with LoRA triggers') from None
+            self._save(record)
+            return self._view(record)
+
     def resume(self, chain_id, client_id=None):
         with self.lock:
             record = self.records[chain_id]
@@ -231,6 +255,12 @@ class ChainRunner:
                                  seconds=None, output=None, report_id=None, error=None,
                                  fraction=0., remaining_seconds=None, continuation=None,
                                  skip_frames=0, skip_audio_samples=0)
+            split = record.get('split')
+            if (split is not None and split['state'] == 'failed' and split['reason'] in ('busy', 'memory')
+                    and all(row['state'] != 'done' for row in record['blocks'])
+                    and len({row['inputs']['text'] for row in record['blocks']}) == 1):
+                # Busy and memory pass; nothing has started and no part was rewritten, so split again.
+                split.update(state='pending', reason=None)
             if client_id is not None:
                 record['client_id'] = client_id
             record['state'] = 'queued'
@@ -299,6 +329,12 @@ class ChainRunner:
                 if block is not None:
                     return record, block
         return None, None
+
+    def owns(self, prompt_id):
+        """True while a chain block submitted this host request; its order is the chain's."""
+        with self.lock:
+            return any(row['prompt_id'] == prompt_id and row['state'] in ('queued', 'running')
+                       for record in self.records.values() for row in record['blocks'])
 
     def _start(self, block):
         if block['started'] is None:
@@ -485,8 +521,18 @@ class ChainRunner:
             else:
                 prompt_id, node = block['prompt_id'], record['node']
                 action = 'status'
+            split = record.get('split')
             if action == 'join':
                 pass
+            elif (prompt_id is None and split is not None and split['state'] == 'pending'
+                  and record['state'] != 'cancelling' and block['index'] == 0):
+                # Before the first part: one description per part, so later parts carry on instead of replaying.
+                split['state'] = 'running'
+                record['state'] = 'running'
+                self._save(record)
+                value = dict(text=block['inputs']['text'], continued=block['after'] is not None,
+                             seconds=[row['new_frames'] / chain_plan.FPS for row in record['blocks']])
+                action = 'split'
             elif prompt_id is None:
                 self.progress_messages.pop(identity, None)
                 self.progress_values.get(identity, {}).pop('remaining_seconds', None)
@@ -497,6 +543,7 @@ class ChainRunner:
                 self._save(record)
                 prompt = deepcopy(record['snapshot']['prompt'])
                 block_inputs = dict(block['inputs'])
+                block_inputs.update(index=block['index'], count=len(record['blocks']))
                 sources = self._sources(record, block)
                 extra = deepcopy(record['snapshot']['extra_data'])
                 if record['client_id'] is not None:
@@ -513,6 +560,11 @@ class ChainRunner:
         if action == 'join':
             self._join(identity, snapshot)
             return
+        if action == 'split':
+            self._split(record, value)
+            if record['split']['state'] != 'pending':
+                self._step_chain(identity)  # The first part starts in the same pass.
+            return
         if action == 'submit':
             try:
                 for key, source in sources.items():
@@ -524,11 +576,13 @@ class ChainRunner:
                     block_inputs[key] = (source['output'] or '') if source is not None else ''
                 for name in getattr(self.host, 'continuation_inputs', ()):
                     prompt[node]['inputs'].pop(name, None)
-                # A part that continues footage takes no keyframes or references of its own:
-                # only a part that starts fresh keeps the request's media.
+                # A part that continues footage takes no keyframes of its own: it starts from the footage.
+                # The host's media inputs name what only a part that starts fresh keeps.
                 if any(source is not None for source in sources.values()):
                     for name in getattr(self.host, 'media_inputs', ()):
                         prompt[node]['inputs'].pop(name, None)
+                    if hasattr(self.host, 'continued'):
+                        self.host.continued(prompt, node)
                 prompt[node]['inputs'].update(self.inputs(block_inputs))
                 self.host.submit(prompt_id, node_prompt(prompt, node), extra)
             except Exception as error:
@@ -577,6 +631,39 @@ class ChainRunner:
                     else:
                         block['state'] = desired
                     self._save(record)
+
+    def _split(self, record, value):
+        def cancelled():
+            return record['state'] == 'cancelling' or self.closed.is_set()
+        split = getattr(self.host, 'split_texts', None)
+        parts, reason = None, 'unavailable'
+        if split is not None:
+            try:
+                parts, reason = split(value, cancelled)
+            except Exception:
+                logging.exception('[FreeVideo] Splitting the description failed')
+                parts, reason = None, 'failed'
+        with self.lock:
+            if parts is None and cancelled():
+                record['split']['state'] = 'pending'  # Split again when resumed.
+            elif parts is not None and len(parts) == len(record['blocks']) and all(
+                    isinstance(part, str) and part.strip() for part in parts):
+                for row, part in zip(record['blocks'], parts):
+                    row['inputs']['text'] = part
+                try:
+                    from .lora_triggers import apply_chain_triggers
+                    apply_chain_triggers(record)
+                    record['split'].update(state='done', reason=None)
+                except Exception:
+                    for row in record['blocks']:
+                        row['inputs']['text'] = value['text']
+                    record['split'].update(state='failed', reason='failed')
+            else:
+                # The whole description goes to every part, as before; the page says why.
+                if parts is not None:
+                    reason = 'unusable'
+                record['split'].update(state='failed', reason=reason if reason in store.SPLIT_REASONS else 'failed')
+            self._save(record)
 
     def _join(self, identity, snapshot):
         final_state = snapshot.get('join_final_state', 'done')

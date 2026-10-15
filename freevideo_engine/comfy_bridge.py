@@ -908,6 +908,21 @@ class EventTail:
         return result
 
 
+def preview_state(event):
+    """The few facts the page needs to show the newest frame preview, or None."""
+    values = {key: event.get(key) for key in ('serial', 'step', 'total', 'frames', 'frame_width', 'frame_height')}
+    if any(type(value) is not int or value < 1 or value > 100000 for value in values.values()) or values['frames'] > 8:
+        return None
+    return values
+
+
+def preview_update(current, event):
+    """The page's frame picture after a frame_preview / frame_preview_clear event."""
+    if event.get('event') == 'frame_preview_clear':
+        return None
+    return preview_state(event) or current
+
+
 def progress_message(event):
     from .sampling_progress import progress_message as sampling_message
     sampling = sampling_message(event)
@@ -1155,9 +1170,13 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
-             continue_from=None, frames=None, first_frame_reference=False):
+             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False):
     if type(first_frame_reference) is not bool:
         raise ValueError('First-frame reference must be a boolean')
+    if type(voice_reference) is not bool:
+        raise ValueError('Voice reference must be a boolean')
+    if type(hide_tail) is not bool:
+        raise ValueError('Hide tail must be a boolean')
     if continue_from is not None:
         from .continuation import validate_route
         validate_route(two_pass=two_pass, preview=preview, refine_from=refine_from)
@@ -1167,6 +1186,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         raise ValueError('Force regeneration must be a boolean')
     if type(preview) is not bool:
         raise ValueError('Preview must be a boolean')
+    from .comfy_continuation import optional_text
+    refine_from = optional_text(refine_from)
     refine_from = refine_from if isinstance(refine_from, str) and refine_from.strip() else None
     upscale = None
     if refine_from:
@@ -1249,6 +1270,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         command += ['--continue-from', str(continue_from)]
         if first_frame_reference:
             command.append('--first-frame-reference')
+        if voice_reference:
+            command.append('--voice-reference')
         if continuation is not None:
             from .continuation import persist_snapshot
             continuation = persist_snapshot(continuation, run / 'continuation-source.safetensors')
@@ -1262,6 +1285,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 command += ['--' + field.replace('_', '-'), str(reserve)]
         if preview:
             command.append('--preview')
+    if hide_tail:
+        command.append('--hide-tail')
     state = {'status': 'starting', 'geometry': canvas, 'seed': seed, 'installation': str(root),
              'command': command, 'output': str(output), 'source': str(source), 'resources': resources}
     if preview:
@@ -1285,9 +1310,15 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     whole_progress = _SafeProgress(whole_progress)
     from .comfy_progress import REPORTS
     report_id = REPORTS.register(output)
+    frame_state = [None]
     def send_progress(message, event=None):
         if progress:
-            progress(whole_progress.annotate(dict(message, report_id=report_id), event=event))
+            value = whole_progress.annotate(dict(message, report_id=report_id), event=event)
+            if message.get('phase') in ('sample_finalize', 'decode') or message.get('timing_phase') in ('decode', 'encoding'):
+                frame_state[0] = None
+            if frame_state[0] is not None:
+                value = dict(value, frame_preview=frame_state[0])
+            progress(value)
     process = None
     from .result_cache import ResultCache, request_key, inspect_bounded
     cache = ResultCache(output_directory)
@@ -1300,6 +1331,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             for event in tail.events():
                 if index == 0 and event.get('event') == 'resource_retry':
                     tails[2].reset()
+                if event.get('event') in ('frame_preview', 'frame_preview_clear'):
+                    frame_state[0] = preview_update(frame_state[0], event)
+                    continue
                 message = progress_message(event)
                 if message:
                     send_progress(message, event)
@@ -1338,21 +1372,31 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             media = extra.get('media') or {}
             send_progress({'label': 'Retaining and checking input media', 'timing_phase': 'encoding',
                            'references': any(media.get(key) for key in ('first', 'last', 'references'))})
+        # A continued part keeps the cast's pictures; the engine then leaves out the film's first frame.
+        pictured = continue_from is not None and any(
+            row.get('kind') == 'image' for row in (extra.get('media') or {}).get('references', []))
+        if pictured:
+            anchored = False
         from .media_request import task_for
         from .two_pass import plan, sampling_canvas
+        from .generate import hide_tail_geometry
+        generated_canvas, hidden = hide_tail_geometry(canvas, None if extra.get('conditioning') else prompt,
+                                                      hide_tail, preview=bool(preview or upscale))
+        hide_tail_frames = hidden['frames'] if hidden and hidden['used'] else 0
         # The engine samples this canvas; results, cache keys and labels keep the requested size.
-        sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale), media=extra.get('media'),
+        sampled, output_size = sampling_canvas(generated_canvas, staged=bool(preview or upscale), media=extra.get('media'),
                                                conditioned=bool(extra.get('conditioning')))
-        planned = plan(sampled, two_pass, 'ref2va' if anchored else task_for(extra.get('media', {})),
+        planned = plan(sampled, two_pass, 'ref2va' if anchored or pictured else task_for(extra.get('media', {})),
                        base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
         if continue_from is not None:
             from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, MISSING, validate_snapshot, summary
-            validate_route(task='ref2va' if anchored else task_for(extra.get('media', {})), anchor=anchored,
+            validate_route(task='ref2va' if anchored or pictured else task_for(extra.get('media', {})),
+                           anchor=anchored or pictured,
                            media=extra.get('media'))
             if continuation is not None:
                 try:
                     continuation = validate_snapshot(continuation, sampled, sampling_plan=planned)
-                    state['continuation'] = summary(continuation)
+                    state['continuation'] = summary(continuation, hide_tail_frames=hide_tail_frames)
                 except ValueError as error:
                     if str(error) != MISSING:
                         raise
@@ -1367,9 +1411,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             if continuation is None:
                 from .continuation import OVERLAP_FRAMES
                 state['continuation'] = dict(overlap_frames=OVERLAP_FRAMES,
-                                             new_frames=sampled['frames'] - OVERLAP_FRAMES, encoded=True)
+                                             new_frames=sampled['frames'] - hide_tail_frames - OVERLAP_FRAMES, encoded=True)
         # A preview is its own result; an upscale is always run from its preview.
         keyed = dict(planned, preview=True) if preview else planned
+        if hide_tail_frames:
+            keyed = dict(keyed, hide_tail_frames=hide_tail_frames)
         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
                                              resources, source, environment, inspection=check)
         state['result_cache'] = dict(enabled=False, hit=False, forced=force_regenerate)
@@ -1400,7 +1446,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         preparation_started = time.monotonic()
         try:
             # Reference audio selects its own tables; match the encoder's choice.
-            asset_task = ((ANCHOR_ADALN_TASK if anchored else ADALN_TASK) if continue_from is not None
+            asset_task = ((ANCHOR_ADALN_TASK if anchored or pictured else ADALN_TASK) if continue_from is not None
                           else engine_task(extra.get('media', {}), media_base))
             preparation = prepare_sampling_assets(root, machine, planned, asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)
@@ -1453,6 +1499,15 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 raise RuntimeError(generation_failure(run, process.returncode, repair=hint))
         report = json.loads(output.with_suffix('.request.json').read_text(encoding='utf-8'))
         engine = json.loads(output.with_suffix('.engine.json').read_text(encoding='utf-8'))
+        if hide_tail_frames and report.get('hide_tail') == dict(requested=True, used=False, reason='too_long'):
+            # Admission before encoding can decline the extra frames after the bridge's
+            # estimate. Validate the ordinary plan and don't cache it as a hidden-tail result.
+            # After encoding the conditioning is tied to the longer canvas, so a later refusal
+            # fails like any other request.
+            sampled, output_size = sampling_canvas(canvas, staged=bool(preview or upscale),
+                media=extra.get('media'), conditioned=bool(extra.get('conditioning')))
+            hidden, hide_tail_frames = report['hide_tail'], 0
+            cache_key = None
         from .two_pass import steps, plan
         completed_steps = steps(report.get('sampling_plan'))
         expected_plan = plan(sampled, two_pass, report.get('profile', {}).get('engine', {}).get('task', 't2va'),
@@ -1468,6 +1523,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                 or engine.get('sampling_plan') != report.get('sampling_plan')
                 or report.get('sampling_plan') != expected_plan
                 or bool(report.get('preview')) != preview or bool(report.get('upscaled_preview')) != bool(upscale)
+                or (hide_tail and report.get('hide_tail') != hidden)
                 or any(engine.get('geometry', {}).get(k) != shown[k] for k in ('width', 'height', 'frames'))
                 or (report.get('output_size') or None) != output_size):
             from .comfy_launcher_api import repair_hint

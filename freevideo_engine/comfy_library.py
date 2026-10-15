@@ -561,6 +561,34 @@ def register():
             # Estimation is advisory; installation and generation remain usable.
             return web.json_response({}, headers={'Cache-Control': 'no-store'})
 
+    @server.routes.get('/freevideo/request-assets')
+    async def request_assets(request):
+        """What this request still needs downloaded; advisory and read-only."""
+        from .comfy_bridge import installation
+        from .request_assets import inspect
+        query = request.query
+        try:
+            root, machine = installation()
+            value = dict(width=int(query['width']), height=int(query['height']), seconds=float(query['seconds']),
+                         task=query.get('task', 't2va'), base_steps=int(query.get('base_steps', '8')),
+                         refine_steps=int(query.get('refine_steps', '3')), two_pass=query.get('two_pass', '1') == '1',
+                         enhance=query.get('enhance') == '1', loras=query.getall('lora', [])[:32])
+            refs = []
+            for item in query.getall('ref', [])[:32]:
+                kind, _, name = item.partition(':')
+                parts = Path(name).parts
+                if kind in ('image', 'video', 'audio') and parts and not Path(name).is_absolute() and '..' not in parts:
+                    refs.append(dict(kind=kind, path=name))
+            if refs:
+                # The generation path's own classification decides the tables (audio track in a video).
+                value.update(references=refs, media_base=folder_paths.get_input_directory())
+            names = await asyncio.to_thread(folder_paths.get_filename_list, 'loras') if value['loras'] else None
+            result = await asyncio.to_thread(inspect, root, machine, value, lora_names=names)
+            return web.json_response(result, headers={'Cache-Control': 'no-store'})
+        except (OSError, ValueError, TypeError, KeyError):
+            # Advisory: generation still reports whatever it needs.
+            return web.json_response({}, headers={'Cache-Control': 'no-store'})
+
     @server.routes.get('/freevideo/library')
     async def library(request):
         try:

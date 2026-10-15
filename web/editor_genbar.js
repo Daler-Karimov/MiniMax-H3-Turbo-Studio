@@ -84,10 +84,13 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);
-        cancel.hidden = !busy || opening; resume.hidden = !stopped;
+        // A cancel already accepted is not offered again; the bar says it is stopping until the run ends.
+        const cancelling = status?.state === 'cancelling' && !held;
+        cancel.hidden = !busy || opening || cancelling; resume.hidden = !stopped;
         const waiting = status?.state === 'queued' && !(status.blocks || []).some(block => ['queued', 'running'].includes(block.state) && block.prompt_id);
         if (opening) hint.textContent = t('Starting…', '正在开始…');
         else if (held || waiting) hint.textContent = t('Queued', '排队中');
+        else if (cancelling) hint.textContent = t('Stopping…', '正在停止…');
         else if (running) {
             const blocks = status?.blocks || [], done = blocks.filter(block => block.state === 'done').length;
             const number = Math.min(blocks.length || 1, Math.max(done, status?.chainProgress?.index || 0) + 1), count = blocks.length || 1;
@@ -96,7 +99,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             // The creation panel's own sentences, so a long step says what it is and how long it has taken.
             // At a narrow width only the stage sentence is cut; the part number and the time stay.
             // A single part needs no number; with nothing else to say it reads "Preparing".
-            const time = words?.stall || words?.time || (remaining != null ? timeEstimate(remaining, t) : '');
+            // The creation panel's own time when it has one, so the bar and the panel never differ; the job's sum until the panel has one.
+            const left = words?.over ? null : words?.left ?? remaining;
+            const time = words?.stall || (words?.over ? t('Taking longer than expected', '比预计久，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
             const stage = words?.stage || (count === 1 && !time ? t('Preparing', '正在准备') : '');
             const spans = [['fv-ed-gen-part', count > 1 ? t(`Part ${number}/${count}`, `第 ${number}/${count} 段`) : ''],
                 ['fv-ed-gen-stage', stage], ['fv-ed-gen-time', time]];
@@ -105,7 +110,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             hint.title = shown.map(([, text]) => text).join('');
         }
         firstFrame.update(busy);
-        references?.update(busy, busy ? undefined : !!actions.references.visible());
+        references?.update(busy, busy ? undefined : actions.references.visible() || false);
         generate.textContent = t('Generate', '生成');
         // Never disabled for a reason the press itself can explain or fix.
         generate.disabled = busy || !!previewSelection;
@@ -178,7 +183,11 @@ export function editorBlockStates(job, messages = [], resolve = null) {
     if (resolve) return resolve(job, messages);
     const states = {pending: 'waiting', queued: 'waiting', running: 'generating', done: 'done',
         failed: 'failed', cancelled: 'stopped', interrupted: 'stopped'};
+    // A part that never started in a run that was stopped or failed is stopped too, not still queued.
+    // Once a cancel is accepted (cancelling), such a part can only end cancelled, so it reads stopped at once.
+    const ended = ['failed', 'cancelled', 'interrupted', 'cancelling'].includes(job.state);
     return Object.fromEntries((job.blocks || []).map(block => {
+        if (ended && ['pending', 'queued'].includes(block.state)) return [block.id, {state: 'stopped', fraction: 0, remainingSeconds: null}];
         const live = messages.find(message => message.chain?.id === job.id && message.chain?.block === block.id);
         const running = block.state === 'running' || block.state === 'queued';
         const fraction = block.state === 'done' ? 1 : running && live
