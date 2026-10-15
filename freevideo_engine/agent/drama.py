@@ -72,6 +72,7 @@ SIX_PICTURES_CLASSES = frozenset()
 SIX_PICTURES_TIERS_GIB = (8, 10, 12, 16, 20, 24, 32)  # measured card sizes; a card takes the largest one it reaches
 SIX_PICTURES_SYSTEMS = ('Linux',)
 TIER_SLACK_GIB = .5  # A "24 GB" card reports a little under 24 GiB.
+CONTINUED_ORDER = ('face', 'front', 'three_quarter')  # a continuing shot's picture for each person
 MAX_VOICES = 3      # voice clips per shot, the model limit
 MAX_REFERENCES = 32
 
@@ -304,6 +305,23 @@ def _pictures(card, each=PICTURES_EACH):
     return [row['media'] for _, row in rows[:each]]
 
 
+def _continued_pictures(card, alone):
+    """The pictures a continuing shot carries for one person.
+
+    Alone in the shot: the sheet, then a close face (else the front view), because a sheet
+    alone makes the face too small. With others: one picture, face > front > three_quarter."""
+    by = {}
+    for item in card.get('images') or []:
+        by.setdefault(item['label'], item['media'])
+    rest = [item['media'] for item in card.get('images') or [] if item['label'] not in CONTINUED_ORDER]
+    ordered = [by[label] for label in CONTINUED_ORDER if label in by] + rest
+    if not alone:
+        return ordered[:1]
+    sheet = by.get('sheet')
+    close = by.get('face') or by.get('front') or next((m for m in ordered if m is not sheet), None)
+    return [m for m in (sheet, close) if m is not None] or ordered[:1]
+
+
 def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
     """Which cast cards a shot carries, as references and a prompt prefix.
 
@@ -315,8 +333,8 @@ def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
     'partial' (not everyone fit) or 'cards'. 'omitted' lists people left out
     entirely; 'voice_omitted' lists people whose pictures are carried but whose
     voice did not fit. A shot that continues the previous one carries one picture
-    per person (the sheet, else the front view) for at most CONTINUED_PICTURES
-    people, and no voice clip: its voices carry on from the previous shot."""
+    per person (face, else front, else three-quarter; a lone person gets the sheet and
+    then a face close-up) for at most CONTINUED_PICTURES people, and no voice clip: its voices carry on from the previous shot."""
     characters = play.get('characters', {})
     keys = [k for k in cast(play, shot) if isinstance(characters[k].get('card'), str)]
     result = dict(cast_reference=None, people=[], omitted=[], voice_omitted=[], missing=[], references=[],
@@ -331,16 +349,18 @@ def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
         spoken[line['who']] = spoken.get(line['who'], 0) + 1
     # People with more lines come first when not everyone fits; ties keep the order of appearance.
     chosen, pictures, voices = [], 0, 0
+    alone = continues and sum(1 for k in keys if cards.get(characters[k]['card']) is not None
+                              and _pictures(cards[characters[k]['card']])) == 1
     for key in sorted(keys, key=lambda k: -spoken.get(k, 0)):
         identity = characters[key]['card']
         card = cards.get(identity)
         if card is None:
             result['missing'].append(key)
             continue
-        images = _pictures(card, each)
+        images = _pictures(card, each)  # a continuing shot ignores each: it carries at most 2, within the 3 it may hold
         if continues:
             if images and len(chosen) < specs.CONTINUED_PICTURES:
-                chosen.append((key, card, images[:1], False))
+                chosen.append((key, card, _continued_pictures(card, alone), False))
             else:
                 result['omitted'].append(key)
             continue
