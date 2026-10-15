@@ -26,6 +26,10 @@ INVALID_ERRORS = frozenset(('invalid_request', 'invalid_prompt', 'invalid_dimens
                             'invalid_media', 'too_many_images'))
 
 
+class WorkerIdleExit(RuntimeError):
+    """The worker closed itself after its idle timeout before it answered anything."""
+
+
 class Worker:
     """One reader owns each pipe; stderr is drained without retaining user text."""
     def __init__(self, process):
@@ -527,6 +531,16 @@ class Service:
                         return
                     if self.video_busy():
                         raise BlockingIOError('busy_video')
+                    def respawn():
+                        nonlocal session
+                        session.process.wait()
+                        session.close()
+                        session = Worker(self.spawn(root, machine, env, descriptor))
+                        with self.mutex:
+                            self.worker = session
+                            self.process = session.process
+                            self.worker_restarts += 1
+
                     session = Worker(self.spawn(root, machine, env, descriptor))
                     with self.mutex:
                         self.worker = session
@@ -543,14 +557,17 @@ class Service:
                                     break
                             continue
                         if session.process.poll() == 0:
-                            session.process.wait()
-                            session.close()
-                            session = Worker(self.spawn(root, machine, env, descriptor))
-                            with self.mutex:
-                                self.worker = session
-                                self.process = session.process
-                                self.worker_restarts += 1
-                        self.infer(session, value)
+                            respawn()
+                        try:
+                            self.infer(session, value)
+                        except WorkerIdleExit:
+                            # The request reached a worker that was already unloading after
+                            # its idle timeout and was never read. Nothing ran: send it to a
+                            # fresh worker once; a second exit is reported as a failure.
+                            if self.stop.is_set() or self.session_stop.is_set():
+                                raise
+                            respawn()
+                            self.infer(session, value)
                 finally:
                     # Keep the parent's lease until the whole owned process tree exits.
                     if session is not None:
@@ -620,9 +637,24 @@ class Service:
         context.update_request(value)
         return True
 
+    @staticmethod
+    def worker_gone(session, heard):
+        """The error for a worker pipe that ended; it carries the exit code for the report."""
+        try:
+            code = session.process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            code = None
+        if code == 0 and not heard:
+            return WorkerIdleExit('worker_exit (exit code 0, before any answer)')
+        return RuntimeError('worker_exit' if code is None else 'worker_exit (exit code %d)' % code)
+
     def infer(self, session, value):
         context = self.context or Context('generate', value)
-        session.send(action='generate', **value)
+        heard = False
+        try:
+            session.send(action='generate', **value)
+        except OSError:
+            raise self.worker_gone(session, heard)
         cancelled_at = None
         deadline = time.monotonic() + INFERENCE_TIMEOUT
         while True:
@@ -640,7 +672,8 @@ class Service:
             except queue.Empty:
                 continue
             if row is None:
-                raise RuntimeError('worker_exit')
+                raise self.worker_gone(session, heard)
+            heard = True
             phase = row.get('phase')
             if phase == 'progress':
                 stage, fraction = row.get('stage'), row.get('fraction')
