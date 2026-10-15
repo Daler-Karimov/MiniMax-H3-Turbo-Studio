@@ -16,7 +16,7 @@ import { outputDownloadURL } from './output_download.js';
 import { shareButton } from './share.js';
 import { reportFileName } from './report_issue.js';
 import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';
-import { cleanOptionalWidgets, cleanOptionalPrompt } from './optional_inputs.js';
+import { cleanOptionalWidgets, cleanOptionalPrompt, optionalInputValue } from './optional_inputs.js';
 import { regenerateResult, createSecondPassQueue } from './studio_queue.js';
 import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
@@ -245,7 +245,7 @@ function mediaPanel(node, mount = null) {
         // A Generate node that continues a video takes these keyframes as pictures, so they may sit beside references.
         const continuing = (node.outputs?.[0]?.links || []).some(id => {
             const target = node.graph?.getNodeById(node.graph?.links[id]?.target_id);
-            return target?.type === 'FreeVideoGenerate' && String(target.widgets?.find(w => w.name === 'continue_from')?.value ?? '').trim();
+            return target?.type === 'FreeVideoGenerate' && optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '';
         });
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
