@@ -588,6 +588,38 @@ class Service:
                     self.context = None
                 self.queue_wake.set()
 
+    def shrink(self, value, row, context):
+        """After a memory error while working on the picture, step the size down for one more try.
+
+        The ladder is the one start-up fitting uses (32-pixel grid, 512 pixels at the least);
+        the step grows with the size so a big canvas needs few tries. False at the smallest size.
+        """
+        if (row.get('code') != 'no_memory' or row.get('stage') in ('load', 'text', 'encode')
+                or self.stop.is_set() or self.session_stop.is_set()):
+            return False
+        width, height = value['width'], value['height']
+        long, short = max(width, height), min(width, height)
+        # A worker that had to load the model again costs seconds per try; take bigger steps then.
+        side = long - max(32, long // (8 if row.get('reloaded') else 16) // 32 * 32)
+
+        def fitted(length):
+            return (short * length + long * 16) // (long * 32) * 32
+
+        if side < 512 or fitted(side) < 512:
+            # The step would jump past the least size: try that size itself before giving up.
+            side = next((n for n in range(512, long, 32) if fitted(n) >= 512), None)
+            if side is None:
+                return False
+        other = fitted(side)
+        value['width'], value['height'] = (side, other) if width >= height else (other, side)
+        with self.mutex:
+            fitted = self.state.get('fitted') or {}
+            requested = fitted.get('requested') or dict(width=width, height=height)
+            self.state['fitted'] = dict(width=value['width'], height=value['height'], requested=requested)
+            self.state.update(phase='progress', stage='start', fraction=0)
+        context.update_request(value)
+        return True
+
     def infer(self, session, value):
         context = self.context or Context('generate', value)
         session.send(action='generate', **value)
@@ -625,6 +657,11 @@ class Service:
             elif phase in ('result', 'error'):
                 if self.stop.is_set() or row.get('code') == 'cancelled':
                     result = dict(phase='cancelled')
+                elif phase == 'error' and self.shrink(value, row, context):
+                    # The memory estimate was optimistic for this machine: same worker, next size down.
+                    session.send(action='generate', **value)
+                    deadline = time.monotonic() + INFERENCE_TIMEOUT
+                    continue
                 elif phase == 'error':
                     code = row.get('code')
                     result = self.failed(code, context, row=row)

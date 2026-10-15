@@ -118,8 +118,8 @@ ERRORS.update({
 
 # Static bilingual image reasons; backend exception strings never enter the API.
 IMAGE_REASONS = {
-    'no_memory': ('Not enough GPU memory. Make the picture smaller in "Image size…" and try again.',
-                  '显存不足。在“图像大小…”里缩小后再试。'),
+    'no_memory': ('Not enough GPU memory, even at the smallest size. Close other apps using the GPU, then try again.',
+                  '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。'),
     'busy_video': ('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。'),
     'pack_missing': ('Download "Image generation models" in the launcher first.',
                      '请先在启动器里下载“图像生成模型”。'),

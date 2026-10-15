@@ -235,6 +235,10 @@ class ImageRunner:
         return self.generator.generate(prompt, width=width, height=height, seed=seed,
                                        reference_images=reference_images, progress=progress, cancel=cancel)
 
+    def at_boundary(self):
+        """False when a failure left a weights streamer inside a layer pass; the next request cannot use it."""
+        return self.dit_stack.offloader.at_boundary and self.te_stack.offloader.at_boundary
+
     def stats(self):
         return dict(dit=self.dit_stack.stats(), text_encoder=self.te_stack.stats(),
                     plan=self.last_plan.to_dict() if self.last_plan else None, load_seconds=self.load_seconds)
