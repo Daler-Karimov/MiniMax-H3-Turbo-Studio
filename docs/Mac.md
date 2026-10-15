@@ -26,7 +26,7 @@ This approves FreeVideo only. It doesn't turn off Gatekeeper or change your othe
 - Before each stage, attention head groups, chunk sizes and the number of resident transformer layers are set from the unified memory available at that moment.
 - Macs download ConvRot int8 weights. On Apple M5 and newer, the large projections run as int8 on the GPU's Metal 4 tensor units; earlier Macs decode them to BF16 on the GPU as each layer loads.
 - Layers that are not kept in memory stream from disk with read-ahead.
-- Text prompts, first-frame input and two-pass sampling are supported.
+- Text prompts, first-frame input and two-step generation are supported.
 
 ## Generation time
 

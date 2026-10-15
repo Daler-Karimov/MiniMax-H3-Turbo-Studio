@@ -508,7 +508,7 @@ function resultPanel(node) {
         stats.hidden = !!value.result_cache_hit;
         const number = (value, scale, unit) => Number.isFinite(value) && value >= 0 ? `${(value / scale).toFixed(1)} ${unit}` : "—";
         const unified = value.memory_model === 'unified';
-        for (const [label, shown] of [[text("Sampling", "采样"), number(value.sample_seconds, 1, "s")], [text("Request total", "请求总计"), number(value.request_seconds, 1, "s")], [unified ? text("Unified memory", "统一内存总量") : text("VRAM peak", "显存峰值"), number(unified ? value.unified_total_bytes : value.vram_peak_bytes, 2 ** 30, "GiB")], [unified ? text("Process RAM peak", "进程内存峰值") : text("RAM peak", "内存峰值"), number(value.ram_peak_bytes, 2 ** 30, "GiB")]]) {
+        for (const [label, shown] of [[text("Generation", "生成用时"), number(value.sample_seconds, 1, "s")], [text("Total time", "总用时"), number(value.request_seconds, 1, "s")], [unified ? text("Unified memory", "统一内存总量") : text("Peak VRAM", "最高显存"), number(unified ? value.unified_total_bytes : value.vram_peak_bytes, 2 ** 30, "GiB")], [unified ? text("Process peak RAM", "进程最高内存") : text("Peak RAM", "最高内存"), number(value.ram_peak_bytes, 2 ** 30, "GiB")]]) {
             const stat = el("div", undefined, "fv-stat"); stat.append(el("strong", shown), el("span", label)); stats.append(stat);
         }
         const links = el("div", undefined, "fv-links");

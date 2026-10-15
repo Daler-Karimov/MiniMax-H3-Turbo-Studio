@@ -175,10 +175,10 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         const number = (value, scale, unit) => measured(value) ? `${(value / scale).toFixed(1)} ${unit}` : '—';
         stats.replaceChildren();
         for (const [label, value, scale, unit] of [
-            [t('Sampling', '采样耗时'), row.sample_seconds, 1, 's'],
-            [t('Request total', '请求总计'), row.request_seconds, 1, 's'],
-            [t('VRAM peak', '显存峰值'), row.vram_peak_bytes, 2 ** 30, 'GiB'],
-            [t('RAM peak', '内存峰值'), row.ram_peak_bytes, 2 ** 30, 'GiB'],
+            [t('Generation', '生成用时'), row.sample_seconds, 1, 's'],
+            [t('Total time', '总用时'), row.request_seconds, 1, 's'],
+            [t('Peak VRAM', '最高显存'), row.vram_peak_bytes, 2 ** 30, 'GiB'],
+            [t('Peak RAM', '最高内存'), row.ram_peak_bytes, 2 ** 30, 'GiB'],
         ]) {
             const item = el('div', null, 'fv-stat');
             item.append(el('strong', number(value, scale, unit)), el('span', label)); stats.append(item);
@@ -195,7 +195,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             await upscale(row);
             if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后在“作品”里。');
         } catch (error) {
-            if (!disposed && selected === row.video) notice.textContent = t('Could not start the second pass: ', '无法开始二采：') + error.message;
+            if (!disposed && selected === row.video) notice.textContent = t('Could not continue: ', '无法继续生成：') + error.message;
             throw error;
         }
     }
@@ -217,7 +217,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
                 : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
                 : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
                 : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请等它完成后再试。')
-                : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
+                : error.message === 'in-use' ? t('Not deleted: it is still being generated or the video is open. Try again in a moment.', '未删除：它还在继续生成，或视频仍被占用，请稍后再试。')
                 : t('Could not delete this creation.', '无法删除这条作品。'));
         }
         // Other views of the library (the studio's Recent videos) drop it too.
@@ -250,7 +250,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         image.dataset.src = videoThumbnailURL(row);
         image.onerror = () => { image.hidden = true; };
         picture.append(image);
-        if (row.preview) picture.append(el('span', t('First-pass preview', '一采预览'), 'fv-preview-badge'));
+        if (row.preview) picture.append(el('span', t('Preview', '预览'), 'fv-preview-badge'));
         // Made by an AI agent: say so, with the name the agent gave the shot.
         if (row.agent) {
             const badge = el('span', 'Agent', 'fv-agent-badge');

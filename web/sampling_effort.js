@@ -111,5 +111,5 @@ export function createSamplingEffort(t, {onChange, onPreview = () => {}}) {
             : t('Same model. Higher effort uses more sampling steps; results vary by scene.', '使用同一模型，提高档位会增加采样步数；效果因场景而异。');
         for (const name of nameButtons) { name.disabled = disabled; name.title = ''; }
     }
-    return {element, update, setEstimate(text, title = '') { estimate.textContent = text; estimate.title = title; }, dispose: cancel};
+    return {element, update, setEstimate(text, title = '') { estimate.textContent = text; if (title) estimate.title = title; else estimate.removeAttribute('title'); }, dispose: cancel};
 }
