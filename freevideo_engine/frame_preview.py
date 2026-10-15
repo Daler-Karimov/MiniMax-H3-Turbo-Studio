@@ -14,6 +14,7 @@ from pathlib import Path
 
 WEIGHTS = Path(__file__).with_name('frame_preview_weights.json')
 FILE = 'frame-preview.jpg'
+MARKER = 'frame-preview-off'
 ENV = 'FREEVIDEO_FRAME_PREVIEW'
 FIRST_STEP = 3
 FRAMES = 4
@@ -25,6 +26,7 @@ ROW_WIDTH = CHANNELS * 4  # 24 channels x a (1, 2, 2) patch
 _sink = None
 _active = None
 _weights = None
+_marker = None  # request-level file: a failure in one process keeps the request's later processes off
 _failed = False  # request-level: one failure turns previews off for every later pass
 _serial = 0      # request-level: numbers pictures across passes so the page never mistakes a new one for the old
 
@@ -45,15 +47,22 @@ def load_weights(path=WEIGHTS):
     return k, weight, bias
 
 
-def configure(directory, emit=None, *, weights=None):
+def configure(directory, emit=None, *, weights=None, request_state=None):
     """Turn previews on for this process; returns whether they are active.
 
     `directory` receives the picture; `emit(event)` reports each new one.
+    `request_state` is a per-request directory shared by the request's worker
+    processes: a failure leaves a marker there, so a later process of the same
+    request stays off.
     """
-    global _sink, _weights, _failed, _serial
+    global _sink, _weights, _failed, _serial, _marker
     _sink = _weights = None
     _failed, _serial = False, 0
+    _marker = None if request_state is None else Path(request_state) / MARKER
     if disabled():
+        return False
+    if _marker is not None and _marker.exists():
+        _failed = True
         return False
     try:
         k, weight, bias = load_weights(WEIGHTS if weights is None else weights)
@@ -86,6 +95,11 @@ def _fail():
     """Previews stay off for the rest of the request: drop the picture and tell the page to do the same."""
     global _sink, _weights, _failed
     sink, _sink, _weights, _failed = _sink, None, None, True
+    if _marker is not None:
+        try:
+            _marker.write_text('off\n', encoding='ascii')
+        except OSError:
+            pass
     if sink is None:
         return
     _remove(sink[0])

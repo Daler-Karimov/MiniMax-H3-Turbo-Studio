@@ -329,7 +329,7 @@ def worker(value):
             from .macos_runtime import Engine
             from . import frame_preview
             # The picture goes next to the video, where the page's report link reads it.
-            frame_preview.configure(Path(value['output']).parent)
+            frame_preview.configure(Path(value['output']).parent, request_state=artifacts)
             refining = phase == 'refinement'
             if refining and not sampling['enabled']:
                 raise ValueError('Refinement is absent from this sampling plan')
