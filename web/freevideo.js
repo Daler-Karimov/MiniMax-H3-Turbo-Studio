@@ -686,15 +686,15 @@ app.registerExtension({
                 if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
-                    quality.label = text('Two-step generation', '两步生成');
+                    quality.label = text('Two-pass acceleration', '二次采样加速');
                     quality.tooltip = text('Usually faster: generates at a lower resolution, then upscales and refines.', '通常更快：先用低分辨率生成，再放大细化。');
                 }
-                for (const [name, en, zh] of [['base_steps', 'First-pass steps', '首轮步数'], ['refine_steps', 'Refine steps', '细化步数']]) {
+                for (const [name, en, zh] of [['base_steps', 'First-pass steps', '一采步数'], ['refine_steps', 'Second-pass steps', '二采步数']]) {
                     const steps = this.widgets?.find(w => w.name === name);
                     if (steps) {
                         steps.label = text(en, zh);
-                        steps.tooltip = text('Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Two-step generation runs only with 8 first-pass steps. Other step counts use a single pass. Refine steps must be fewer than first-pass steps unless set to 3.',
-                            '修改步数可能降低质量。默认首轮 8 步、细化 3 步；只有首轮为 8 步时才会使用两步生成，其他步数只生成一轮；细化步数不是 3 时，需少于首轮。');
+                        steps.tooltip = text('Changing sampling steps may lower generation quality. Default: 8 first-pass and 3 second-pass steps. Two-pass acceleration runs only with 8 first-pass steps. Other step counts use a single pass. Other second-pass counts must be fewer than first-pass steps.',
+                            '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；只有一采为 8 步时才会使用二次采样加速，其他步数只采样一遍；其他二采步数需小于一采步数。');
                     }
                 }
                 for (const widget of this.widgets || []) {

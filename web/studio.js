@@ -631,7 +631,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const twoPassStatus = el('small', '', 'fv-two-pass-status');
     // Off, on, or on and paused after the first pass: a preview is one way to run two-pass.
     const passMode = el('div', null, 'fv-pass-mode'); passMode.setAttribute('role', 'radiogroup');
-    passMode.setAttribute('aria-label', t('Two-step', '两步生成'));
+    passMode.setAttribute('aria-label', t('Two-pass sampling', '二次采样'));
     const passOptions = [['off', t('Off', '关闭')], ['on', t('On', '开启')], ['preview', t('Preview first', '先出预览')]].map(([mode, label]) => {
         const option = el('button', label); option.type = 'button'; option.dataset.mode = mode; option.setAttribute('role', 'radio');
         option.onclick = () => choosePassMode(mode);
@@ -650,7 +650,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const next = enabled[(current + step + enabled.length) % enabled.length];
         if (next) { next.click(); next.focus(); }
     });
-    twoPassLabel.append(el('span', t('Two-step', '两步生成')), twoPassStatus, passMode);
+    twoPassLabel.append(el('span', t('Two-pass', '二次采样')), twoPassStatus, passMode);
     let effortEstimate = {}, effortEstimateKey = '', effortEstimateTimer = null, effortEstimateRequest = null, lengthControl = null, chainController = null;
     const effort = createSamplingEffort(t, {onChange: tier => {
         baseSteps.value = tier.steps;
@@ -745,8 +745,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     samplingWarning.id = `fv-sampling-warning-${node.id}`;
     samplingWarning.style.color = 'var(--fv-warning)';
     for (const [input, name, label, fallback, maximum] of [
-        [baseSteps, 'base_steps', t('First-pass steps', '首轮步数'), 8, 32],
-        [refineSteps, 'refine_steps', t('Refine steps', '细化步数'), 3, 31],
+        [baseSteps, 'base_steps', t('First-pass steps', '一采步数'), 8, 32],
+        [refineSteps, 'refine_steps', t('Second-pass steps', '二采步数'), 3, 31],
     ]) {
         input.type = 'number'; input.min = '1'; input.max = String(maximum); input.step = '1'; input.required = true;
         input.value = value(node, name) ?? fallback;
@@ -790,9 +790,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         baseSteps.min = twoPass.checked ? '2' : '1';
         refineSteps.max = baseLinked ? '31' : String(Math.max(3, Math.min(31, Number(baseSteps.value || 8) - 1)));
         refineSteps.setCustomValidity(twoPass.checked && !baseLinked && !refineSteps.disabled && Number(refineSteps.value) !== 3 && Number(refineSteps.value) >= Number(baseSteps.value)
-            ? t('Use 3 refine steps, or fewer steps than in the first pass.', '细化步数须为 3，或少于首轮步数。') : '');
+            ? t('Use 3 second-pass steps, or fewer steps than in the first pass.', '二采步数须为 3，或少于一采步数。') : '');
         if (twoPass.checked) refineSteps.removeAttribute('title');
-        else refineSteps.title = t('Available when two-step is on.', '开启两步生成后可用。');
+        else refineSteps.title = t('Turn on two-pass acceleration to use this setting.', '开启二次采样加速后生效。');
         for (const [input, name] of [[baseSteps, 'base_steps'], [refineSteps, 'refine_steps']]) {
             if (!input.disabled && input.checkValidity() && Number(input.value) !== value(node, name)) {
                 set(node, name, Number(input.value));
@@ -1338,8 +1338,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 const message = new Map([[seconds, t('Fill in the duration.', '请填写时长。')],
                     [width, t('Fill in the width.', '请填写宽度。')], [height, t('Fill in the height.', '请填写高度。')],
                     [seed, t('Fill in the seed.', '请填写种子。')],
-                    [baseSteps, t('Fill in the first-pass steps.', '请填写首轮步数。')],
-                    [refineSteps, t('Fill in the refine steps.', '请填写细化步数。')]]).get(invalid);
+                    [baseSteps, t('Fill in the first-pass steps.', '请填写一采步数。')],
+                    [refineSteps, t('Fill in the second-pass steps.', '请填写二采步数。')]]).get(invalid);
                 if (message) { status.dataset.error = 'true'; status.textContent = message; }
             }
             invalid.focus(); invalid.reportValidity(); return;

@@ -35,7 +35,7 @@ const SAMPLING_NAME = {
     pass2: ['Generating video', '正在生成视频', 'Step', '正在生成 · 第 '],
     preview: ['Generating a preview', '正在生成预览', 'Step', '正在生成 · 第 '],
 };
-const SAMPLING_PASS = {first: ['first pass', '首轮'], pass2: ['refine', '细化'], preview: ['preview', '预览']};
+const SAMPLING_PASS = {first: ['first pass', '一采'], pass2: ['second pass', '二采'], preview: ['preview', '预览']};
 const SUBACTIVITY_LABELS = {
     'Starting generation process': 'start', 'Starting text encoder': 'libraries',
     'Loading text encoder': 'libraries', 'Preparing text encoder GPU': 'gpu',
@@ -180,17 +180,17 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
     if (message.prediction || message.sampling_plan) {
         if (!ranOnePass(plan)) return named('prepare');
         const n = plan.base_steps;
-        return {key: 'prepare', text: t(`Two-step generation needs 8 first-pass steps. This video uses a single ${n}-step pass.`,
-            `只有首轮为 8 步时才会使用两步生成，这次按 ${n} 步只生成一轮。`)};
+        return {key: 'prepare', text: t(`Two-pass acceleration needs 8 first-pass steps. This video uses a single ${n}-step pass.`,
+            `只有一采为 8 步时才会使用二次采样加速，这次按 ${n} 步只采样一遍。`)};
     }
     if (phase === 'recovery') return message.retry?.reuse_sampling === true ? named('decode')
         : message.retry?.reuse_first_pass === true ? steps('pass2', 'pass2') : named('prepare');
     if (phase === 'sample_finalize') return named('decode');
     if (message.stage === 'latent_upscale' || phase === 'latent_upscale')
         return {key: 'upscale', text: Number.isInteger(second?.width) && Number.isInteger(second?.height)
-            ? t(`Refine · upscaling to ${second.width} × ${second.height}`,
-                `细化 · 放大到 ${second.width} × ${second.height}`)
-            : t('Refine · upscaling', '细化 · 放大')};
+            ? t(`Second pass · upscaling to ${second.width} × ${second.height}`,
+                `二采 · 放大到 ${second.width} × ${second.height}`)
+            : t('Second pass · upscaling', '二采 · 放大')};
     if (phase === 'sampling' || phase === 'refinement' || message.stage === 'preview_mismatch') {
         const done = Number.isInteger(message.done) ? message.done : null;
         const total = Number.isInteger(message.total) && message.total > 0 ? message.total : null;
@@ -205,7 +205,7 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         if (twoPass && plan.preview) return steps('preview', 'preview', step, count);
         const sampling = steps('pass1', twoPass ? 'first' : 'single', step, count);
         if (!twoPass && ranOnePass(plan))
-            sampling.text += t(' (single pass; two-step generation needs 8 first-pass steps)', '（只生成一轮；两步生成需首轮 8 步）');
+            sampling.text += t(' (single pass; two-pass acceleration needs 8 first-pass steps)', '（只采样一遍；二次采样加速需一采 8 步）');
         return sampling;
     }
     const key = labelActivities.get(message.label) || {
@@ -213,7 +213,7 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         load: 'load', decode: 'decode', save: 'save',
     }[phase] || labelActivities.get(message.stage);
     if (!key) return null;
-    if (key === 'refine') return {key: 'upscale', text: t('Refine · upscaling', '细化 · 放大')};
+    if (key === 'refine') return {key: 'upscale', text: t('Second pass · upscaling', '二采 · 放大')};
     // Named encoder and post-sampling events stay distinct, even before a pause.
     const substage = SUBACTIVITY_LABELS[message.label] || (key === 'reference' ? 'reference' : null);
     if (substage) return {key: ['prompt', 'combined', 'reference'].includes(key) ? 'encode' : key,
