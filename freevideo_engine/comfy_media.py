@@ -62,7 +62,7 @@ def continued(exported, notes=None):
     lines = [continued_note(len(pictures), keyframes, len(candidates[:PICTURES_MAX]))]
     if any(row.get('kind') != 'image' for row in media.get('references', [])) or media.get('conditioning_info') \
             or (exported or {}).get('conditioning'):
-        lines.append('Video and audio references and pre-encoded conditioning are not used for a continued part.')
+        lines.append('A continued part uses picture references only. Video, audio and pre-encoded inputs are skipped.')
     for line in filter(None, lines):
         logging.info('[FreeVideo] %s', line)
         if notes is not None:
@@ -72,14 +72,15 @@ def continued(exported, notes=None):
 
 def continued_note(pictures, keyframes, used):
     """One line for a continued part whose keyframes became pictures or whose pictures did not all fit."""
-    frames = ' and '.join(keyframes)
+    frames = 'the %s frame%s' % (' and '.join(keyframes), 's' if len(keyframes) > 1 else '')
     if pictures + len(keyframes) > used:
-        order = 'reference pictures first, then the %s frame image%s' % (frames, 's' if len(keyframes) > 1 else '')
-        return ('Continuing the previous video with %d of %d pictures: %s.' % (used, pictures + len(keyframes), order)
-                if keyframes else 'Continuing the previous video with the first %d of %d reference pictures.' % (used, pictures))
+        return ('Continuing the previous video with %d of %d pictures: references first, then %s.'
+                % (used, pictures + len(keyframes), frames) if keyframes
+                else 'Continuing the previous video with the first %d of %d references.' % (used, pictures))
     if keyframes:
-        return ('Continuing the previous video; the %s frame image%s used as %s.'
-                % (frames, 's are' if len(keyframes) > 1 else ' is', 'reference pictures' if len(keyframes) > 1 else 'a reference picture'))
+        return 'Continuing the previous video. %s %s used as %s.' % (
+            frames[0].upper() + frames[1:], 'are' if len(keyframes) > 1 else 'is',
+            'references' if len(keyframes) > 1 else 'a reference')
     return None
 
 

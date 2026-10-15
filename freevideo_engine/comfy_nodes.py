@@ -123,10 +123,10 @@ class FreeVideoGenerate(io.ComfyNode):
         notes = []
         if options.get('continue_from') and not two_pass:
             two_pass = True
-            notes.append('Continuing a video uses two-pass acceleration, so it is on for this part.')
+            notes.append('Continuing a video needs "Two-pass acceleration", so it is on for this part.')
         if options.get('continue_from') and preview:
             preview = False
-            notes.append('A continued part is made in full, without stopping for a first-pass preview.')
+            notes.append('A continued part is made in full, without stopping at the preview.')
         from .two_pass import validate_steps
         if not refine_from:
             validate_steps(base_steps, refine_steps, two_pass)

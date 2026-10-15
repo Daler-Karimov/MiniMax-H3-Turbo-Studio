@@ -34,11 +34,10 @@ MISSING = 'The previous video has no usable continuation data. Generate it again
 SIZE_MISMATCH = 'Use the same width and height as the previous video.'
 # Every refusal starts with UNSUPPORTED, then says what to change.
 UNSUPPORTED = 'Continue from video cannot be used with these settings.'
-UNSUPPORTED_DEVICE = UNSUPPORTED + ' It needs an NVIDIA GPU. Clear Continue from video to make a new video.'
-UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on Two-pass acceleration and turn off Two-pass: preview first pass.'
-UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear Second pass of preview: a continued part is made in full.'
-UNSUPPORTED_MEDIA = (UNSUPPORTED + ' A continued part takes up to 3 pictures as references. '
-                     'Remove video or audio references and pre-encoded conditioning.')
+UNSUPPORTED_DEVICE = UNSUPPORTED + ' Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".'
+UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on "Two-pass acceleration" and turn off the first-pass preview.'
+UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear either "Second pass of preview" or "Continue from video".'
+UNSUPPORTED_MEDIA = UNSUPPORTED + ' Connect up to 3 pictures as references, and remove video, audio and pre-encoded inputs.'
 # A continued part keeps the cast's pictures, one per person and at most three people in a frame.
 PICTURES_MAX = 3
 INVALID_FRAMES = 'Frame count must be 5 + 17n and at least 39 (39, 56, 73, 90, ...).'
