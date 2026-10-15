@@ -6,7 +6,7 @@ from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
 from . import comfy_bridge
 from .comfy_continuation import optional_text, request_options
-from .default_prompt import DEFAULT_PROMPT, DEFAULT_PROMPT_DISPLAY
+from .default_prompt import DEFAULT_PROMPT
 
 References = io.Custom('FREEVIDEO_REFERENCES')
 LoRAs = io.Custom('FREEVIDEO_LORAS')
@@ -22,7 +22,7 @@ class FreeVideoGenerate(io.ComfyNode):
             description='Generate a video with audio using your FreeVideo installation. Memory placement, '
                         'caches and validated optimizations are automatic. Outputs and diagnostics are retained.',
             inputs=[
-                io.String.Input('text', display_name='Prompt', multiline=True, default=DEFAULT_PROMPT, placeholder=DEFAULT_PROMPT_DISPLAY,
+                io.String.Input('text', display_name='Prompt', multiline=True, default=DEFAULT_PROMPT,
                     tooltip='Describe the scene, motion, dialogue, sound and music.'),
                 io.Int.Input('width', default=1344, min=256, max=4096, step=32),
                 io.Int.Input('height', default=768, min=256, max=4096, step=32),

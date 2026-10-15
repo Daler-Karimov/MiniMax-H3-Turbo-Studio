@@ -659,7 +659,7 @@ app.registerExtension({
             return;
         }
         if (!["FreeVideoMedia", "FreeVideoGenerate", "FreeVideoLoRAStack"].includes(nodeData.name)) return;
-        if (nodeData.name === "FreeVideoGenerate") { const spec = nodeData.input?.required?.text?.[1] || {}; nodeType.prototype.freevideoStarterPrompt = spec.default || ''; nodeType.prototype.freevideoStarterShown = spec.placeholder || spec.default || ''; }
+        if (nodeData.name === "FreeVideoGenerate") nodeType.prototype.freevideoStarterPrompt = nodeData.input?.required?.text?.[1]?.default || '';
         const created = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const result = created?.apply(this, arguments);

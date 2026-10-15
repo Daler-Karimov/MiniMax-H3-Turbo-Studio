@@ -4,8 +4,6 @@ Written against MiniMax H3's official h3-prompt-writing/SKILL.md and
 references/base-en.txt. This is creative copy, not a benchmark input.
 """
 
-import re
-
 # Used only as a new-node default; saved and connected prompts stay authoritative.
 DEFAULT_PROMPT = (
     'integrated_multimodal_description: [Shot 1] A premium cinematic, photorealistic '
@@ -37,15 +35,3 @@ DEFAULT_PROMPT = (
     'harmonics, expands into full strings and deep brass as the observatory opens, then '
     'resolves into one bright, confident chord under the final title.'
 )
-
-
-def display_prompt(prompt=DEFAULT_PROMPT):
-    """The same text as plain prose for the studio box; the structured labels stay in the prompt sent to the model."""
-    text = re.sub(r'^integrated_multimodal_description:\s*', '', prompt)
-    text = re.sub(r'\[Shot \d+\]\s*', '', text)
-    text = re.sub(r'At 00:0?(\d+)\.000,', lambda m: f'At {int(m.group(1))} seconds,', text)
-    text = re.sub(r'\n\noverall_soundscape:\s*', '\n\nSound: ', text)
-    return re.sub(r'\n\nnon_diegetic_music:\s*', '\n\nMusic: ', text)
-
-
-DEFAULT_PROMPT_DISPLAY = display_prompt()
