@@ -11,6 +11,13 @@ def number(value):
             and math.isfinite(value) and value >= 0)
 
 
+MODEL_ACTIVITIES = ('download', 'verify', 'assemble', 'copy', 'copy_bytes', 'check', 'resume')
+
+
+VERB_ACTIVITIES = ('verify', 'assemble', 'copy_bytes', 'check', 'copy', 'download')
+COMPONENT_NAMES = ('Video ', 'Text ', 'Sampling ', 'Image ', 'Model', 'Runtime components')
+
+
 class ProgressState:
     def __init__(self):
         self.phase = {}
@@ -26,8 +33,11 @@ class ProgressState:
             self.model_groups = event.get('groups', [])
             return
         if event.get('kind') == 'phase':
+            # A parallel compiler re-sends the running phase with a larger count
+            # every moment; only a different phase ends a retry notice.
+            if event.get('label') != self.phase.get('label'):
+                self.download_notices.clear()
             self.phase = event
-            self.download_notices.clear()
             return
         key = str(event.get('key', 'current'))
         if event.get('kind') == 'progress' and key.startswith('download-patient-'):
@@ -53,8 +63,12 @@ class ProgressState:
     def snapshot(self, now=None):
         now = time.monotonic() if now is None else now
         active = [self._view(row, now) for row in self.tasks.values() if row.get('state') == 'running']
-        # Keep a download visible while a parallel compiler reports a heartbeat.
-        active.sort(key=lambda row: (number(row.get('total')) and row['total'] > 0,
+        # Keep model work visible while a parallel compiler reports a heartbeat,
+        # also in the moments a file is only being connected or verified (no
+        # byte total yet); otherwise the line would alternate between the two.
+        def models(row):
+            return (row.get('unit') == 'bytes' or row.get('activity') in MODEL_ACTIVITIES) and row['age_seconds'] <= 30
+        active.sort(key=lambda row: (models(row), number(row.get('total')) and row['total'] > 0,
                                      row.get('unit') == 'bytes'), reverse=True)
         current = active[0] if active else self._view(self.last, now)
         if self.download_notices:
@@ -101,6 +115,11 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
     """One activity line for the launcher, including known transfer and scan counts."""
     t = lambda en, cn: cn if zh else en
     activity, name = event.get('activity'), event.get('name') or ''
+    # A Chinese name follows its verb directly; a Latin one (Python) keeps a space.
+    gap = ' ' if name[:1].isascii() and name[:1].isalnum() else ''
+    if not zh and activity in VERB_ACTIVITIES and (
+            name.startswith(COMPONENT_NAMES) or any(name == en for en, _ in NAMES.values())):
+        name = name[:1].lower() + name[1:]  # In the middle of a sentence.
     if activity == 'count':
         done, total = event.get('done'), event.get('total')
         if number(done) and number(total) and total > 0 and done <= total:
@@ -110,21 +129,20 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
         verb = {'verify': ('Verifying ', '正在校验'), 'assemble': ('Assembling ', '正在合并'),
                 'copy_bytes': ('Copying ', '正在复制')}[activity]
         # MiB rather than tenths of GiB: even slow disks change the visible text.
-        parts = [t(*verb) + name]
+        parts = [t(verb[0], verb[1] + gap) + name]
         done, total = event.get('done'), event.get('total')
-        if event.get('unit') == 'bytes' and number(done) and number(total) and total > 0 and done <= total:
+        if event.get('unit') == 'bytes' and number(done) and number(total) and total >= 2**20 and done <= total:
             parts.append('%d / %d %s' % (done // 2**20, total // 2**20, 'MiB'))
         return ' · '.join(parts)
     if activity == 'resume':
         return t('The connection dropped; resuming the download and keeping what was already downloaded',
                  '连接中断，正在继续下载，已下载的部分会保留')
     if activity in ('check', 'copy'):
-        # Mid-sentence, a model family name starts in lower case in English; Chinese has no space after the verb.
-        name = name[:1].lower() + name[1:] if any(name == en for en, _ in NAMES.values()) else name
-        parts = [t('Checking ', '正在校验') + name if activity == 'check'
-                 else t('Copying ', '正在复制') + name]
+        parts = [t('Checking ', '正在校验' + gap) + name if activity == 'check'
+                 else t('Copying ', '正在复制' + gap) + name]
         done, total = event.get('done'), event.get('total')
-        if event.get('unit') == 'bytes' and number(done) and number(total) and total > 0 and done <= total:
+        # Below 1 KiB the size would read "0 / 0 KiB".
+        if event.get('unit') == 'bytes' and number(done) and number(total) and total >= 1024 and done <= total:
             parts.extend(transfer_parts(done, total, event.get('rate'), decimal_sizes))
         return ' · '.join(parts)
     if activity == 'note':
@@ -135,6 +153,6 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
         return ' · '.join(parts + transfer_parts(0, 0, event.get('rate'), decimal_sizes))
     if activity == 'download':
         total = event.get('total') if event.get('unit') == 'bytes' else 0
-        return ' · '.join([t('Downloading ', '正在下载 ') + name] +
+        return ' · '.join([t('Downloading ', '正在下载' + gap) + name] +
                           transfer_parts(event.get('done'), total or 0, event.get('rate'), decimal_sizes))
     return ''

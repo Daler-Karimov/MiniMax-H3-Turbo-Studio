@@ -328,6 +328,23 @@ class LogProgress:
         self.model_backend = ''
         self.parallel_tasks = {}
         self.model_groups = None
+        # Ninja runs several times during one build, each with its own count.
+        self.compile_before, self.compile_last, self.compile_runs = 0, (0, 0), 0
+
+    def compile_fraction(self):
+        """How far the compile has advanced, never reaching 1; None before any step.
+
+        The number of runs is unknown until the build ends, so a finished run
+        cannot mean "done": each run advances the share of the range still left
+        by half, in proportion to its own counter. A first run of two steps
+        followed by one of a hundred keeps moving instead of stopping at the
+        end of the first.
+        """
+        done, total = self.compile_last
+        if total <= 0:
+            return None
+        inside = min(1., max(0., done / total))
+        return 1 - .5 ** self.compile_runs + .5 ** (self.compile_runs + 1) * inside
 
     def take_tasks(self):
         tasks, self.parallel_tasks = self.parallel_tasks, {}
@@ -421,7 +438,18 @@ class LogProgress:
                 package_phase = ('remove', 'Packages removing') if 'Uninstalling' in text else (
                     ('prepare', 'Packages preparing') if 'Preparing packages' in text else (
                     ('install', 'Packages installing') if self.installing_packages else ('compile', 'GPU acceleration building')))
-                update(done=int(match[1]), total=int(match[2]),
+                if package_phase[0] == 'compile':
+                    done, total = int(match[1]), int(match[2])
+                    if total != self.compile_last[1] or done < self.compile_last[0]:
+                        self.compile_before += self.compile_last[1]
+                        self.compile_runs += self.compile_last[1] > 0
+                    self.compile_last = (done, total)
+                shown_done, shown_total = int(match[1]), int(match[2])
+                if package_phase[0] == 'compile':
+                    # One count across the runs, so it never restarts from 1.
+                    shown_done += self.compile_before
+                    shown_total += self.compile_before
+                update(done=shown_done, total=shown_total,
                               activity='count', name=package_phase[1],
                               detail='Installing packages' if self.installing_packages else 'Compiling CUDA kernels',
                               scope='package-' + package_phase[0], unit='items')

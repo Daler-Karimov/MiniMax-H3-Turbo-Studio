@@ -1886,6 +1886,10 @@ class Session:
         zh = self.language.startswith('zh')
         row = self.controller.state
         busy = self.controller.busy or self.importer.busy or self.cleaner.busy
+        # The sidebar card shows work being done; a plan waiting for confirmation is not work, but an
+        # import or a cleanup started from that page is.
+        working = bool(self.importer.busy or self.cleaner.busy
+                       or (self.controller.busy and row.get('status') != 'review'))
         task = row.get('task', {})
         port_from = int(row['moved_from']) if row.get('status') == 'open' and 'moved_from' in row else 0
         port_to = (urlsplit(row.get('selection', {}).get('url') or row['url']).port or 80) if port_from else 0
@@ -2060,7 +2064,7 @@ class Session:
             download_state.update(error=self.t(*DOWNLOAD_COPY['error_read']), needs_check=True)
         return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__, image_pack=image_pack,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
-            page=self.page, status=row.get('status', 'idle'), busy=busy,
+            page=self.page, status=row.get('status', 'idle'), busy=busy, working=working,
             action_notice=self.t(*ACTION_COPY[self.action_notice]) if self.action_notice else '',
             setup_pending=bool(self.pending_action), setup_wait_text=self.t(*ACTION_COPY['setup_queued']),
             can_manage=self.can_manage(), busy_reason=self.t(*ACTION_COPY['busy']),

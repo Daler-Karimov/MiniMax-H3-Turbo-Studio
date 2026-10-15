@@ -153,7 +153,10 @@ ZH.update([
     ('Packages preparing', '正在准备组件'), ('Packages removing', '正在移除旧组件'),
     ('Model files verifying', '正在校验模型文件'), ('Model files preparing', '正在准备模型文件'),
     ('Model files assembling', '正在合并模型文件'),
-    ('Package files', '离线包文件'),
+    ('Package files', '离线包文件'), ('Connecting to download server', '正在连接下载服务器'),
+    ('Runtime components', '运行组件'), ('video model', '视频模型'), ('video decoder', '视频解码器'),
+    ('model files', '模型文件'), ('runtime components', '运行组件'),
+    ('Uses models already on this computer; original files stay in place', '使用电脑上已有的模型，不移动原文件'),
 ])
 # Card lines for steps that only report counts (the terminal keeps the counts).
 ZH.update([('Downloading components', '正在下载组件'), ('Preparing components', '正在准备组件'),
@@ -192,8 +195,63 @@ def lan_error(value, zh=False):
     return value
 
 
+MODEL_FILE = re.compile(r'[\w.+-]+\.(?:safetensors|gguf|bin|pth?|ckpt|onnx|json|txt|model)', re.I)
+# A whole path to a model file, with a folder the user chose and any characters in its names.
+MODEL_PATH = re.compile(r'(?:[A-Za-z]:)?[\\/][^·]*[\\/][^\\/·]+\.(?:safetensors|gguf|bin|pth?|ckpt|onnx)', re.I)
+# One downloaded package or archive: MinGit-2.55.0.5.zip, a wheel with a local version, uv.zip.
+PACKAGE_FILE = re.compile(r'[\w.+-]+\.(?:zip|whl|tar\.gz|tgz|tar\.xz|7z|exe|msi)', re.I)
+SHARD_FILE = re.compile(r'diffusion_pytorch_model-\d+-of-(\d+)\.safetensors')
+# Components are named, never their file or package names.
+FILE_GROUPS = {14: 'video model', 3: 'video decoder'}
+
+
+def file_group(name):
+    """The group a model file belongs to, in lower case for use inside a sentence."""
+    name = re.sub(r' · shard \d+ / \d+$', '', name)
+    name = name.replace('\\', '/').rsplit('/', 1)[-1]
+    shard = SHARD_FILE.fullmatch(name)
+    if shard:
+        return FILE_GROUPS.get(int(shard[1]), 'model files')
+    if MODEL_FILE.fullmatch(name):
+        return 'model files'
+    if PACKAGE_FILE.fullmatch(name):
+        return 'runtime components'
+    return re.sub(r' · shard \d+ / \d+$', '', name)
+
+
+def names_a_file(rest):
+    """Whether what follows a verb is one file or group name; a sentence or a count such as "3 / 2" is not."""
+    rest = re.sub(r' · shard \d+ / \d+$', '', rest)
+    return bool(rest) and ' · ' not in rest and ' / ' not in rest and not rest.startswith('/')
+
+
+def without_names(value):
+    """Lines the launcher shows, without file or package names; known sentences and states stay as they are."""
+    if value in ZH or value in SOURCES:
+        return value
+    match = re.fullmatch(r'Connecting to [^·]+(?: · .*)?', value)
+    if match:
+        return 'Connecting to download server'
+    for prefix in ('Verified ', 'Verify ', 'Download ', 'Assemble downloaded parts · '):
+        if value.startswith(prefix) and names_a_file(value[len(prefix):]):
+            group = file_group(value[len(prefix):])
+            if group[:1].isupper() and group.split(' ')[0].lower() in ('video', 'audio', 'text', 'model'):
+                group = group[:1].lower() + group[1:]
+            return prefix.split(' · ')[0].rstrip() + ('' if prefix.startswith('Assemble') else ' ' + group)
+    if ' · ' in value:
+        return ' · '.join('Model files' if MODEL_FILE.fullmatch(part) else
+                          'Runtime components' if PACKAGE_FILE.fullmatch(part) else part for part in value.split(' · '))
+    if MODEL_FILE.fullmatch(value) or MODEL_PATH.fullmatch(value):
+        return 'Model files'
+    if PACKAGE_FILE.fullmatch(value):
+        return 'Runtime components'
+    if re.fullmatch(r'[a-z0-9][a-z0-9_.]*[-_.][a-z0-9_.-]*', value) and re.search(r'[a-z]', value):
+        return 'Runtime components'
+    return value
+
+
 def display(value, zh=False):
-    value = clean(value)
+    value = without_names(clean(value))
     if not zh:
         # English names for stages whose internal names describe how they run, not what they do.
         return {'检查配套包': 'Checking packages', '下载模型': 'Downloading models',
@@ -208,10 +266,10 @@ def display(value, zh=False):
         return ' · '.join(display(part, True) for part in value.split(' · '))
     for prefix, translated in (
         MODEL_REPAIR_PROGRESS,
-        ('Switched current download to ', '已切换至 '), ('Connecting to ', '正在连接 '),
+        ('Switched current download to ', '已切换至 '), ('Connecting to ', '正在连接'),
         ('Assemble downloaded parts', '合并已下载文件'), ('Reuse verified FP8 ', '复用模型缓存 '),
-        ('Prepare FP8 ', '准备模型缓存 '), ('Verified ', '已校验 '), ('Verify ', '正在校验 '),
-        ('Download ', '下载 '), ('Prepare ', '准备 '), ('Source: ', '下载源：'), ('Log: ', '日志：'),
+        ('Prepare FP8 ', '准备模型缓存 '), ('Verified ', '已校验'), ('Verify ', '正在校验'),
+        ('Download ', '正在下载'), ('Prepare ', '准备 '), ('Source: ', '下载源：'), ('Log: ', '日志：'),
     ):
         if value.startswith(prefix):
             return translated + display(value[len(prefix):], True)

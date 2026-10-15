@@ -853,6 +853,16 @@ class Controller:
                 return
             offset += count
 
+    def open_ceiling(self):
+        """How far through the last section the start-up wait may show: the whole bar stays under 97%."""
+        total = sum(count for _, count in self.sections)
+        offset = 0
+        for key, count in self.sections:
+            if key == 'open':
+                return max(0., min(.9, (.97 * total - offset) / count)) if count else 0.
+            offset += count
+        return 0.
+
     @property
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
@@ -1308,8 +1318,16 @@ class Controller:
         self.state = dict(self.state, task=dict(progress=dict(label='Starting ComfyUI', detail='Loading nodes and the web interface'), log=plain(directory)))
         waiting_since = time.monotonic()
         extended = False
+        shown = 0.
+        # Start-up has no countable steps. The bar creeps through the last section and stays below the
+        # displayed 97%, so a long start never reads as nearly done and then waits there.
+        ceiling = self.open_ceiling()
         while True:
             now = time.monotonic()
+            fraction = round(ceiling * (1 - 1 / (1 + (now - waiting_since) / 30)), 2)
+            if self.section == 'open' and fraction >= shown + .02:
+                shown = fraction
+                self.stage('open', done=fraction, label=(self.state.get('overall') or {}).get('label', 'Open ComfyUI'))
             if self.cancelled.is_set():
                 with self._server_lock:
                     if self.server is server:

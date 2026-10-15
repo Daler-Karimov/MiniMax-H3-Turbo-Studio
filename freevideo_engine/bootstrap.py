@@ -1399,7 +1399,7 @@ class Installer:
         key = str(index) + '-' + label
         title, detail = setup_task(label)
         if label == 'models' and self.plan.get('local_models'):
-            title, detail = 'Reuse models / download missing files', 'Import verified local models; source files stay in place'
+            title, detail = 'Reuse models / download missing files', 'Uses models already on this computer; original files stay in place'
         self.ui.begin(key, title, detail=str(log) if self.ui.verbose else detail)
         initial = ('Python downloading' if title == 'Install Python' else
                    'Environment creating' if title == 'Create Python environment' else '')
@@ -1408,6 +1408,7 @@ class Installer:
         progress = LogProgress(log)
         parallel_tasks = set()
         models_step = label == 'models'
+        build_step = label == 'sage2-build'
         def update_progress(*, final=False):
             self.ui.update(key, **progress.read(final=final))
             if progress.model_groups is not None:
@@ -1415,6 +1416,9 @@ class Installer:
                 if models_step and getattr(self, 'model_bytes_callback', None):
                     self.model_bytes_callback(progress.model_groups)
                 progress.model_groups = None
+            fraction = progress.compile_fraction()
+            if build_step and fraction is not None and getattr(self, 'build_callback', None):
+                self.build_callback(min(fraction, .95))
             for name, details in progress.take_tasks().items():
                 subkey = key + '-' + name
                 label, state = details.pop('label'), details.pop('state')
@@ -2022,11 +2026,12 @@ class Installer:
         tasks, pythons, comfy = self.component_tasks(uv)
         total = len(tasks) + 4  # Bootstrap, preparation, checks and final readiness.
         phase = 'Install with space saver' if self.plan.get('disk_mode') == 'extreme' else 'Install components in parallel'
-        weighted = dict(finished=set(), fetched=0, shown=1.)
+        weighted = dict(finished=set(), fetched=0, built=0., shown=1.)
+        build_bytes = INSTALL_PHASE_BUILD_BYTES if self.system != 'Windows' and 'sage' in tasks else 0
         def publish():
             with self.state_lock:
                 units = install_phase_units(len(tasks), weighted['finished'], self.plan.get('model_download_bytes') or 0,
-                                            weighted['fetched'])
+                                            weighted['fetched'], build_bytes, weighted['built'])
                 # Never step back: a restarted file may report fewer bytes for a moment.
                 weighted['shown'] = done = max(weighted['shown'], 1 + units)
             self.ui.phase(phase, done, total)
@@ -2044,6 +2049,12 @@ class Installer:
                                       for group in groups or ())
             publish()
         self.model_bytes_callback = model_bytes
+        def built(fraction):
+            if fraction <= weighted['built']:
+                return  # A repeated heartbeat adds nothing to show.
+            weighted['built'] = fraction
+            publish()
+        self.build_callback = built
         self.ui.phase(phase, 1, total)
         results = run(tasks, self.cancel, progress=scheduling,
                       workers=1 if self.plan.get('disk_mode') == 'extreme' else 3)
@@ -2080,19 +2091,32 @@ class Installer:
 INSTALL_PHASE_OTHER_BYTES = 6 * 2**30
 
 
-def install_phase_units(tasks, finished, download_bytes, fetched_bytes):
+# The GPU acceleration build is one task of the phase but takes minutes, so it
+# weighs in the same way: as a share of the phase that advances with its counter.
+INSTALL_PHASE_BUILD_BYTES = 3 * 2**30
+
+
+def install_phase_units(tasks, finished, download_bytes, fetched_bytes, build_bytes=0, built=0.):
     """Units of the parallel install phase completed, out of ``tasks``.
 
     Counting finished tasks left the overall bar still for the whole model
     download (one task, most of the time). That task now takes a share of the
-    phase in proportion to its bytes and advances with the bytes fetched.
+    phase in proportion to its bytes and advances with the bytes fetched. With
+    ``build_bytes`` the compile task does the same, advancing with ``built``
+    (the fraction of its compile steps done).
     """
-    if download_bytes <= 0:
+    if download_bytes <= 0 and build_bytes <= 0:
         return len(finished)
-    share = download_bytes / (download_bytes + INSTALL_PHASE_OTHER_BYTES)
-    others = len(finished - {'models'})
-    models = 1. if 'models' in finished else min(1., max(0, fetched_bytes) / download_bytes)
-    return tasks * ((1 - share) * others / max(1, tasks - 1) + share * models)
+    # Only a task that has its own share leaves the ordinary count; one without
+    # (nothing to download, no build on this platform) counts like any other.
+    weighted = ({'models'} if download_bytes > 0 else set()) | ({'sage'} if build_bytes > 0 else set())
+    others = len(finished - weighted)
+    count = max(1, tasks - len(weighted))
+    models = 1. if 'models' in finished else min(1., max(0, fetched_bytes) / download_bytes) if download_bytes > 0 else 0.
+    build = 1. if 'sage' in finished else min(1., max(0., built))
+    done = (INSTALL_PHASE_OTHER_BYTES * others / count
+            + max(0, download_bytes) * models + max(0, build_bytes) * build)
+    return tasks * done / (INSTALL_PHASE_OTHER_BYTES + max(0, download_bytes) + max(0, build_bytes))
 
 
 class Prefetcher:

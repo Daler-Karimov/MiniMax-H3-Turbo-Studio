@@ -254,7 +254,8 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true; Layout.bottomMargin: 8; implicitHeight: busyBody.implicitHeight + 28
                 radius: theme.radiusMd; color: theme.surface; border.color: theme.border
-                opacity: s.busy ? 1 : 0; visible: opacity > 0
+                // Waiting for the person to confirm the plan is not work in progress.
+                opacity: s.working ? 1 : 0; visible: opacity > 0
                 Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 ColumnLayout {
                     id: busyBody; x: 14; y: 14; width: parent.width - 28; spacing: 8
@@ -938,7 +939,7 @@ ApplicationWindow {
                     text: s.setup_pending ? s.setup_wait_text : s.busy ? t("Working…", "正在处理…") : primaryText()
                     enabled: !s.busy && !s.setup_pending && !(s.page === "launcher" && s.needs_consent && !accepted)
                              && !(s.page === "progress" && s.status === "review" && !s.retry_kind && (!accepted || !!s.error))
-                    onClicked: { if (s.retry_kind) { backend.action("retry", accepted); return } if (needsRuntime) { backend.browseRuntimePackage(); return } if (needsPackages) { backend.browsePackages(); return } if (updateFirst) { backend.update(""); return } backend.action(s.page === "launcher" && s.status === "open" ? "browser" : "primary", accepted); if (s.busy && s.page === "launcher") terminalOpen = true }
+                    onClicked: { if (s.retry_kind) { backend.action("retry", accepted); return } if (needsRuntime) { backend.browseRuntimePackage(); return } if (needsPackages) { backend.browsePackages(); return } if (updateFirst) { backend.update(""); return } backend.action(s.page === "launcher" && s.status === "open" ? "browser" : "primary", accepted) }
                 }
             }
         }
