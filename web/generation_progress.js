@@ -422,7 +422,8 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     const frames = el('img', 'fv-generation-frames'); frames.alt = ''; frames.hidden = true;
     frames.decoding = 'async'; frames.setAttribute('aria-hidden', 'true'); frames.draggable = false;
     const times = el('div', 'fv-generation-times');
-    const elapsed = el('span', ''), eta = el('span', ''); times.append(elapsed, eta);
+    const elapsed = el('span', ''), eta = el('span', 'fv-generation-eta'); times.append(elapsed, eta);
+    const late = el('div', 'fv-generation-late'); late.hidden = true;
     const status = el('div', 'fv-generation-status'); status.hidden = true;
     const compatibilityNote = el('div', 'fv-generation-compatibility'); compatibilityNote.hidden = true;
     const live = el('div', 'fv-generation-live');
@@ -431,7 +432,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     stall.setAttribute('role', 'status');
     const stallText = el('span', ''); stall.append(stallText);
     const trims = new Map();
-    element.append(heading, track, label, mini, frames, times, compatibilityNote, status, live);
+    element.append(heading, track, label, mini, frames, times, late, compatibilityNote, status, live);
     let recovery = '', lowMemory = false, compatibility = null, samplingPlan = {}, secondPass = false, references = false, splitFailed = null;
     let hasHeartbeat = false;
     // Mac: the unified-memory notice of this request, and whether its first pass has ended.
@@ -857,7 +858,11 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             }
         }
         remainingAt = now();
+        // The editor's bar reads this number, so both places always show the same time.
         eta.hidden = remainingSeconds === null;
+        // Past the shown time the line says so once, instead of a number that only shrinks.
+        late.hidden = !(remainingSeconds === null && remainingRetired && !ended);
+        late.textContent = late.hidden ? '' : t('Taking longer than expected', '比预计久，仍在生成');
         const etaText = remainingSeconds === null ? '' : remainingSeconds >= 60
             ? t(`About ${Math.ceil(remainingSeconds / 60)}\u00a0min left`, `预计还需约 ${Math.ceil(remainingSeconds / 60)}\u00a0分钟`)
             : t('Less than a minute left', '预计还需不到 1\u00a0分钟');
@@ -866,6 +871,10 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         if (eta.textContent !== etaText && (!initial || !eta.textContent || now() - etaChangedAt >= 5000)) {
             eta.textContent = etaText; etaChangedAt = now();
         }
+        // The bar takes the number behind the words on screen: while the shown minutes wait out their
+        // spacing, the seconds wait with them.
+        if (remainingSeconds === null) delete eta.dataset.seconds;
+        else if (eta.textContent === etaText) eta.dataset.seconds = String(Math.ceil(remainingSeconds));
         elapsed.hidden = false; times.hidden = elapsed.hidden && eta.hidden;
         drawStall(age, ended);
         drawActivity(age, ended);

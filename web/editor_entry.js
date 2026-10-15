@@ -38,7 +38,10 @@ export function openEditorView(node, {studio, work = null, extend = false} = {})
             };
             // The block already shows the overall percentage; the bar keeps only the stage sentence.
             const stage = words('.fv-generation-label').replace(/（本步 \d+%）$| \(\d+% of this step\)$/, '');
-            return {stage, time: words('.fv-generation-status'), stall: words('.fv-generation-stall')};
+            const eta = progressElement.querySelector('.fv-generation-eta');
+            const shown = eta && !eta.hidden ? eta.dataset : null, left = shown?.seconds != null ? Number(shown.seconds) : null;
+            return {stage, time: words('.fv-generation-status'), stall: words('.fv-generation-stall'),
+                left: Number.isFinite(left) ? left : null, over: words('.fv-generation-late') !== ''};
         };
     }
     const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view) {

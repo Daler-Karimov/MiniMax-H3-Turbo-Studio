@@ -99,7 +99,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             // The creation panel's own sentences, so a long step says what it is and how long it has taken.
             // At a narrow width only the stage sentence is cut; the part number and the time stay.
             // A single part needs no number; with nothing else to say it reads "Preparing".
-            const time = words?.stall || words?.time || (remaining != null ? timeEstimate(remaining, t) : '');
+            // The creation panel's own time when it has one, so the bar and the panel never differ; the job's sum until the panel has one.
+            const left = words?.over ? null : words?.left ?? remaining;
+            const time = words?.stall || (words?.over ? t('Taking longer than expected', '比预计久，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
             const stage = words?.stage || (count === 1 && !time ? t('Preparing', '正在准备') : '');
             const spans = [['fv-ed-gen-part', count > 1 ? t(`Part ${number}/${count}`, `第 ${number}/${count} 段`) : ''],
                 ['fv-ed-gen-stage', stage], ['fv-ed-gen-time', time]];

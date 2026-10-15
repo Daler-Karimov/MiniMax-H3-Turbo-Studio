@@ -19,7 +19,8 @@
 .fv-generation-note{font-size:var(--fv-micro);color:var(--fv-muted,#a2abba);margin:10px auto 0;max-width:400px;line-height:1.5}
 .fv-panel .fv-generation-progress{padding:12px 14px;margin-bottom:12px;border-radius:var(--fv-r-md)}
 .fv-generation-compact{max-width:820px}
-.fv-generation-times>span[hidden],.fv-generation-status[hidden],.fv-generation-times[hidden]{display:none!important}
+.fv-generation-late{margin-top:5px;text-align:center;font-size:12px;color:var(--fv-muted,#a2abba)}
+.fv-generation-late[hidden],.fv-generation-times>span[hidden],.fv-generation-status[hidden],.fv-generation-times[hidden]{display:none!important}
 /* No reserved blank rows or clipped copy. Browser checks measure actual lines. */
 .fv-generation-status{box-sizing:border-box;width:100%;flex:none;margin-top:10px;font-size:12px;line-height:18px;color:var(--fv-muted,#a2abba);text-align:center;text-wrap:balance}
 .fv-generation-compatibility{box-sizing:border-box;width:100%;flex:none;margin-top:10px;font-size:12px;line-height:18px;color:var(--fv-ink,#e8edf5);text-align:center;text-wrap:balance}

@@ -361,9 +361,9 @@ test('main browser entry registers both views and preserves node hooks', async t
                 removalNode = new GenerateNode(); removalNode.id = 10; removalNode.onNodeCreated();
                 removalNode.freevideoShowProgress({phase: 'load', received_at: 0});
                 const progress = progressView;
-                assert.deepEqual(progress.element.children.slice(0, 9).map(child => child.className), [
+                assert.deepEqual(progress.element.children.slice(0, 10).map(child => child.className), [
                     'fv-generation-heading', 'fv-generation-track', 'fv-generation-label',
-                    'fv-generation-mini', 'fv-generation-frames', 'fv-generation-times', 'fv-generation-compatibility', 'fv-generation-status', 'fv-generation-live']);
+                    'fv-generation-mini', 'fv-generation-frames', 'fv-generation-times', 'fv-generation-late', 'fv-generation-compatibility', 'fv-generation-status', 'fv-generation-live']);
                 const activity = progress.snapshot().label;
                 removalNode.freevideoShowProgress({compatibility: {level: 2, name_en: 'Compatible', name_zh: '兼容'}});
                 assert.equal(progress.snapshot().label, activity, 'The node must not replace the activity for settings-only events');
