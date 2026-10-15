@@ -5,7 +5,7 @@ from pathlib import Path
 from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
 from . import comfy_bridge
-from .comfy_continuation import request_options
+from .comfy_continuation import optional_text, request_options
 from .default_prompt import DEFAULT_PROMPT
 
 References = io.Custom('FREEVIDEO_REFERENCES')
@@ -76,6 +76,7 @@ class FreeVideoGenerate(io.ComfyNode):
 
     @classmethod
     def validate_inputs(cls, text, width, height, seconds, seed, **kwargs):
+        refine_from = optional_text(kwargs.get('refine_from'))
         try:
             options = request_options(kwargs.get('continue_from', ''), kwargs.get('frames', 0))
             if options.get('continue_from'):
@@ -90,9 +91,9 @@ class FreeVideoGenerate(io.ComfyNode):
                     for key in ('first', 'last', 'conditioning_info'):
                         media[key] = media[key] or bool(assets.get(key))
                 options.update(two_pass=kwargs.get('two_pass', True), preview=kwargs.get('preview', False),
-                               refine_from=kwargs.get('refine_from'), media=media)
+                               refine_from=refine_from or None, media=media)
             comfy_bridge.validate_request(text, width, height, seconds, seed, **options)
-            if not kwargs.get('refine_from'):
+            if not refine_from:
                 from .two_pass import validate_steps
                 validate_steps(kwargs.get('base_steps', 8), kwargs.get('refine_steps', 3), kwargs.get('two_pass', True))
                 if kwargs.get('preview') and not kwargs.get('two_pass', True):
@@ -115,6 +116,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False):
         from server import PromptServer
         from .comfy_chain import block_context, block_finished, report_fields
+        refine_from, continue_from = optional_text(refine_from), optional_text(continue_from)
         node_id = cls.hidden.unique_id
         chain = block_context(PromptServer.instance, node_id)
         options = request_options(continue_from, frames)

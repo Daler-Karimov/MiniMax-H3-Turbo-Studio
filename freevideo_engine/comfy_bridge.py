@@ -1171,6 +1171,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         raise ValueError('Force regeneration must be a boolean')
     if type(preview) is not bool:
         raise ValueError('Preview must be a boolean')
+    from .comfy_continuation import optional_text
+    refine_from = optional_text(refine_from)
     refine_from = refine_from if isinstance(refine_from, str) and refine_from.strip() else None
     upscale = None
     if refine_from:

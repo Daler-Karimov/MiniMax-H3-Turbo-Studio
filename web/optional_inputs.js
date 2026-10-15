@@ -2,11 +2,19 @@
 // shape. A workflow restored from an older version, or a widget list that moved,
 // can leave an empty or missing value in them, and Comfy then rejects the whole
 // request. Keep each of them to a value the server accepts.
-const DEFAULTS = {continue_from: '', frames: 0, first_frame_reference: false};
+const DEFAULTS = {refine_from: '', continue_from: '', frames: 0, first_frame_reference: false};
+
+// Comfy turns a missing text value into the string "None" on its way to the server,
+// so those spellings are an unset path here too. Mirrors optional_text in the engine.
+function optionalText(value) {
+    if (typeof value !== 'string') return '';
+    const text = value.trim().toLowerCase();
+    return !text || ['none', 'null', 'undefined'].includes(text) ? '' : value;
+}
 
 export function optionalInputValue(name, value) {
     if (name === 'frames') return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-    if (name === 'continue_from') return typeof value === 'string' ? value : '';
+    if (name === 'refine_from' || name === 'continue_from') return optionalText(value);
     if (name === 'first_frame_reference') return value === true;
     return value;
 }
