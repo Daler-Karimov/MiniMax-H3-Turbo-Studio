@@ -145,6 +145,9 @@ const DOWNLOADS = {
     reference_download: ['Downloading model files', '下载模型文件'],
 };
 const size = (bytes, unit) => (bytes / (unit === 'GiB' ? 2**30 : 2**20)).toFixed(1);
+// Asked for two passes with a first pass other than 8 steps: the engine ran one pass.
+const ranOnePass = plan => plan.requested === true && plan.enabled === false && plan.preview !== true
+    && Number.isInteger(plan.base_steps) && plan.base_steps > 0 && plan.base_steps !== 8;
 // The fixed stage key (for the small bar and replays) and its sentence. Each
 // number appears once: sampling says the step, a download says its size and speed.
 function activityLabel(message, t, plan = {}, secondPass = false, references = false) {
@@ -174,7 +177,12 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
     };
     const base = Number.isInteger(plan.base_steps) && plan.base_steps > 0 ? plan.base_steps : null;
     const second = plan.second || plan.upscale_target;
-    if (message.prediction || message.sampling_plan) return named('prepare');
+    if (message.prediction || message.sampling_plan) {
+        if (!ranOnePass(plan)) return named('prepare');
+        const n = plan.base_steps;
+        return {key: 'prepare', text: t(`Two-step generation needs 8 first-pass steps. This video uses a single ${n}-step pass.`,
+            `只有首轮为 8 步时才会使用两步生成，这次按 ${n} 步只生成一轮。`)};
+    }
     if (phase === 'recovery') return message.retry?.reuse_sampling === true ? named('decode')
         : message.retry?.reuse_first_pass === true ? steps('pass2', 'pass2') : named('prepare');
     if (phase === 'sample_finalize') return named('decode');
@@ -195,7 +203,10 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         const count = twoPass ? base : total;
         const step = done === null || count === null ? null : Math.min(done + 1, count);
         if (twoPass && plan.preview) return steps('preview', 'preview', step, count);
-        return steps('pass1', twoPass ? 'first' : 'single', step, count);
+        const sampling = steps('pass1', twoPass ? 'first' : 'single', step, count);
+        if (!twoPass && ranOnePass(plan))
+            sampling.text += t(' (single pass; two-step generation needs 8 first-pass steps)', '（只生成一轮；两步生成需首轮 8 步）');
+        return sampling;
     }
     const key = labelActivities.get(message.label) || {
         starting: 'prepare', prepare: 'prepare', prediction: 'prepare', describe: 'describe', encoding: 'combined',

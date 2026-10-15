@@ -776,7 +776,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         // uses it with other steps is shown as custom and left unchanged.
         const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked;
         twoPass.disabled = Boolean(extension.source) || unavailable || linked(node, 'two_pass') || !widget(node, 'two_pass');
-        twoPassStatus.textContent = unavailable ? t('Coming soon', '即将推出') : '';
+        twoPassStatus.textContent = Number(baseSteps.value) !== 8 ? t('Needs an 8-step first pass', '一采需 8 步') : '';
         twoPassLabel.classList.toggle('fv-two-pass-unavailable', unavailable);
         // A preview stops after the first pass, so it needs two-pass sampling.
         if (!twoPass.checked && previewFirst.checked) {

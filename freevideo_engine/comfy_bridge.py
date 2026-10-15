@@ -969,7 +969,7 @@ def progress_message(event):
                         (first['width'], first['height'], second['width'], second['height'],
                          event.get('base_steps', 8), event.get('refine_steps', 3)),
                         detail='Audio is preserved from the first pass', sampling_plan=event)
-        return dict(label='Single-pass · %d steps' % event.get('base_steps', 8), detail=event.get('reason'), sampling_plan=event)
+        return dict(label='Single-pass · %d step%s' % (event.get('base_steps', 8), '' if event.get('base_steps', 8) == 1 else 's'), detail=event.get('reason'), sampling_plan=event)
     if name == 'latent_upscaler_prepare':
         return dict(label='Preparing two-pass upscaler', timing_phase='load')
     if name == 'first_pass_reused':
@@ -1203,7 +1203,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         base_steps = int(argument(arguments, '--base-steps', 8))
         refine_steps = int(argument(arguments, '--refine-steps', 3))
     from .preview import validate_flags
-    validate_flags(preview, upscale, two_pass)
+    validate_flags(preview, upscale, two_pass, base_steps)
     from .two_pass import validate_steps
     validate_steps(base_steps, refine_steps, two_pass)
     canvas = validate_request(prompt, width, height, seconds, seed, continue_from=continue_from, frames=frames)

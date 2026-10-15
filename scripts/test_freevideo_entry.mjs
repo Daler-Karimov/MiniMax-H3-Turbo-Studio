@@ -141,8 +141,8 @@ test('main browser entry registers both views and preserves node hooks', async t
             computeSize() { return [this.size[0], this.dom.reduce((height, row) => height + (row.options?.getMinHeight?.() || 0), 0)]; }
         }
         for (const [language, tooltip] of [
-            ['en', 'Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Refine steps must be fewer than first-pass steps unless set to 3.'],
-            ['zh', '修改步数可能降低质量。默认首轮 8 步、细化 3 步；细化步数不是 3 时，需少于首轮。'],
+            ['en', 'Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Two-step generation runs only with 8 first-pass steps. Other step counts use a single pass. Refine steps must be fewer than first-pass steps unless set to 3.'],
+            ['zh', '修改步数可能降低质量。默认首轮 8 步、细化 3 步；只有首轮为 8 步时才会使用两步生成，其他步数只生成一轮；细化步数不是 3 时，需少于首轮。'],
         ]) {
             await t.test(`${language} node step tooltips include the three-step exception for valid plans`, async () => {
                 navigator.language = language;

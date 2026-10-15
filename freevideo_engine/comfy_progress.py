@@ -124,7 +124,7 @@ class ProgressState:
                 # pass from a first pass, without repeating the whole plan.
                 plan = message.get('sampling_plan')
                 if isinstance(plan, dict):
-                    value['plan_context'] = {key: deepcopy(plan[key]) for key in ('enabled', 'preview', 'base_steps', 'refine_steps', 'second')
+                    value['plan_context'] = {key: deepcopy(plan[key]) for key in ('enabled', 'requested', 'preview', 'base_steps', 'refine_steps', 'second')
                                              if key in plan}
                 elif old and not fresh and old['message'].get('plan_context'):
                     value.setdefault('plan_context', deepcopy(old['message']['plan_context']))

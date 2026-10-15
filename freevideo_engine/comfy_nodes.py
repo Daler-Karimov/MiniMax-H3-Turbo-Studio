@@ -45,7 +45,8 @@ class FreeVideoGenerate(io.ComfyNode):
                 io.Boolean.Input('two_pass', display_name='Two-step generation', default=True, optional=True,
                     tooltip='Usually faster: generate at a lower resolution, then upscale and finish sampling at the target size.'),
                 io.Int.Input('base_steps', display_name='First-pass steps', default=8, min=1, max=32, optional=True,
-                    tooltip='Default: 8. Changing sampling steps may reduce generation quality.'),
+                    tooltip='Default: 8. Two-pass acceleration runs only with 8 first-pass steps; any other count '
+                            'generates in one pass of that many steps. Changing sampling steps may reduce generation quality.'),
                 io.Int.Input('refine_steps', display_name='Second-pass steps', default=3, min=1, max=31, optional=True,
                     tooltip='Default: 3. Three steps use the independent refinement schedule. Changing sampling steps may reduce generation quality.'),
                 io.Boolean.Input('force_regenerate', display_name='Force regeneration', default=False, optional=True,
@@ -173,6 +174,12 @@ class FreeVideoGenerate(io.ComfyNode):
         if notice:
             logging.warning('[FreeVideo] %s', notice)
             PromptServer.instance.send_progress_text(notice, node_id)
+        if two_pass and not refine_from and not preview:
+            from .two_pass import one_pass_note
+            step_note = one_pass_note(base_steps)
+            if step_note:
+                logging.warning('[FreeVideo] %s', step_note)
+                notice = notice + '\n' + step_note if notice else step_note
         notice = notice + '\n' if notice else ''
         def said():
             return notice + ''.join(line + '\n' for line in notes)

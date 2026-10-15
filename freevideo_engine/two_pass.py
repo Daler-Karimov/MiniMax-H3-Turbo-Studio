@@ -22,6 +22,19 @@ def validate_steps(base_steps=8, refine_steps=3, enabled=True):
         raise ValueError('Second-pass steps must be fewer than first-pass steps')
 
 
+# The learned latent lift and the three refinement steps were built and checked
+# for the 8-step first pass only. Any other first-pass count runs in one pass.
+TWO_PASS_BASE_STEPS = 8
+
+
+def one_pass_note(base_steps):
+    """The sentence a request gets when its step count rules out two-pass, else None."""
+    if base_steps == TWO_PASS_BASE_STEPS:
+        return None
+    return ('Two-pass generation runs only with %d first-pass steps; this request runs in one pass of %d step%s.'
+            % (TWO_PASS_BASE_STEPS, base_steps, '' if base_steps == 1 else 's'))
+
+
 # A first pass below this many pixels is too small for the learned lift: about
 # a third of the clips at 768x512 and every clip at 512x512 had coloured
 # bursts, and none did from 480x288 (960x544) upward. Those sizes run in one pass.
@@ -107,6 +120,13 @@ def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, sta
     if not enabled:
         result['reason'] = 'Two-pass generation is disabled.'
         return result
+    if base_steps != TWO_PASS_BASE_STEPS:
+        if not staged:
+            single = plan(canvas, False, task, base_steps=base_steps)
+            return dict(single, requested=True, reason=one_pass_note(base_steps))
+        # A preview and its upscale keep the first pass they were made with; the
+        # receipt says so, because a replay without the flag would take the one-pass rule.
+        result['staged'] = True
     if min(target['width'], target['height']) >= 512:
         first = dict(width=((target['width'] + 63) // 64) * 32,
                      height=((target['height'] + 63) // 64) * 32, frames=target['frames'])

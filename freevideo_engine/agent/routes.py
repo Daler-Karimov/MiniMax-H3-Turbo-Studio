@@ -251,6 +251,8 @@ def plan(port, value, jobs=None):
     result['geometry'] = {k: canvas[k] for k in ('width', 'height', 'frames', 'seconds', 'fps', 'latent_frames')}
     result['sampling'] = dict(two_pass=passes['enabled'], total_steps=passes['total_steps'],
                               first_pass=passes.get('first'), second_pass=passes.get('second') if passes['enabled'] else None)
+    if spec.get('sampling_note'):
+        result['warnings'].append(spec['sampling_note'])
     if spec['seconds'] > 15:
         result['warnings'].append('Longer than 15 s is experimental')
     if spec['task'] == 'ref2va':

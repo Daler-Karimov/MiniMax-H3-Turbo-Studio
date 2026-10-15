@@ -176,7 +176,22 @@ def generate(*, local=False):
                {'if': {'if': {'required': ['sampling'], 'properties': {'sampling': {'required': ['two_pass']}}},
                        'then': {'properties': {'sampling': {'properties': {'two_pass': {'const': False}}}}},
                        'else': {'required': ['quality'], 'properties': {'quality': {'not': {'const': 'light'}}}}},
-                'then': {'properties': {'preview': {'const': False}}}}],
+                'then': {'properties': {'preview': {'const': False}}}},
+               # A preview is two-pass, which runs only with 8 first-pass steps: refused when the effective
+               # first-pass count is another number, given in sampling or inherited from the quality.
+               {'if': {'properties': {'preview': {'const': True}}, 'required': ['preview']},
+                # x-derived: issues() names this case at /sampling with the derived sampling checks.
+                'then': {'x-derived': True, 'not': {'anyOf': [
+                    {'required': ['sampling'], 'properties': {'sampling': {'required': ['two_pass', 'base_steps'],
+                        'properties': {'two_pass': {'const': True}, 'base_steps': {'not': {'const': 8}}}}}},
+                    {'required': ['sampling'], 'properties': {
+                        'sampling': {'required': ['base_steps'], 'not': {'required': ['two_pass']},
+                                     'properties': {'base_steps': {'not': {'const': 8}}}},
+                        'quality': {'const': 'light'}}},
+                    {'required': ['sampling', 'quality'], 'properties': {
+                        'sampling': {'required': ['two_pass'], 'not': {'required': ['base_steps']},
+                                     'properties': {'two_pass': {'const': True}}},
+                        'quality': {'enum': ['medium', 'high', 'max']}}}]}}}],
         description='x-job-kind selects normalization and checks derived geometry and sampling step comparisons; these calculations are not JSON Schema constraints.',
         **{'x-job-kind': 'generate'})
 
@@ -976,7 +991,7 @@ def issues(schema, value, path='', *, refs=False):
     if 'if' in schema:
         rule = schema.get('then', True) if not issues(schema['if'], value) else schema.get('else', True)
         errors += issues(rule, value, path)
-    if 'not' in schema and not issues(schema['not'], value):
+    if 'not' in schema and not schema.get('x-derived') and not issues(schema['not'], value):
         errors.append(diagnostic(path, 'a permitted field combination', value))
     if 'oneOf' in schema or 'anyOf' in schema:
         # Structural unions choose the most specific applicable branch, then
@@ -1101,6 +1116,8 @@ def cross_issues(schema, value, path):
                 validate_steps(base, refine, two)
             except ValueError:
                 bad('sampling', 'two-pass refine_steps=3 or refine_steps below base_steps', custom)
+            if value.get('preview') and two and base != 8:
+                bad('sampling', 'base_steps=8 for a preview, the only first-pass count that runs two-pass', custom)
     if kind == 'vlm':
         rows = value['questions'] if isinstance(value['questions'], list) else [value['questions']]
         count = sum(len(r.get('images', [])) + (r.get('video', {}).get('frames', 6) if isinstance(r.get('video'), dict)

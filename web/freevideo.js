@@ -693,8 +693,8 @@ app.registerExtension({
                     const steps = this.widgets?.find(w => w.name === name);
                     if (steps) {
                         steps.label = text(en, zh);
-                        steps.tooltip = text('Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Refine steps must be fewer than first-pass steps unless set to 3.',
-                            '修改步数可能降低质量。默认首轮 8 步、细化 3 步；细化步数不是 3 时，需少于首轮。');
+                        steps.tooltip = text('Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Two-step generation runs only with 8 first-pass steps. Other step counts use a single pass. Refine steps must be fewer than first-pass steps unless set to 3.',
+                            '修改步数可能降低质量。默认首轮 8 步、细化 3 步；只有首轮为 8 步时才会使用两步生成，其他步数只生成一轮；细化步数不是 3 时，需少于首轮。');
                     }
                 }
                 for (const widget of this.widgets || []) {

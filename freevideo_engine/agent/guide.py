@@ -70,6 +70,13 @@ GUIDE = {
         'lighting and surroundings as described above; do not copy its simplified, flat look." The result follows '
         'the draft and looks plainer than a direct generation, so keep the direct one when the user prefers its look.',
     ],
+    'quality': [
+        'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass (default); "medium" = 12 steps, '
+        '"high" = 16 steps, "max" = 20 steps, each in one pass.',
+        'Two-pass generation runs only with 8 first-pass steps. Any other base_steps (for example 20 with '
+        'two_pass=true) runs in one pass of that many steps; the job notice says so. A preview is always two-pass '
+        'with 8 steps.',
+    ],
     'timing': [
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
