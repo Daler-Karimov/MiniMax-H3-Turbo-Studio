@@ -112,7 +112,7 @@ def transfer_parts(done, total, rate, decimal_sizes=False):
 
 
 def progress_text(event, zh=False, *, decimal_sizes=False):
-    """One activity line for the launcher, including known transfer and scan counts."""
+    """One activity line for the launcher, including known transfer counts."""
     t = lambda en, cn: cn if zh else en
     activity, name = event.get('activity'), event.get('name') or ''
     # A Chinese name follows its verb directly; a Latin one (Python) keeps a space.
@@ -146,6 +146,8 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
             parts.extend(transfer_parts(done, total, event.get('rate'), decimal_sizes))
         return ' · '.join(parts)
     if activity == 'note':
+        if name in ('Finding existing models', '正在查找已有模型'):
+            return t('Finding files', '正在查找文件')
         parts = [name]
         scanned = event.get('scanned')
         if number(scanned) and scanned > 0:

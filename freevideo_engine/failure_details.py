@@ -201,7 +201,7 @@ def environment_python_removed(args, pythons):
 PLACE_RULES = (
     (r'The installation folder is on a FAT32 disk', 'disk-format',
      ('This disk cannot hold the models', '这块硬盘放不下模型'),
-     ('It is formatted as FAT32, which stores files up to 4 GB; the text encoder alone is 15.7 GB. '
+     ('It is formatted as FAT32, which stores files up to 4 GB; the prompt model alone is 15.7 GB. '
       'Choose a folder on an APFS or Mac OS Extended disk.',
       '它不能存放 4 GB 以上的文件。'
       '请选择其他硬盘上的文件夹。')),

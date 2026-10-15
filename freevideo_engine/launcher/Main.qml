@@ -81,10 +81,10 @@ ApplicationWindow {
         var d = disk
         if (!d) return ""
         var en = "\"" + d.name + "\"", zh = "“" + d.name + "”"
-        if (d.problem === "fat32") return t(en + " uses FAT32, which limits each file to 4 GB, too small for the model files.", zh + "是 FAT32 格式，单个文件最大 4 GB，放不下模型。")
-        if (d.problem === "exfat") return t(en + " uses exFAT, where the FreeVideo environment cannot run.", zh + "是 exFAT 格式，装不了 FreeVideo 的运行环境。")
+        if (d.problem === "fat32") return t(en + " can't store files over 4 GB. Choose another disk.", zh + " 不能存放 4 GB 以上的文件，请换一块硬盘。")
+        if (d.problem === "exfat") return t(en + " can't hold FreeVideo. Choose another disk.", zh + " 不能安装 FreeVideo，请换一块硬盘。")
         if (d.problem === "disconnected") return t(en + " is not connected. Connect it to continue.", zh + "没有连接，请接上这块硬盘。")
-        if (d.problem === "read-only") return t(en + " is read-only on this Mac.", zh + "在这台 Mac 上是只读的。")
+        if (d.problem === "read-only") return t(en + " is read-only. Choose another disk.", zh + " 不能写入，请换一块硬盘。")
         if (d.short) return t(en + " has " + d.free + " available; this installation needs about " + d.need + ".",
                               zh + "可用 " + d.free + "，这次安装需要约 " + d.need + "。")
         return t(d.name + " · " + d.free + " available", d.name + " · 可用 " + d.free)
@@ -105,7 +105,7 @@ ApplicationWindow {
     readonly property bool upgradeShown: !upgrade.dismissed && ["available", "low-disk", "downloading", "downloaded", "switching", "releasing", "releasable", "complete", "failed"].indexOf(upgrade.status) >= 0
     function upgradeHeadline() {
         var u = upgrade
-        if (u.status === "available") return t("A faster model is available for your GPU", "你的显卡有更快的模型可用")
+        if (u.status === "available") return t("A faster model is available for your GPU", "有适合这张显卡的更快模型")
         if (u.status === "low-disk") return t("Not enough disk space for the faster model", "磁盘空间不够，暂时无法升级到更快的模型")
         if (u.status === "downloading") return t("Downloading the faster model", "正在下载更快的模型")
         if (u.status === "downloaded" && u.waiting === "comfy") return t("Switching after ComfyUI is closed", "关闭 ComfyUI 后切换")
@@ -122,8 +122,8 @@ ApplicationWindow {
     }
     function upgradeBlocker(code) {
         if (code === "prepared-folder-redirected") return t("The model folder is linked to another location, and FreeVideo never deletes through a link.", "模型文件夹被链接到了别的位置，FreeVideo 不会通过链接删除文件。")
-        if (code === "unexpected-active-variant") return t("FreeVideo is not using the int8 model, so the old model stays.", "当前使用的不是 int8 模型，旧模型保留。")
-        if (code === "active-variant-incomplete") return t("Some int8 files are missing, so the old model stays.", "int8 模型文件不完整，旧模型保留。")
+        if (code === "unexpected-active-variant") return t("The faster model is not in use, so the old model is kept.", "没有在用更快的模型，旧模型保留。")
+        if (code === "active-variant-incomplete") return t("The faster model's files are incomplete, so the old model is kept.", "更快的模型文件不完整，旧模型保留。")
         return t("The model in use is not a standard FreeVideo model, so nothing was deleted.", "当前使用的模型不是标准安装的模型，为安全起见没有删除任何文件。")
     }
     function upgradeExplanation() {
@@ -132,9 +132,9 @@ ApplicationWindow {
         var speed = u.architecture === "ampere" ? t("about twice as fast on this GPU", "在这张显卡上预计快约 2 倍")
                                                  : t("about 10–30% faster on this GPU", "在这张显卡上预计快约 10–30%")
         if (u.status === "available")
-            return (u.resized ? t("Recounted with the other model files this installation still needs. ", "下载量已按实际重新计算，包含这份安装还缺的其他模型文件。") : "")
-                + t("The int8 model is ", "int8 模型") + speed + t(" and closer to the original quality. It downloads ", "，画质也更接近原版。需要下载约 ") + bytes(u.download_bytes)
-                + (lora ? t("; your old model stays for the fused LoRAs that int8 cannot merge yet.", "；你有需要合并的 LoRA，int8 暂不支持，旧模型会保留，不释放空间。")
+            return (u.resized ? t("Download size updated. ", "下载量已更新。") : "")
+                + t("The faster model is ", "更快的模型") + speed + t(" and closer to the original quality. It downloads ", "，画质也更接近原版。需要下载约 ") + bytes(u.download_bytes)
+                + (lora ? t("; the old model stays so your LoRAs keep working, and no space is freed.", "；为了继续使用已有的 LoRA，旧模型会保留，空间不会释放。")
                         : t(", then removes the old model and frees about ", "，完成后删除旧模型，释放约 ") + bytes(u.release_bytes) + t(".", "。"))
                 + t(" You can keep generating while it downloads.", "下载期间可以继续生成。")
         if (u.status === "low-disk")
@@ -147,12 +147,12 @@ ApplicationWindow {
             return t("This ComfyUI was not opened by the launcher, so FreeVideo cannot restart it. Close it and the switch starts on its own; until then the current model keeps working.",
                      "这个 ComfyUI 不是启动器打开的，FreeVideo 没法重启它。关闭它后会自动开始切换，在此之前当前模型照常可用。")
         if (u.status === "downloaded" || u.status === "switching")
-            return t("ComfyUI restarts once and generation pauses for about 2 minutes while FreeVideo switches; settings and videos are kept.", "切换约需 2 分钟，ComfyUI 会重启一次，期间暂停生成，设置和视频都会保留。")
+            return t("Generation pauses for about 2 minutes during the switch; settings and videos are kept.", "切换期间暂停生成约 2 分钟，设置和视频会保留。")
         if (u.status === "releasable" && u.in_use === "int8_convrot")
-            return t("FreeVideo now uses the int8 model. Removing the old model frees about ", "现在用的是 int8 模型，删除不再使用的旧模型可以释放约 ") + bytes(u.release_bytes)
+            return t("FreeVideo now uses the faster model. Removing the old model frees about ", "已在用更快的模型，删除旧模型可释放约 ") + bytes(u.release_bytes)
                 + t("; only its own files are removed.", "，只删除旧模型自己的文件。")
         if (u.status === "releasable")
-            return t("These model files are not in use, for example an int8 download this GPU could not run. Removing them frees about ", "这些模型文件没有在使用，比如这张显卡没能运行的 int8 下载。删除可以释放约 ") + bytes(u.release_bytes)
+            return t("Removing unused model files frees about ", "删除未使用的模型文件可释放约 ") + bytes(u.release_bytes)
                 + t("; the model in use is not touched.", "，正在使用的模型不受影响。")
         if (u.status === "releasing") return t("Only the old model's own files are removed.", "只删除旧模型自己的文件。")
         if (u.status === "complete")
@@ -160,8 +160,8 @@ ApplicationWindow {
                 + (lora ? t(" The old model stays for your fused LoRAs.", "旧模型为需要合并的 LoRA 保留。") : "")
         if (u.status === "failed")
             return (u.blockers && u.blockers.length ? upgradeBlocker(u.blockers[0]) + t(" ", "") : u.error ? u.error.split("\n")[0] + "\n" : "")
-                + (u.step === "release" ? t("The int8 model is in use; the old files stay on disk for now.", "int8 模型已在使用，旧模型文件暂时保留在磁盘上。")
-                   : u.step === "switch" && !u.kept ? t("The previous model's files are all kept. Retry on the setup page restores it; you can upgrade again afterwards.", "原来的模型文件都还在。在安装页面点「重试」即可恢复，之后可以再次升级。")
+                + (u.step === "release" ? t("The faster model is in use; the old model files are kept for now.", "已在用更快的模型，旧模型文件暂时保留。")
+                   : u.step === "switch" && !u.kept ? t("The previous model's files are all kept. Select \"Retry\" on the setup page to restore it.", "原来的模型文件都还在，在安装页点“重试”可恢复。")
                    : t("Your previous model is unchanged and still works.", "原来的模型没有变化，可以继续使用。"))
         return ""
     }
@@ -170,7 +170,7 @@ ApplicationWindow {
         if (phase === "downloading") return t("Downloading update ", "正在下载更新 ") + percent(s.update.progress)
         if (phase === "waiting") return t("Updating after the current video finishes", "当前视频生成完成后自动更新")
         if (phase === "restarting") return t("Restarting FreeVideo…", "正在重启 FreeVideo…")
-        if (phase === "engine") return t("Updating the engine…", "正在更新引擎…")
+        if (phase === "engine") return t("Updating…", "正在更新…")
         if (phase === "checking") return t("Checking for updates…", "正在检查更新…")
         if (s.update.status === "error") return t("Update incomplete", "更新未完成")
         if (s.update.candidate) return t("FreeVideo ", "FreeVideo ") + releaseVersion(s.update.candidate) + t(" is available", " 可以更新")
@@ -414,12 +414,12 @@ ApplicationWindow {
                                       onClicked: backend.useDisk(bestDisk.path) }
                             FButton { objectName: "chooseDisk"; visible: diskFailure && s.form.new_comfy && diskChoices.length > (bestDisk ? 1 : 0); enabled: !s.busy
                                       text: t("Other disks…", "其他硬盘…"); onClicked: diskDialogOpen = true }
-                            FButton { objectName: "diskCleanupButton"; visible: s.failure.kind === "disk"; enabled: s.can_cleanup; text: t("Clean download cache", "清理下载缓存"); onClicked: { settingsTab = "general"; settingsOpen = true; backend.cleanupDownloads(false) } }
+                            FButton { objectName: "diskCleanupButton"; visible: s.failure.kind === "disk"; enabled: s.can_cleanup; text: t("Clean download cache", "清理缓存"); onClicked: { settingsTab = "general"; settingsOpen = true; backend.cleanupDownloads(false) } }
                             FButton { visible: s.failure.kind === "download"; text: t("Change source", "切换下载源"); onClicked: { settingsTab = "downloads"; settingsOpen = true } }
                             FButton { objectName: "repairCardButton"; primary: true; visible: !!s.repair_offered; text: t("Repair", "修复"); onClicked: backend.action("repair", false) }
                             FButton { objectName: "latestLauncherLink"; visible: s.failure.kind === "older-launcher"; flat: true
                                       text: t("Download the latest ↗", "下载最新版 ↗"); onClicked: backend.link("https://github.com/FlashML-org/FreeVideo/releases/latest") }
-                            FButton { objectName: "copyError"; visible: !diskFailure; text: t("Copy full details", "复制完整详情"); onClicked: backend.copy(s.error) }
+                            FButton { objectName: "copyError"; visible: !diskFailure; text: t("Copy details", "复制详情"); onClicked: backend.copy(s.error) }
                             FButton { objectName: "showError"; text: errorDetailsOpen ? t("Hide details", "收起详情") : t("Show details", "查看详情"); flat: true; onClicked: errorDetailsOpen = !errorDetailsOpen }
                             FButton { objectName: "exportError"; visible: !diskFailure; text: t("Export report", "导出报告"); enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                         }
@@ -436,7 +436,7 @@ ApplicationWindow {
                     text: s.report.status === "running" ? t("Exporting full logs…", "正在导出完整日志…") :
                         s.report.status === "error" ? t("Export failed: ", "导出失败：") + s.report.error :
                         t("Report saved locally: ", "报告已保存到本机：") + s.report.path +
-                        (s.report.collection_errors ? t("\nSome diagnostics were unavailable; see manifest.json in the ZIP.", "\n部分诊断信息未能收集，原因记录在 ZIP 内的 manifest.json。") : "")
+                        (s.report.collection_errors ? t("\nReport saved with some diagnostic information missing.", "\n报告已保存，部分诊断信息未能收集。") : "")
                 }
 
                 ColumnLayout {
@@ -490,7 +490,7 @@ ApplicationWindow {
                             // The label's right edge lines up with Browse; the hover fill reaches into the card's padding.
                             FButton { objectName: "changeDisk"; visible: s.form.new_comfy && diskChoices.length > 0; enabled: s.can_manage; flat: true; implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1
                                       leftPadding: 10; rightPadding: 10; Layout.rightMargin: -10; Layout.alignment: Qt.AlignBaseline
-                                      text: t("Choose another disk", "换一块硬盘"); onClicked: diskDialogOpen = true }
+                                      text: t("Change disk", "更换硬盘"); onClicked: diskDialogOpen = true }
                         }
                     }
                     FCard {
@@ -668,7 +668,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; spacing: 16
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 4
-                            FText { text: s.status === "review" ? t("Installation plan", "安装计划") : s.overall.label || s.progress.label || t("Checking your installation", "正在检查安装"); font.pixelSize: theme.strong + 1; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                            FText { text: s.status === "review" ? t("Installation details", "安装内容") : s.overall.label || s.progress.label || t("Checking your installation", "正在检查安装"); font.pixelSize: theme.strong + 1; font.weight: Font.DemiBold; Layout.fillWidth: true }
                             // The plan's line (GPU, download, disk peak) belongs to the review; while installing,
                             // the step line already gives the download, so the card does not repeat it.
                             FText { objectName: "planSummary"; visible: !!s.summary && !s.busy; text: s.summary; color: theme.muted; font.pixelSize: theme.micro + 1; Layout.fillWidth: true }
@@ -842,7 +842,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true; spacing: 6
                                 // A failed start stays failed while another task (an import, a cleanup) runs: the controller's own tasks clear it first.
                                 FText { objectName: "statusTitle"; text: s.status === "open" ? t("FreeVideo is ready", "FreeVideo 已就绪") : s.status === "failed" ? t("Startup interrupted", "启动未完成") : s.busy ? t("Starting ComfyUI", "正在启动 ComfyUI") : s.status === "restart-required" ? t("Restart ComfyUI", "请重启 ComfyUI") : t("Ready to launch", "准备就绪"); font.pixelSize: theme.section + 2; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                                FText { objectName: "statusDetail"; text: s.status === "open" ? s.url : s.status === "restart-required" ? t("Restart your running ComfyUI to load the updated nodes, then connect again.", "重启正在运行的 ComfyUI 以载入更新后的节点，再点击重新连接。") : s.status === "failed" ? t("ComfyUI did not start. See the message above.", "ComfyUI 未能启动，原因见上方。") : t("Your models and environment are connected.", "已连接你的模型与运行环境。"); color: theme.muted; Layout.fillWidth: true }
+                                FText { objectName: "statusDetail"; text: s.status === "open" ? s.url : s.status === "restart-required" ? t("Restart ComfyUI after the update, then select \"Connect again\".", "更新后需重启 ComfyUI，再点“重新连接”。") : s.status === "failed" ? t("ComfyUI did not start. See the message above.", "ComfyUI 未能启动，原因见上方。") : t("Your models and environment are connected.", "已连接你的模型与运行环境。"); color: theme.muted; Layout.fillWidth: true }
                                 FText { objectName: "portMovedNote"; visible: s.status === "open" && s.port_from > 0; text: t("Port %1 is in use by another program, so FreeVideo now uses port %2 and will keep using this address.", "端口 %1 已被其他程序占用，FreeVideo 改用端口 %2，以后也使用这个地址。").arg(s.port_from).arg(s.port_to); font.pixelSize: 13; color: theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.topMargin: -2 }
                             }
                         }
@@ -969,15 +969,15 @@ ApplicationWindow {
             }
             Flow {
                 Layout.fillWidth: true; spacing: 6
-                FButton { text: t("Copy full log", "复制完整日志"); flat: true; implicitHeight: 28; leftPadding: 8; rightPadding: 8; font.pixelSize: theme.micro; onClicked: backend.copyLog() }
+                FButton { text: t("Copy log", "复制日志"); flat: true; implicitHeight: 28; leftPadding: 8; rightPadding: 8; font.pixelSize: theme.micro; onClicked: backend.copyLog() }
                 FButton { text: t("Export report", "导出报告"); flat: true; implicitHeight: 28; leftPadding: 8; rightPadding: 8; font.pixelSize: theme.micro; enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                 FButton { text: t("Clear", "清空"); flat: true; implicitHeight: 28; implicitWidth: 64; leftPadding: 8; rightPadding: 8; font.pixelSize: theme.micro; onClicked: backend.clearTerminal() }
             }
-            FText { Layout.fillWidth: true; font.pixelSize: theme.micro; color: theme.muted; text: t("Recent output is shown here. Copy or export to get the full redacted log.", "这里显示最近的输出；复制或导出可获取完整脱敏日志。") }
+            FText { Layout.fillWidth: true; font.pixelSize: theme.micro; color: theme.muted; text: t("Copy or export the full log with private information hidden.", "可复制或导出完整日志，隐私信息已隐藏。") }
             ScrollView {
                 id: terminalScroll; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                 TextArea {
-                    id: terminalText; objectName: "terminalText"; text: s.log || t("Process output will appear here.", "进程启动后，输出会显示在这里。"); textFormat: TextEdit.PlainText
+                    id: terminalText; objectName: "terminalText"; text: s.log || t("Activity will appear here after startup.", "启动后将在这里显示运行记录。"); textFormat: TextEdit.PlainText
                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: s.log ? theme.text : theme.disabled; font.family: theme.mono; font.pixelSize: 12; background: null
                     selectionColor: theme.accentDim
                     onTextChanged: if (!activeFocus) cursorPosition = length
@@ -1044,7 +1044,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true; current: s.source; onPicked: function(value) { backend.selectSource(value) }
                                 options: [{value: "auto", label: t("Automatic", "自动选择")}, {value: "official", label: "Hugging Face"}, {value: "hf-mirror", label: t("HF Mirror", "HF 镜像")}, {value: "modelscope", label: t("ModelScope", "魔搭")}]
                             }
-                            FText { text: t("Switching also moves the current download. Verified partial data is retained wherever resuming is supported.", "切换会应用于当前下载；支持续传时，继续使用已校验的片段。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { text: t("Downloads continue from the new source, keeping progress where supported.", "切换后继续下载，支持续传的文件会保留进度。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                             FDivider {}
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
@@ -1181,7 +1181,7 @@ ApplicationWindow {
                                     FText { text: t("Video model", "视频模型"); Layout.fillWidth: true }
                                     FText {
                                         objectName: "modelStorageStatus"; Layout.fillWidth: true; font.pixelSize: theme.micro; color: theme.muted; wrapMode: Text.WordWrap
-                                        text: upgrade.status === "available" ? t("A faster int8 model is available: about ", "有更快的 int8 模型：下载约 ") + bytes(upgrade.download_bytes)
+                                        text: upgrade.status === "available" ? t("A faster model is available: about ", "有更快的模型：下载约 ") + bytes(upgrade.download_bytes)
                                                   + (upgrade.release_bytes ? t(" to download, about ", "，完成后删除旧模型，释放约 ") + bytes(upgrade.release_bytes) + t(" freed afterwards.", "。") : t(" to download.", "。"))
                                             : upgrade.status === "releasable" ? (upgrade.in_use === "int8_convrot" ? t("The old model is no longer used; about ", "旧模型已不再使用，删除可释放约 ") : t("Model files not in use; about ", "有没在使用的模型文件，删除可释放约 ")) + bytes(upgrade.release_bytes) + t(" can be freed.", "。")
                                             : upgradeHeadline()
@@ -1206,7 +1206,7 @@ ApplicationWindow {
                                 FText { objectName: "compatibilityLevel"; text: s.compatibility.available && s.compatibility.levels && s.compatibility.levels[s.compatibility.level || 0] ? t(s.compatibility.levels[s.compatibility.level || 0].en.split(" · ")[0], s.compatibility.levels[s.compatibility.level || 0].zh.split(" · ")[0]) : "—"; color: s.compatibility.available ? theme.accent : theme.disabled; font.weight: Font.DemiBold }
                             }
                             FSlider { objectName: "compatibilitySlider"; Layout.fillWidth: true; from: 0; to: 3; stepSize: 1; value: s.compatibility.level || 0; enabled: s.compatibility.available && !s.busy; snapMode: Slider.SnapAlways; onMoved: backend.compatibilityLevel(Math.round(value)) }
-                            FText { objectName: "compatibilityNote"; text: s.compatibility.available ? t("Applies from the next generation. Higher levels have the GPU handle less at a time, so generation is slower and the picture differs slightly; resolution, duration and steps stay the same.", "从下一次生成起生效。档位越高，显卡每次处理的数据越少，生成越慢，画面也会有细微差别；分辨率、时长和步数不变。") : t("Available after hardware setup.", "完成硬件检查后可调整。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
+                            FText { objectName: "compatibilityNote"; text: s.compatibility.available ? t("Applies to the next generation; higher levels are slower and may slightly change the picture.", "从下次生成起生效，档位越高越慢，画面可能略有变化。") : t("Available after hardware setup.", "完成硬件检查后可调整。"); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                             FDivider {}
                             FSwitch { objectName: "compatibilityAutomatic"; Layout.fillWidth: true; text: t("Raise the level automatically after an unexpected interruption", "异常中断后自动提高兼容档位"); checked: !!s.compatibility.automatic; enabled: s.compatibility.available && !s.busy; onToggled: backend.compatibility(s.compatibility.level, checked) }
                         }
@@ -1259,7 +1259,7 @@ ApplicationWindow {
                             }
                             Flow {
                                 Layout.fillWidth: true; spacing: 8
-                                FButton { text: t("Copy full details", "复制完整详情"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.copy(s.error) }
+                                FButton { text: t("Copy details", "复制详情"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.copy(s.error) }
                                 FButton { text: t("Export report", "导出报告"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                             }
                             FText {
@@ -1300,8 +1300,8 @@ ApplicationWindow {
                             id: diskRowText; Layout.fillWidth: true; spacing: 2
                             FText { text: modelData.name; font.weight: Font.DemiBold; Layout.fillWidth: true }
                             FText { visible: !modelData.enough; Layout.fillWidth: true; color: theme.danger; font.pixelSize: theme.micro
-                                    text: modelData.problem === "exfat" ? t("exFAT not supported", "不支持 exFAT")
-                                        : modelData.problem === "fat32" ? t("FAT32 not supported", "不支持 FAT32")
+                                    text: modelData.problem === "exfat" ? t("Cannot install", "无法安装")
+                                        : modelData.problem === "fat32" ? t("Cannot install", "无法安装")
                                         : t("Not enough space", "空间不够") }
                         }
                         FText { text: t(modelData.free + " available", "可用 " + modelData.free); color: theme.muted; font.pixelSize: theme.micro + 1; font.features: { "tnum": 1 }; wrapMode: Text.NoWrap; Layout.alignment: Qt.AlignVCenter }
@@ -1637,9 +1637,9 @@ ApplicationWindow {
     FDialog {
         objectName: "releaseConfirmation"; visible: releaseConfirm
         title: upgrade.in_use === "int8_convrot" ? t("Remove the old model?", "删除旧模型？") : t("Remove unused model files?", "删除没在使用的模型文件？")
-        text: (upgrade.in_use === "int8_convrot" ? t("The FP8 model files FreeVideo no longer uses are removed, about ", "将删除 FreeVideo 不再使用的 FP8 模型文件，释放约 ")
+        text: (upgrade.in_use === "int8_convrot" ? t("Removes the old model files FreeVideo no longer uses, about ", "将删除不再使用的旧模型文件，释放约 ")
                                                  : t("The model files FreeVideo does not use are removed, about ", "将删除 FreeVideo 没在使用的模型文件，释放约 ")) + bytes(upgrade.release_bytes || 0)
-              + (upgrade.in_use === "int8_convrot" ? t(". The int8 model, your videos and settings are not touched.", "。int8 模型、视频和设置都不受影响。")
+              + (upgrade.in_use === "int8_convrot" ? t(". The model in use, your videos and settings are not touched.", "。现在用的模型、视频和设置都不受影响。")
                                                    : t(". The model in use, your videos and settings are not touched.", "。正在使用的模型、视频和设置都不受影响。"))
         acceptText: t("Remove", "删除"); rejectText: t("Cancel", "取消"); destructive: true
         onAccepted: { releaseConfirm = false; backend.upgradeModel() }

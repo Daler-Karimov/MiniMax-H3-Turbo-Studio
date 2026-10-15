@@ -316,19 +316,19 @@ def package_instructions(runtime_needed, zh=False):
     """
     if sys.platform == 'darwin':
         return (
-            'Get the four model packs (video model, text encoder, video & audio decoder, sampling caches); they also work on Mac. '
+            'Get the four model packs: video model, prompt model (FreeVideo-文本编码器.zip), video & audio decoder, and sampling caches. They also work on Mac. '
             'The installer downloads the Mac environment automatically. Do not download the Windows Environment package.',
-            '下载「视频模型」「文本编码器」「视频与音频解码器」「采样缓存」四个模型包，Mac 同样适用。'
+            '下载「视频模型」「提示词模型（FreeVideo-文本编码器.zip）」「视频与音频解码器」「采样缓存」四个模型包，Mac 同样适用。'
             'Mac 运行环境由安装器自动下载，无需下载 Windows「运行环境」包。')[bool(zh)]
     if sys.platform.startswith('linux'):
         return (
-            'Get the four model packs (video model, text encoder, video & audio decoder, sampling caches); they also work on Linux. '
+            'Get the four model packs: video model, prompt model (FreeVideo-文本编码器.zip), video & audio decoder, and sampling caches. They also work on Linux. '
             'The installer downloads the Linux environment automatically. Do not download the Windows Environment package.',
-            '下载「视频模型」「文本编码器」「视频与音频解码器」「采样缓存」四个模型包，Linux 同样适用。'
+            '下载「视频模型」「提示词模型（FreeVideo-文本编码器.zip）」「视频与音频解码器」「采样缓存」四个模型包，Linux 同样适用。'
             'Linux 运行环境由安装器自动下载，无需下载 Windows「运行环境」包。')[bool(zh)]
-    text = ('Get the four model packs: video model, text encoder, video & audio decoder, and sampling caches. '
+    text = ('Get the four model packs: video model, prompt model (FreeVideo-文本编码器.zip), video & audio decoder, and sampling caches. '
             'The reference audio pack is optional, for audio references.',
-            '下载「视频模型」「文本编码器」「视频与音频解码器」「采样缓存」四个模型包；'
+            '下载「视频模型」「提示词模型（FreeVideo-文本编码器.zip）」「视频与音频解码器」「采样缓存」四个模型包；'
             '「音频参考缓存」可选，用音频做参考时才需要。')[bool(zh)]
     if runtime_needed:
         text += '\n' + ('For a new installation, also get the Environment package.',
@@ -373,13 +373,13 @@ def show_component(app, component):
     import webbrowser
     from . import branding as b
     from .launcher_copy import display
-    titles = {'video': ('Video model', '视频模型'), 'encoder': ('Text encoder', '文本编码器'),
+    titles = {'video': ('Video model', '视频模型'), 'encoder': ('Prompt model', '提示词模型'),
               'decoder': ('Video & audio decoders', '视频与音频解码器')}
     instructions = {
         'video': ('Choose your GPU variant on the model page and keep its folder structure.',
                   '按模型页说明选择显卡版本，保留下载的目录结构。'),
-        'encoder': ('Download the text encoder to your model folder.',
-                    '下载文本编码器，放入模型目录。'),
+        'encoder': ('Download the prompt model to your model folder.',
+                    '下载提示词模型，放入模型目录。'),
         'decoder': ('Download the vae and audio_vae folders.',
                     '下载 vae 和 audio_vae 文件夹。'),
     }

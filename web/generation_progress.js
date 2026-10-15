@@ -268,8 +268,8 @@ export function encoderFileText(file, t) {
     if (file.offline_installation === true) {
         const target = encoderFilePath(file) ? t('the file below', '下面这个文件') : t('this file', '这个文件');
         message += t(
-            ` This offline-package installation cannot switch back in one step yet. Close FreeVideo, move or rename ${target}, then import the Text encoder package again on the Installation page of the launcher.`,
-            `离线包安装暂时不能一键换回。请先关闭 FreeVideo，把${target}移走或改名，再在启动器的“安装”页重新导入“文本编码器”包。`);
+            ` This offline-package installation cannot switch back in one step yet. Close FreeVideo, move or rename ${target}, then import the Prompt model package (FreeVideo-文本编码器.zip) again on the Installation page of the launcher.`,
+            `离线包安装暂时不能一键换回。请先关闭 FreeVideo，把${target}移走或改名，再在启动器的“安装”页重新导入“提示词模型（FreeVideo-文本编码器.zip）”包。`);
     } else if (file.launcher === true) message += t(
         ' Select "Repair" in the launcher under Settings > Environment to restore the tested file; the current file is kept.',
         '可在启动器“设置 → 环境”中点“修复”恢复已验证的文件，原文件会保留。');

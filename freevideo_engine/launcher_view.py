@@ -294,7 +294,7 @@ def build(app):
     component_row = ttk.Frame(app.model_components, style='Card.TFrame'); component_row.pack(fill='x')
     app.component_buttons = {}
     for component, en, zh in (('video', 'Video model ↗', '视频模型 ↗'),
-                              ('encoder', 'Text encoder ↗', '文本编码器 ↗'), ('decoder', 'Decoders ↗', '解码器 ↗')):
+                              ('encoder', 'Prompt model ↗', '提示词模型 ↗'), ('decoder', 'Decoders ↗', '解码器 ↗')):
         button = app.button(component_row, en, zh, lambda name=component: app.model_download_link(name))
         button.configure(style='Card.TButton'); button.pack(side='left', padx=(0, 8))
         app.component_buttons[component] = button

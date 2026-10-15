@@ -71,7 +71,7 @@ def pack_name(path):
     if 'sampling-cache' in parts:
         return '采样缓存'
     if path.startswith('models/encoder/') or 'latent_upscaler' in parts:
-        return '文本编码器'
+        return '提示词模型（FreeVideo-文本编码器.zip）'
     return '视频与音频解码器' if any(p in ('vae', 'audio_vae', 'vocoder') for p in parts) else '视频模型'
 
 

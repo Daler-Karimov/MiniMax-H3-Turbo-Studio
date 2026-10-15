@@ -2007,7 +2007,7 @@ class Session:
             for entry in entries:
                 names = {'edge-models': ('Video model', '视频模型'), 'vdn-models': ('Decoder', '解码器'),
                          'image-models': NAMES['image'],
-                         'models': ('Text encoder', '文本编码器'), 'pypi': ('Python packages', 'Python 依赖'),
+                         'models': NAMES['text'], 'pypi': ('Python packages', 'Python 依赖'),
                          'github': ('Tools', '安装工具'), 'git': ('Git', 'Git'), 'cuda': ('CUDA', 'CUDA')}
                 if group.startswith('torch-'):
                     names[group] = ('GPU packages', 'GPU 依赖')
