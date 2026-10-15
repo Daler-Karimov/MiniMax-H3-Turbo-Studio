@@ -1053,15 +1053,18 @@ class Session:
         self.bridge_pending = False
         if self.action_notice == 'update_queued':
             self.action_notice = ''
-        key = self.update_key()
-        if key:
-            self.update_snoozed = dict(self.update_snoozed, **{key: time.monotonic() + SNOOZE_SECONDS})
+        self._snooze_update()
         self.update_intent = None
         self.update_waiting = False
         if self.updater and (self.updater.state['status'] == 'downloading'
                              or self.updater.state.get('retry_operation') == 'download'):
             self.updater.cancelled.set()
             self.updater.stop()
+
+    def _snooze_update(self):
+        key = self.update_key()
+        if key:
+            self.update_snoozed = dict(self.update_snoozed, **{key: time.monotonic() + SNOOZE_SECONDS})
 
     def _unsnooze(self):
         key = self.update_key()
@@ -1080,11 +1083,35 @@ class Session:
         self.update_checked = time.monotonic()
         self.updater.run('check')
 
+    def _open_release_page(self):
+        """A package the user installs themselves (macOS app, Windows folder): the release
+        page opens and the reminder closes. True when this update was handled that way."""
+        row = self.updater.state if self.updater else {}
+        if not (row.get('candidate') and row.get('status') != 'checking'
+                and self.updater.current.get('packaging') in ('onedir', 'app')):
+            return False
+        from .launcher_update import release_page
+        from .windows_ux import open_browser
+        self.pending_update = None
+        self.update_intent = None
+        try:
+            opened = open_browser(release_page(self.updater.current))
+        except OSError:
+            opened = False
+        if opened:
+            self.action_notice = ''
+            self._snooze_update()
+        else:
+            self.action_notice = 'update_page_failed'
+        return True
+
     def update(self, token='', source='launcher'):
         """One explicit update: the newest launcher if one is known, otherwise
         the engine bundled with this launcher. Downloading, waiting for running
         ComfyUI jobs and restarting continue from tick()."""
         if self.engine_updating or self.update_restarting:
+            return
+        if self._open_release_page():
             return
         if self.task_busy() or self.updater and self.updater.busy:
             self.pending_update = (token, source)
@@ -1100,12 +1127,6 @@ class Session:
         self.queue_state = None
         row = self.updater.state if self.updater else {}
         if self.updater and row.get('candidate') and row.get('status') != 'checking':
-            if self.updater.current.get('packaging') in ('onedir', 'app'):
-                from .launcher_update import release_page
-                from .windows_ux import open_browser
-                self.update_intent = None
-                open_browser(release_page(self.updater.current))
-                return
             self._unsnooze()
             self.update_intent = 'launcher'
             if row['status'] == 'ready':
