@@ -26,6 +26,7 @@ import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
+import { createRequestAssets, enabledLoras, referenceFiles } from './request_assets.js';
 import { rememberPromptDraft, trackPromptDraft } from './prompt_draft.js';
 import { canvasDimensions, imageSizeSelection } from './studio_size.js';
 import { createCapabilityView } from './capability_view.js';
@@ -562,16 +563,20 @@ export function openStudio(node, {extendFrom = null} = {}) {
     cleanup.push(() => { castLibrary?.destroy?.(); castLibrary = null; window.removeEventListener('freevideo-media', castChanged); prompt.removeEventListener('input', announceCast); castOverlay.dispose(); delete node.freevideoCastOff; });
     openCastLibrary({api, text: t, viewURL: view, uploadOne: castUpload, onChange: () => { castOverlay.refresh(); references.refresh(); }})
         .then(library => { if (disposed) library?.destroy?.(); else castLibrary = library; });
+    let requestAssets = null;
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
         prepare: text => expandCast(text, mediaRows(node), {active: !extension.source}).text,
         onReport: row => { node.freevideoReportId = row.report_id; progress.updateReport(row); },
-        onChange: () => rememberPromptDraft(api, node),
+        onChange: () => { rememberPromptDraft(api, node); requestAssets?.refresh(); },
         setText: text => { set(node, 'text', text || (untouched() ? starter : '')); placeholder(); }, context: () => {
         const items = referenceItems(node);
         if (linked(node, 'conditioning') || items.some(row => !row.file || row.kind !== 'image')) throw new Error('unsupported_media');
         return {seconds: Number(value(node, 'seconds')), media: items.map(row => ({file: row.file, role: row.role || 'reference'}))};
     }});
     cleanup.push(() => enhancer.dispose());
+    requestAssets = createRequestAssets({t, api, request: () => requestAssetsQuery?.()});
+    cleanup.push(() => requestAssets.dispose());
+    let requestAssetsQuery = null;
     const promptChanged = e => { if (String(e.detail) === String(node.id)) { if (prompt.value !== shown(value(node, 'text'))) prompt.value = shown(value(node, 'text')); prompt.disabled = linked(node, 'text'); mention.disabled = prompt.disabled; placeholder(); castOverlay.refresh(); references.refresh(); announceCast(); enhancer.sync(); } };
     window.addEventListener('freevideo-reference-prompt', promptChanged);
     cleanup.push(() => window.removeEventListener('freevideo-reference-prompt', promptChanged));
@@ -694,8 +699,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     else if (loraNode && widget(loraNode, 'lora')) {
         const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
         for (const name of widget(loraNode, 'lora').options?.values || ['None']) { const o = el('option', name); o.value = name; select.append(o); }
-        select.value = value(loraNode, 'lora'); select.onchange = () => set(loraNode, 'lora', select.value);
-        const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = value(loraNode, 'strength'); strength.onchange = () => { if (strength.reportValidity()) set(loraNode, 'strength', Number(strength.value)); };
+        select.value = value(loraNode, 'lora'); select.onchange = () => { set(loraNode, 'lora', select.value); requestAssets?.refresh(); };
+        const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = value(loraNode, 'strength'); strength.onchange = () => { if (strength.reportValidity()) { set(loraNode, 'strength', Number(strength.value)); requestAssets?.refresh(); } };
         loraMount.append(field(t('LoRA', 'LoRA'), select), field(t('Strength', '强度'), strength), el('p', loraWarning(), 'fv-lora-note'));
     } else loraMount.append(el('p', loraWarning(), 'fv-lora-note'));
     const [, advanced] = expand(t('Advanced', '高级选项'));
@@ -835,9 +840,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
     function refreshEffortEstimate(force = false) {
         capabilityView?.update();
         let task = 'external';
+        let requestRefs = [];
         try {
             if (!linked(node, 'conditioning')) {
                 const media = referenceItems(node), refs = media.filter(r => !r.role);
+                requestRefs = refs;
                 const audio = refs.some(r => r.kind === 'audio'), visual = refs.some(r => r.kind !== 'audio');
                 const first = media.some(r => r.role === 'first'), last = media.some(r => r.role === 'last');
                 task = audio ? visual ? 'ref2va_av' : 'ref2va_audio' : visual ? 'ref2va'
@@ -852,6 +859,15 @@ export function openStudio(node, {extendFrom = null} = {}) {
         lengthControl?.refresh({width: requestWidth, height: requestHeight, task, adapters,
             settings: {tier: twoPass.checked ? 'light' : ({12: 'medium', 16: 'high', 20: 'max'}[Number(baseSteps.value)] || 'custom'),
                 base_steps: Number(baseSteps.value), refine_steps: Number(refineSteps.value), two_pass: twoPass.checked}}, force);
+        requestAssetsQuery = () => {
+            const query = new URLSearchParams({width: requestWidth, height: requestHeight, seconds: value(node, 'seconds'), task,
+                base_steps: baseSteps.value, refine_steps: refineSteps.value, two_pass: twoPass.checked ? '1' : '0',
+                enhance: node.properties?.freevideo_prompt_versions?.enabled ? '1' : '0'});
+            for (const name of enabledLoras(loraNode, {upstream, widget, value})) query.append('lora', name);
+            for (const row of referenceFiles(requestRefs)) query.append('ref', row);
+            return query;
+        };
+        requestAssets.refresh(force);
         const query = new URLSearchParams({width: requestWidth, height: requestHeight, seconds: value(node, 'seconds'), task, adapters: adapters ? '1' : '0'}).toString();
         if (query === effortEstimateKey && !force) { showEffortEstimate(); return; }
         clearTimeout(effortEstimateTimer);
@@ -1176,7 +1192,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         finally { stopLoop.disabled = false; }
     }, 'fv-quiet');
     queueActions.append(queueDetails, cancelCurrent, stopLoop, resumeChain);
-    runbar.append(runrow, queueActions); controls.append(runbar);
+    runbar.append(requestAssets.element, runrow, queueActions); controls.append(runbar);
     const queueError = error => ({
         queue_unavailable: t('Could not read the queue. Any loop has been stopped; already submitted videos stay queued.', '暂时无法读取队列。循环已停止追加，已提交的任务仍在队列中。'),
         cancel_failed: t('Could not cancel. Try again.', '暂时未能取消，请重试。'),

@@ -201,3 +201,4 @@
 .fv-studio .fv-chain-part-tag:empty{display:none}
 .fv-studio .fv-chain-part-tag[data-kind=error]{color:var(--fv-warning);white-space:normal;max-width:16em;text-align:right}
 @media(max-width:680px){.fv-studio .fv-chain-part{gap:8px;padding-left:4px}}
+.fv-studio .fv-request-assets{font-size:12px;line-height:1.5;margin:0 0 8px}
