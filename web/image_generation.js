@@ -6,7 +6,7 @@ import {saveReport, reportIssue, showReportTip} from './report_issue.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
-    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading',
+    installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading', checking: 'checking',
     token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', seed: 'seed',
     stage: 'stage', fraction: 'fraction', file: 'file', error: 'error', name: 'name', subfolder: 'subfolder',
     states: {queued: 'waiting', starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
@@ -192,6 +192,7 @@ export function renderImageFailure(host, {error, report_id} = {}, t,
     return card;
 }
 export function imagePackUnavailableMessage(info, t) {
+    if (info?.[IMAGE_GEN_PROTOCOL.checking]) return t('Checking. Available when finished.', '正在检查，完成后可用。');
     return info?.[IMAGE_GEN_PROTOCOL.downloading]
         ? t('Downloading. Available when finished.', '正在下载，完成后可用。') : imagePackMessage(info, t);
 }

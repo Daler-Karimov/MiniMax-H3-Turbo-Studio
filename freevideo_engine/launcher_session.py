@@ -722,6 +722,8 @@ class Session:
         labels = {'missing': ('Not installed', '未安装'), 'partial': ('Paused', '已暂停'),
                   'ready': ('Ready', '已就绪'), 'invalid': ('Needs repair', '需要修复')}
         detail = self.t(*labels[value['state']])
+        if value.get('checking'):
+            detail = self.t('Checking', '正在校验')
         # Repair only answers a pack that is ready or known to be damaged; half a download just continues.
         repairable = value['state'] in ('ready', 'invalid')
         if active.get('state') == 'running':
@@ -740,7 +742,8 @@ class Session:
                    or self.closing or self.engine_updating or self.update_intent or self.upgrade.active or self.model_switch
                    or self.updater and self.updater.busy)
         return dict(value, visible=bool(self.installation_engine()), title=self.t(*NAMES['image']),
-                    detail=detail, busy=busy, install=active, can_act=not (blocked or busy), removable_bytes=removable,
+                    detail=detail, busy=busy, install=active, can_act=not (blocked or busy or value.get('checking')),
+                    removable_bytes=removable,
                     repairable=repairable, failure=failure, report_id=active.get('report_id'))
 
     def image_pack_report(self):

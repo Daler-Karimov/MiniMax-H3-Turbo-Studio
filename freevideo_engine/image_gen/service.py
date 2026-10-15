@@ -110,6 +110,7 @@ class Service:
         spec = image_pack.catalog()
         ready = image_pack.ready(machine['model_root'])
         return dict(ready=ready, model=spec['repo'],
+                    checking=not ready and image_pack.checking(machine['model_root']),
                     downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
                     max_images=MAX_IMAGES)

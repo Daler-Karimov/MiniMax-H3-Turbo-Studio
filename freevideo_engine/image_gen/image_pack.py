@@ -1,8 +1,10 @@
 """Optional, hash-pinned image weights under <model_root>/image_gen/.
 
 Downloads use the engine's source ranking, proxy policy and resumable transfers.
-Status reads verification stamps without hashing gigabytes. Repair hashes every
-file and retains mismatches; removal touches only unchanged files we created.
+Status reads verification stamps without hashing gigabytes on the caller's thread;
+a full-size file whose stamp no longer matches (a hard link raised its change time,
+the folder moved) is hashed once in the background and re-stamped. Repair hashes
+every file and retains mismatches; removal touches only unchanged files we created.
 Installer.start('install', background=True) yields to the existing engine lease
 or an optional busy callback. The CLI writes atomic, read-only status snapshots.
 """
@@ -240,14 +242,125 @@ def _write_notice(folder, owned):
         logging.warning('[FreeVideo] Could not write the image model notice: %s', redacted_launcher_error(error))
 
 
+_RECHECKS = {}
+_RECHECKED = set()
+_RETRY_AT = {}
+_KEYS = {}
+_RECHECK_GUARD = threading.Lock()
+_RETRY_SECONDS = 300
+
+
+def _stale(path, row, ledger):
+    """A complete file that was verified before and whose stamp no longer matches."""
+    try:
+        return path.is_file() and path.stat().st_size == row['bytes'] and isinstance(ledger.get(str(path)), dict)
+    except OSError:
+        return False
+
+
+def _same_file(path, row, before):
+    try:
+        return provision.file_identity(path, row) == before
+    except OSError:
+        return False
+
+
+def _recheck(root, folder, pending):
+    """Hash files whose stamp went stale and refresh the receipt; contents decide, not the stamp.
+
+    Hashing only reads. Under the pack lease the result is merged only into the receipt and the
+    file it was read from: a file or receipt changed in the meantime (a repair, an install) keeps
+    its newer state and is looked at again later. A file is marked as checked only once its result
+    was published; any failure leaves it to be retried after a pause.
+    """
+    published = []
+    try:
+        stamps = deepcopy(_read(folder, LEDGER))
+        results = []
+        for row in rows():
+            path = target(row, root)
+            name = str(path)
+            if name in pending and _stale(path, row, stamps):
+                prior, before, shape = deepcopy(stamps[name]), provision.file_identity(path, row), model_repair.identity(path)
+                results.append((row, path, prior, before, shape, provision.verified(path, row, stamps, mode='full')))
+        with _lease(root):
+            ledger = _read(folder, LEDGER)
+            for row, path, prior, before, shape, intact in results:
+                name = str(path)
+                if ledger.get(name) != prior or not _same_file(path, row, before):
+                    continue
+                if intact:
+                    stamp = stamps[name]
+                    if not all(stamp.get(k) == v for k, v in before.items()):
+                        continue
+                    ledger[name] = stamp
+                else:
+                    ledger.pop(name, None)
+                    model_repair.record(folder, path, row, shape)
+                published.append(name)
+            save(_path(folder, LEDGER), ledger)
+    except Exception as error:
+        published = []
+        logging.warning('[FreeVideo] Could not re-check the image model files: %s', redacted_launcher_error(error))
+    finally:
+        with _RECHECK_GUARD:
+            for name in pending:
+                key = _KEYS.pop((folder, name), None)
+                if key is None:
+                    continue
+                if name in published and key[1] is not None:
+                    _RECHECKED.add(key[0])
+                else:
+                    _RETRY_AT[key[0]] = time.monotonic() + _RETRY_SECONDS
+            _RECHECKS.pop(folder, None)
+
+
+
+def _start_recheck(root, folder, stale):
+    """One background check per folder; a file already checked at this identity is not hashed again."""
+    keys = {}
+    for path in stale:
+        try:
+            info = provision.fingerprint(path)
+        except OSError:
+            continue
+        # The same identity the receipt is compared by, so a change the stamp would notice is noticed here.
+        keys[str(path)] = (str(path), tuple(sorted(info.items())))
+    now = time.monotonic()
+    with _RECHECK_GUARD:
+        if folder in _RECHECKS:
+            return True
+        pending = {name for name, key in keys.items()
+                   if key not in _RECHECKED and _RETRY_AT.get(key, 0) <= now}
+        if not pending or downloading(root):
+            return False
+        for name in pending:
+            reliable = dict(keys[name][1]).get('change_time_ns', 0) is not None
+            _KEYS[(folder, name)] = (keys[name], reliable)
+        worker = threading.Thread(target=_recheck, args=(root, folder, pending), name='image-pack-recheck', daemon=True)
+        try:
+            worker.start()
+        except Exception:
+            for name in pending:
+                _KEYS.pop((folder, name), None)
+            raise
+        # Registered only after it runs, so a lease taken meanwhile never joins a thread that has not started.
+        _RECHECKS[folder] = worker
+    return True
+
+
 def status(root=None):
-    """Missing files and unique retained bytes; no network or full weight reads."""
+    """Missing files and unique retained bytes; no network and no weight reads on this thread."""
     folder = base(root)
     ledger = _read(folder, LEDGER)
     files, missing, downloaded, verified_bytes = [], [], 0, 0
+    stale = []
     for row in rows():
         path = target(row, root)
         intact = _intact(path, row, ledger)
+        old = not intact and _stale(path, row, ledger)
+        if old:
+            stale.append(path)
         size = path.stat().st_size if path.is_file() else 0
         part = _path(folder, row['file'] + '.partial')
         partial = part.stat().st_size if part.is_file() else 0
@@ -256,18 +369,26 @@ def status(root=None):
         verified_bytes += row['bytes'] if intact else 0
         if not intact:
             missing.append(row['file'])
-        files.append(dict(file=row['file'], bytes=row['bytes'], ready=intact, downloaded_bytes=retained))
+        files.append(dict(file=row['file'], bytes=row['bytes'], ready=intact, downloaded_bytes=retained, stale=old))
+    checking = bool(stale) and _start_recheck(root, folder, stale)
     try:
         notice_ready = _notice_ready(_path(folder, 'NOTICE.txt'))
     except PackError:
         notice_ready = False
     total = sum(r['bytes'] for r in files)
     available = not missing
+    # Files being re-checked are all there: nothing to download for them.
     return dict(installable=True, ready=available, total_bytes=total, verified_bytes=verified_bytes,
-                downloaded_bytes=downloaded, bytes=sum(r['bytes'] for r in files if not r['ready']),
+                downloaded_bytes=downloaded,
+                bytes=sum(r['bytes'] for r in files if not r['ready'] and not (checking and r['stale'])),
                 remaining_bytes=sum(r['bytes'] - r['downloaded_bytes'] for r in files if not r['ready']),
-                missing=missing, notice_ready=notice_ready, files=files,
+                missing=missing, notice_ready=notice_ready, files=files, checking=checking,
                 state='ready' if available else 'partial' if downloaded else 'missing')
+
+
+def checking(root=None) -> bool:
+    """True while a background stamp re-check of this pack is hashing."""
+    return base(root) in _RECHECKS
 
 
 def ready(root=None):
@@ -308,6 +429,10 @@ def _lease(root, engine_root=None, destructive=False):
     folder = base(root)
     _path(folder, 'pack.lock')
     _path(folder, 'logs/model-mismatches.json')
+    # A stamp re-check started by status() only reads and then merges its receipt; let it finish first.
+    worker = _RECHECKS.get(folder)
+    if worker is not None and worker is not threading.current_thread():
+        worker.join()
     with ExitStack() as stack:
         if engine_root is not None:
             engine = Path(engine_root)
