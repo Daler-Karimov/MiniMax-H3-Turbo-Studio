@@ -75,31 +75,31 @@ class FreeVideoGenerate(io.ComfyNode):
         )
 
     @classmethod
-    def validate_inputs(cls, text, width, height, seconds, seed, **kwargs):
-        refine_from = optional_text(kwargs.get('refine_from'))
+    def validate_inputs(cls, text, width, height, seconds, seed, continue_from='', frames=0, two_pass=True,
+                        preview=False, refine_from='', base_steps=8, refine_steps=3):
+        # ComfyUI marks every input named here when a check fails, so only the checked widgets are
+        # listed. Linked pictures, media and conditioning have no value before the run anyway.
+        refine_from = optional_text(refine_from)
         try:
-            options = request_options(kwargs.get('continue_from', ''), kwargs.get('frames', 0))
+            options = request_options(continue_from, frames)
             if options.get('continue_from'):
-                # Use presence checks: tensor inputs have no scalar truth value.
-                assets = kwargs.get('media')
-                connected = assets.get('_connected', {}) if isinstance(assets, dict) else {}
-                # References are not checked here: a continued part keeps only their pictures.
-                media = dict(first=kwargs.get('first') is not None or connected.get('first') is not None,
-                             last=kwargs.get('last') is not None or connected.get('last') is not None,
-                             conditioning_info=kwargs.get('conditioning') is not None)
-                if isinstance(assets, dict):
-                    for key in ('first', 'last', 'conditioning_info'):
-                        media[key] = media[key] or bool(assets.get(key))
-                options.update(two_pass=kwargs.get('two_pass', True), preview=kwargs.get('preview', False),
-                               refine_from=refine_from or None, media=media)
+                # A continued part turns on two passes, skips the preview and takes keyframes as pictures (execute).
+                two_pass, preview = True, False
+                options.update(two_pass=True, preview=False, refine_from=refine_from or None,
+                               media=dict(first=False, last=False, conditioning_info=False))
             comfy_bridge.validate_request(text, width, height, seconds, seed, **options)
             if not refine_from:
                 from .two_pass import validate_steps
-                validate_steps(kwargs.get('base_steps', 8), kwargs.get('refine_steps', 3), kwargs.get('two_pass', True))
-                if kwargs.get('preview') and not kwargs.get('two_pass', True):
+                validate_steps(base_steps, refine_steps, two_pass)
+                if preview and not two_pass:
                     return 'Preview first needs two-pass acceleration.'
             comfy_bridge.installation()
         except (OSError, ValueError, KeyError) as error:
+            from .continuation import UNSUPPORTED
+            if str(error).startswith(UNSUPPORTED):
+                # A refusal of the whole route (device, refine) is not one input's fault: the run stops
+                # at this node with the same guidance instead of marking every widget.
+                return True
             return str(error)
         return True
 
@@ -120,6 +120,13 @@ class FreeVideoGenerate(io.ComfyNode):
         node_id = cls.hidden.unique_id
         chain = block_context(PromptServer.instance, node_id)
         options = request_options(continue_from, frames)
+        notes = []
+        if options.get('continue_from') and not two_pass:
+            two_pass = True
+            notes.append('Continuing a video uses two-pass acceleration, so it is on for this part.')
+        if options.get('continue_from') and preview:
+            preview = False
+            notes.append('A continued part is made in full, without stopping for a first-pass preview.')
         from .two_pass import validate_steps
         if not refine_from:
             validate_steps(base_steps, refine_steps, two_pass)
@@ -167,6 +174,8 @@ class FreeVideoGenerate(io.ComfyNode):
             logging.warning('[FreeVideo] %s', notice)
             PromptServer.instance.send_progress_text(notice, node_id)
         notice = notice + '\n' if notice else ''
+        def said():
+            return notice + ''.join(line + '\n' for line in notes)
         def progress(message):
             if message.get('report_id'):
                 result_report[0] = message['report_id']
@@ -184,7 +193,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 publish(server, node_id, message)
                 if server is not None:
                     detail = message.get('detail')
-                    server.send_progress_text(notice + label + (' · ' + detail if detail else ''), node_id)
+                    server.send_progress_text(said() + label + (' · ' + detail if detail else ''), node_id)
                 last_message[0] = dict(message)
         def release():
             cpu_prewarm = IDLE.stop()
@@ -212,6 +221,19 @@ class FreeVideoGenerate(io.ComfyNode):
             # workflow, not one that points at this machine's preview file.
             graph = comfy_bridge.without_upscale(graph, node_id, refine_from)
         output_root = Path(folder_paths.get_output_directory()).resolve()
+
+        def kept(exported):
+            if not options.get('continue_from'):
+                return exported
+            before = len(notes)
+            result = continued(exported, notes)
+            if len(notes) > before and PromptServer.instance is not None:
+                PromptServer.instance.send_progress_text(said().rstrip('\n'), node_id)
+            return result
+        for line in notes:
+            logging.info('[FreeVideo] %s', line)
+        if notes and PromptServer.instance is not None:
+            PromptServer.instance.send_progress_text(said().rstrip('\n'), node_id)
         publish(PromptServer.instance, node_id, {'label': 'Preparing video', 'new_request': True})
         try:
             output = comfy_bridge.generate(text, width, height, seconds, seed, output_root,
@@ -221,9 +243,8 @@ class FreeVideoGenerate(io.ComfyNode):
                 base_steps=base_steps, refine_steps=refine_steps, comfy_metadata=graph,
                 preview=bool(preview), refine_from=refine_from or None,
                 interrupted=memory.throw_exception_if_processing_interrupted, release_models=release,
-                export_inputs=lambda run, canvas: (continued if options.get('continue_from') else dict)(
-                    export(run, canvas, first=first, last=last, references=references, loras=loras,
-                           conditioning=conditioning, assets=media)),
+                export_inputs=lambda run, canvas: kept(export(run, canvas, first=first, last=last, references=references,
+                    loras=loras, conditioning=conditioning, assets=media, continuing=bool(options.get('continue_from')))),
                 **options,
                 # Only a part that continues another can use it; other requests keep the existing bridge call.
                 **({'first_frame_reference': True} if first_frame_reference is True and options.get('continue_from') else {}),

@@ -32,7 +32,13 @@ VERSION = 1
 
 MISSING = 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.'
 SIZE_MISMATCH = 'Use the same width and height as the previous video.'
-UNSUPPORTED = 'Video continuation requires full two-pass text generation on an NVIDIA GPU, without first frames, last frames or reference media.'
+# Every refusal starts with UNSUPPORTED, then says what to change.
+UNSUPPORTED = 'Continue from video cannot be used with these settings.'
+UNSUPPORTED_DEVICE = UNSUPPORTED + ' It needs an NVIDIA GPU. Clear Continue from video to make a new video.'
+UNSUPPORTED_PASSES = UNSUPPORTED + ' Turn on Two-pass acceleration and turn off Two-pass: preview first pass.'
+UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear Second pass of preview: a continued part is made in full.'
+UNSUPPORTED_MEDIA = (UNSUPPORTED + ' A continued part takes up to 3 pictures as references. '
+                     'Remove video or audio references and pre-encoded conditioning.')
 # A continued part keeps the cast's pictures, one per person and at most three people in a frame.
 PICTURES_MAX = 3
 INVALID_FRAMES = 'Frame count must be 5 + 17n and at least 39 (39, 56, 73, 90, ...).'
@@ -85,11 +91,16 @@ def validate_route(*, task='t2va', two_pass=True, preview=False, refine_from=Non
     valid_task = task == ('ref2va' if anchor else 't2va')
     if sound:
         valid_task = valid_reference and task in (('ref2va', 'ref2va_av') if anchor else ('t2va', 'ref2va', 'ref2va_audio'))
-    if (not supported()[0] or backend not in (None, 'cuda') or not valid_task
-            or not two_pass or preview or refine_from
-            or any(media.get(key) for key in ('first', 'last', 'conditioning_info'))
+    if not supported()[0] or backend not in (None, 'cuda'):
+        raise ValueError(UNSUPPORTED_DEVICE)
+    if refine_from:
+        raise ValueError(UNSUPPORTED_REFINE)
+    if not two_pass or preview:
+        raise ValueError(UNSUPPORTED_PASSES)
+    # Keyframes reach a continued part as pictures (comfy_media.continued); here they are a request error.
+    if (not valid_task or any(media.get(key) for key in ('first', 'last', 'conditioning_info'))
             or (references and not valid_reference)):
-        raise ValueError(UNSUPPORTED)
+        raise ValueError(UNSUPPORTED_MEDIA)
 
 
 def encoded_references(conditions, task, anchor):
@@ -108,7 +119,7 @@ def continuation_pictures(media):
     references = media.get('references') or []
     pictures = [row for row in references if row.get('kind') == 'image']
     if len(pictures) != len(references) or len(pictures) > PICTURES_MAX:
-        raise ValueError(UNSUPPORTED)
+        raise ValueError(UNSUPPORTED_MEDIA)
     return pictures
 
 

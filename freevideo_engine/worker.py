@@ -101,7 +101,7 @@ def generate(request, resident=None):
             metrics['sampling_plan'] = expected
         continuation = request.get('continuation')
         if continuation is not None:
-            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED,
+            from .continuation import (validate_route, summary, ADALN_TASK, ANCHOR_ADALN_TASK, UNSUPPORTED_DEVICE,
                                        validate_audio_context, AUDIO_CONTEXT_DEFAULT)
             # A plan that fell back to one pass on a small canvas still has
             # the two-pass flag set and keeps its continuation; an explicit
@@ -113,7 +113,7 @@ def generate(request, resident=None):
                            two_pass=bool(request.get('sampling_plan', {}).get('requested')),
                            preview=request.get('preview', False), refine_from=request.get('resume_first_pass'))
             if isinstance(getattr(torch.version, 'hip', None), str):
-                raise ValueError(UNSUPPORTED)
+                raise ValueError(UNSUPPORTED_DEVICE)
             continuation = dict(continuation,
                 audio_context=validate_audio_context(continuation.get('audio_context', AUDIO_CONTEXT_DEFAULT)))
             request['continuation'] = continuation

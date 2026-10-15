@@ -632,8 +632,8 @@ class Engine:
         else:
             prompt, tags, conditions = load_prompt(str(conditioning), self.device_backend.device)
             if continuation is not None and conditions:
-                from .continuation import UNSUPPORTED
-                raise ValueError(UNSUPPORTED)
+                from .continuation import UNSUPPORTED_MEDIA
+                raise ValueError(UNSUPPORTED_MEDIA)
             from .keyframes import validate_conditioning
             source_canvas = self.canvas if allow_smaller_canvas and self.canvas is not None else canvas
             validate_conditioning(prompt, tags, conditions, self.task,

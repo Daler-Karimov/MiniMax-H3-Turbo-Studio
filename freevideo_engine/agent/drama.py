@@ -329,7 +329,7 @@ def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
     function serves plan previews and the moment a take is submitted. each is
     the most pictures one person carries; pictures_each says what was used.
     cast_reference: None (no character in the shot has a card), 'own' (the shot
-    names its own first frame or references), 'missing' (a card was deleted),
+    names its own first frame or references; an empty list means no pictures), 'missing' (a card was deleted),
     'partial' (not everyone fit) or 'cards'. 'omitted' lists people left out
     entirely; 'voice_omitted' lists people whose pictures are carried but whose
     voice did not fit. A shot that continues the previous one carries one picture
@@ -341,7 +341,8 @@ def cast_references(play, shot, cards, *, continues=False, each=PICTURES_EACH):
                   prefix=None, subjects=[], cards={}, pictures_each=each, clip_seconds=[])
     if not keys:
         return result
-    if shot.get('first') is not None or shot.get('references'):
+    # A references list, even an empty one, is the shot's own choice: cards are added only when it is left out.
+    if shot.get('first') is not None or isinstance(shot.get('references'), list):
         result['cast_reference'] = 'own'
         return result
     spoken = {}

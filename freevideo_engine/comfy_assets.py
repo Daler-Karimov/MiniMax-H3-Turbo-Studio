@@ -104,8 +104,8 @@ def resolve_assets(serialized, input_directory):
             result.setdefault('references', []).append({'kind': kind, 'path': str(path)})
         else:
             raise ValueError('Media role must be first, last or reference')
-    if result.get('references') and any(name in result for name in ('first', 'last')):
-        raise ValueError('Use first/last frames or references in this request. Disable unused media cards.')
+    # Mixing keyframes and references is checked when the video is made (comfy_media.export):
+    # a part that continues a video uses its keyframes as pictures.
     return result
 
 
@@ -151,9 +151,6 @@ def connect_assets(assets, *, first=None, last=None, reference=None, reference_a
     if count > 32:
         raise ValueError(f'There are {count} references and the limit is 32. '
                          'For a long image batch, connect a clip to the Reference node\'s video input; a clip counts as one reference.')
-    if count and any(
-            name in result or name in connected for name in ('first', 'last')):
-        raise ValueError('Choose keyframes or references; disable the unused inputs')
     if connected:
         result['_connected'] = connected
     return result

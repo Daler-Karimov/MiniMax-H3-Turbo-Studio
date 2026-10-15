@@ -534,8 +534,9 @@ GUIDE['cast'] = [
     'Changes need the revision you read (body revision or If-Match); stale_revision returns the current card in '
     'error.card. Fields the user changed return changed_by_user: keep the user\'s version.',
     'Film with a card by setting characters.<key>.card. Cards are read when each take is submitted. Shots that '
-    'continue the previous one carry one card picture per person (the sheet, else the front) for at most 3 people, '
-    'and keep the voices of the previous shot; POST /drama/plan shows each shot\'s cast. '
+    'continue the previous one carry one card picture per person (a person alone: the sheet and a face close-up) for '
+    'at most 3 people, and keep the voices of the previous shot; POST /drama/plan shows each shot\'s cast. '
+    'A shot\'s own references replace the card pictures; references=[] sends none. '
     'A shot with a carded character is at most 15 s; continue it in the next shot to go longer.',
     'POST /cast/{id}/generate makes reference pictures from the description as a normal job (face=true adds a close-up). '
     'It defaults to the installed image model, otherwise video frames (labels guessed, label_guess). '

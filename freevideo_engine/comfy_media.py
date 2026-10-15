@@ -44,23 +44,48 @@ def _audio(value, path):
             container.mux(packet)
 
 
-def continued(exported):
-    """What a continued part keeps of exported inputs: the pictures (at most three, one per person) and LoRAs.
+def continued(exported, notes=None):
+    """What a continued part keeps of exported inputs: up to three pictures, and the LoRAs.
 
-    It starts from the footage, so keyframes, pre-encoded conditioning, clips and sound are left out."""
+    It starts from the footage, so a first or last frame image becomes one more picture after the
+    reference pictures; pre-encoded conditioning, clips and sound are left out. When keyframes are
+    used or pictures are left out, notes gets one line saying so."""
     from .continuation import PICTURES_MAX
     media = (exported or {}).get('media') or {}
     kept = {key: value for key, value in media.items()
             if key not in ('first', 'last', 'references', 'conditioning_info')}
     pictures = [row for row in media.get('references', []) if row.get('kind') == 'image']
-    if len(pictures) > PICTURES_MAX:
-        logging.warning('[FreeVideo] A continued part keeps the first %d of %d pictures', PICTURES_MAX, len(pictures))
-    if pictures:
-        kept['references'] = pictures[:PICTURES_MAX]
+    keyframes = [name for name in ('first', 'last') if media.get(name)]
+    candidates = pictures + [{'kind': 'image', 'path': media[name]} for name in keyframes]
+    if candidates:
+        kept['references'] = candidates[:PICTURES_MAX]
+    lines = [continued_note(len(pictures), keyframes, len(candidates[:PICTURES_MAX]))]
+    if any(row.get('kind') != 'image' for row in media.get('references', [])) or media.get('conditioning_info') \
+            or (exported or {}).get('conditioning'):
+        lines.append('Video and audio references and pre-encoded conditioning are not used for a continued part.')
+    for line in filter(None, lines):
+        logging.info('[FreeVideo] %s', line)
+        if notes is not None:
+            notes.append(line)
     return {'media': kept} if len(kept) > 1 else {}
 
 
-def export(run, canvas, *, first=None, last=None, references=None, loras=None, conditioning=None, assets=None):
+def continued_note(pictures, keyframes, used):
+    """One line for a continued part whose keyframes became pictures or whose pictures did not all fit."""
+    frames = ' and '.join(keyframes)
+    if pictures + len(keyframes) > used:
+        order = 'reference pictures first, then the %s frame image%s' % (frames, 's' if len(keyframes) > 1 else '')
+        return ('Continuing the previous video with %d of %d pictures: %s.' % (used, pictures + len(keyframes), order)
+                if keyframes else 'Continuing the previous video with the first %d of %d reference pictures.' % (used, pictures))
+    if keyframes:
+        return ('Continuing the previous video; the %s frame image%s used as %s.'
+                % (frames, 's are' if len(keyframes) > 1 else ' is', 'reference pictures' if len(keyframes) > 1 else 'a reference picture'))
+    return None
+
+
+def export(run, canvas, *, first=None, last=None, references=None, loras=None, conditioning=None, assets=None,
+           continuing=False):
+    """continuing: the request continues a video, so keyframes and references may be mixed (see continued)."""
     media = {'version': 1}
     if assets:
         if conditioning is not None or first is not None or last is not None or references:
@@ -80,7 +105,8 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
             references.append({'kind': 'audio', 'value': connected['reference_audio']})
     if conditioning is not None and (first is not None or last is not None or references):
         raise ValueError('Preencoded conditioning already includes media; do not connect a second set')
-    if references and (first is not None or last is not None):
+    keyframes = first is not None or last is not None or any(name in media for name in ('first', 'last'))
+    if not continuing and keyframes and (references or media.get('references')):
         raise ValueError('Choose keyframes or experimental references; mixed layouts are not supported')
     result = {}
     run = Path(run)

@@ -242,6 +242,11 @@ function mediaPanel(node, mount = null) {
         try { rows = read(); } catch (error) { message(error.message, true); return; }
         const active = rows.filter(row => row.enabled !== false);
         const linked = name => node.inputs?.find(i => i.name === name)?.link != null;
+        // A Generate node that continues a video takes these keyframes as pictures, so they may sit beside references.
+        const continuing = (node.outputs?.[0]?.links || []).some(id => {
+            const target = node.graph?.getNodeById(node.graph?.links[id]?.target_id);
+            return target?.type === 'FreeVideoGenerate' && String(target.widgets?.find(w => w.name === 'continue_from')?.value ?? '').trim();
+        });
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
         const audioRefs = active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'audio').length + Number(linked('reference_audio'));
@@ -258,7 +263,7 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) || first > 1 || last > 1));
+        message(refs > 32 ? text(`There are ${refs} references and the limit is 32. Remove some before generating.`, `参考素材有 ${refs} 个，超过了 32 个的上限，请减少后再生成。`) : (first || last) && continuing ? text("Continuing a video: first and last frame images are used as reference pictures.", "接续视频时，首尾帧图会作为参考图使用。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Connect IMAGE / AUDIO outputs on the left, or drop / paste files here.", "可连接左侧 IMAGE / AUDIO 输入，或拖入、粘贴文件。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
         if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
         if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media will come from the connected nodes.\nNo upload is needed.', '素材由已连接的节点提供。\n无需上传文件。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
