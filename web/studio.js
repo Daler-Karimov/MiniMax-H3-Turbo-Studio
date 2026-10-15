@@ -1063,6 +1063,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     const runbar = el('div', null, 'fv-runbar');
     let busy = false, queued = false, cancelling = false, activePrompt = null, capturing = false;
+    // The queue lists only this page's own requests. A video started elsewhere (another tab, a
+    // reloaded page) is still running on the server and reports progress here, so the button must
+    // not fall back to "Generate video" between two reports, e.g. while decoding.
+    const LIVE_PROGRESS_MS = 120000;
+    let liveProgressAt = 0;
+    const progressLive = () => Date.now() - liveProgressAt < LIVE_PROGRESS_MS;
     let runMode = ['single', 'batch', 'loop'].includes(node.properties?.freevideo_run_mode)
         ? node.properties.freevideo_run_mode : 'single', queueState;
     if (!studioQueues.has(node)) studioQueues.set(node, createStudioQueue(api, node.id, {
@@ -1249,7 +1255,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (chainController?.active) { queueActions.hidden = false; updateRunButton(); return; }
         const active = state.running || state.pending[0];
         activePrompt = active?.id || null;
-        busy = Boolean(active); queued = !state.running && Boolean(state.pending.length);
+        busy = Boolean(active) || progressLive(); queued = !state.running && Boolean(state.pending.length);
         const g = active?.inputs;
         // The right-hand frame belongs to the submitted video. Draft edits on
         // the left must never reshape a video currently being generated.
@@ -1438,19 +1444,19 @@ export function openStudio(node, {extendFrom = null} = {}) {
     cleanup.push(() => { window.removeEventListener('freevideo-media', mediaChanged); window.removeEventListener('freevideo-result', resultChanged); });
     const listen = (type, handler) => { api.addEventListener(type, handler); cleanup.push(() => api.removeEventListener(type, handler)); };
     listen('status', () => { syncQueue().catch(() => {}); });
-    listen('executing', e => { const id = typeof e.detail === 'object' ? e.detail?.node : e.detail; if (String(id) === String(node.id)) { if (chainController.active) { chainController.refresh(); return; } failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null; busy = true; queued = false; updateRunButton(); showProgress(node.freevideoProgress || {label: t('Preparing your video', '正在准备视频'), reset: true, new_request: true}); status.textContent = ''; } syncQueue().catch(() => {}); });
+    listen('executing', e => { const id = typeof e.detail === 'object' ? e.detail?.node : e.detail; if (String(id) === String(node.id)) { if (chainController.active) { chainController.refresh(); return; } failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null; liveProgressAt = Date.now(); busy = true; queued = false; updateRunButton(); showProgress(node.freevideoProgress || {label: t('Preparing your video', '正在准备视频'), reset: true, new_request: true}); status.textContent = ''; } syncQueue().catch(() => {}); });
     const progressChanged = e => {
         if (String(e.detail.node) !== String(node.id)) return;
         if (chainController.progress(e.detail)) return;
         progress.updateReport(e.detail);
         if (['failed', 'cancelled'].includes(e.detail.phase) || e.detail.result) {
-            busy = cancelling = false; updateRunButton();
+            liveProgressAt = 0; busy = cancelling = false; updateRunButton();
             if (e.detail.phase === 'cancelled') { hideProgress(); status.textContent = t('Cancelled', '已取消'); }
             else if (e.detail.phase === 'failed') { hideProgress(); status.textContent = t('Generation stopped', '生成已停止'); }
             else if (revealTimer === null) hideProgress();
             return;
         }
-        busy = true; queued = false; updateRunButton(); status.dataset.error = 'false';
+        liveProgressAt = Date.now(); busy = true; queued = false; updateRunButton(); status.dataset.error = 'false';
         if (cancelling) return;
         status.textContent = '';
         showProgress(e.detail);
@@ -1466,7 +1472,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             for (const input of currentNode.inputs || []) pending.push(upstream(currentNode, input.name));
         }
         if (!seen.has(String(e.detail?.node_id))) return;
-        busy = cancelling = false; updateRunButton(); hideProgress(); status.dataset.error = 'true';
+        liveProgressAt = 0; busy = cancelling = false; updateRunButton(); hideProgress(); status.dataset.error = 'true';
         node.freevideoFailureReport = failure.show(e.detail, true, {stage: 'execution', node, graph: app.graph, progress: node.freevideoProgress});
         node.freevideoFailure = errorText(node.freevideoFailureReport);
         status.textContent = t('Generation stopped.', '生成已停止。');
@@ -1474,7 +1480,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     listen('execution_interrupted', e => {
         if (chainController.active && String(e.detail?.node_id) === String(node.id)) { chainController.refresh(); return; }
         if (activePrompt ? e.detail?.prompt_id !== activePrompt : String(e.detail?.node_id) !== String(node.id)) return;
-        busy = cancelling = false; activePrompt = null; updateRunButton(); hideProgress();
+        liveProgressAt = 0; busy = cancelling = false; activePrompt = null; updateRunButton(); hideProgress();
         failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null; status.dataset.error = 'false'; status.textContent = t('Cancelled', '已取消');
     });
     const escape = e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
