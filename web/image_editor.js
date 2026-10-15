@@ -227,7 +227,8 @@ export async function openImageEditor({source = null, name = source || '', targe
     document.body.append(dialog);
     const generation = createImageGeneration({client: imageGenClient || createImageGenClient(api.fetchApi.bind(api)),
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
-        library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options)});
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
+        resumeKey: `${role}|${source || ''}|${name}`});
 
     // ----- tools ----------------------------------------------------------------
     const TOOLS = [
@@ -911,8 +912,8 @@ export async function openImageEditor({source = null, name = source || '', targe
     }
 
     // ----- canvas: shape, orientation, size ----------------------------------------------
-    function setBlankCanvasRatio(ratio) {
-        if (doc.layers.length || generation.state().running) return;
+    function setBlankCanvasRatio(ratio, resumed = false) {
+        if (doc.layers.length || (!resumed && generation.state().running)) return;
         const next = blankDocument(blankSizeForRatio(ratio), ratio);
         followSize(doc, next); deselectQuiet(); commit(next);
     }
@@ -1595,7 +1596,8 @@ export async function openImageEditor({source = null, name = source || '', targe
     dialog.showModal();
     computeLayout();
     renderPanels();
-    select(!doc.layers.length ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
+    if (generation.resumedRatio && !doc.layers.length && generation.resumedRatio !== doc.ratio) setBlankCanvasRatio(generation.resumedRatio, true);
+    select(!doc.layers.length || generation.state().running ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
     (save.disabled ? stage : save).focus();
     // The other fonts load in the background, so switching to one is immediate.
     loadFonts(FONT_KEYS.flatMap(k => [[k, 400], [k, 700]])).catch(error => console.warn('FreeVideo image editor fonts unavailable; using fallback fonts.', error));
