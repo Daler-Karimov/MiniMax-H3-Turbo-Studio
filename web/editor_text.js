@@ -3,13 +3,22 @@
 import * as model from './editor_model.js';
 import {FONT_KEYS} from './fonts.js';
 import {row, button, slider, number, segmented, toggle} from './editor_adjust.js';
-import {isText, isTextTrack, addText, changeText, changeSubtitleStyle, styleOf, activeText, setTextTrack, parseSRT, importSRT, addSubtitles, defaults} from './editor_text_model.js';
+import {isText, isTextTrack, addText, changeText, changeSubtitleStyle, styleOf, activeText, setTextTrack, parseSRT, importSRT, addSubtitles, defaults, cleanStyle, SUBTITLE_DEFAULTS} from './editor_text_model.js';
 import {loadCoverage, loadTextFonts, textFontStack, missingGlyphs, missingHint, overTwoHint, textLayout, drawText} from './editor_text_layout.js';
 import {createSelectionActions, isTyping} from './editor_select.js';
 import {plan} from './editor_geometry.js';
 import {isolateDialogKeys} from './dialog_keys.js';
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
 const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const PRESET_KEY='freevideo.subtitle-presets',PRESET_LIMIT=6;
+// Saved subtitle looks live in this browser, so any project can reuse them; a bad or missing store is an empty list.
+function readPresets(){
+    let saved;try{saved=JSON.parse(localStorage.getItem(PRESET_KEY));}catch{return [];}
+    if(!Array.isArray(saved))return [];
+    return saved.flatMap(value=>{try{return [cleanStyle(value,'subtitle')];}catch{return [];}}).slice(0,PRESET_LIMIT);
+}
+function writePresets(list){try{localStorage.setItem(PRESET_KEY,JSON.stringify(list));}catch{/* The look still applies without storage. */}}
+const sameStyle=(a,b)=>JSON.stringify(Object.entries(cleanStyle(a,'subtitle')).sort())===JSON.stringify(Object.entries(cleanStyle(b,'subtitle')).sort());
 export function createEditorText({element,state,t,actions,adjust,player,toolbar,exportBox,tracksHost}) {
     const frame=player.element, canvas=el('canvas','fv-ed-text-canvas'), boundsLayer=el('div','fv-ed-text-handles');
     canvas.setAttribute('aria-hidden','true'); frame.append(canvas,boundsLayer);
@@ -115,7 +124,11 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         host.append(row(t('Content','内容'),content),warning,overflow);
         const duration=number({min:1/24,max:1e7/24,step:1/24,label:t('Duration','时长'),onChange:v=>{const c=selectedText();if(c)apply(t('Duration','时长'),r=>changeText(r,c.id,{frames:Math.max(1,Math.round(v*24))}));}});
         const durationRow=row(t('Duration','时长'),duration);
-        if(kind==='subtitle')host.append(durationRow,el('hr'),el('strong','fv-ed-subtitle-style-title',t('Style for all subtitles','全部字幕的样式')));
+        let presetRow=null;
+        if(kind==='subtitle'){
+            presetRow=el('div','fv-ed-style-presets');
+            host.append(durationRow,el('hr'),el('strong','fv-ed-subtitle-style-title',t('Style for all subtitles','全部字幕的样式')),presetRow);
+        }
         const font=el('select','fv-ed-text-font');font.setAttribute('aria-label',t('Font','字体'));
         for(const key of FONT_KEYS){const option=el('option','',names[key]);option.value=key;option.style.fontFamily=textFontStack(key);font.append(option);}
         font.onchange=()=>modifyStyle({font:font.value});host.append(row(t('Font','字体'),font));
@@ -161,8 +174,36 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             if(e.key==='Escape'){e.preventDefault();finishContent();content.blur();}
             else if(kind==='subtitle' && e.key==='Enter' && !e.shiftKey && !e.isComposing){e.preventDefault();const c=selectedText();if(!c||!model.find(record(),c.id)?.text.trim())return;commitDraft();add('subtitle',c.start+c.frames);content.value='';}
         };
-        panels.set(kind,{content,warning,overflow,font,size,sizeNumber,custom,backing,bold,align,position,duration,fade,host});
+        panels.set(kind,{presetRow,content,warning,overflow,font,size,sizeNumber,custom,backing,bold,align,position,duration,fade,host});
         updatePanel(kind);
+    }
+    // One press saves the subtitle look as a preset; one press on a preset sets it on every subtitle.
+    function renderPresets(host,current,replaced=false){
+        const list=readPresets(),found=list.findIndex(value=>sameStyle(value,current));
+        host.replaceChildren();
+        list.forEach((value,index)=>{
+            const full={...SUBTITLE_DEFAULTS,...value},chip=el('span','fv-ed-preset');chip.dataset.current=String(index===found);
+            const apply_=button('Aa',{onClick:()=>modifyStyle({...SUBTITLE_DEFAULTS,...value})});apply_.classList.add('fv-ed-preset-apply');
+            apply_.setAttribute('aria-label',t(`Use style ${index+1}`,`套用样式 ${index+1}`));apply_.title=t(`Use style ${index+1}`,`套用样式 ${index+1}`);
+            apply_.style.fontFamily=textFontStack(full.font);apply_.style.color=full.color;
+            const light=parseInt(full.color.slice(1,3),16)*.3+parseInt(full.color.slice(3,5),16)*.59+parseInt(full.color.slice(5,7),16)*.11>140;
+            apply_.style.backgroundColor=full.backing==='box'?'#000000':light?'#2a2f38':'#e5e7eb';
+            if(full.backing==='outline')apply_.style.textShadow=light?'0 0 2px #000, 0 0 2px #000':'0 0 2px #fff, 0 0 2px #fff';
+            const remove=button('×',{onClick:()=>{const next=readPresets();next.splice(index,1);writePresets(next);renderPresets(host,current);}});
+            remove.classList.add('fv-ed-preset-remove');remove.setAttribute('aria-label',t(`Delete style ${index+1}`,`删除样式 ${index+1}`));remove.title=t('Delete','删除');
+            chip.append(apply_,remove);host.append(chip);
+        });
+        const save=button(t('Save style','保存样式'),{onClick:()=>{
+            // A full list gives up its oldest look for the new one, and says so for a moment.
+            const next=readPresets(),full=next.length>=PRESET_LIMIT;if(full)next.shift();
+            next.push(cleanStyle(current,'subtitle'));writePresets(next);renderPresets(host,current,full);}});
+        save.classList.add('fv-ed-preset-save');
+        if(found>=0){save.disabled=true;save.title=t('Already saved','已保存过');}
+        host.append(save);
+        if(replaced){
+            const note=el('span','fv-ed-preset-note',t('Replaced the oldest','已替换最早的一套'));note.setAttribute('role','status');host.append(note);
+            setTimeout(()=>note.remove(),2000);
+        }
     }
     function updatePanel(kind){
         const p=panels.get(kind),c=selectedText();if(!p||!c||c.text_kind!==kind)return;
@@ -172,6 +213,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         if(!draft){p.size.value=s.size*1080;p.sizeNumber.value=Math.round(s.size*1080);p.custom.value=s.color;}
         p.backing.value=s.backing;p.position.value=kind==='text'?s.y:s.position;p.duration.value=c.frames/24;
         if(p.bold){p.bold.value=s.bold;p.align.value=s.align;p.fade.value=s.fade;}
+        if(p.presetRow&&!draft)renderPresets(p.presetRow,s);
         updateWarnings();
     }
     for(const kind of ['text','subtitle'])adjust.register(kind,{render:host=>buildPanel(host,kind),update:()=>updatePanel(kind)});

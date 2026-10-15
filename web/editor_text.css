@@ -40,3 +40,11 @@
 .fv-ed-track-head[data-text-track=true]>svg{display:none}
 
 .fv-ed-text-notice{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;cursor:pointer}
+.fv-ed-style-presets{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.fv-ed-preset{position:relative;display:inline-flex}
+.fv-editor .fv-ed-preset-apply{width:40px;height:32px;padding:0;font-size:16px;font-weight:700;border:1px solid var(--fv-border);border-radius:4px}
+.fv-ed-preset[data-current=true] .fv-ed-preset-apply{outline:2px solid var(--fv-accent);outline-offset:1px}
+.fv-ed-preset-note{font-size:12px;color:var(--fv-muted)}
+.fv-editor .fv-ed-preset-remove{position:absolute;top:-6px;right:-6px;width:16px;height:16px;min-width:0;padding:0;font-size:11px;line-height:1;border-radius:50%;opacity:0;background:var(--fv-card);border:1px solid var(--fv-border);color:var(--fv-ink)}
+.fv-ed-preset:hover .fv-ed-preset-remove,.fv-ed-preset:focus-within .fv-ed-preset-remove{opacity:1}
+.fv-editor .fv-ed-preset-save{height:32px;padding:0 10px;font-size:12px}
