@@ -1,41 +1,74 @@
 {
   "schema": 1,
-  "product_version": "0.4.5",
+  "product_version": "0.4.6",
   "en": {
-    "summary": "Generation progress now says what is happening with real percentages, image generation explains failures and waits in line behind running work, and the creation panel keeps your settings and media after a refresh. The editing view gains a first-open guide, smoother playback and clearer continued parts, prompts suggest camera and motion words, and many smaller issues are fixed.",
+    "summary": "Long videos keep the same voices and people from part to part and no longer pause where parts join, and a new character library lets you create characters, generate their pictures and bring them into a prompt with @. A small preview appears while a video is generated, a waiting video can be moved to the front of the queue, and image generation, the editing view and the launcher get many fixes.",
     "changes": [
-      "Progress: generation progress names what is happening during loading, decoding and saving, shows real percentages, and no longer stays on the same line for minutes; the upscale before the second pass keeps reporting while it runs. When a longer run finishes in a background tab, the tab title flashes and a short sound plays; desktop notifications can be turned on in the settings.",
-      "Image generation: a failure says why on the card and offers the diagnostic report; a request made while the graphics card is busy waits in line; a size that does not fit memory is made smaller automatically; model loading shows progress by what has actually been read; the panel tells a model that is still downloading from one that is not installed; Generate with an empty description says what is missing. Graphics memory is released 45 seconds after the last picture when nothing else is waiting.",
-      "Creation panel: settings, prompt and media are kept after a refresh, undo and redo; an empty duration, size, seed or step count is asked for instead of reusing an old value; the duration control explains lengths longer than one run; part-by-part videos show cancelled, resumed and finished states after a refresh and say why a part failed; result actions, sharing and the second pass report their progress and failures.",
-      "Prompts: while you type, the start of a camera or motion word lists matching words in English or Chinese; these suggestions and @ mentions open under the line being typed.",
-      "Editing view: a short first-open guide that can be skipped; smoother timeline playback, with the next clip made ready before each cut; a failed part says which step went wrong and offers the diagnostic report; export failures say why (missing font characters, a missing or unreadable source, a full disk). Edit, Create and Autopilot in the view switch open even when no node is selected.",
-      "Editing view timeline: a part that continues the one before it shows a link mark; continued parts keep the ten-second minimum while dragging and fill to ten seconds on release; a part waiting in line still says Queued after a reload; a reopened edit fits its content; the description box and Generate button stay in place while a part is made; on phone-width windows the toolbar stays on one row, with the rest in a More menu.",
-      "LoRA: each LoRA can carry its own trigger words, added to the prompt whenever it is selected and removed when it is not, in Create, Agent and the editing view. The list keeps the three most recently used LoRAs at the top and has a Clear button.",
-      "Agent: tools no longer stall on the first call on Windows; conversations can be deleted from the row menu; drafts and failed messages stay after switching conversations, and a retry after an unclear failure no longer sends the message twice. Finished pictures have an Open button with zoom and drag, past chats show a small cover from their first finished video, screenplay problems name the field at fault, and take sheets show one frame per second unless a count is given; on narrow windows the Autopilot header keeps Settings, and the connection shows as a dot.",
-      "Launcher and offline packages: actions requested while background work is running start once it finishes or say why they are unavailable; update failures tell a full disk from a network problem; offline package imports check file contents before finishing and no longer clash with a cleanup running at the same time.",
-      "Settings: an empty manual graphics-memory value is reported instead of being ignored, compatibility saves no longer overlap and show their progress, and the placement test shows its progress and Stop button as soon as it starts; the setup Stop button appears only while something is running; the additional model folders box is taller and its save status sits beside the button, in a warning colour when a folder cannot be found.",
-      "Windows int8: the second pass on large videos chooses its group size from the graphics memory actually available, so it no longer shows a memory warning and retries.",
-      "Browser page translation leaves the product name as written."
+      "Long videos: voices keep the same sound and loudness from part to part, the pause and the return to the same pose where parts with dialogue join are gone, and continued parts also receive the characters' pictures. A long video made in one request gives each part its own share of the description, and each part's description can be read and edited; if the description cannot be split, every part uses the whole description and the reason is shown. Agent can also write one description per part.",
+      "Characters: the material section has a character row where you add, edit and delete characters, each with a front picture and up to five more views. The AI tab of the character dialog generates the front, three-quarter, side, back and face pictures one by one, with progress, stop and retry. Type @ in the prompt to bring a character's pictures in as references. In Agent shots, continuing parts carry the characters' pictures too: two when one person is in the shot, one each when there are more.",
+      "Continue from video: first and last frame images are used as reference pictures, and settings that cannot continue a video are adjusted automatically with a short note instead of stopping with an error. In the editing view, a part that continues the one before keeps your reference pictures, so people stay the same; first and last frames apply only to a part that starts fresh.",
+      "Generation: from the third sampling step, a small picture of the frames being made appears in the progress block, in both passes. The creation panel and the bottom bar show the same estimated time, and once a run goes past it both say it is taking longer than expected. The main button stays on Add to queue while a video is running. Above Generate, the creation panel lists what the current settings will still download and which LoRA files cannot be found.",
+      "Queue: from the second waiting video on, each row has a Move to front button. The row is greyed until the server confirms; the running video and the parts of a continuous chain are never moved. The waiting list is shown in queue order and stays inside narrow windows.",
+      "Image generation: when graphics memory runs out, the picture is retried one size smaller until it fits, and the size made is shown. After the image pack is moved or copied it is checked again instead of being reported as missing and downloaded again. A page refresh resumes the running image task at its exact canvas size, and a request that arrives while the idle image worker is closing runs on a fresh worker instead of failing.",
+      "Editing view: a subtitle look can be saved as a style and applied to every subtitle in one press; a range drawn on the timeline starts exactly where it is pressed; a queued part that is cancelled, or left unstarted when a run fails, shows as stopped, and after a cancel is accepted the bar reads Stopping; a failed save before export names the reason, and choosing media without sound for Replace audio says so.",
+      "Install and launcher: Settings show right away what an installation check or install is doing, and the launcher shows counts and speed while it finds, checks and copies existing models. The one-time background kernel compile after an install or update starts about 5 seconds after ComfyUI opens instead of 30. Reopening the creation panel from the launcher keeps the previous project's media and connections. On macOS, the update reminder says to download the new version and replace the current one, and its button opens the download page.",
+      "AI autopilot: every button responds at once and retries before giving up, and a message sent while the agent is not listening goes out when it listens again. Failed tasks, pictures, short dramas and character cards name the step that failed and offer the same report download and submit dialog as video. The character library keeps every picture of cards without a front picture, tells characters that share a name apart, and stays hidden while the Agent interface is off.",
+      "Optional inputs left empty or written as \"None\" or \"null\" by older workflows or scripts are no longer treated as real values, so an ordinary generation is no longer sent down the second-pass route."
     ]
   },
   "zh": {
-    "summary": "生成进度会写明正在做什么，百分比按实际进度走；图像生成失败时会说明原因，显卡忙时自动排队；创作面板刷新后保留设置和素材。剪辑视图加了首次打开的引导，播放更顺，接续的段更清楚；写提示词时会提示运镜和动作词；另修复了多处小问题。",
+    "summary": "长视频各段的人声和人物保持一致，段与段相接处不再停顿；新增角色库，可以新建角色、用 AI 生成角色图片，并在描述里用 @ 引用。生成视频时进度块里会显示正在生成的画面小预览，等待中的视频可以排到最前；图像生成、剪辑视图和启动器也修复了多处问题。",
     "changes": [
-      "进度：生成进度会写明载入、解码、保存各在做什么，百分比按实际进度走，不再长时间停在同一句；第二遍前的放大过程中进度持续更新。较长的生成在后台标签页完成时，标签标题会闪烁并响一声短提示音；在设置里可以打开桌面通知。",
-      "图像生成：失败时卡片上写明原因，并可提交诊断报告；显卡忙时发起的生成自动排队；尺寸超出显存时自动缩小；模型载入进度按实际读取量显示；能区分模型“下载中”和“未安装”；描述为空时点生成会提示缺什么。最后一张图完成 45 秒后，如果没有别的任务在等，就释放显存。",
-      "创作面板：刷新、撤销和重做后，设置、提示词和素材都会保留；时长、尺寸、种子或步数留空时会提示填写，不再沿用旧值；时长控件会说明超过一次能生成的长度时怎么处理；分段生成的视频刷新后能显示已取消、已继续和已完成，失败的段会说明原因；结果操作、分享和第二遍都会显示进度和失败原因。",
-      "提示词：输入运镜或动作词的开头时，会列出匹配的词，中英文都可以；这些候选和 @ 选择器跟在正在输入的那一行下面。",
-      "剪辑视图：首次打开时有一段简短引导，可以跳过；时间线播放更顺，换段前先把下一段准备好；某一段失败时说明是哪一步出的错，并可提交诊断报告；导出失败会说明原因（字体缺字、源文件缺失或读不出、磁盘已满）。没有选中节点时，视图切换里的剪辑、创作、全自动也能打开。",
-      "剪辑视图时间线：接续上一段的部分带链环标记；接着生成的每一段在拖动时就保证至少 10 秒，松手后自动补齐；排队的段刷新后仍显示“排队中”；重新打开的作品按内容适配缩放；生成一段时描述框和“生成”按钮留在原位；手机宽度的窗口里工具栏保持一行，其余放进“更多”菜单。",
-      "LoRA：每个 LoRA 可以带自己的触发词，选中时自动加进提示词，取消时去掉，创作、Agent 和剪辑视图都适用。列表把最近用过的三个放在最上面，并新增“清除”按钮。",
-      "Agent：Windows 上第一次调用工具不再卡住；可以在对话行的菜单里删除对话；切换对话后草稿和发送失败的消息仍在，失败原因不明时重试不会把消息发两遍。做好的图片可以点“打开”放大、拖动查看；历史对话显示第一段做成的视频的小封面；剧本有问题时写明是哪个字段；审片拼图默认每秒一帧；窄窗口下全自动页顶栏保留“设置”，连接状态显示为圆点。",
-      "启动器和离线包：后台任务进行中点的操作，会在任务结束后执行一次，或者说明暂时不能用的原因；更新失败时区分磁盘已满和网络问题；导入离线包会先核对文件内容再完成，不再和同时进行的清理冲突。",
-      "设置：手动显存留空时会提示，不再被忽略；兼容性设置的保存不会重叠，并显示进度；放置测试一开始就显示进度和停止按钮；安装页的停止按钮只在运行时出现；其他模型目录输入框加高，保存结果显示在按钮旁，找不到目录时用警示色。",
-      "Windows int8：生成较大的视频时，第二遍按实际可用的显存选分组大小，不再弹显存提示后重试。",
-      "浏览器翻译页面时不再翻译产品名。"
+      "长视频：人声在各段之间保持同样的音色和音量；有对话的段相接处不再停顿，人物也不再每段回到同一个姿势；接续的段也会带上人物参考图。一次请求生成的长视频，每段只用描述里属于自己的部分，每段的描述可以查看和修改；描述无法拆分时，各段都用完整描述，并说明原因。Agent 也可以为每段分别写描述。",
+      "角色：素材区新增“角色”一行，可以新建、编辑和删除角色，每个角色有一张正面图和最多五张其他角度图。角色对话框的“AI 生成”会逐张生成正面、四分之三、侧面、背面和脸部五张图，可看进度、停止和重试。在描述里输入 @ 可以引用角色，它的图片自动加入参考素材。Agent 拍片时，接续的镜头也带上人物图片：只有一个人时带两张，多人时每人一张。",
+      "视频接续：首帧和尾帧图会用作参考图；不能用于接续的设置会自动调整并附一句说明，不再直接报错停止。剪辑视图里接着上一段生成的段会保留参考图，人物保持一致；首尾帧只用于重新开始的段。",
+      "生成：从采样第 3 步起，进度块里会显示一张正在生成的画面小预览，两遍采样都有。创作面板和底栏显示同一个预计时间，超过预计后两处都改为“比预计久”。视频生成中主按钮保持“加入队列”。“生成”按钮上方会列出当前设置还需要下载的内容，以及找不到的 LoRA 文件。",
+      "队列：从第 2 个等待中的视频起，每行有“排到最前”按钮。点击后这一行置灰，服务端确认后按新顺序显示；正在生成的视频和连续生成的各段不会被移动。等待列表按队列顺序显示，在窄窗口里也不会被截掉。",
+      "图像生成：显存不足时自动缩小一档重试，直到能出图，并显示实际尺寸。图像包被移动或复制后会先重新校验，不再误报缺失、要求重新下载。刷新页面后会按原画布尺寸接回正在进行的图像任务；空闲的图像进程正在关闭时发来的请求会在新进程上运行，不再失败。",
+      "剪辑视图：字幕样式可以存为预设，一键套用到所有字幕；在时间线上画范围，起点就是按下的位置；取消排队中的段，或整条失败时还没开始的段，会显示为已停止，取消生效后底栏显示“正在停止”；导出前保存失败会说明原因；替换声音时选了没有声音的素材会提示。",
+      "安装和启动器：设置里检查安装、开始安装时马上显示正在做什么；启动器复用已有模型时，显示查找、校验和复制的项数与速度。安装或更新后的一次性后台内核编译在 ComfyUI 打开约 5 秒后开始（原来 30 秒）。从启动器重新打开创作面板时，上次工程的素材和连线会保留。Mac 上的更新提醒写明“下载新版后替换当前版本”，按钮会打开下载页。",
+      "AI 全自动：每个按钮点了都会马上响应，失败会先重试；Agent 没在接收时发出的消息，会在它恢复后发出。任务、图片、短剧和角色卡失败时写明是哪一步出的错，并和视频一样可以下载和提交诊断报告。角色库里没有正面图的角色卡会保留全部图片，同名角色可以区分，Agent 界面关闭时角色库也隐藏。",
+      "旧工作流或脚本把可选输入留空、写成 \"None\" 或 \"null\" 时，不再被当成真实值，普通生成也不会再被误当作第二遍处理。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.5",
+      "en": {
+        "summary": "Generation progress now says what is happening with real percentages, image generation explains failures and waits in line behind running work, and the creation panel keeps your settings and media after a refresh. The editing view gains a first-open guide, smoother playback and clearer continued parts, prompts suggest camera and motion words, and many smaller issues are fixed.",
+        "changes": [
+          "Progress: generation progress names what is happening during loading, decoding and saving, shows real percentages, and no longer stays on the same line for minutes; the upscale before the second pass keeps reporting while it runs. When a longer run finishes in a background tab, the tab title flashes and a short sound plays; desktop notifications can be turned on in the settings.",
+          "Image generation: a failure says why on the card and offers the diagnostic report; a request made while the graphics card is busy waits in line; a size that does not fit memory is made smaller automatically; model loading shows progress by what has actually been read; the panel tells a model that is still downloading from one that is not installed; Generate with an empty description says what is missing. Graphics memory is released 45 seconds after the last picture when nothing else is waiting.",
+          "Creation panel: settings, prompt and media are kept after a refresh, undo and redo; an empty duration, size, seed or step count is asked for instead of reusing an old value; the duration control explains lengths longer than one run; part-by-part videos show cancelled, resumed and finished states after a refresh and say why a part failed; result actions, sharing and the second pass report their progress and failures.",
+          "Prompts: while you type, the start of a camera or motion word lists matching words in English or Chinese; these suggestions and @ mentions open under the line being typed.",
+          "Editing view: a short first-open guide that can be skipped; smoother timeline playback, with the next clip made ready before each cut; a failed part says which step went wrong and offers the diagnostic report; export failures say why (missing font characters, a missing or unreadable source, a full disk). Edit, Create and Autopilot in the view switch open even when no node is selected.",
+          "Editing view timeline: a part that continues the one before it shows a link mark; continued parts keep the ten-second minimum while dragging and fill to ten seconds on release; a part waiting in line still says Queued after a reload; a reopened edit fits its content; the description box and Generate button stay in place while a part is made; on phone-width windows the toolbar stays on one row, with the rest in a More menu.",
+          "LoRA: each LoRA can carry its own trigger words, added to the prompt whenever it is selected and removed when it is not, in Create, Agent and the editing view. The list keeps the three most recently used LoRAs at the top and has a Clear button.",
+          "Agent: tools no longer stall on the first call on Windows; conversations can be deleted from the row menu; drafts and failed messages stay after switching conversations, and a retry after an unclear failure no longer sends the message twice. Finished pictures have an Open button with zoom and drag, past chats show a small cover from their first finished video, screenplay problems name the field at fault, and take sheets show one frame per second unless a count is given; on narrow windows the Autopilot header keeps Settings, and the connection shows as a dot.",
+          "Launcher and offline packages: actions requested while background work is running start once it finishes or say why they are unavailable; update failures tell a full disk from a network problem; offline package imports check file contents before finishing and no longer clash with a cleanup running at the same time.",
+          "Settings: an empty manual graphics-memory value is reported instead of being ignored, compatibility saves no longer overlap and show their progress, and the placement test shows its progress and Stop button as soon as it starts; the setup Stop button appears only while something is running; the additional model folders box is taller and its save status sits beside the button, in a warning colour when a folder cannot be found.",
+          "Windows int8: the second pass on large videos chooses its group size from the graphics memory actually available, so it no longer shows a memory warning and retries.",
+          "Browser page translation leaves the product name as written."
+        ]
+      },
+      "zh": {
+        "summary": "生成进度会写明正在做什么，百分比按实际进度走；图像生成失败时会说明原因，显卡忙时自动排队；创作面板刷新后保留设置和素材。剪辑视图加了首次打开的引导，播放更顺，接续的段更清楚；写提示词时会提示运镜和动作词；另修复了多处小问题。",
+        "changes": [
+          "进度：生成进度会写明载入、解码、保存各在做什么，百分比按实际进度走，不再长时间停在同一句；第二遍前的放大过程中进度持续更新。较长的生成在后台标签页完成时，标签标题会闪烁并响一声短提示音；在设置里可以打开桌面通知。",
+          "图像生成：失败时卡片上写明原因，并可提交诊断报告；显卡忙时发起的生成自动排队；尺寸超出显存时自动缩小；模型载入进度按实际读取量显示；能区分模型“下载中”和“未安装”；描述为空时点生成会提示缺什么。最后一张图完成 45 秒后，如果没有别的任务在等，就释放显存。",
+          "创作面板：刷新、撤销和重做后，设置、提示词和素材都会保留；时长、尺寸、种子或步数留空时会提示填写，不再沿用旧值；时长控件会说明超过一次能生成的长度时怎么处理；分段生成的视频刷新后能显示已取消、已继续和已完成，失败的段会说明原因；结果操作、分享和第二遍都会显示进度和失败原因。",
+          "提示词：输入运镜或动作词的开头时，会列出匹配的词，中英文都可以；这些候选和 @ 选择器跟在正在输入的那一行下面。",
+          "剪辑视图：首次打开时有一段简短引导，可以跳过；时间线播放更顺，换段前先把下一段准备好；某一段失败时说明是哪一步出的错，并可提交诊断报告；导出失败会说明原因（字体缺字、源文件缺失或读不出、磁盘已满）。没有选中节点时，视图切换里的剪辑、创作、全自动也能打开。",
+          "剪辑视图时间线：接续上一段的部分带链环标记；接着生成的每一段在拖动时就保证至少 10 秒，松手后自动补齐；排队的段刷新后仍显示“排队中”；重新打开的作品按内容适配缩放；生成一段时描述框和“生成”按钮留在原位；手机宽度的窗口里工具栏保持一行，其余放进“更多”菜单。",
+          "LoRA：每个 LoRA 可以带自己的触发词，选中时自动加进提示词，取消时去掉，创作、Agent 和剪辑视图都适用。列表把最近用过的三个放在最上面，并新增“清除”按钮。",
+          "Agent：Windows 上第一次调用工具不再卡住；可以在对话行的菜单里删除对话；切换对话后草稿和发送失败的消息仍在，失败原因不明时重试不会把消息发两遍。做好的图片可以点“打开”放大、拖动查看；历史对话显示第一段做成的视频的小封面；剧本有问题时写明是哪个字段；审片拼图默认每秒一帧；窄窗口下全自动页顶栏保留“设置”，连接状态显示为圆点。",
+          "启动器和离线包：后台任务进行中点的操作，会在任务结束后执行一次，或者说明暂时不能用的原因；更新失败时区分磁盘已满和网络问题；导入离线包会先核对文件内容再完成，不再和同时进行的清理冲突。",
+          "设置：手动显存留空时会提示，不再被忽略；兼容性设置的保存不会重叠，并显示进度；放置测试一开始就显示进度和停止按钮；安装页的停止按钮只在运行时出现；其他模型目录输入框加高，保存结果显示在按钮旁，找不到目录时用警示色。",
+          "Windows int8：生成较大的视频时，第二遍按实际可用的显存选分组大小，不再弹显存提示后重试。",
+          "浏览器翻译页面时不再翻译产品名。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.4",
       "en": {
@@ -225,37 +258,6 @@
           "生成被意外中断一次后，之后的生成不再因此变慢：只有连续两次中断或显卡报错，才会自动提高兼容档位；之后连续三次正常完成，档位会自动调回。",
           "生成过程中关掉 FreeVideo，现在会取消这次生成，不算作中断；兼容档位被自动提高时，生成进度上会说明这一点，并显示再完成几次后会加快。",
           "创作面板“画幅与时长”下面新增“可生成范围”：展开是一张图，显示可以生成的画面大小和时长；鼠标移到图上会显示预计用时，点击图中的位置会填入对应的大小和时长。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.3.24",
-      "en": {
-        "summary": "Compiling after an update now runs in the background while FreeVideo is idle, and Windows PCs with less RAM and 8 GB RTX 30 cards generate faster; Repair handles more cases and offline installations update their engine with the launcher.",
-        "changes": [
-          "After an update, an installation, a repair or a graphics driver update, FreeVideo compiles in the background while it is idle, which takes two to three minutes, and the first video after that no longer waits for compiling; the background work stops as soon as a video starts.",
-          "Clearing the system's temporary files no longer slows the next video: compiled results are now kept in the FreeVideo folder.",
-          "On Windows PCs with less RAM, each step reads less from the drive, and the second pass of a two-pass video starts sooner; 8 GB RTX 30-series cards also run the second pass of full-size videos faster.",
-          "With prompt enhancement on, a rewrite starts 3–4 seconds sooner. The background preparation uses about 0.7 GiB of RAM and no GPU memory, and it stops when a video starts generating.",
-          "Repair also restores ComfyUI packages whose files were deleted or changed, and replaces model files that differ from the tested version, keeping the original under a new name. When the text encoder folder holds a same-named file of a different size, generation uses the tested one.",
-          "FreeVideo installed from an offline package now updates its engine with the launcher without downloading; an older launcher no longer overwrites a newer FreeVideo, and both versions are shown when they differ.",
-          "When a browser extension interferes with FreeVideo, the error card names the extension and lists ways to fix it.",
-          "View licenses in the license step lists each license you accept, and each one opens; in installations from an offline package the full texts open from this computer, without a connection.",
-          "Fixes: after an engine update, commands run with the engine's own Python use the new FreeVideo; on Linux, Install / repair completes when the uv tool in the installation folder is a link to another location."
-        ]
-      },
-      "zh": {
-        "summary": "更新后的编译改在空闲时于后台完成，内存较小的 Windows 电脑和 8 GB 的 RTX 30 显卡生成更快；“修复”能处理更多情况，离线安装也能随启动器更新引擎。",
-        "changes": [
-          "更新、安装、修复或更新显卡驱动后，FreeVideo 会在空闲时于后台完成编译，约两三分钟，之后的第一次生成不用再等编译；开始生成时后台编译会立即停止。",
-          "清理系统临时文件后，下一次生成不再变慢：编译结果改存在 FreeVideo 的目录里。",
-          "内存较小的 Windows 电脑上，生成时每一步从硬盘读取的数据更少，两遍生成的第二遍也开始得更快；8 GB 的 RTX 30 系列显卡上，全尺寸视频的第二遍更快。",
-          "开启提示词增强时，改写开始前少等 3–4 秒。为此 FreeVideo 会在后台提前做好准备，约占 0.7 GiB 内存，不占显存，开始生成视频时自动退出。",
-          "“修复”也会补回 ComfyUI 环境里被删除或改动的包，并把和测试版本不同的模型文件改名保留、换回测试过的版本。生成时如果文本编码器目录里有同名但大小不同的文件，会改用测试过的那份。",
-          "用离线整合包装的 FreeVideo 也会随启动器更新引擎，不用下载；旧启动器不再覆盖新版 FreeVideo，两者版本不同时会分别显示。",
-          "浏览器扩展干扰 FreeVideo 时，出错卡片会写出是哪个扩展，并给出解决办法。",
-          "许可确认里的“查看许可证”会列出要同意的每一项许可，每项都能打开；用离线整合包安装时打开的是本机全文，断网也能看。",
-          "修复：引擎更新后，用引擎自带 Python 运行的命令也会用新版 FreeVideo；Linux 上安装目录里的 uv 被换成链接时，“安装 / 修复”也能完成。"
         ]
       }
     }
