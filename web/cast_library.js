@@ -1,4 +1,5 @@
 import {agentGet, agentPost, agentSend} from './agent_session.js';
+import {agentInterfaceEnabled} from './agent_connect.js';
 
 // The optional generator owns its UI and job lifecycle; keep its contract here.
 async function mountGenerator(options) {
@@ -28,6 +29,9 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
     let rows = [], mentioned = new Set(), disposed = false, request = 0, current = null, broadcasting = false;
     const subscribers = new Set();
     const element = el('div', 'fv-cast-library');
+    // The row shows, and the page session is asked for, only once /freevideo/agent says the interface is on.
+    let available = false; element.hidden = true;
+    const probe = agentInterfaceEnabled(api).then(on => { available = on && !disposed; element.hidden = !available; return available; });
     const heading = el('span', 'fv-cast-heading', text('Characters', '角色'));
     const avatars = el('div', 'fv-cast-avatars');
     const add = button('fv-cast-add', '+', () => openDialog());
@@ -61,7 +65,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         }
     }
     async function refresh() {
-        if (disposed) return rows;
+        if (disposed || !await probe) return rows;
         const serial = ++request;
         const data = await value(await agentGet(api, '/freevideo/agent/cast?kind=character&limit=200'));
         if (!disposed && serial === request) {
@@ -81,10 +85,10 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
     }
 
     function openDialog(id = null) {
-        if (disposed) return;
+        if (disposed || !available) return;
         current?.close();
         let closed = false, loading = !!id, saving = false, revision, active = 'upload';
-        let generator = null, aiState = {busy: false, done: false}, deleteTimer = null, confirming = false;
+        let generator = null, aiState = {busy: false, done: false}, deleteTimer = null, confirming = false, frontless = false;
         const slots = Array(6).fill(null), slotUI = [];
         const dialog = el('dialog', 'fv-cast-dialog');
         const top = el('div', 'fv-cast-top');
@@ -123,7 +127,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             name.disabled = busy; remove.disabled = busy;
             uploadTab.disabled = aiTab.disabled = busy;
             save.disabled = busy || aiBusy() || !name.value.trim()
-                || (active === 'upload' ? !slots[0] : !aiState.done);
+                || (active === 'upload' ? !(frontless ? slots.some(Boolean) : slots[0]) : !aiState.done);
             for (let index = 0; index < slotUI.length; index++) {
                 slotUI[index].choose.disabled = busy; slotUI[index].remove.disabled = busy;
             }
@@ -196,9 +200,10 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                 if (closed) return;
                 revision = card.revision; name.value = card.name;
                 for (let i = 0; i < 6; i++) release(i);
-                const front = card.images[0]?.label === 'front';
-                (front ? card.images : [null, ...card.images]).slice(0, 6)
-                    .forEach((picture, index) => { if (picture) slots[index] = {...picture}; });
+                // A card may have no front picture (the API does not require one): all its pictures stay, in order, and
+                // saving does not ask for a front; the front slot is only reserved while there is a front to keep first.
+                frontless = card.images.length > 0 && card.images[0].label !== 'front';
+                card.images.slice(0, 6).forEach((picture, index) => { slots[index] = {...picture}; });
                 slotUI.forEach((_, index) => paint(index));
                 generator?.cancel(); aiState = {busy: false, done: false}; select('upload'); resetDelete();
             } finally { loading = false; if (!closed) sync(); }
@@ -220,7 +225,8 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                     ...(typeof picture.file === 'string' ? {media: picture.file} : {file: picture.file}),
                     label: picture.label || (index ? 'other' : 'front'),
                 }));
-                if (!pictures.length || pictures.length > 6 || !pictures.some(picture => picture.label === 'front'))
+                const frontNeeded = active === 'ai' || !frontless;
+                if (!pictures.length || pictures.length > 6 || (frontNeeded && !pictures.some(picture => picture.label === 'front')))
                     throw new Error(text('Choose a front image and up to five views', '请选择正面图片，最多五张视角图片'));
                 const images = [];
                 for (const picture of pictures) {

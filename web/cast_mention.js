@@ -48,7 +48,9 @@ export function castInRows(rows) {
     const people = new Map();
     (Array.isArray(rows) ? rows : []).forEach((row, index) => {
         if (!enabled(row) || !row.cast?.id || row.role !== 'reference' || !IMAGE.test(row.file || '')) return;
-        const person = people.get(row.cast.id) || {id: row.cast.id, name: row.cast.name || '', description: row.cast.description || '', rows: []};
+        const name = row.cast.name || '';
+        // `handle` is what the text says after the @: the name, or "name (2)" when another present character has the same name.
+        const person = people.get(row.cast.id) || {id: row.cast.id, name, handle: row.cast.handle || name, description: row.cast.description || '', rows: []};
         person.rows.push(index); people.set(row.cast.id, person);
     });
     return [...people.values()];
@@ -56,15 +58,15 @@ export function castInRows(rows) {
 
 // Ids of the characters present in the media list and written in the text, in list order.
 export function mentionedIds(text, rows) {
-    const people = castInRows(rows), names = new Set(mentionRanges(String(text ?? ''), people).map(range => range.name));
-    return people.filter(person => names.has(person.name)).map(person => person.id);
+    const people = castInRows(rows), handles = new Set(mentionRanges(String(text ?? ''), people).map(range => range.name));
+    return people.filter(person => handles.has(person.handle)).map(person => person.id);
 }
 
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Where `@name` of a present character stands in the text; longer names win, an @ right after a word or an address is not
 // a mention (the same rule as the @ list's).
 export function mentionRanges(text, people) {
-    const names = [...new Set(people.map(person => person.name).filter(Boolean))].sort((a, b) => b.length - a.length);
+    const names = [...new Set(people.map(person => person.handle ?? person.name).filter(Boolean))].sort((a, b) => b.length - a.length);
     if (!names.length || !text.includes('@')) return [];
     // A name written in Latin letters does not end in the middle of a longer word ("@Su Wanda" is not "@Su Wan").
     const whole = name => escape(name) + (/[A-Za-z0-9_]$/.test(name) ? '(?![A-Za-z0-9_])' : '');
@@ -92,11 +94,11 @@ export function expandCast(text, rows, {active = true} = {}) {
     let result = '', at = 0;
     for (const range of ranges) {
         result += text.slice(at, range.start); at = range.end;
-        const person = people.find(p => p.name === range.name);
-        if (!active || !person) { result += range.name; continue; }
+        const person = people.find(p => (p.handle ?? p.name) === range.name);
+        if (!active || !person) { result += person ? person.name : range.name; continue; }
         let number = order.indexOf(person) + 1;
         if (!number) {
-            if (order.length >= MAX_PEOPLE) { result += range.name; continue; }
+            if (order.length >= MAX_PEOPLE) { result += person.name; continue; }
             order.push(person); number = order.length;
         }
         result += `<Subject ${number}>`;
@@ -136,10 +138,24 @@ export function mentionState(rows, card, count = cardPictures(card).length) {
     return {ok: true, present: false};
 }
 
+// What the text says after the @ for this card: its name, unless another character in the list already goes by that
+// name (the library allows two cards with one name); then "name (2)", "name (3)" … so each @ points at one card.
+// `pending` maps ids of characters chosen a moment ago, whose rows have not landed yet, to the handle already typed.
+export function mentionHandle(rows, card, pending = new Map()) {
+    const people = castInRows(rows), present = people.find(person => person.id === card.id);
+    if (present) return present.handle;
+    if (pending.has(card.id)) return pending.get(card.id);
+    const taken = new Set([...people.map(person => person.handle), ...pending.values()]);
+    let handle = card.name, number = 1;
+    while (taken.has(handle)) handle = `${card.name} (${++number})`;
+    return handle;
+}
+
 // The media list with the character's pictures appended together, so one range of picture numbers covers them.
-export function withCharacter(rows, card) {
+export function withCharacter(rows, card, typed = '') {
     const list = Array.isArray(rows) ? rows.map(row => ({...row})) : [];
     if (castInRows(list).some(person => person.id === card.id)) return list;
-    const cast = {id: card.id, name: card.name, description: card.description || ''};
+    const handle = typed || mentionHandle(list, card);
+    const cast = {id: card.id, name: card.name, description: card.description || '', ...(handle === card.name ? {} : {handle})};
     return [...list, ...cardPictures(card).map(file => ({file, role: 'reference', enabled: true, cast}))];
 }

@@ -19,7 +19,7 @@ import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed } from './studio_queue.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
-import { castInRows, expandCast, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
+import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
 import { attachMentionOverlay } from './cast_overlay.js';
 import { openCastLibrary } from './cast_source.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
@@ -514,13 +514,14 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const castBlocked = reason => ({frames: t('Not available with first and last frames', '首尾帧不能和角色同时使用'),
         people: t('Up to 3 characters', '最多 3 个角色'), full: t('Up to 32 references', '参考素材最多 32 个'),
         extend: t('Not available when continuing a video', '接着生成时不能使用角色')}[reason] || '');
+    const castPending = new Map();
     function castChoices() {
         if (!castLibrary || linked(node, 'text') || !castAssets()) return [];
         const rows = mediaRows(node);
         return castLibrary.list().filter(card => card.name).map(card => {
             const state = extension.source ? {ok: false, reason: 'extend'}
                 : mentionState(rows, card, Math.min(MAX_PICTURES_EACH, Number(card.images) || 0));
-            return {id: card.id, name: card.name, thumb: card.thumbnail?.file ? view(card.thumbnail.file) : card.thumbnail?.url || '',
+            return {id: card.id, name: card.name, handle: mentionHandle(rows, card, castPending), thumb: card.thumbnail?.file ? view(card.thumbnail.file) : card.thumbnail?.url || '',
                 blocked: state.ok ? '' : castBlocked(state.reason)};
         });
     }
@@ -529,14 +530,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (!castLibrary || extension.source) return false;
         if (castInRows(mediaRows(node)).some(entry => entry.id === person.id)) return true;
         if (!mentionState(mediaRows(node), {id: person.id}, 1).ok) return false;
+        const typed = person.handle || person.name;
+        castPending.set(person.id, typed);
         castLibrary.get(person.id).then(card => {
             if (disposed) return;
             const rows = mediaRows(node), target = castAssets();
             if (!target || !mentionState(rows, card).ok) return;
-            target.field.value = JSON.stringify(withCharacter(rows, card));
+            target.field.value = JSON.stringify(withCharacter(rows, card, typed));
             target.owner.graph?.change?.();
             window.dispatchEvent(new CustomEvent('freevideo-media', {detail: target.owner.id}));
-        }).catch(() => { if (!disposed) { status.dataset.error = 'true'; status.textContent = t('Could not add the character\'s pictures', '无法加入角色的图片'); } });
+        }).catch(() => { if (!disposed) { status.dataset.error = 'true'; status.textContent = t('Could not add the character\'s pictures', '无法加入角色的图片'); } })
+            .finally(() => castPending.delete(person.id));
         return true;
     }
     const references = attachReferencePicker(prompt, {items: () => referenceItems(node), t, view, host: dialog,

@@ -170,7 +170,7 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
         const item = matches[index], selection = range;
         if (item.character) {
             if (item.character.blocked || onCharacter(item.character) === false) return;
-            close(); insert('@' + item.character.name + (/^\s/.test(input.value.slice(selection.end)) ? '' : ' '), selection.start, selection.end); close();
+            close(); insert('@' + (item.character.handle || item.character.name) + (/^\s/.test(input.value.slice(selection.end)) ? '' : ' '), selection.start, selection.end); close();
             return;
         }
         close(); insert(item.token + (/^\s/.test(input.value.slice(selection.end)) ? '' : ' '), selection.start, selection.end); close();
