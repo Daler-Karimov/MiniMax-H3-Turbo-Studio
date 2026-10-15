@@ -5,21 +5,20 @@ from .continuation import (INVALID_FILE, INVALID_FRAMES, LEAD_IN_SAMPLES,
                            LEAD_IN_FADE, LEAD_IN_RATE)
 
 
-# ComfyUI turns an empty string widget into str(None) when a saved workflow or an API
-# client leaves it out, so these spellings all mean "not set". Real paths are untouched.
-EMPTY_TEXT = frozenset(('none', 'null', 'undefined'))
+_EMPTY_TEXT = frozenset(('none', 'null', 'undefined', 'nan'))
 
 
-def optional_text(value):
-    """The one place an optional text input (refine_from, continue_from) is read as set or not.
+def optional_text(value, default=''):
+    """Return an optional text input, or default when it was not given.
 
-    None, blank text and "None"/"null"/"undefined" (any case) become ''; any other
-    value is returned unchanged so later validation still rejects what is not a path.
+    A missing optional widget can arrive as None, a blank string or the word a
+    script or an older workflow wrote for "nothing" ("None", "null",
+    "undefined", "NaN"). Other values are returned unchanged for the caller's
+    own checks, so a real value is never reinterpreted.
     """
-    if value is None:
-        return ''
-    if isinstance(value, str) and (not value.strip() or value.strip().lower() in EMPTY_TEXT):
-        return ''
+    if value is None or isinstance(value, str) and (
+            not value.strip() or value.strip().lower() in _EMPTY_TEXT):
+        return default
     return value
 
 

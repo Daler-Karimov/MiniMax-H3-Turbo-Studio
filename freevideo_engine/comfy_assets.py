@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from . import launcher_bridge
+from .comfy_continuation import optional_text
 from .monitoring import thermal_slowdown, shared_gpu_note, worker_gpu
 from .paths import data_root
 from .support_report import encoder_sizes
@@ -30,6 +31,7 @@ REFERENCE_INPUTS = ('reference', *(f'reference_{i}' for i in range(2, 9)))
 
 def resolve_loras(serialized, names, resolve, previous=None):
     """Resolve a UI stack through Comfy's registered libraries, never raw paths."""
+    serialized = optional_text(serialized, '[]')
     if not isinstance(serialized, str) or len(serialized) > 128 * 1024:
         raise ValueError('Invalid LoRA selection')
     rows = json.loads(serialized)
@@ -64,6 +66,7 @@ def media_kind(filename):
 
 
 def resolve_assets(serialized, input_directory):
+    serialized = optional_text(serialized, '[]')
     if not isinstance(serialized, str) or len(serialized) > 128 * 1024:
         raise ValueError('Invalid media selection')
     rows = json.loads(serialized)

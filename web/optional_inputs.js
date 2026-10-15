@@ -4,12 +4,14 @@
 // request. Keep each of them to a value the server accepts.
 const DEFAULTS = {refine_from: '', continue_from: '', frames: 0, first_frame_reference: false};
 
-// Comfy turns a missing text value into the string "None" on its way to the server,
-// so those spellings are an unset path here too. Mirrors optional_text in the engine.
-function optionalText(value) {
+// The words a script, an older workflow or String(null) leaves behind for "not given".
+const EMPTY_WORDS = new Set(['none', 'null', 'undefined', 'nan']);
+
+// Text of an optional input, or '' when it was not given.
+export function optionalText(value) {
     if (typeof value !== 'string') return '';
-    const text = value.trim().toLowerCase();
-    return !text || ['none', 'null', 'undefined'].includes(text) ? '' : value;
+    const text = value.trim();
+    return !text || EMPTY_WORDS.has(text.toLowerCase()) ? '' : value;
 }
 
 export function optionalInputValue(name, value) {

@@ -26,6 +26,7 @@ import {createBlockNotes, describedTrack} from './editor_notes.js';
 import {createFirstRunGuide} from './first_run_guide.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
+import {optionalText} from './optional_inputs.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -1227,7 +1228,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                         has_video: true, has_audio: true, path: work.video, missing: false, thumbnail: '/freevideo/library/thumbnail?' + new URLSearchParams({id})}});
                 }
             } else {
-                let id; try { id = localStorage.getItem('fv-editor-last'); } catch {}
+                let id; try { id = optionalText(localStorage.getItem('fv-editor-last')); } catch {}
                 let draft; try { draft = globalThis.sessionStorage?.getItem('fv-editor-draft'); } catch { draft = lastDraft; }
                 if (draft?.startsWith('draft:')) key = draft;
                 else if (id) { record = await store.load(id); if (record) key = id; }

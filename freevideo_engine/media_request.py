@@ -44,7 +44,9 @@ def read(path):
         if value.get(anchor):
             result[anchor] = file_info(value[anchor])
     for field in ('references', 'loras'):
-        entries = value.get(field, [])
+        entries = value.get(field)
+        if entries is None:
+            entries = []
         if not isinstance(entries, list) or len(entries) > 32:
             raise ValueError('At most 32 ' + field + ' per request')
         result[field] = []

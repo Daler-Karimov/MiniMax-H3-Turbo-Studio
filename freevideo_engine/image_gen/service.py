@@ -126,7 +126,9 @@ class Service:
         seed = value.get('seed')
         if seed is not None and (type(seed) is not int or not -2**63 <= seed < 2**64):
             raise ValueError('invalid_seed')
-        images = value.get('images', [])
+        images = value.get('images')
+        if images is None:
+            images = []
         if not isinstance(images, list):
             raise ValueError('invalid_media')
         if len(images) > MAX_IMAGES:
