@@ -140,6 +140,29 @@ test('main browser entry registers both views and preserves node hooks', async t
             arrange() { this.arranged = (this.arranged || 0) + 1; }
             computeSize() { return [this.size[0], this.dom.reduce((height, row) => height + (row.options?.getMinHeight?.() || 0), 0)]; }
         }
+        for (const [language, tooltip] of [
+            ['en', 'Changing steps may lower quality. Default: 8 first-pass and 3 refine steps. Refine steps must be fewer than first-pass steps unless set to 3.'],
+            ['zh', '修改步数可能降低质量。默认首轮 8 步、细化 3 步；细化步数不是 3 时，需少于首轮。'],
+        ]) {
+            await t.test(`${language} node step tooltips include the three-step exception for valid plans`, async () => {
+                navigator.language = language;
+                try {
+                    await import('data:text/javascript;base64,' + Buffer.from(source + `\n// tooltip language: ${language}`).toString('base64'));
+                    const localized = extensions.at(-1);
+                    class LocalizedGenerateNode extends GenerateNode {}
+                    await localized.beforeRegisterNodeDef(LocalizedGenerateNode, {name: 'FreeVideoGenerate'});
+                    for (const [base, refine] of [[1, 3], [2, 3], [3, 3], [8, 3], [8, 2]]) {
+                        const node = new LocalizedGenerateNode();
+                        node.widgets[0].value = base; node.widgets[1].value = refine;
+                        node.onNodeCreated();
+                        assert.equal(node.widgets[0].tooltip, tooltip, `${base} + ${refine}: first-pass tooltip`);
+                        assert.equal(node.widgets[1].tooltip, tooltip, `${base} + ${refine}: refine tooltip`);
+                        assert.deepEqual(node.widgets.slice(0, 2).map(widget => widget.value), [base, refine]);
+                        node.onRemoved();
+                    }
+                } finally { navigator.language = 'en'; }
+            });
+        }
         await extension.beforeRegisterNodeDef(GenerateNode, {name: 'FreeVideoGenerate'});
         const node = new GenerateNode(); app.graph._nodes = [node];
         assert.equal(node.onNodeCreated(), 'created');

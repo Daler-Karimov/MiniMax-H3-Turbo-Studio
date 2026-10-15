@@ -25,6 +25,7 @@ const PLAIN_ERRORS = [
         title: ['This computer can\'t continue a video', '这台电脑无法接续视频'],
         summary: ['Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡。要生成新视频，请清空“Continue from video”。']},
     {key: 'continuation-passes', message: 'Continue from video cannot be used with these settings. Turn on "Two-step generation" and turn off the first-pass preview.',
+        aliases: ['Continue from video cannot be used with these settings. Turn on "Two-pass acceleration" and turn off the first-pass preview.'],
         title: ['Continuing needs two-step generation', '接续需要两步生成'],
         summary: ['Turn on "Two-step generation" and turn off the first-pass preview.', '请打开“两步生成”，并关闭首轮预览。']},
     {key: 'continuation-refine', message: 'Continue from video cannot be used with these settings. Clear either "Second pass of preview" or "Continue from video".',
