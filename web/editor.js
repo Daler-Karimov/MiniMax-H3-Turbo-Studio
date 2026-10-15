@@ -1170,6 +1170,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     });
     const leaving = () => { player.pause(); rememberView(); if (queue.dirty) queue.flush(); };
     window.addEventListener('pagehide', leaving);
+    // A workflow without FreeVideo nodes came to the front: the editing view makes way (unsaved edits stay open).
+    const collapse = () => { void handle.close(); };
+    window.addEventListener('freevideo-collapse', collapse);
     const handle = {element, state, actions, store, adjust, audio, notify,
         async switchView(view) {
             if (closing || disposed || view === 'editor') return;
@@ -1198,7 +1201,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 progressConnection?.stop(); progressObserver?.disconnect(); runProgress.clear(); failures.clear();
                 stopKeys();
                 resumeCanvasPointer();
-                window.removeEventListener('pagehide', leaving); clearTimeout(noticeTimer);
+                window.removeEventListener('pagehide', leaving); window.removeEventListener('freevideo-collapse', collapse); clearTimeout(noticeTimer);
                 for (const stop of jobWatchers.values()) stop(); jobWatchers.clear();
                 queue.dispose({discard: discardOnSwitch}); store.dispose(); if (element.open) element.close(); element.replaceChildren(); element.remove(); if (opened === handle) opened = null;
                 if (returnFocus?.isConnected) returnFocus.focus({preventScroll: true});

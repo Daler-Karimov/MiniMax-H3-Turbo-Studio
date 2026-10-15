@@ -8,7 +8,9 @@ import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
 import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
-import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';
+import { installNavigation, refreshNavigation, preferredView, collapseWorkspaces } from './view_navigation.js';
+import { isLaunchVisit } from './launch_visit.js';
+import { openFreeVideoWorkflow } from './launcher.js';
 import { agentInterfaceEnabled } from './agent_connect.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';
 import { expandCast } from './cast_mention.js';
@@ -626,17 +628,38 @@ const progressConnection = createProgressConnection(api, message => {
     window.dispatchEvent(new CustomEvent('freevideo-progress', {detail: message}));
 });
 
+const isGenerate = node => node?.comfyClass === 'FreeVideoGenerate' || node?.type === 'FreeVideoGenerate';
+const isFreeVideoNode = id => /^FreeVideo/.test(String(app.graph?.getNodeById(id)?.comfyClass || app.graph?.getNodeById(id)?.type || ''));
+// Only the launcher, a click or a key brings a workspace over a page; a restored tab alone never does.
+const launchVisit = isLaunchVisit(globalThis.location?.search, globalThis.sessionStorage);
+let userActed = false;
+for (const type of ['pointerdown', 'keydown']) globalThis.addEventListener?.(type, () => { userActed = true; }, {capture: true, once: true});
+
+async function openFromMenu() {
+    try {
+        const node = (app.graph?._nodes || []).find(isGenerate) || await openFreeVideoWorkflow();
+        if (!node) throw new Error('FreeVideo workflow unavailable');
+        showStudio(node);
+    } catch (error) {
+        console.warn('FreeVideo menu:', error);
+        app.extensionManager?.toast?.add({severity: 'error', summary: 'FreeVideo', detail: text('Could not complete. Try again.', '没有完成，请重试'), life: 9000});
+    }
+}
+
 const desktopNoticeEnabled = () => (app.extensionManager?.setting?.get?.(DESKTOP_SETTING) ?? app.ui?.settings?.getSettingValue?.(DESKTOP_SETTING)) === true;
 
 app.registerExtension({
     name: "FreeVideo.UnifiedMedia",
     settings: [{id: DESKTOP_SETTING, name: text('Desktop notification when done', '完成时发桌面通知'),
         type: 'boolean', defaultValue: false, onChange: value => { if (value) askDesktopPermission(); }}],
+    // The one entry that stays in ComfyUI's own menu, whatever workflow is in front.
+    commands: [{id: 'FreeVideo.Open', label: 'FreeVideo', function: openFromMenu}],
+    menuCommands: [{path: ['Extensions'], commands: ['FreeVideo.Open']}],
     beforeConfigureGraph() { configuringGraph = true; configuration++; },
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
-        for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api))],
-            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled})]]) {
+        for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api), {openWorkflow: openFreeVideoWorkflow})],
+            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled, isFreeVideoNode})]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));
@@ -731,9 +754,12 @@ app.registerExtension({
         progressConnection.refresh();
         refreshNavigation();
         const rememberedView = preferredView();
-        if ((app.graph?.extra?.freevideo_studio || rememberedView === 'editor') && rememberedView !== 'nodes') {
-            const node = app.graph._nodes.find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
-            if (node) requestAnimationFrame(() => {
+        const node = (app.graph?._nodes || []).find(isGenerate);
+        // The user's own workflow is shown as it is. A FreeVideo workflow opens its workspace once the
+        // launcher or the user asked for it, never on its own for a tab restored with the page.
+        if (!node) { collapseWorkspaces(); return; }
+        if (app.graph?.extra?.freevideo_studio && rememberedView !== 'nodes' && (launchVisit || userActed)) {
+            requestAnimationFrame(() => {
                 const studio = showStudio(node);
                 if (studio && rememberedView === 'editor') {
                     void openEditorView(node, {studio, onFailure: error => health({type: 'error', where: 'editor', error})});
@@ -754,6 +780,10 @@ api.addEventListener('executed', event => {
     if (prompt_id && node?.freevideoShowResult && output?.freevideo_summary?.[0]) {
         node.freevideoShowResult({...output, freevideo_summary: [{...output.freevideo_summary[0], request_id: prompt_id}]});
     }
+});
+api.addEventListener('execution_start', () => {
+    // A workflow of the user's own is running: nothing of ours stays over it.
+    if (!(app.graph?._nodes || []).some(isGenerate)) collapseWorkspaces();
 });
 api.addEventListener('freevideo_prewarm', event => {
     const value = event.detail;

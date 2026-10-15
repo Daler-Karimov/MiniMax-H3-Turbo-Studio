@@ -77,7 +77,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     };
     const previous = new Map();
     for (const [name, value] of Object.entries({
-        document, navigator: {language: 'en'}, window: events,
+        document, navigator: {language: 'en'}, window: events, addEventListener: (type, fn, options) => events.addEventListener(type, fn, options),
         getComputedStyle: element => ({marginTop: '8px', marginBottom: '8px', display: element.hidden ? 'none' : 'block', ...element.style}),
         CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options?.detail; } },
         requestAnimationFrame: callback => callback(), __freevideoEntryTest: dependencies,
@@ -109,7 +109,9 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { regenerateResult, createSecondPassQueue, enableNode } from './studio_queue.js';", 'const {regenerateResult,createSecondPassQueue,enableNode} = globalThis.__freevideoEntryTest;')
             .replace("import { secondPassAction } from './result_actions.js';", 'const {secondPassAction} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
-            .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
+            .replace("import { installNavigation, refreshNavigation, preferredView, collapseWorkspaces } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest; const collapseWorkspaces = () => { globalThis.__freevideoEntryTest.collapsed = (globalThis.__freevideoEntryTest.collapsed || 0) + 1; };')
+            .replace("import { isLaunchVisit } from './launch_visit.js';", 'const isLaunchVisit = () => false;')
+            .replace("import { openFreeVideoWorkflow } from './launcher.js';", 'const openFreeVideoWorkflow = (...args) => globalThis.__freevideoEntryTest.openFreeVideoWorkflow?.(...args);')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
             .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
@@ -180,8 +182,28 @@ test('main browser entry registers both views and preserves node hooks', async t
         node.widgets[0].value = false; node.onConfigure();
         assert.equal(node.widgets[0].value, 8, 'Migrate the previous private force-checkbox slot');
         node.buttons[0].callback();
+        const quiet = opened.length;
+        extension.afterConfigureGraph();
+        assert.equal(opened.length, quiet, 'a tab restored with the page does not open the workspace on its own');
+        events.dispatchEvent(new Event('pointerdown'));
         extension.afterConfigureGraph();
         assert.deepEqual(opened, [node, node]);
+        // A workflow without FreeVideo nodes is the user's own: every workspace makes way and none opens.
+        const nodes = app.graph._nodes, collapsed = dependencies.collapsed || 0;
+        app.graph._nodes = [];
+        extension.afterConfigureGraph();
+        assert.equal(dependencies.collapsed, collapsed + 1); assert.deepEqual(opened, [node, node]);
+        // The menu entry opens the workspace of the workflow in front, or FreeVideo's own workflow when it has no node.
+        const entry = extension.commands.find(row => row.id === 'FreeVideo.Open');
+        assert.equal(entry.label, 'FreeVideo'); assert.deepEqual(extension.menuCommands[0].commands, ['FreeVideo.Open']);
+        let workflows = 0;
+        dependencies.openFreeVideoWorkflow = async () => { workflows++; return node; };
+        const before = opened.length;
+        await entry.function();
+        assert.equal(workflows, 1); assert.equal(opened.length, before + 1); assert.equal(app.graph._nodes.length, 0);
+        app.graph._nodes = nodes;
+        await entry.function();
+        assert.equal(workflows, 1); assert.equal(opened.length, before + 2);
         rememberedView = 'editor';
         const restored = [];
         dependencies.openEditorView = (value, options) => restored.push({node:value, studio:options.studio});
