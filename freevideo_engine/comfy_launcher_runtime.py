@@ -7,6 +7,7 @@ An existing server is never stopped by this launcher.
 import errno
 import hashlib
 import ipaddress
+import re
 import json
 import logging
 import os
@@ -488,6 +489,57 @@ GIT_IGNORE = ('# FreeVideo engine: environments, models and caches, not part of 
               '# Keeps an update of a surrounding ComfyUI from copying, moving or deleting them.\n*\n')
 
 
+
+def launcher_downloaded(root):
+    """Whether this ComfyUI folder is the copy the launcher itself downloaded (its source receipt)."""
+    try:
+        value = json.loads((io_path(root) / RECEIPT).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return isinstance(value, dict) and bool(value.get('url')) and bool(value.get('commit'))
+
+
+def _plugin_names(root):
+    try:
+        return sorted(p.name for p in (io_path(root) / 'custom_nodes').iterdir() if p.name != '__pycache__')
+    except OSError:
+        return []
+
+
+SCOPED_RECORD = 'launcher/scoped-nodes.json'
+
+
+def remembered_scope(engine, root):
+    """The user's plugins stopped FreeVideo from loading with this very set of plugins before."""
+    try:
+        value = json.loads((io_path(engine) / SCOPED_RECORD).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(value, dict) and value.get('root') == plain(resolved(root))
+            and value.get('nodes') == _plugin_names(root))
+
+
+def remember_scope(engine, root):
+    try:
+        save(Path(engine) / SCOPED_RECORD, dict(root=plain(resolved(root)), nodes=_plugin_names(root)))
+    except OSError:
+        pass
+
+
+def freevideo_import_failed(path, name, offset):
+    """(failed, new offset): ComfyUI's own import failure line for exactly our node folder, read incrementally."""
+    pattern = re.compile(r'[\\/]custom_nodes[\\/]' + re.escape(name) + r'(?![\w.\-])')
+    try:
+        with io_path(path).open('rb') as handle:
+            handle.seek(offset)
+            data = handle.read(1 << 20)
+    except OSError:
+        return False, offset
+    for line in data.decode('utf-8', 'replace').splitlines():
+        if ('Cannot import' in line or 'IMPORT FAILED' in line) and pattern.search(line):
+            return True, offset + len(data)
+    return False, offset + len(data)
+
 def shield_engine(engine):
     """Keep a surrounding git checkout's operations away from the engine.
 
@@ -606,6 +658,7 @@ class Controller:
         # it was asked to serve.
         self.move_when_taken = True
         self.port_move = None
+        self._scope_retry = False
 
     def retire_old_versions(self, selected):
         """Once ComfyUI runs this version, earlier FreeVideo copies are no longer read."""
@@ -1157,7 +1210,9 @@ class Controller:
         self.refresh_access_links()
 
     def _connect_comfy(self):
-        self.state = {key: value for key, value in self.state.items() if key != 'moved_from'}
+        retry, self._scope_retry = self._scope_retry, False
+        self.state = {key: value for key, value in self.state.items()
+                      if key != 'moved_from' and (retry or key != 'plugin_scoped')}
         if not self.selection or not self.selection['ready']:
             raise ValueError('Choose and inspect ComfyUI first')
         selected = self.selection
@@ -1278,13 +1333,21 @@ class Controller:
         command = [selected['python'], '-u', '-B', str(Path(selected['root']) / 'main.py'), '--listen', ','.join(listen_hosts(parsed.hostname)),
                    '--port', str(parsed.port or 80), '--disable-auto-launch']
         managed = managed_frontend(selected)
-        if managed:
-            # This environment has ComfyUI core dependencies, not the user's
-            # custom-node packages. Scope both prestartup scripts and imports;
-            # a plugin can otherwise run pip, replace Torch, or call sys.exit.
+        # Only the ComfyUI this launcher downloaded loads FreeVideo alone. The user's own ComfyUI keeps
+        # every plugin, unless they stopped FreeVideo from loading (retry below, or remembered).
+        ours = launcher_downloaded(selected['root'])
+        scoped = ours or retry or remembered_scope(selected['engine'], selected['root'])
+        if scoped and not ours:
+            self.state = dict(self.state, plugin_scoped=True)
+        if scoped:
+            # Scope both prestartup scripts and imports; a plugin can otherwise run pip,
+            # replace Torch, or call sys.exit.
             command += ['--disable-all-custom-nodes', '--whitelist-custom-nodes', node_target(selected['root']).name]
+        if managed and not scoped:
+            # The user's plugins run in our environment: they may not install into it or replace Torch.
+            env.update(PIP_NO_INDEX='1', UV_OFFLINE='1', PIP_DISABLE_PIP_VERSION_CHECK='1')
         context = dict(environment='freevideo-managed' if managed else 'existing-comfyui',
-                       custom_nodes='FreeVideo' if managed else 'all')
+                       custom_nodes='FreeVideo' if scoped else 'all')
         if selected.get('portable') and not selected['separate']:
             command.append('--windows-standalone-build')
         view = launch_view.for_engine(selected['engine'])
@@ -1302,9 +1365,11 @@ class Controller:
         with self._server_lock, external_python(), io_path(self.server_log).open('wb') as log:
             if self._closed or self.cancelled.is_set():
                 raise RuntimeError('ComfyUI startup cancelled')
-            if managed:
+            if scoped:
                 log.write(b'[FreeVideo] Separate environment: loading FreeVideo custom nodes only. '
-                          b'Use your original ComfyUI launcher for other plugins.\n')
+                          b'Use your original ComfyUI launcher for other plugins.\n' if ours else
+                          b'[FreeVideo] Your other plugins stopped FreeVideo from loading: '
+                          b'loading FreeVideo custom nodes only this time.\n')
                 log.flush()
             # Keep durable embedded output, but own the whole tree: Windows
             # Job / Linux supervisor also reclaim independently grouped model
@@ -1317,6 +1382,20 @@ class Controller:
         save(directory / 'launch.json', dict(command=command, pid=server.pid, root=selected['root'], url=url, **context))
         self.state = dict(self.state, task=dict(progress=dict(label='Starting ComfyUI', detail='Loading nodes and the web interface'), log=plain(directory)))
         waiting_since = time.monotonic()
+        log_offset = 0
+        plugin_name = node_target(selected['root']).name
+
+        def fall_back():
+            # Once: the user's other plugins stopped FreeVideo; start again with FreeVideo's nodes only.
+            with self._server_lock:
+                if self.server is server:
+                    self.stop_owned_server(grace=3)
+            self._scope_retry = True
+            result = self._connect_comfy()
+            # Only a start that worked with FreeVideo alone says the plugins were the cause.
+            if self.state.get('status') == 'open':
+                remember_scope(selected['engine'], selected['root'])
+            return result
         extended = False
         shown = 0.
         # Start-up has no countable steps. The bar creeps through the last section and stays below the
@@ -1333,7 +1412,13 @@ class Controller:
                     if self.server is server:
                         self.stop_owned_server(grace=3)
                 raise RuntimeError('ComfyUI startup cancelled')
+            if not scoped:
+                failed, log_offset = freevideo_import_failed(self.server_log, plugin_name, log_offset)
+                if failed:
+                    return fall_back()
             if server.poll() is not None:
+                if not scoped:
+                    return fall_back()
                 from .failure_details import startup_failure
                 message = startup_failure('ComfyUI could not start.', directory / 'comfy.log',
                                           exit_code=server.returncode, context=context)
@@ -1357,6 +1442,8 @@ class Controller:
                 return
             if now - waiting_since >= START_WAIT_SECONDS:
                 if now - waiting_since >= START_WAIT_LIMIT_SECONDS:
+                    if not scoped:
+                        return fall_back()
                     break
                 if not extended:
                     extended = True

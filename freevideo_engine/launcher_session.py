@@ -2167,6 +2167,7 @@ class Session:
                          self.t('No LAN address found. Connect to Wi-Fi or a wired network first.', '未找到局域网地址，请先连接 Wi-Fi 或有线网络。')
                          if row.get('lan_status') == 'no-address' else ''),
             port_from=port_from, port_to=port_to,
+            plugin_scoped=row.get('status') == 'open' and row.get('plugin_scoped') is True,
             old_versions=self.old_versions_text(), copied_models=self.copied_models_text(),
             archives=self.archives_text(), archives_confirm=self.archives_confirm_text(),
             archives_done=self.archives_done_text(), archives_failed=self.archives_failed_text(),
