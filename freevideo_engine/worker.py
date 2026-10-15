@@ -305,6 +305,9 @@ def generate(request, resident=None):
                 decode_read_ahead.start(drive_idle=getattr(engine, 'drive_idle', False) is True)
             from .sampling_memory import SamplingMemory
             memory_diagnostics = SamplingMemory(torch, Path(request['output']).with_suffix('.sampling-memory.json')).start()
+            from . import frame_preview
+            if not request.get('capacity_trial', False):
+                frame_preview.configure(Path(request['output']).parent)
             def sample_finalize_phase(name):
                 metrics.update(phase='sample_finalize', sample_finalize_phase=name)
                 save(request['metrics'], metrics)
@@ -586,6 +589,7 @@ def generate(request, resident=None):
                         gpu_reserve_bytes=request.get('gpu_reserve_bytes', 0),
                         budget_refresh=refresh_budget if live_budget is not None else None)
             finally:
+                frame_preview.clear()
                 metrics['sampling_memory'] = memory_diagnostics.close()
             metrics.update(sampled)
             metrics.pop('sample_metrics_scope', None)

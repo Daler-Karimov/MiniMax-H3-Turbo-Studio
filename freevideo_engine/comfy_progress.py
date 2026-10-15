@@ -72,7 +72,8 @@ class ProgressState:
                 'sampling_plan', 'bytes_per_second', 'block', 'blocks', 'elapsed_seconds', 'step_elapsed_seconds',
                 'estimated_step_seconds', 'remaining_seconds', 'display_fraction',
                 'estimated', 'uniform_remaining_steps', 'overall', 'retry', 'warning', 'kernel_cache_note',
-                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain')
+                'new_request', 'reset', 'result', 'report_id', 'compatibility', 'memory_tight', 'references', 'chain',
+                'frame_preview')
         value = deepcopy({key: message[key] for key in keys if key in message})
         if isinstance(message.get('prediction'), dict):
             # The UI only needs a history marker, not the resource forecast.
@@ -198,6 +199,24 @@ class ReportDownloads:
         return path.read_bytes()
 
 
+    def preview(self, token):
+        """The newest frame preview picture of a registered run, or KeyError."""
+        from .frame_preview import FILE
+        from .diagnostics import is_link
+        with self.lock:
+            output = self.runs.get(token)
+        if output is None:
+            raise KeyError('Unknown run')
+        path = output.parent / FILE
+        if is_link(output.parent) or path.is_symlink() or not path.is_file():
+            raise KeyError('No preview')
+        with path.open('rb') as stream:
+            data = stream.read(2 * 1024 * 1024 + 1)
+        if not data or len(data) > 2 * 1024 * 1024:
+            raise KeyError('No preview')
+        return data
+
+
 REPORTS = ReportDownloads()
 
 
@@ -289,6 +308,15 @@ def register():
         return web.Response(body=data, content_type='application/json', headers={
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
             'Content-Disposition': 'attachment; filename="FreeVideo-report-%s.json"' % time.strftime('%Y%m%d-%H%M%S')})
+
+    @server.routes.get('/freevideo/frame-preview/{report_id}')
+    async def frame_preview(request):
+        try:
+            data = await asyncio.to_thread(REPORTS.preview, request.match_info['report_id'])
+        except (KeyError, OSError):
+            raise web.HTTPNotFound(text='') from None
+        return web.Response(body=data, content_type='image/jpeg', headers={
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
     @server.routes.get('/freevideo/progress')
     async def progress(request):

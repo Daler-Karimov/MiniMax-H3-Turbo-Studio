@@ -908,6 +908,21 @@ class EventTail:
         return result
 
 
+def preview_state(event):
+    """The few facts the page needs to show the newest frame preview, or None."""
+    values = {key: event.get(key) for key in ('serial', 'step', 'total', 'frames', 'frame_width', 'frame_height')}
+    if any(type(value) is not int or value < 1 or value > 100000 for value in values.values()) or values['frames'] > 8:
+        return None
+    return values
+
+
+def preview_update(current, event):
+    """The page's frame picture after a frame_preview / frame_preview_clear event."""
+    if event.get('event') == 'frame_preview_clear':
+        return None
+    return preview_state(event) or current
+
+
 def progress_message(event):
     from .sampling_progress import progress_message as sampling_message
     sampling = sampling_message(event)
@@ -1295,9 +1310,15 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     whole_progress = _SafeProgress(whole_progress)
     from .comfy_progress import REPORTS
     report_id = REPORTS.register(output)
+    frame_state = [None]
     def send_progress(message, event=None):
         if progress:
-            progress(whole_progress.annotate(dict(message, report_id=report_id), event=event))
+            value = whole_progress.annotate(dict(message, report_id=report_id), event=event)
+            if message.get('phase') in ('sample_finalize', 'decode') or message.get('timing_phase') in ('decode', 'encoding'):
+                frame_state[0] = None
+            if frame_state[0] is not None:
+                value = dict(value, frame_preview=frame_state[0])
+            progress(value)
     process = None
     from .result_cache import ResultCache, request_key, inspect_bounded
     cache = ResultCache(output_directory)
@@ -1310,6 +1331,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             for event in tail.events():
                 if index == 0 and event.get('event') == 'resource_retry':
                     tails[2].reset()
+                if event.get('event') in ('frame_preview', 'frame_preview_clear'):
+                    frame_state[0] = preview_update(frame_state[0], event)
+                    continue
                 message = progress_message(event)
                 if message:
                     send_progress(message, event)

@@ -418,6 +418,9 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     heading.append(count);
     const track = el('div', 'fv-generation-track'), fill = el('div', 'fv-generation-fill');
     track.setAttribute('role', 'progressbar'); track.setAttribute('aria-valuemin', '0'); track.append(fill);
+    // The sampler's newest coarse frames; decorative, so it carries no text.
+    const frames = el('img', 'fv-generation-frames'); frames.alt = ''; frames.hidden = true;
+    frames.decoding = 'async'; frames.setAttribute('aria-hidden', 'true'); frames.draggable = false;
     const times = el('div', 'fv-generation-times');
     const elapsed = el('span', ''), eta = el('span', ''); times.append(elapsed, eta);
     const status = el('div', 'fv-generation-status'); status.hidden = true;
@@ -428,7 +431,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     stall.setAttribute('role', 'status');
     const stallText = el('span', ''); stall.append(stallText);
     const trims = new Map();
-    element.append(heading, track, label, mini, times, compatibilityNote, status, live);
+    element.append(heading, track, label, mini, frames, times, compatibilityNote, status, live);
     let recovery = '', lowMemory = false, compatibility = null, samplingPlan = {}, secondPass = false, references = false, splitFailed = null;
     let hasHeartbeat = false;
     // Mac: the unified-memory notice of this request, and whether its first pass has ended.
@@ -481,6 +484,47 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         || (message.reset === true && !message.phase);
     const diagnostic = createDiagnosticReportControl(t, {api});
     const {report, updateReport, fetchReport, downloadReport} = diagnostic;
+    // The newest frame picture. Any failure leaves the page as it was without one.
+    // `framesToken` changes whenever a pending fetch stops being wanted, so a late answer is dropped.
+    let framesKey = '', framesUrl = null, framesLoading = null, framesToken = 0;
+    function clearFrames() {
+        framesKey = ''; framesLoading = null; framesToken++; frames.hidden = true;
+        if (framesUrl) { URL.revokeObjectURL(framesUrl); framesUrl = null; }
+        frames.removeAttribute('src');
+    }
+    // In a wide column each frame is 64 px high; a narrow one keeps the picture's own size.
+    function fitFrames() {
+        const width = (element.parentElement || element).clientWidth;
+        frames.dataset.wide = width > 480 ? 'true' : 'false';
+    }
+    function updateFrames(message, id) {
+        const value = message.frame_preview;
+        fitFrames();
+        const usable = value && typeof value === 'object' && Number.isInteger(value.serial) && value.serial > 0
+            && Number.isInteger(value.frames) && value.frames > 0 && value.frames <= 8;
+        if (!usable || !id || ['complete', 'failed', 'cancelled'].includes(message.phase)) { if (framesKey || framesLoading) clearFrames(); return; }
+        const key = `${id}:${value.serial}`;
+        if (key === framesKey || key === framesLoading) return;
+        framesLoading = key;
+        const token = ++framesToken;
+        const path = `/freevideo/frame-preview/${id}`;
+        (async () => {
+            try {
+                const response = await (api ? api.fetchApi(path) : fetch(path));
+                if (!response.ok) throw new Error('No picture');
+                const blob = await response.blob();
+                if (framesToken !== token) return;
+                const url = URL.createObjectURL(blob);
+                const old = framesUrl;
+                frames.onload = () => { fitFrames(); if (framesUrl === url) frames.hidden = false; try { onLayout?.(); } catch {} };
+                frames.onerror = () => { if (framesUrl === url) clearFrames(); };
+                framesUrl = url; framesKey = key; frames.src = url;
+                if (old) URL.revokeObjectURL(old);
+            } catch {
+                if (framesToken === token) clearFrames();
+            }
+        })();
+    }
     const hasCount = value => Number.isInteger(value.total) && value.total > 0 && Number.isInteger(value.done)
         && value.done >= 0 && value.done <= value.total;
 
@@ -830,7 +874,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // A finished first-pass preview is not the finished video.
     const savedText = () => state.label === 'Preview saved' ? t('Preview saved', '预览已保存') : t('Video saved', '视频已保存');
     function update(message) {
-        updateReport(message);
+        updateFrames(message, updateReport(message));
         // Older servers may still forward this diagnostic-only event. It is
         // not a stage change or something the user needs to act on.
         if (message.warning === 'ram_budget_warning' && !message.phase) return;
@@ -988,6 +1032,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         tick(); if (timer === null) timer = setInterval(tick, 250);
     }
     function hide() {
+        clearFrames();
         element.hidden = true; status.hidden = true; recovery = ''; placeholder = false; elapsedLead = 0; trims.clear(); lowMemory = false; compatibility = null; references = false; hasHeartbeat = false; splitFailed = null;
         compatibilityNote.hidden = true; compatibilityNote.textContent = '';
         memoryTight = null; firstPassOver = false;

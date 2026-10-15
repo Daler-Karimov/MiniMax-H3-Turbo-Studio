@@ -327,6 +327,9 @@ def worker(value):
         sampling_lifetime(resource)
         if phase in ('first-pass', 'refinement'):
             from .macos_runtime import Engine
+            from . import frame_preview
+            # The picture goes next to the video, where the page's report link reads it.
+            frame_preview.configure(Path(value['output']).parent)
             refining = phase == 'refinement'
             if refining and not sampling['enabled']:
                 raise ValueError('Refinement is absent from this sampling plan')
@@ -436,6 +439,9 @@ def worker(value):
         result.update(error_type=type(error).__name__, error_message=str(error), exception=traceback.format_exc())
         raise
     finally:
+        if phase in ('first-pass', 'refinement'):
+            from . import frame_preview
+            frame_preview.clear()
         if phase == 'decode':
             result['conditions'].append(runtime_conditions())
             if isinstance(result.get('decode'), dict):

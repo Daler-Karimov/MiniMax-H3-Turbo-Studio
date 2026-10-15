@@ -547,6 +547,7 @@ class Engine:
                budget_refresh=None, continuation=None):
         from src.inference.render import load_prompt, generate_latents
         from .geometry import geometry, sampler_for_canvas
+        from . import frame_preview
         refining = initial_latents is not None
         if continuation is not None:
             from .continuation import validate_route
@@ -828,7 +829,10 @@ class Engine:
                     self.transformer, continuation, seed, self.device_backend.device,
                     **({'video_offset': continuation_offset} if continuation_offset else {}),
                     **({'audio_offset': continuation_audio_offset} if continuation_audio_offset else {})) as prefix, \
-                    (watch.layers(self.transformer.transformer_blocks) if watch is not None else nullcontext()):
+                    (watch.layers(self.transformer.transformer_blocks) if watch is not None else nullcontext()), \
+                    frame_preview.observing(latent_frames=canvas['latent_frames'], frame_h=height // 32,
+                                            frame_w=width // 32, step_offset=progress_offset,
+                                            total=progress_total if progress_total is not None else active_steps):
                 latents, audio = generate_latents(self.transformer, prompt, tags, frames,
                                                 self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
                                                 conditions=conditions, **sampling_kwargs)
