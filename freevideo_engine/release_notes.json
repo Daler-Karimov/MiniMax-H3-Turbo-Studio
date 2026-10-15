@@ -7,9 +7,10 @@
       "Your creations: select several creations (click, Shift-click, a whole day, or all) and delete them in one step, with the size shown before you confirm and ten seconds to undo. Creations that are still in use are kept.",
       "Feedback: every view has a Feedback button beside Settings. Write one sentence, optionally attach a screenshot of the page and a diagnostic summary (no prompts or images), and the GitHub suggestion page opens with the text filled in.",
       "Launcher: local network access shows a QR code to open FreeVideo from a phone and offers an optional password for other devices; freevideo status prints the same QR code on Linux.",
+      "Your own ComfyUI: the FreeVideo toolbar appears only on FreeVideo workflows, no longer opens over your other workflows or adds nodes to them, and FreeVideo can be opened from the Extensions menu. Opening ComfyUI from the launcher keeps your other plugins; if a plugin stops FreeVideo from loading, the launcher starts again with FreeVideo only and says so.",
       "Long videos: steadier loudness from part to part.",
       "Editing view: the description box grows with its text and can be expanded into a larger window; errors and shortcut labels use plainer wording.",
-      "Studio: shorter hints, two-pass sampling is now called two-step generation, and the starter prompt reads as plain prose. Generate no longer fails with \"missing node\" when the creation node was muted or bypassed in the workflow; the node is turned back on and a line says so. Two-step generation runs only with 8 first-pass steps; other step counts use a single pass, and the progress line, the ComfyUI node and Agent results say so.",
+      "Studio: shorter hints. Generate no longer fails with \"missing node\" when the creation node was muted or bypassed in the workflow; the node is turned back on and a line says so. Two-pass sampling runs only with 8 first-pass steps; other step counts use a single pass, and the progress line, the ComfyUI node and Agent results say so.",
       "Installation and launcher: install progress is steadier, with the total following the GPU acceleration build and the final start-up; sublines no longer show file names, and the terminal stays closed unless something goes wrong. Installation and update wording is plainer.",
       "Progress and error messages: shorter, plainer wording."
     ]
@@ -20,9 +21,10 @@
       "作品库：可多选作品（点选、Shift 连选、选择某一天或全选），确认前显示大小，一次删除，10 秒内可撤销；仍在使用的作品会保留。",
       "反馈：每个视图的“设置”左边新增“反馈”按钮。写一句话，可选附上这一页的截图和诊断信息（不含提示词和画面），点一下即打开已填好文字的 GitHub 反馈页。",
       "启动器：局域网访问显示二维码，手机扫码即可打开 FreeVideo，并可为其他设备设置密码；Linux 的 freevideo status 也会显示二维码。",
+      "自己的 ComfyUI：工具条只在 FreeVideo 工作流上出现，不再盖住其他工作流，也不往里面加节点；Extensions 菜单里可以打开 FreeVideo。从启动器打开时保留已装的其他插件；如有插件让 FreeVideo 载入失败，会自动只载入 FreeVideo 再启动一次，并提示一句。",
       "长视频：各段声音响度更稳定。",
       "剪辑视图：描述框随内容长高，可放大成大窗口编辑；出错和快捷键的说法更直白。",
-      "创作面板：提示更简短，“二次采样”改名“两步生成”，默认提示词改为自然的一段话。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用两步生成，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
+      "创作面板：提示更简短。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用二次采样，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
       "安装和启动器：安装进度更平稳，总进度会跟随显卡加速编译和最后的启动步骤，副行不再显示文件名，终端只在出错时需要打开；安装和更新的说法更直白。",
       "进度与出错提示：说法更短、更直白。"
     ]
