@@ -439,7 +439,7 @@ def start_background_compile():
     """Compile recent request shapes once this session is idle; see background_compile."""
     import os
     from server import PromptServer
-    from .background_compile import COMPILE
+    from .background_compile import COMPILE, OWED_DELAY, START_DELAY, compile_owed
     if os.environ.get('FREEVIDEO_BACKGROUND_COMPILE', 'auto').lower() in ('0', 'off', 'false'):
         return False
     root, machine = comfy_bridge.installation()
@@ -455,7 +455,8 @@ def start_background_compile():
     return COMPILE.start([machine['python'], '-B', '-m', 'freevideo_engine.precompile',
                           '--config', str(root / 'machine.json'), '--background'],
                          environment=environment, cwd=str(source), log=root / 'precompile.log',
-                         lock=environment.get('FREEVIDEO_LOCK_PATH') or root / 'engine.lock', busy=busy)
+                         lock=environment.get('FREEVIDEO_LOCK_PATH') or root / 'engine.lock', busy=busy,
+                         delay=OWED_DELAY if compile_owed(root) else START_DELAY)
 
 
 class FreeVideoExtension(ComfyExtension):
