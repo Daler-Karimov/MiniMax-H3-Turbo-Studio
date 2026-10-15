@@ -44,27 +44,27 @@ export function editorErrorText(value, t = en => en) {
     const node = oneLine(detail?.node_type), step = `${value?.phase || ''} ${value?.stage || ''} ${node}`;
     const part = Number.isInteger(value?.index) ? value.index + 1 : null;
     const generating = part ? t(`Generating part ${part}`, `生成第 ${part} 段`) : t('Generation', '生成');
-    const stage = /encod|编码/i.test(step) ? t('Encoding', '编码') : /decod|解码/i.test(step) ? t('Decoding', '解码')
+    const stage = /encod|编码/i.test(step) ? t('Preparing', '准备生成') : /decod|解码/i.test(step) ? t('Making the video', '合成视频')
         : /load|model|加载/i.test(step) ? t('Loading the model', '加载模型') : generating;
     if (code === 'gpu_memory' || /out of memory|cuda.*memory|显存不足|显存不够/i.test(raw))
-        return t(`${stage} ran out of GPU memory`, `${stage}时显存不足`);
+        return t(`${stage}: not enough GPU memory.`, `${stage}时显存不足。`);
     const known = {
-        chain_part_too_short: t('Each continued part must be at least 10 seconds.', '续接的每一段至少要 10 秒。'),
+        chain_part_too_short: t('Each continued part needs at least 10 seconds.', '接续的每段至少 10 秒。'),
         chain_too_long: t('A video can have up to 5 parts.', '一条视频最多 5 段。'),
         too_long: t('This part is longer than the maximum length. Shorten it and try again.', '这一段超过了最长时长，请缩短后再试。'),
         missing_node: t('Generation is not ready. Restart FreeVideo.', '生成功能没有就绪，请重新启动 FreeVideo。'),
-        chain_missing: t('Generation could not be submitted. Choose "Generate" again.', '提交生成时出错，请再点一次“生成”。'),
-        result_mismatch: t('Reading the result failed. Choose "Generate" again.', '读取生成结果时出错，请再点一次“生成”。'),
-        no_material: t('The media this part uses is missing.', '找不到这一段用到的素材。'),
+        chain_missing: t('Generation could not start. Choose "Generate" again.', '生成没能开始，请再点“生成”。'),
+        result_mismatch: t('Could not read the result. Choose "Generate" again.', '没能读取结果，请再点“生成”。'),
+        no_material: t('The media this part uses is missing. Import it again from the library.', '找不到这一段用到的素材，请在素材库重新导入。'),
     };
     if (known[code]) return known[code];
     if (['model_missing', 'missing_model', 'model_not_found'].includes(code) || /(?:model|checkpoint|模型).*(?:not found|missing|不存在|缺失)/i.test(raw))
         return t(`Loading the model failed: ${raw || code}`, `加载模型时出错：${raw || code}`);
     if (['timeout', 'timed_out', 'generation_timeout'].includes(code) || /timed?\s*out|timeout|超时/i.test(raw))
-        return t(`${stage} timed out`, `${stage}时等待超时`);
+        return t(`${stage} timed out. Try again.`, `${stage}时等待超时，请再试一次。`);
     const received = raw || (/^[a-z_]+$/.test(code) ? '' : code);
     return received ? t(`${generating} failed: ${received}`, `${generating}时出错：${received}`)
-        : t(`${generating} failed`, `${generating}时出错`);
+        : t(`${generating} failed. Try again.`, `${generating}时出错，请再试一次。`);
 }
 function exportErrorText(value, t) {
     const message = [value?.response?.error?.message, value?.response?.error, value?.response?.message, value?.message]
@@ -674,7 +674,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 });
             }
             const metadata = store.sources.get(sourceKey(value.source));
-            try { state.apply(t('Insert source', '放入素材'), record => model.insertSource(record, {
+            try { state.apply(t('Insert clip', '放入素材'), record => model.insertSource(record, {
                 ...value, width: metadata?.width ?? value.width, height: metadata?.height ?? value.height, text: value.text ?? metadata?.text,
                 at: value.at ?? model.duration(record)}), {clearRange: state.selection !== initialSelection});
                 return {ok: true};
@@ -821,7 +821,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
             if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
             const flush = flushSpot(selection);
-            if (flush) { selection = state.select(flush); said = t('Moved to right after the part before.', '已接在上一段后面。'); genbar?.say(said); }
+            if (flush) { selection = state.select(flush); said = t('Moved right after the previous part.', '已接在上一段后面。'); genbar?.say(said); }
             else if (!actions.supportedSelection(selection)) {
                 const moved = emptySpot(selection);
                 if (!moved) return {say: t('Choose an empty spot on the timeline.', '请在时间线上选一段空白。')};
@@ -839,7 +839,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (waiting) {
                 hold(selection, text);
                 return {text, say: [said, used, waiting === 'ready' ? queuedReady()
-                    : t('Queued. It starts after the part before it.', '已排队，上一段完成后自动开始。')].filter(Boolean).join(' '), queued: true};
+                    : t('Queued. It starts after the previous part finishes.', '已排队，上一段完成后自动开始。')].filter(Boolean).join(' '), queued: true};
             }
             const busyBefore = jobActive();
             await actions.generate({text, selection});

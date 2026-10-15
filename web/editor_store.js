@@ -307,7 +307,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 },
                 onConflict: (record, nameSuffix) => { state.adopt({id: null, revision: 0, nameSuffix}); },
                 onCopied: () => notice('conflict', 'This edit changed elsewhere. Your changes here were saved as a copy.', '这条剪辑在别处改过，这里的改动已存为副本'),
-                onMemory: () => notice('memory', 'Changes are kept in this page. Restart after updating to save them to disk.', '改动暂存在这个页面里，更新后重启即可保存到磁盘。'),
+                onMemory: () => notice('memory', 'Changes are kept in this page for now. Update and restart to save them.', '改动暂存在这个页面里，更新并重启后会保存。'),
                 // Automatic retries stay quiet; switching away while unsaved warns in editor.js.
                 onError: () => {}});
             const reset = queue.reset;

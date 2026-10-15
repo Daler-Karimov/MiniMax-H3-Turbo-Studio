@@ -84,7 +84,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
                 const ability=done?await actions.speech.ability():null;
                 if(run!==speech.run)return;
                 if(ability){speech.available=ability.available;speech.need=ability.need;}
-                if(!done||speech.need){speechEnd(t('Could not download','没能下载'));return;}
+                if(!done||speech.need){speechEnd(t('Could not download. Try again.','没能下载，请再试一次。'));return;}
                 if(!speech.available){speechEnd(speechFailed());return;}
                 speech.loading=false;
             }
@@ -94,7 +94,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             if(!job){speechEnd(speechFailed());return;}
             speech.job=job.id??null;
             if(speechResult(job))speech.stop=actions.speech.watch(job.id,value=>{if(run!==speech.run)return false;if(!value){speechEnd(speechFailed());return false;}return speechResult(value);});
-        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download','没能下载'):speechFailed());}
+        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download. Try again.','没能下载，请再试一次。'):speechFailed());}
     }
     function commitDraft(){if(draft){const change=draft.change;apply(t('Text','文字'),change);const c=selectedText();if(c?.text_kind==='text')lastStyle={...styleOf(state.record,c)};}}
     // Editing a text ended. One left without words is taken away; one that never had any leaves no step behind.
