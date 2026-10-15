@@ -4,6 +4,7 @@ import {isText} from './editor_text_model.js';
 import {viewSwitch, viewChanged} from './view_navigation.js';
 import {wordmark} from './wordmark.js';
 import {openSetup} from './setup.js';
+import {feedbackButton} from './feedback.js';
 import * as model from './editor_model.js';
 import {createEditorState} from './editor_state.js';
 import {createEditorStore, sourceKey, mediaURL} from './editor_store.js';
@@ -182,7 +183,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }, 'fv-primary');
     const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(error)); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
-    headerActions.append(exportBox, button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    headerActions.append(exportBox, feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     top.append(brand, navigation, headerActions);
     const headerFit = fitEditorHeader(top, brand, title, navigation, headerActions);
     const menu = el('div', 'fv-ed-name-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');

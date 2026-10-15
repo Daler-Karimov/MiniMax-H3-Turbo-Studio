@@ -318,6 +318,12 @@ def register():
         return web.Response(body=data, content_type='image/jpeg', headers={
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
+    @server.routes.get('/freevideo/feedback-info')
+    async def feedback_info(request):
+        from . import feedback
+        info = await asyncio.to_thread(feedback.collect, request.query.get('report_id'))
+        return web.json_response(info, headers={'Cache-Control': 'no-store'})
+
     @server.routes.get('/freevideo/progress')
     async def progress(request):
         return web.json_response({'progress': STATE.snapshot()},

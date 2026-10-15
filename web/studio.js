@@ -4,6 +4,7 @@ import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
+import { feedbackButton } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
@@ -472,7 +473,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const tools = el('div', null, 'fv-header-actions');
     const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
-    tools.append(button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    tools.append(feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     // The Agent's page is the fourth tab, shown where the Agent interface is on; the guide's last step circles it.
     agentTabReady(agentInterfaceEnabled(api));
     const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
