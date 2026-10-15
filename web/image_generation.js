@@ -616,7 +616,8 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
     }
     return {mount, unmount() { clearAttention(); promptRequired = false; mounted = null; },
         selected: () => session.check(), cancel: session.cancel,
-        // The blank canvas shape a reloaded generation was started on, to be set again by the editor.
-        resumedRatio: resumed?.context?.mode === 'new' ? blankCanvasRatio(resumed.context.doc) : null,
+        // The blank canvas a reloaded generation was started on, to be set again by the editor.
+        resumedCanvas: resumed?.context?.mode === 'new'
+            ? {width: resumed.context.doc.width, height: resumed.context.doc.height} : null,
         dispose() { clearAttention(); return session.dispose(); }, state: session.state};
 }

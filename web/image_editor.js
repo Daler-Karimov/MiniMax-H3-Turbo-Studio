@@ -1596,7 +1596,12 @@ export async function openImageEditor({source = null, name = source || '', targe
     dialog.showModal();
     computeLayout();
     renderPanels();
-    if (generation.resumedRatio && !doc.layers.length && generation.resumedRatio !== doc.ratio) setBlankCanvasRatio(generation.resumedRatio, true);
+    // The result is placed on the canvas the request was made for, not on the one a reload rebuilt.
+    const resumedCanvas = generation.resumedCanvas;
+    if (resumedCanvas && !doc.layers.length && (resumedCanvas.width !== doc.width || resumedCanvas.height !== doc.height)) {
+        const next = blankDocument(resumedCanvas, blankCanvasRatio(resumedCanvas));
+        followSize(doc, next); deselectQuiet(); commit(next);
+    }
     select(!doc.layers.length || generation.state().running ? 'generate' : startTool || (fresh && target && role !== 'reference' ? 'crop' : 'move'));
     (save.disabled ? stage : save).focus();
     // The other fonts load in the background, so switching to one is immediate.
