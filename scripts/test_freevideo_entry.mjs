@@ -390,7 +390,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.match(audioHelp.textContent, /<Audio 1>/);
         assert.match(connections.children[0].textContent, /Reference audio.*Connected/);
         const audioButton = toolbar.children.find(e => e.tag === 'button' && e.textContent === 'Reference audio');
-        const audioPicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('audio/'));
+        const audioPicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('.wav'));
         audioButton.onclick(); assert.equal(audioPicker.clicked, true);
         api.fetchApi = async (url, options) => {
             assert.equal(url, '/freevideo/media/upload');
@@ -407,7 +407,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(audioHelp.hidden, true);
         assert.match(mode.textContent, /Text to video/);
         const imageRole = toolbar.children.find(e => e.tag === 'select');
-        const imagePicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('image/'));
+        const imagePicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('.png'));
         assert.equal(imageRole.value, 'reference');
         api.fetchApi = async () => ({ok: true, json: async () => ({file: 'image.png'})});
         imagePicker.files = [new File(['image'], 'image.png', {type: 'image/png'})];

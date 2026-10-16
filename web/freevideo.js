@@ -67,12 +67,27 @@ function viewURL(file, type = "input") {
         filename: file.slice(split + 1), subfolder: split < 0 ? "" : file.slice(0, split), type,
     }));
 }
+const MEDIA_EXTENSIONS = {
+    image: ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
+    video: ["mp4", "mov", "webm", "mkv", "m4v"],
+    audio: ["wav", "mp3", "flac", "ogg", "m4a", "aac", "opus"],
+};
+const extensionOf = name => name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+const acceptList = kinds => kinds.flatMap(kind => MEDIA_EXTENSIONS[kind]).map(ext => "." + ext).join(",");
+function mediaKindOrNull(name) {
+    const ext = extensionOf(name);
+    return Object.keys(MEDIA_EXTENSIONS).find(kind => MEDIA_EXTENSIONS[kind].includes(ext)) ?? null;
+}
 function mediaKind(name) {
-    const ext = name.split(".").pop().toLowerCase();
-    if (["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].includes(ext)) return "image";
-    if (["mp4", "mov", "webm", "mkv", "m4v"].includes(ext)) return "video";
-    if (["wav", "mp3", "flac", "ogg", "m4a", "aac", "opus"].includes(ext)) return "audio";
-    throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
+    const kind = mediaKindOrNull(name);
+    if (!kind) throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
+    return kind;
+}
+function skippedNote(names) {
+    const found = [...new Set(names.map(extensionOf).filter(Boolean).map(ext => "." + ext))], kinds = found.slice(0, 3);
+    const more = found.length > 3, n = names.length;
+    return text(`Skipped ${n} unsupported file${n === 1 ? "" : "s"}${kinds.length ? ` (${kinds.join(", ")}${more ? " and more" : ""})` : ""}`,
+        `已跳过 ${n} 个不支持的文件${kinds.length ? `（${kinds.join("、")}${more ? " 等" : ""}）` : ""}`);
 }
 
 const referenceHelp = () => text('Each reference image counts as one media item.', '每张参考图片各占一个素材名额。');
@@ -118,13 +133,13 @@ function mediaPanel(node, mount = null) {
     const mode = el("div", "", "fv-mode");
     const cards = el("div"), connections = el("div", undefined, "fv-connected");
     const picker = el("input"); picker.type = "file"; picker.multiple = true;
-    picker.accept = "image/*,video/*,audio/*"; picker.hidden = true;
+    picker.accept = acceptList(["image", "video", "audio"]); picker.hidden = true;
     const add = button(text("Upload files", "上传文件"), text("Upload images, video or audio", "上传图片、视频或音频"), () => picker.click());
     const generateImage = button(text('Generate with AI', 'AI 生成'), text('Generate with AI', 'AI 生成'), () => newImage());
     generateImage.prepend(document.createRange().createContextualFragment(icon('generate')));
     generateImage.hidden = !imageGenerationSupported();
     const audioPicker = el('input'); audioPicker.type = 'file'; audioPicker.multiple = true;
-    audioPicker.accept = 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus'; audioPicker.hidden = true;
+    audioPicker.accept = acceptList(["audio"]); audioPicker.hidden = true;
     const addAudio = button(text('Reference audio', '参考音频'),
         text('Add a voice, music or rhythm reference (its first 15 seconds at most are used)', '添加音色、音乐或节奏参考（最多使用前 15 秒）'), () => audioPicker.click());
     const audioHelp = el('div', '', 'fv-note'); audioHelp.hidden = true;
@@ -342,17 +357,21 @@ function mediaPanel(node, mount = null) {
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;
+        const chosen = Array.from(files);
+        const usable = chosen.filter(file => mediaKindOrNull(file.name));
+        const skipped = chosen.filter(file => !mediaKindOrNull(file.name)).map(file => file.name);
         uploading = true; node.isUploading = true; add.disabled = true; addAudio.disabled = true;
         try {
-            for (const [index, file] of Array.from(files).entries()) {
+            for (const [index, file] of usable.entries()) {
                 if (read().length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 const kind = mediaKind(file.name);
-                message(`${text("Uploading", "正在上传")} ${index + 1}/${files.length} · ${file.name}`);
+                message(`${text("Uploading", "正在上传")} ${index + 1}/${usable.length} · ${file.name}`);
                 const result = await uploadOne(file);
                 // Read again after the wait: another place may have changed the list meanwhile.
                 const rows = read(); if (rows.length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 rows.push({file: result.file, role: kind === "image" ? role.value : "reference", enabled: true}); update(rows);
             }
+            if (skipped.length) message(skippedNote(skipped), !usable.length);
         } catch (error) { message(error.message, true); }
         finally { uploading = false; node.isUploading = false; add.disabled = false; addAudio.disabled = false; picker.value = ""; audioPicker.value = ''; }
     }
