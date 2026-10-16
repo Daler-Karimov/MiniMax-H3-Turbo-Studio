@@ -2,37 +2,37 @@
   "schema": 1,
   "product_version": "0.4.8",
   "en": {
-    "summary": "Long videos keep the voice steadier from part to part, @characters carry their pictures into continued videos and the editing view, large downloads switch to a faster source, and many hints and layouts are shorter and clearer.",
+    "summary": "Long videos keep a steadier voice from part to part, and continuing a video keeps your reference pictures and characters. LoRA strength can be typed up to 100, large downloads move to a faster source on their own, and the second-pass button uses the earlier wording again, with smaller fixes to uploads, your creations, the waiting queue, diagnostic reports and the interface.",
     "changes": [
-      "Second pass: the result button, preview badge and related messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
+      "Second pass: the result button, preview badge, library and delete messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
+      "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used.",
+      "Characters: two @names written back to back are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. An @character written in the editing view's generation bar now carries that character's description and pictures, as it does in the creation panel.",
       "LoRA: you can type a strength beyond -4 to 4, up to 100, and a note marks values outside the usual range; the slider and default strength are unchanged. A trigger word that only appears inside a longer word (sks in asks) is now added.",
+      "Image generation: an out-of-memory failure says where memory ran out and at which size, and the progress line shows the smaller size while retrying; if the background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well checks free space on the drive that holds the models and is not offered when there is not enough room.",
+      "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well. The missing-model hint names each download and its size, and is checked again after a generation ends.",
       "Media uploads: the upload buttons list only the file types FreeVideo can use, and unsupported files in a multiple selection are skipped. Files over 2 GiB are turned away in the page, a failed or interrupted upload no longer leaves a partial file, and upload errors appear in your language.",
-      "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date. Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
-      "The missing-model hint names each download and its size, and is checked again after a generation ends. Feedback stays in the header on narrow windows.",
-      "Image generation: if its background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well now checks free space on the drive that holds the models and is not offered when there is not enough room. When it runs out of memory, the message says at which step and size, and the progress line shows the smaller size while retrying.",
-      "Character @mentions: two names written back to back are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used. In the editing view, an @character written in the generation bar now carries that character's description and pictures, as it does in the creation panel.",
-      "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech.",
-      "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well.",
+      "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date.",
+      "Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
       "Diagnostic report: the prompt-rewrite report no longer replaces the video's, the same file is saved and sent, and a large report is saved as a zip.",
       "Wording: Agent chat, Settings, image generation and editor messages are shorter and say what to do next; the character library uses \"character\" throughout and its view labels are clearer.",
-      "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
+      "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better and keep Feedback in the header; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
     ]
   },
   "zh": {
-    "summary": "长视频各段的人声更稳定，@角色在接续视频和剪辑视图里会带上图片，大文件下载会自动换到更快的下载源，许多提示和排布更简短清楚。",
+    "summary": "长视频各段人声更一致，接着生成时保留参考图和角色。LoRA 强度可以手动输入到 100，大文件下载会自动换到更快的下载源，二次采样按钮恢复此前的说法；上传、作品库、等待队列、诊断报告和界面细节也有多处改进。",
     "changes": [
-      "二次采样：结果卡按钮、预览角标和相关提示恢复 0.4.6 的说法（继续二采、一采预览）。",
+      "二次采样：结果卡按钮、预览角标、作品库和删除提示恢复 0.4.6 的说法（继续二采、一采预览）。",
+      "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。在创作面板接着生成视频时，会保留参考图和角色，人物前后保持一致，最多使用 3 张图片。",
+      "角色：紧挨着写的两个 @名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么；剪辑视图的生成条里写 @角色，也会和创作面板一样带上该角色的描述和图片。",
       "LoRA：强度可以手动输入超出 -4 到 4 的数，最大到 100，超出常用范围时有提示；滑块和默认强度不变。触发词只出现在更长的单词里（如 asks 里的 sks）时，现在也会自动加上。",
+      "图像生成：显存不够时写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸；后台进程刚启动就退出时自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始；“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。",
+      "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。缺模型提示写明是哪几项、各多大，生成结束后重新检查。",
       "素材上传：上传按钮只列出能用的文件格式，一次选多个时跳过不支持的；超过 2 GiB 的文件在页面上直接拦下；上传失败或中断不再留下残留文件，出错提示用当前界面语言。",
-      "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
-      "缺模型提示写明是哪几项、各多大，生成结束后重新检查。窗口较窄时，顶栏仍保留“反馈”入口。",
-      "图像生成：后台进程刚启动就退出时，自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始。“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。显存不够时会写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸。",
-      "角色 @ 提及：紧挨着写的两个名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么。在创作面板接着生成视频时，会保留参考图和人物，人物前后保持一致；最多使用 3 张图片。剪辑视图的生成条里写 @角色，现在和创作面板一样会带上该角色的描述和图片。",
-      "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。",
-      "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。",
+      "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。",
+      "等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
       "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
       "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
-      "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
+      "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理，顶栏仍保留“反馈”入口；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
     ]
   },
   "history": [
