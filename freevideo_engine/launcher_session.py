@@ -698,12 +698,26 @@ class Session:
         return queue_busy(url)
 
     def image_disk_fits(self, total):
-        """Whether the chosen installation location has room for the image model."""
+        """Whether the disk the image model downloads to has room for it, by the margin that
+        download itself keeps and after the video models still waiting on the same disk."""
         from .image_gen import image_pack
-        folder = self.form['destination'] if self.form['new_comfy'] else self.form['comfy']
+        folder = Path(self.form['destination'] if self.form['new_comfy'] else self.form['comfy'])
+        if self.installation_engine():
+            # An existing installation downloads to its own model folder, which may be on another disk.
+            try:
+                folder = self._image_location()[0]
+            except (OSError, ValueError):
+                pass
         try:
-            return disk_space.free_bytes(Path(folder).expanduser()) >= total + image_pack.RESERVE
-        except (OSError, ValueError):
+            folder = folder.expanduser()
+            free = disk_space.free_bytes(folder)
+            row = getattr(self.controller, 'state', None) or {}
+            if row.get('status') == 'review':
+                key = disk_space.disk_key(folder)
+                free -= sum(d.get('needed_bytes', 0) for d in row.get('disks', [])
+                            if d.get('path') and disk_space.disk_key(d['path']) == key)
+            return free >= total + image_pack.BACKGROUND_RESERVE
+        except Exception:  # A page reading the disk must never fail to draw.
             return True
 
     def image_pack_view(self):
@@ -1127,6 +1141,12 @@ class Session:
             return
         if self._open_release_page():
             return
+        if (self.image_installer and self.image_installer.busy and not self.controller.busy
+                and not self.importer.busy and not self.cleaner.busy and not self.archives_busy
+                and not self.closing and not self.upgrade.active and not self.model_switch):
+            # An explicit update goes first. The image model download is the long, quiet kind and
+            # keeps what it has; it carries on from there when the user continues it.
+            self.image_installer.cancel()
         if self.task_busy() or self.updater and self.updater.busy:
             self.pending_update = (token, source)
             self.action_notice = 'update_queued'

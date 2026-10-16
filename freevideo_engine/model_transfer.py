@@ -22,6 +22,10 @@ GiB = 1 << 30
 MiB = 1 << 20
 MIN_SDK_BYTES = 64 * MiB
 STALL_SECONDS = 240
+# Bytes stopped while downloading move to another source after this long; the
+# longer allowance stays for connecting, the xet start-up and verification.
+DOWNLOAD_STALL_SECONDS = 30
+CONNECT_STALL_SECONDS = 90
 SAME_SOURCE_ATTEMPTS = 3
 
 
@@ -482,6 +486,14 @@ def run_sdk(source, row, path, plan, progress_callback, networking, transfer_com
         prior_phase = None
         prior_backend = None
         prior_io = 0
+        compare = dict(thread=None, rates={}, checks=0, at=None, current=0.)
+        moving = None
+        alternatives = []
+        if (row['bytes'] >= 128 * MiB and not networking.get('manual_source_switch') and not request['require_xet']
+                and not plan.get('manual_ranges')):
+            family = network.model_family(row)
+            alternatives = [(name, url, network.route_order(networking, family, name)[0])
+                            for name, url in network.model_urls(networking, row) if name != source]
         while process.poll() is None:
             if networking.get('resource_check'):
                 networking['resource_check']()
@@ -502,10 +514,29 @@ def run_sdk(source, row, path, plan, progress_callback, networking, transfer_com
                 break
             # Xet reconstruction can lag network transfer; either counter counts
             # as activity. Verification gets a size-aware disk allowance.
-            timeout = max(STALL_SECONDS, row['bytes'] / (8*MiB)) if current['phase'] in ('verify', 'reconstruct') else STALL_SECONDS
+            timeout = (max(STALL_SECONDS, row['bytes'] / (8*MiB)) if current['phase'] in ('verify', 'reconstruct')
+                       else DOWNLOAD_STALL_SECONDS if current['phase'] == 'download' and current.get('done_bytes')
+                       else CONNECT_STALL_SECONDS)
             if time.monotonic() - current['last_activity'] > timeout:
                 failure = 'stalled-transfer'
                 break
+            if alternatives and current['phase'] == 'download' and current.get('done_bytes'):
+                if moving is None:
+                    moving = (time.monotonic(), current['done_bytes'])
+                    compare['at'] = moving[0] + network.SWITCH_AFTER_SECONDS
+                from .provision import model_headers
+                better = network._faster_source(compare, time.monotonic(), moving[0], moving[1], current['done_bytes'],
+                                                row['bytes'], alternatives, 5, None, networking,
+                                                network.model_family(row), model_headers, full_restart=True)
+                if better is not None:
+                    from .download_settings import current as settings, SwitchRequested
+                    failure = 'faster-source'
+                    network.event(networking, category=network.model_family(row), source=source,
+                                  file=path.name, action='fallback', reason='faster-source',
+                                  resume_bytes=current['done_bytes'])
+                    network.source_health(networking, network.model_family(row), source, False)
+                    network.source_health(networking, network.model_family(row), better[0], True)
+                    raise SwitchRequested(dict(settings(networking), source=better[0], automatic=True))
             size_error = stage_overflow(stage, row, selected['part_bytes'])
             if size_error:
                 failure = 'unexpected-transfer-size'
@@ -683,7 +714,8 @@ def download(row, path, plan, progress_callback, headers_for, *, transfer_comple
                     network.event(networking,category=network.model_family(row),source=selected,
                         file=path.name,action='manual-switch',resume_bytes=retained['bytes'],
                         retained_unmapped_bytes=retained.get('unmapped_bytes',0),
-                        reason='User selected a new source; stopped the previous worker')
+                        reason=('A faster source was found; stopped the slower transfer' if switch.value.get('automatic')
+                                else 'User selected a new source; stopped the previous worker'))
                     if path.is_file() and retained['bytes']==row['bytes']:
                         break
     finally:

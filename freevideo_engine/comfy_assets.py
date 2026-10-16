@@ -48,8 +48,8 @@ def resolve_loras(serialized, names, resolve, previous=None):
             continue
         name, strength = row.get('name'), row.get('strength', 1.)
         if (isinstance(strength, bool) or not isinstance(strength, (int, float))
-                or not math.isfinite(strength) or not -4 <= strength <= 4):
-            raise ValueError('LoRA strength must be a finite number between -4 and 4')
+                or not math.isfinite(strength) or not -100 <= strength <= 100):
+            raise ValueError('LoRA strength must be a finite number between -100 and 100')
         if not isinstance(name, str) or name not in available or not name.lower().endswith('.safetensors'):
             raise ValueError('Select an available safetensors LoRA from your ComfyUI model folders')
         if strength != 0:

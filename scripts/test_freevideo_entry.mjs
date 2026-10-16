@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import {uploadMedia} from '../web/media_upload.js';
 import {outputDownloadURL} from '../web/output_download.js';
 import {regenerateResult, upscaleResult, createSecondPassQueue, enableNode} from '../web/studio_queue.js';
 import {referenceInputs, mediaRows} from '../web/prompt_references.js';
@@ -38,7 +39,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, enableNode, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue,
+        app, api, uploadMedia, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, enableNode, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue,
         createCastLibrary: options => {
             const cast = {element: new Element('cast'), options, destroyed: false, destroy() { this.destroyed = true; }};
             casts.push(cast); return cast;
@@ -113,6 +114,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { isLaunchVisit } from './launch_visit.js';", 'const isLaunchVisit = () => false;')
             .replace("import { openFreeVideoWorkflow } from './launcher.js';", 'const openFreeVideoWorkflow = (...args) => globalThis.__freevideoEntryTest.openFreeVideoWorkflow?.(...args);')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
+            .replace("import { uploadMedia } from './media_upload.js';", 'const {uploadMedia} = globalThis.__freevideoEntryTest;')
             .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
         await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
@@ -162,6 +164,38 @@ test('main browser entry registers both views and preserves node hooks', async t
                         assert.deepEqual(node.widgets.slice(0, 2).map(widget => widget.value), [base, refine]);
                         node.onRemoved();
                     }
+                } finally { navigator.language = 'en'; }
+            });
+            await t.test(`${language} advanced node labels preserve keys, values and untranslated copy`, async () => {
+                navigator.language = language;
+                try {
+                    await import('data:text/javascript;base64,' + Buffer.from(source + `\n// label language: ${language}`).toString('base64'));
+                    const localized = extensions.at(-1);
+                    class LocalizedGenerateNode extends GenerateNode {}
+                    await localized.beforeRegisterNodeDef(LocalizedGenerateNode, {name: 'FreeVideoGenerate'});
+                    const rows = [
+                        ['force_regenerate', 'Force regeneration', '重新生成', false, '跳过已保存结果的缓存。'],
+                        ['preview', 'Two-pass: preview first pass', '先出预览', false,
+                            '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
+                        ['refine_from', 'Second pass of preview', '继续二采', 'preview.mp4', '从这个预览继续生成全分辨率视频。'],
+                        ['continue_from', 'Continue from video', '接着生成', 'previous.mp4'],
+                        ['frames', 'Total frames', '帧数', 141],
+                        ['first_frame_reference', 'First-frame reference', '首帧参考', true, '减小漂移'],
+                        ['voice_reference', 'Voice reference', 'Voice reference', true],
+                        ['hide_tail', 'Hide dialogue tail', 'Hide dialogue tail', true],
+                    ];
+                    const node = new LocalizedGenerateNode();
+                    node.widgets = rows.map(([name, label, , value]) => ({name, label, value, tooltip: `original ${name}`}));
+                    node.onNodeCreated();
+                    assert.deepEqual(node.widgets.map(w => [w.name, w.value]), rows.map(([name, , , value]) => [name, value]));
+                    for (const [name, en, zh, , tooltip] of rows) {
+                        const widget = node.widgets.find(w => w.name === name);
+                        assert.equal(widget.label, language === 'zh' ? zh : en, name);
+                        assert.equal(widget.tooltip, language === 'zh' && tooltip ? tooltip : `original ${name}`, name);
+                    }
+                    assert.equal(node.widgets[0].type, 'hidden');
+                    assert.equal(node.widgets[0].serializeValue(), false);
+                    node.onRemoved();
                 } finally { navigator.language = 'en'; }
             });
         }
@@ -358,7 +392,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.match(audioHelp.textContent, /<Audio 1>/);
         assert.match(connections.children[0].textContent, /Reference audio.*Connected/);
         const audioButton = toolbar.children.find(e => e.tag === 'button' && e.textContent === 'Reference audio');
-        const audioPicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('audio/'));
+        const audioPicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('.wav'));
         audioButton.onclick(); assert.equal(audioPicker.clicked, true);
         api.fetchApi = async (url, options) => {
             assert.equal(url, '/freevideo/media/upload');
@@ -375,7 +409,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(audioHelp.hidden, true);
         assert.match(mode.textContent, /Text to video/);
         const imageRole = toolbar.children.find(e => e.tag === 'select');
-        const imagePicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('image/'));
+        const imagePicker = toolbar.children.find(e => e.tag === 'input' && e.accept.startsWith('.png'));
         assert.equal(imageRole.value, 'reference');
         api.fetchApi = async () => ({ok: true, json: async () => ({file: 'image.png'})});
         imagePicker.files = [new File(['image'], 'image.png', {type: 'image/png'})];

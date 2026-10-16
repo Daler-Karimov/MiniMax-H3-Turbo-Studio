@@ -22,9 +22,9 @@ let chatNumber = 0;
 
 const WORKING = ['running', 'queued', 'waiting', 'cancelling'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
-const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Polishing', '润色中']};
+const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Enhancing prompt', '增强提示词']};
 const SEND_ATTEMPTS = 3, WAIT_FOR_AGENT = ['not_connected', 'not_listening'];
-const GENERIC_FAILURE_ZH = '处理任务时出错，未能完成结果';
+const GENERIC_FAILURE_ZH = '没有完成';
 // A listening/connection race is queued; other 4xx refusals never repeat automatically.
 const sendRefused = (error, response) => error?.code === 'session_full' || error?.retryable === false
     || response?.status >= 400 && response.status < 500 && !WAIT_FOR_AGENT.includes(error?.code);
@@ -37,8 +37,8 @@ async function sendError(response) {
 function failureReason(value, t) {
     const error = value.error, reason = error?.error_zh || value.error_zh;
     if (error?.code === 'session_full' && (!reason || reason === GENERIC_FAILURE_ZH))
-        return t('This conversation is full. Start a new chat.', '这个对话已达到消息数量上限，请新建对话');
-    return t(error?.message || 'The task failed.', reason || GENERIC_FAILURE_ZH);
+        return t('This chat is full. Click "New chat".', '这个对话已满，请点“新对话”。');
+    return t(error?.message || 'Did not finish', reason || GENERIC_FAILURE_ZH);
 }
 
 export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
@@ -93,12 +93,12 @@ export function jobLevel(row, base, left, time) {
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
 const SAVING = ['decode', 'finishing', 'assembling'], stepped = p => p.phase === 'sampling' && p.step?.total && p.step.done >= 1;
-// The one line that says where a job is. No step count is written unless the engine gave one.
+// The one line that says where a job is. Sampling leaves it blank; the preview shows progress.
 export function jobLine(job, t) {
     const p = job.progress || {};
     if (job.status === 'cancelling') return t('Stopping', '正在停止');
     if (job.status !== 'running') return t('Queued', '排队中');
-    if (stepped(p)) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
+    if (stepped(p)) return '';
     if (SAVING.includes(p.phase)) return t('Saving', '保存中');
     if (p.phase === 'encoding') return t('Reading the prompt', '读取提示词');
     // Before the first step of the first part the model is still settling in: the line does not turn back to "Preparing".
@@ -106,7 +106,7 @@ export function jobLine(job, t) {
     return t('Preparing', '准备中');
 }
 // The line a card shows. After the last step, and again after saving, the engine has a moment with no step and no
-// stage to report: a card that has counted steps or said "Saving" for a part keeps that line until there is a newer
+// stage to report: a card that has started sampling or said "Saving" for a part keeps that line until there is a newer
 // one, and does not go back to the lines from before the first step. `said` is the card's own memory.
 export function cardLine(said, job, t) {
     const p = job.progress || {}, part = p.block?.index ?? 0;
@@ -266,7 +266,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (draftSession === session) return;
         saveDraft(); draftSession = session; input.value = drafts.get(session)?.text || ''; grow();
     }
-    const reason = error => error?.message || t('Connection lost', '连接中断');
+    const reason = error => error?.message || t('Connection lost. Try again.', '连接中断，请重试。');
     async function requestError(response) {
         const data = await response.json().catch(() => ({}));
         return new Error(data.error?.message || data.error?.code || `HTTP ${response.status}`);
@@ -572,7 +572,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         ids.forEach(id => stopping.add(id)); render(); report();
         const results = await Promise.all(ids.map(id => retryAgentPost(api, '/freevideo/agent/activity/cancel', {id})));
         results.forEach((response, index) => { if (!response?.ok) stopping.delete(ids[index]); });
-        if (results.some(response => !response?.ok)) say(t('Stopping failed after a retry. If still running, click again.', '停止没成功，已重试；仍在运行请再点一次'));
+        if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '没能停止，请再点一次。'));
         else say('');
         if (!stopped) { render(); report(); void poll(); }
     }
@@ -814,7 +814,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     // Before anything is said: what the agent can do, and sentences that send themselves when clicked.
     function hello() {
         const item = el('li', 'fv-chat-hello');
-        item.append(el('p', null, t('I can make videos for you,', '我可以替你生成视频，')), el('p', null, t('or turn a story into a short film.', '也可以把一个故事拍成短片。')));
+        item.append(el('p', null, t('I can make videos for you,', '我可以为您生成视频，')), el('p', null, t('or turn a story into a short film.', '也可以把一个故事拍成短片。')));
         return {element: item, update() {}};
     }
     function examples() {
@@ -919,8 +919,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         }
     }
     const waitingNotice = code => (code ? code === 'not_listening' : state.agent.connected === true)
-        ? t('Not sent: Agent is not listening yet. It will send automatically once listening resumes.', '没发出去：Agent 还没在听，继续监听后会自动发送')
-        : t('Not sent: Agent is not connected. It will send automatically once connected.', '没发出去：Agent 还没连接，连接后会自动发送');
+        ? t('Will send when Agent is back', '等 Agent 回来后自动发送')
+        : t('Will send when Agent connects', '等 Agent 连上后自动发送');
     async function send(text, original = null, draft = null, automatic = false) {
         text = String(text).trim();
         original ||= pending.find(entry => entry.session === (state.session ?? null) && entry.text === text && (entry.error || entry.sending || entry.automatic));
@@ -959,9 +959,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const exhausted = entry.attempts >= SEND_ATTEMPTS;
             entry.automatic = waiting && !exhausted;
             const explanation = refused || error && !waiting ? t('Not sent: ', '没发出去：') + failureReason({error}, t)
-                : exhausted ? t('Not sent: tried 3 times. Automatic sending stopped; please send again.', '没发出去：已尝试 3 次，已停止自动发送，请再发一次')
-                : waiting ? waitingNotice(error?.code) : t('The network is unstable. Retried; please send again.', '网络不稳，已重试，请再发一次');
-            entry.error = waiting ? explanation : t('Could not send: ', '没有发送成功：') + (error?.message || explanation);
+                : exhausted ? t('Not sent. Click "Retry".', '没有发出，请点“重试”。')
+                : waiting ? waitingNotice(error?.code) : t('The connection is unstable. Click "Retry".', '网络不稳，请点“重试”。');
+            entry.error = waiting || /^(Not sent|没发出|没有发出)/.test(explanation) ? explanation : t('Could not send: ', '没有发送成功：') + explanation;
             if (entry.session === state.session) {
                 if (waiting && error?.code === 'not_connected') state = {...state, agent: {connected: false, name: null}};
                 if (waiting && error?.code === 'not_listening') state = {...state, agent: {...state.agent, listening: false}};
@@ -985,7 +985,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // Editing a queued draft cancels its automatic delivery. Its original message remains available for manual retry.
         for (const entry of pending) if (entry.automatic && entry.session === draftSession && entry.draft !== drafts.get(draftSession)) {
             entry.automatic = false;
-            entry.error = t('Not sent: the queued draft changed. Retry to send the original.', '没发出去：排队草稿已修改，原消息需手动重试');
+            entry.error = t('The message changed. Click "Retry" to send the original.', '消息已修改，点“重试”发送原消息。');
             say('');
         }
         if (!input.value.trim()) say('');

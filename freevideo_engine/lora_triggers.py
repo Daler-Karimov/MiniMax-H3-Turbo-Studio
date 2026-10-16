@@ -161,8 +161,18 @@ def get_trigger_words(name, *, folders=None):
         return get_trigger(name, folders=folders)['words']
 
 
+def _written(prompt, words):
+    """Whether the phrase stands on its own in the prompt: sks is not found in asks.
+
+    Only letters and digits at the phrase's own edges are checked, so a phrase in Chinese still matches in running text."""
+    ends = ''.join(('(?<![A-Za-z0-9_])' if words[:1].isascii() and (words[:1].isalnum() or words[:1] == '_') else '',
+                    re.escape(words),
+                    '(?![A-Za-z0-9_])' if words[-1:].isascii() and (words[-1:].isalnum() or words[-1:] == '_') else ''))
+    return re.search(ends, prompt, re.IGNORECASE) is not None
+
+
 def prepend_words(prompt, words):
-    if not words or words.casefold() in prompt.casefold():
+    if not words or _written(prompt, words):
         return prompt
     return words + ', ' + prompt if prompt else words
 

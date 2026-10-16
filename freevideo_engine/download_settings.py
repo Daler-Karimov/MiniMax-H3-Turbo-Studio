@@ -10,6 +10,8 @@ from .long_paths import io_path, plain
 from .proxy import MODES
 
 CHOICES = ('auto', 'official', 'hf-mirror', 'modelscope')
+# Shown as is by the Tk window and mapped to Chinese by the setup page.
+SPEED_TEST_FAILED = 'The speed test did not finish. Click "Test source speeds".'
 FAMILIES = ('edge-models', 'vdn-models', 'models', 'image-models')
 
 
@@ -19,7 +21,7 @@ def speed_text(row, zh=False):
     rate = row.get('bytes_per_second')
     if (row.get('speed_measured') is False or not isinstance(rate, (int, float))
             or not math.isfinite(rate) or rate <= 0):
-        return '已连通，样本不足' if zh else 'Connected; insufficient sample'
+        return '已连通，速度还没测出' if zh else 'Connected; speed not measured yet'
     speed = rate / 2**20
     return '<0.01 MiB/s' if speed < .005 else (('%.2f' if speed < 1 else '%.1f') % speed + ' MiB/s')
 
@@ -134,7 +136,7 @@ class Probe:
                     with self.lock:
                         # Provider exceptions can contain request headers/URLs.
                         self.state=dict(status='failed',root=str(root),
-                            error='Source speed test failed (' + type(error).__name__ + '). Retry the speed test.')
+                            error=SPEED_TEST_FAILED)
             self.thread=threading.Thread(target=work,daemon=True)
             self.thread.start()
             return dict(self.state)

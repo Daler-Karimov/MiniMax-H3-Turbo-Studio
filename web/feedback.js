@@ -217,7 +217,14 @@ export function openFeedback(t, { open = openPage, version = productVersion,
 
 // The header entry, in the style of the Settings button beside it.
 export function feedbackButton(t, className = 'fv-quiet') {
-    const button = el('button', `${className} fv-feedback-entry`, t('Feedback', '反馈')); button.type = 'button';
+    const label = t('Feedback', '反馈');
+    const button = el('button', `${className} fv-feedback-entry`); button.type = 'button';
+    button.setAttribute('aria-label', label); button.title = label;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+    const path = document.createElementNS(icon.namespaceURI, 'path');
+    path.setAttribute('d', 'M13.5 2.5h-11a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2v3l3.5-3h5.5a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1Z');
+    icon.append(path); button.append(icon, el('span', 'fv-feedback-label', label));
     button.onclick = () => openFeedback(t);
     return button;
 }

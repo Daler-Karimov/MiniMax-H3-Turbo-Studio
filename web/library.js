@@ -1,6 +1,6 @@
 import { api } from '../../scripts/api.js';
 import { closeDialog } from './motion.js';
-import { resultActions, previewBadge } from './result_actions.js';
+import { resultActions, previewBadge, icon } from './result_actions.js';
 import { videoUnavailableText } from './studio_extend.js';
 import { topDialog } from './dialog_keys.js';
 
@@ -98,8 +98,9 @@ export async function libraryPage(t, {limit = 24, before = null, signal} = {}) {
 
 export function videoTimestamp(row, t) {
     const value = new Date(row.created_at);
-    return Number.isNaN(value.getTime()) ? t('Saved video', '已保存的视频')
-        : value.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+    if (Number.isNaN(value.getTime())) return t('Saved video', '已保存的视频');
+    if (t('en', 'zh') === 'zh') return `${value.getMonth() + 1}月${value.getDate()}日 ${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+    return value.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
 }
 
 export function videoDimensions(row) {
@@ -166,12 +167,21 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
     const header = el('header', null, 'fv-library-header');
     // Closing returns to the view this was opened from; that view names itself on the button.
-    const back = button(backLabel || t('Back to create', '返回创作'), () => closeDialog(dialog), 'fv-quiet');
+    const backText = backLabel || t('Back to create', '返回创作');
+    const back = button('', () => closeDialog(dialog), 'fv-quiet fv-library-back');
+    back.setAttribute('aria-label', backText); back.title = backText;
+    back.append(icon('back'), el('span', backText, 'fv-library-back-label'));
     const title = el('h2', t('Your creations', '我的作品'));
     const refresh = button(t('Refresh', '刷新'), () => load(false), 'fv-quiet');
     const choose = button(t('Select', '选择'), () => setSelecting(!selecting), 'fv-quiet fv-library-choose');
     const tools = el('div', null, 'fv-library-tools'); tools.append(choose, refresh);
     header.append(back, title, tools);
+    // Try the full label on each resize, so wider windows restore it too.
+    const headerObserver = new ResizeObserver(() => {
+        header.dataset.compact = 'false';
+        header.dataset.compact = String(title.scrollWidth > title.clientWidth || header.scrollWidth > header.clientWidth);
+    });
+    headerObserver.observe(header); headerObserver.observe(tools);
     const body = el('div', null, 'fv-library-body');
     const collection = el('section', null, 'fv-library-collection'); collection.setAttribute('aria-label', t('Saved videos', '已保存的视频'));
     const grid = el('div', null, 'fv-library-grid');
@@ -286,7 +296,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             await upscale(row);
             if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后在“作品”里。');
         } catch (error) {
-            if (!disposed && selected === row.video) notice.textContent = t('Could not continue: ', '无法继续生成：') + error.message;
+            if (!disposed && selected === row.video) notice.textContent = t('Could not start the second pass: ', '无法继续二采：') + error.message;
             throw error;
         }
     }
@@ -308,7 +318,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
                 : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
                 : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
                 : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请等它完成后再试。')
-                : error.message === 'in-use' ? t('Not deleted: it is still being generated or the video is open. Try again in a moment.', '未删除：它还在继续生成，或视频仍被占用，请稍后再试。')
+                : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
                 : t('Could not delete this creation.', '无法删除这条作品。'));
         }
         // Other views of the library (the studio's Recent videos) drop it too.
@@ -620,7 +630,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         image.dataset.src = videoThumbnailURL(row);
         image.onerror = () => { image.hidden = true; };
         picture.append(image, el('span', '✓', 'fv-library-check'));
-        if (row.preview) picture.append(el('span', t('Preview', '预览'), 'fv-preview-badge'));
+        if (row.preview) picture.append(el('span', t('First-pass preview', '一采预览'), 'fv-preview-badge'));
         // Made by an AI agent: say so, with the name the agent gave the shot.
         if (row.agent) {
             const badge = el('span', 'Agent', 'fv-agent-badge');
@@ -667,6 +677,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     window.addEventListener('freevideo-result', completed);
     dialog.addEventListener('cancel', event => { event.preventDefault(); if (selecting && !deleting) setSelecting(false); else closeDialog(dialog); });
     dialog.onclose = () => {
+        headerObserver.disconnect();
         disposed = true; abort.abort(); thumbnails.disconnect(); releasePlayer(); clearTimeout(undoTimer); clearTimeout(sizeTimer); clearTimeout(syncTimer);
         window.removeEventListener('freevideo-result', completed); window.removeEventListener('storage', undoChanged); window.removeEventListener('freevideo-library-undo', showUndo); window.removeEventListener('freevideo-library-deleted', deletedElsewhere); dialog.remove();
         if (opened === dialog) opened = null;

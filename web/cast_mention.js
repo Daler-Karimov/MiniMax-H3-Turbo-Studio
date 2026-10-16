@@ -34,11 +34,13 @@ export function subjectDefinitions(subjects) {
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 const enabled = row => row && row.enabled !== false;
 // The number H3 gives each reference picture: images in list order (connected inputs come after the list).
-function pictureNumbers(rows) {
+// A part that continues a video keeps the first CONTINUE_PICTURES of them (continuation.PICTURES_MAX).
+export const CONTINUE_PICTURES = 3;
+function pictureNumbers(rows, limit = Infinity) {
     const numbers = new Map();
     let count = 0;
     rows.forEach((row, index) => {
-        if (enabled(row) && row.role === 'reference' && IMAGE.test(row.file || '')) numbers.set(index, ++count);
+        if (enabled(row) && row.role === 'reference' && IMAGE.test(row.file || '') && count < limit) numbers.set(index, ++count);
     });
     return numbers;
 }
@@ -63,39 +65,39 @@ export function mentionedIds(text, rows) {
 }
 
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// Where `@name` of a present character stands in the text; longer names win, an @ right after a word or an address is not
-// a mention (the same rule as the @ list's).
+// Where `@name` of a present character stands in the text; longer names win, an @ right after a Latin word or an address is
+// not a mention (the same rule as the @ list's), but one right after another name or a Chinese character is.
 export function mentionRanges(text, people) {
     const names = [...new Set(people.map(person => person.handle ?? person.name).filter(Boolean))].sort((a, b) => b.length - a.length);
     if (!names.length || !text.includes('@')) return [];
     // A name written in Latin letters does not end in the middle of a longer word ("@Su Wanda" is not "@Su Wan").
     const whole = name => escape(name) + (/[A-Za-z0-9_]$/.test(name) ? '(?![A-Za-z0-9_])' : '');
-    const pattern = new RegExp('(^|[^\\w.%+\\-])@(' + names.map(whole).join('|') + ')', 'gu');
+    const pattern = new RegExp('(?<![\\w.%+\\-])@(' + names.map(whole).join('|') + ')', 'gu');
     const ranges = [];
-    for (const match of text.matchAll(pattern)) {
-        const start = match.index + match[1].length;
-        ranges.push({start, end: start + 1 + match[2].length, name: match[2]});
-    }
+    for (const match of text.matchAll(pattern))
+        ranges.push({start: match.index, end: match.index + 1 + match[1].length, name: match[1]});
     return ranges;
 }
 
 // The prompt a request carries. Characters mentioned in the text are numbered in order of first mention; one whose
-// pictures are gone is written as a plain name. `active: false` (first/last frames, a continued video) leaves every
-// name plain too, since pictures of people cannot go with those.
-export function expandCast(text, rows, {active = true} = {}) {
+// pictures are gone is written as a plain name. `active: false` (first/last frames) leaves every name plain too, since
+// pictures of people cannot go with those. `continued` (the part continues a video) lets the characters stay: the part
+// keeps the first three reference pictures and its frames come after them, so a character whose pictures are not among
+// those three is written as a plain name.
+export function expandCast(text, rows, {active = true, continued = false} = {}) {
     text = String(text ?? '');
     const list = Array.isArray(rows) ? rows : [];
     const people = castInRows(list);
     const ranges = mentionRanges(text, people);
     if (!ranges.length) return {text, subjects: []};
-    if (list.some(row => enabled(row) && (row.role === 'first' || row.role === 'last'))) active = false;
-    const numbers = pictureNumbers(list);
+    if (!continued && list.some(row => enabled(row) && (row.role === 'first' || row.role === 'last'))) active = false;
+    const numbers = pictureNumbers(list, continued ? CONTINUE_PICTURES : Infinity);
     const order = [];
     let result = '', at = 0;
     for (const range of ranges) {
         result += text.slice(at, range.start); at = range.end;
         const person = people.find(p => (p.handle ?? p.name) === range.name);
-        if (!active || !person) { result += person ? person.name : range.name; continue; }
+        if (!active || !person || !person.rows.some(index => numbers.has(index))) { result += person ? person.name : range.name; continue; }
         let number = order.indexOf(person) + 1;
         if (!number) {
             if (order.length >= MAX_PEOPLE) { result += person.name; continue; }
@@ -108,7 +110,7 @@ export function expandCast(text, rows, {active = true} = {}) {
     const subjects = order.map(person => {
         // Consecutive picture numbers make one range; a person whose pictures are apart gets several.
         const ranges = [];
-        for (const number of person.rows.map(index => numbers.get(index)).sort((a, b) => a - b)) {
+        for (const number of person.rows.map(index => numbers.get(index)).filter(Boolean).sort((a, b) => a - b)) {
             const last = ranges[ranges.length - 1];
             if (last && number === last[1] + 1) last[1] = number; else ranges.push([number, number]);
         }
@@ -128,12 +130,13 @@ export function cardPictures(card) {
 
 // Whether a character can be mentioned now; `reason` is the one thing in the way.
 // `count` is how many pictures the card would add when only its list row is known.
-export function mentionState(rows, card, count = cardPictures(card).length) {
+export function mentionState(rows, card, count = cardPictures(card).length, {continued = false} = {}) {
     const list = Array.isArray(rows) ? rows : [];
     const people = castInRows(list);
     if (people.some(person => person.id === card.id)) return {ok: true, present: true};
-    if (list.some(row => enabled(row) && (row.role === 'first' || row.role === 'last'))) return {ok: false, reason: 'frames'};
+    if (!continued && list.some(row => enabled(row) && (row.role === 'first' || row.role === 'last'))) return {ok: false, reason: 'frames'};
     if (people.length >= MAX_PEOPLE) return {ok: false, reason: 'people'};
+    if (continued && pictureNumbers(list).size >= CONTINUE_PICTURES) return {ok: false, reason: 'continued'};
     if (list.filter(enabled).length + count > MAX_REFERENCES) return {ok: false, reason: 'full'};
     return {ok: true, present: false};
 }

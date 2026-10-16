@@ -42,7 +42,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         const data = await response.json().catch(() => null);
         if (!response.ok) {
             const error = new Error(data?.error?.message || (typeof data?.error === 'string' && data.error)
-                || data?.message || response.statusText || text('Request failed', '请求失败'));
+                || data?.message || response.statusText || text('Did not finish. Try again.', '没有完成，请重试。'));
             error.status = response.status; throw error;
         }
         return data;
@@ -97,7 +97,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         const closeButton = button('fv-cast-close', '×', () => close());
         closeButton.setAttribute('aria-label', text('Close', '关闭')); top.append(title, closeButton);
         const name = el('input', 'fv-cast-name'); name.type = 'text'; name.maxLength = 120;
-        name.placeholder = text('Name', '姓名'); name.setAttribute('aria-label', text('Name', '姓名'));
+        name.placeholder = text('Name', '名字'); name.setAttribute('aria-label', text('Name', '名字'));
         name.oninput = () => sync();
         name.onkeydown = event => { if (event.key === 'Enter') event.preventDefault(); };
         const tabs = el('div', 'fv-cast-tabs'); tabs.setAttribute('role', 'tablist');
@@ -122,12 +122,22 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             status.textContent = content; status.hidden = !content; status.classList.toggle('fv-cast-notice', notice);
         };
         const aiBusy = () => aiState.busy || !!generator?.isBusy();
+        // What is still missing before Save works ('' when nothing is); the button says so on hover and when pressed.
+        let missing = '';
+        const missingNow = () => !name.value.trim() ? text('Enter a name first', '先填写名字')
+            : aiBusy() ? text('Wait for the five pictures to finish', '等待五张图生成完成')
+            : active === 'upload' ? (frontless ? slots.some(Boolean) : slots[0]) ? '' : frontless ? text('Add an image first', '先添加图片') : text('Add a front image first', '先添加正面图片')
+            : aiState.done ? '' : text('Generate the images first', '先生成角色图片');
         function sync() {
             const busy = loading || saving;
             name.disabled = busy; remove.disabled = busy;
             uploadTab.disabled = aiTab.disabled = busy;
-            save.disabled = busy || aiBusy() || !name.value.trim()
-                || (active === 'upload' ? !(frontless ? slots.some(Boolean) : slots[0]) : !aiState.done);
+            const before = missing;
+            missing = busy ? '' : missingNow();
+            save.disabled = busy;
+            if (missing) { save.setAttribute('aria-disabled', 'true'); save.title = missing; }
+            else { save.removeAttribute('aria-disabled'); save.removeAttribute('title'); }
+            if (before && before !== missing && status.textContent === before) message('');
             for (let index = 0; index < slotUI.length; index++) {
                 slotUI[index].choose.disabled = busy; slotUI[index].remove.disabled = busy;
             }
@@ -178,7 +188,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         for (let index = 0; index < 6; index++) {
             const slot = el('div', 'fv-cast-slot' + (index ? '' : ' fv-cast-front'));
             const input = el('input'); input.type = 'file'; input.accept = 'image/*'; input.hidden = true;
-            const label = index ? text(`View image ${index}`, `视角图片 ${index}`) : text('Front image', '正面图片');
+            const label = index ? text(`View ${index}`, `视角 ${index}`) : text('Front image', '正面图片');
             const choose = button('fv-cast-choose', '', () => input.click()); choose.setAttribute('aria-label', label);
             const remove = button('fv-cast-remove', '×', () => { release(index); paint(index); });
             remove.setAttribute('aria-label', text('Remove image', '移除图片'));
@@ -218,7 +228,8 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             } else message(error.message);
         }
         async function saveCard() {
-            if (save.disabled || closed) return;
+            if (closed || save.disabled) return;
+            if (missing) { message(missing, true); return; }
             saving = true; resetDelete(); message(''); sync();
             try {
                 const pictures = active === 'upload' ? slots.filter(Boolean) : generator.getPictures().map((picture, index) => ({
@@ -227,7 +238,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                 }));
                 const frontNeeded = active === 'ai' || !frontless;
                 if (!pictures.length || pictures.length > 6 || (frontNeeded && !pictures.some(picture => picture.label === 'front')))
-                    throw new Error(text('Choose a front image and up to five views', '请选择正面图片，最多五张视角图片'));
+                    throw new Error(text('Choose one front image and up to 5 more angles', '选一张正面图片，再加最多 5 张其他角度的图片'));
                 const images = [];
                 for (const picture of pictures) {
                     if (closed) return;

@@ -130,9 +130,9 @@ IMAGE_REASONS = {
     'worker_exit': ('Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'),
     'timeout': ('This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'),
     'generation_failed': ('Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'),
-    'invalid_media': ('A reference picture is missing or cannot be read. Choose a readable picture.',
-                      '参考图片不存在或读不出来，请选择可读取的图片。'),
-    'invalid_request': ('The picture settings are invalid. Check them and try again.', '图片参数不合法，请检查后重试。'),
+    'invalid_media': ('The reference image could not be read. Choose another one.',
+                      '参考图读不出来，请换一张。'),
+    'invalid_request': ('The image settings are invalid. Adjust them and try again.', '图片设置有误，请调整后重试。'),
     'busy': ('Another picture is being generated. Try again when it finishes.', '已有一张图在生成，完成后再试。'),
     'cancelled': ('The picture was cancelled.', '已取消这张图片。'),
 }
@@ -260,14 +260,14 @@ FAILURE_REASONS_ZH = {
     'not_ready': '生成所需的环境还没有安装好',
     'cancelled': '生成已被停止',
     'stopped_by_user': '生成已被停止',
-    'interrupted': '生成服务中途重启，任务被打断',
-    'worker_exit': '图片生成进程中途退出',
+    'interrupted': '生成中途被打断',
+    'worker_exit': '图片生成中途被打断',
     'closed': '图片生成服务已经关闭',
     'image_unavailable': '图片生成服务还没有启动',
     'vlm_unavailable': '读取画面的模型服务还没有启动',
-    'vlm_failed': '读取画面的模型没有完成请求',
-    'vlm_invalid_json': '模型返回的结果格式无法读取',
-    'context_length': '描述和参考图超过了模型可读取的长度',
+    'vlm_failed': '没能读出画面',
+    'vlm_invalid_json': '回复读不出来',
+    'context_length': '描述和参考图太长',
     'dependency_failed': '前面依赖的任务没有完成',
     'lost': '生成服务没有保留这次任务的结果',
     'unknown_job': '图片生成服务找不到这次任务',
@@ -280,11 +280,11 @@ FAILURE_REASONS_ZH = {
     'invalid_output': '生成的结果无法读取或保存',
     'storage_unavailable': '任务记录或素材无法写入磁盘',
     'submit_interrupted': '提交生成时服务中断，尚未确认任务是否开始',
-    'timeout': '生成等待超时',
+    'timeout': '生成等了太久没有结果',
     'invalid_media': '参考素材无法读取',
     'clip_unreadable': '生成的角色参考视频无法读取',
     'invalid_request': '生成参数不符合支持的范围',
-    'invalid_drama': '短剧计划中有无法使用的参数',
+    'invalid_drama': '短剧设置有误',
     'reshoot_limit': '这个镜头已达到可生成的次数上限',
     'production_limit': '这部短剧已达到可生成的任务数量上限',
     'export_failed': '导出成片时出错',
@@ -293,8 +293,8 @@ FAILURE_REASONS_ZH = {
     'too_many_images': '参考图片数量超过了支持的范围',
     'chain_too_long': '接续后的视频超过了支持的段数',
     'chain_rejected': '生成服务无法使用这组参数',
-    'generation_failed': '生成过程中出错，未能完成结果',
-    'internal_error': '处理任务时出错，未能完成结果',
+    'generation_failed': '生成没有完成',
+    'internal_error': '没有完成',
 }
 FAILURE_MESSAGES_ZH = {
     'The previous video is too short to continue; it needs to be at least 2 s long.': '接续的上一段视频太短，至少需要 2 秒',
@@ -317,7 +317,7 @@ def failure_reason(error):
         return FAILURE_MESSAGES_ZH[line]
     if line.startswith(('CUDA out of memory', 'MPS backend out of memory')):
         return FAILURE_REASONS_ZH['out_of_memory']
-    return FAILURE_REASONS_ZH.get(error.get('code'), '处理任务时出错，未能完成结果')
+    return FAILURE_REASONS_ZH.get(error.get('code'), '没有完成')
 
 
 def with_reason(error):

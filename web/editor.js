@@ -28,6 +28,7 @@ import {createFirstRunGuide} from './first_run_guide.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
 import {optionalText} from './optional_inputs.js';
+import {expandCast} from './cast_mention.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_expand.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -180,7 +181,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const options = await openExportDialog({parent: element, state, sources: store.sources, t, onError: error});
             if (options && !disposed) await actions.export(options);
         } catch (value) { error(value, 'export'); }
-    }, 'fv-primary');
+    }, 'fv-primary fv-ed-export-main');
     const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(error)); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
     headerActions.append(exportBox, feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
@@ -784,7 +785,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const values = new Uint32Array(1);
                 if (globalThis.crypto?.getRandomValues) crypto.getRandomValues(values); else values[0] = Math.floor(Math.random() * 2 ** 32);
                 const seed = values[0] === lastSeed ? (values[0] + 1) >>> 0 : values[0]; lastSeed = seed;
-                const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i}));
+                // An @name in a description becomes <Subject N> and its definition, as in the creative panel; a part that
+                // continues carries only the pictures the engine keeps for it, and is numbered among them.
+                const castRows = panel.references?.available() ? panel.references.rows?.() ?? [] : [];
+                const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i,
+                    text: expandCast(block.text, castRows, {continued: Boolean(block.after)}).text}));
                 const job = await store.startChain({...frozen, blocks});
                 if (!job && !store.generationAvailable) {
                     if (epoch === projectEpoch) {

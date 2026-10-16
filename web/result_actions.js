@@ -7,6 +7,7 @@ const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./result_actions.css', import.meta.url).href; document.head.append(css);
 
 const ICONS = {
+    back: '<path d="M13 8H3m0 0 4-4M3 8l4 4"/>',
     sidebar: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.5 2.5v11"/>',
     download: '<path d="M8 2.5v7.5m0 0 3-3m-3 3-3-3M3 11.5v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1"/>',
     share: '<path d="M8 10V2.5m0 0L5.2 5.3M8 2.5l2.8 2.8M4.5 7.5H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1h-.5"/>',
@@ -29,8 +30,8 @@ export function icon(name) {
 export function previewBadge(record, t) {
     const badge = document.createElement('span'); badge.className = 'fv-preview-badge';
     const g = record.preview_geometry;
-    badge.textContent = g?.width ? t(`Preview · ${g.width} × ${g.height}`, `预览 · ${g.width} × ${g.height}`)
-        : t('Preview', '预览');
+    badge.textContent = g?.width ? t(`First-pass preview · ${g.width} × ${g.height}`, `一采预览 · ${g.width} × ${g.height}`)
+        : t('First-pass preview', '一采预览');
     return badge;
 }
 
@@ -59,7 +60,7 @@ function popover(menu, summary, onClose = () => {}) {
 
 // The next step of a first-pass preview. `run` reports its own errors and throws.
 export function secondPassAction(t, run) {
-    const button = action('button', t('Continue', '继续生成'), 'expand', 'fv-action-primary fv-action-second-pass');
+    const button = action('button', t('Run second pass', '继续二采'), 'expand', 'fv-action-primary fv-action-second-pass');
     const label = button.lastElementChild;
     button.title = t('Continue from this preview to the full-resolution video.',
         '从这个预览继续生成全分辨率视频。');
@@ -70,7 +71,7 @@ export function secondPassAction(t, run) {
         try { await run(); label.textContent = button.title = t('Queued', '已加入队列'); }
         catch {
             button.disabled = false;
-            label.textContent = button.title = t('Could not continue · Retry', '未能继续生成 · 重试');
+            label.textContent = button.title = t('Second pass did not start · Retry', '二采没有开始 · 重试');
         } finally { button.removeAttribute('aria-busy'); }
     };
     return button;
@@ -104,6 +105,16 @@ function deleteAction(t, remove) {
     popover(menu, summary, () => { problem.hidden = true; });
     menu.addEventListener('toggle', () => { if (menu.open) cancel.focus(); });
     return menu;
+}
+
+// The video cannot be opened: what works on the file (download, extend, share) goes quiet and cannot be used.
+export function actionsUnavailable(bar) {
+    if (!bar) return;
+    bar.dataset.unavailable = 'true';
+    for (const item of bar.querySelectorAll('a.fv-action[download], .fv-action-extend, .fv-share-trigger')) {
+        item.setAttribute('aria-disabled', 'true'); item.tabIndex = -1;
+        if (item.tagName === 'A') item.removeAttribute('href'); else item.disabled = true;
+    }
 }
 
 // Download the video first; share and the report follow. A first-pass preview
@@ -150,7 +161,7 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
     if (diagnostic) {
         const reportLabel = t('Diagnostic report', '诊断报告');
         const report = action('button', reportLabel, 'report', 'fv-action-secondary fv-action-report');
-        report.title = t('Redacted diagnostic report: hardware, settings and timings', '已脱敏的诊断报告：硬件、设置和耗时');
+        report.title = t('Diagnostic report: hardware, settings and timings', '诊断报告：硬件、设置和耗时');
         const text = report.lastElementChild;
         report.onclick = async () => {
             if (report.disabled) return;

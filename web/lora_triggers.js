@@ -1,8 +1,23 @@
 // Records are saved on the generation node: {name, words, added}. A phrase
 // already written by the user has added=false, so it is never removed or
 // reinserted after a manual edit. A missing table entry means lookup is pending.
+// Where the phrase stands on its own: a word that only sits inside a longer one
+// (sks in asks, TOK in Tokyo) is not the trigger. Only letters and digits of the
+// phrase's own edges are checked, so a phrase in Chinese still matches in running text.
+function phraseIndex(text, phrase, ignoreCase = false) {
+    if (ignoreCase) { text = text.toLowerCase(); phrase = phrase.toLowerCase(); }
+    const word = /[A-Za-z0-9_]/;
+    const startsWord = word.test(phrase[0] ?? ''), endsWord = word.test(phrase.at(-1) ?? '');
+    for (let index = text.indexOf(phrase); phrase && index >= 0; index = text.indexOf(phrase, index + 1)) {
+        const end = index + phrase.length;
+        if (!(startsWord && index > 0 && word.test(text[index - 1]))
+            && !(endsWord && end < text.length && word.test(text[end]))) return index;
+    }
+    return -1;
+}
+
 function removeInsertion(prompt, words) {
-    const index = prompt.indexOf(words);
+    const index = phraseIndex(prompt, words);
     if (index < 0) return prompt;
     const before = prompt.slice(0, index), after = prompt.slice(index + words.length);
     const following = after.match(/^\s*,\s*/);
@@ -30,13 +45,13 @@ export function reconcileLoraTriggers(prompt, records, rows, wordsByName) {
     }
     // Shared phrases have joint ownership, including when one model replaces
     // another with the same phrase. Remove them only after the last owner leaves.
-    const owned = new Set([...previous.values()].filter(row => row.added && prompt.includes(row.words)).map(row => row.words));
+    const owned = new Set([...previous.values()].filter(row => row.added && phraseIndex(prompt, row.words) >= 0).map(row => row.words));
     const next = [], prefix = [];
     for (const name of names) {
         if (retained.has(name)) { next.push(retained.get(name)); continue; }
         const phrase = words(name);
         if (!phrase) continue;
-        const present = [...prefix, prompt].join(', ').toLowerCase().includes(phrase.toLowerCase());
+        const present = phraseIndex([...prefix, prompt].join(', '), phrase, true) >= 0;
         const added = !present || owned.has(phrase);
         if (!present) { prefix.push(phrase); owned.add(phrase); }
         next.push({name, words: phrase, added});

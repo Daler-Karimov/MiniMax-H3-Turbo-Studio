@@ -93,13 +93,22 @@ export function syncReferencePrompt(node, t = en => en, reset = false) {
     window.dispatchEvent(new CustomEvent('freevideo-reference-prompt', {detail: node.id}));
 }
 
-export function mentionAt(text, start, end = start) {
+// `handles` are the names of characters that can be mentioned: once the caret is past a whole "@name" the mention is
+// finished (a character was chosen), so the list does not open again for what is written after it.
+export function mentionAt(text, start, end = start, handles = []) {
     if (start < 1 || start !== end) return null;
     const at = text.lastIndexOf('@', start - 1);
     if (at < 0 || (at > 0 && /[\w.%+\-]/.test(text[at - 1]))) return null;
     const query = text.slice(at + 1, start);
+    const rest = text.slice(at + 1);
+    // A longer name that still begins like what is typed ("苏" and "苏晚") keeps the list open.
+    const typing = query.toLowerCase(), longer = handles.some(name => name && name.toLowerCase().startsWith(typing));
+    if (!longer && handles.some(name => name && query.length > name.length && rest.startsWith(name)
+        && !(/[A-Za-z0-9_]$/.test(name) && /^[A-Za-z0-9_]/.test(rest.slice(name.length))))) return null;
     return /^[\p{L}\p{N}_. \-]{0,64}$/u.test(query) ? {start: at, end: start, query: query.trim().toLowerCase()} : null;
 }
+
+export const handleNames = people => people.map(person => person.handle || person.name);
 
 let serial = 0;
 // `characters()` lists library characters for the same popup: [{id, name, thumb, blocked}], `blocked` being the reason
@@ -177,20 +186,20 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
     }
     function refresh() {
         if (disposed || composing || input.disabled || input.readOnly || document.activeElement !== input) { close(); return; }
-        range = mentionAt(input.value, input.selectionStart, input.selectionEnd);
+        let everyone = [];
+        try { everyone = characters(); } catch {}
+        range = mentionAt(input.value, input.selectionStart, input.selectionEnd, handleNames(everyone));
         if (!range) { close(); return; }
         let available = [], invalid = false;
         try { available = items(); } catch { invalid = true; }
         const media = available.filter(item => `${item.name} ${item.token} ${t(item.kind, {image:'图片',video:'视频',audio:'音频'}[item.kind])} ${item.number}`.toLowerCase().includes(range.query));
-        let everyone = [];
-        try { everyone = characters(); } catch {}
         const people = everyone.filter(person => person.name.toLowerCase().includes(range.query));
         matches = [...people.map(character => ({character})), ...media];
         list.replaceChildren();
         if (!matches.length) {
             const empty = document.createElement('div'); empty.className = 'fv-reference-empty';
             empty.textContent = invalid ? t('Check your media selection.', '请检查素材用途是否冲突。')
-                : available.length || everyone.length ? t('No matching references', '没有匹配的素材') : t('Add reference media to use @', '添加参考素材后即可使用 @');
+                : available.length || everyone.length ? t('No matching characters or media', '没有匹配的角色或素材') : t('Add reference media to use @', '添加参考素材后即可使用 @');
             list.append(empty);
             if (!available.length && !everyone.length && !invalid && addMedia) {
                 const add = document.createElement('button'); add.type = 'button'; add.textContent = t('Add media', '添加素材');
@@ -250,7 +259,9 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
         refresh,
         open() {
             if (input.disabled || input.readOnly) return;
-            if (!mentionAt(input.value, input.selectionStart, input.selectionEnd)) {
+            let everyone = [];
+            try { everyone = characters(); } catch {}
+            if (!mentionAt(input.value, input.selectionStart, input.selectionEnd, handleNames(everyone))) {
                 const prefix = input.value[input.selectionStart - 1] || '';
                 insert((/[\w.%+\-]/.test(prefix) ? ' ' : '') + '@', input.selectionStart, input.selectionEnd);
             }

@@ -24,6 +24,7 @@ import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
 import { createCastLibrary } from './cast_library.js';
+import { uploadMedia } from './media_upload.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -67,12 +68,27 @@ function viewURL(file, type = "input") {
         filename: file.slice(split + 1), subfolder: split < 0 ? "" : file.slice(0, split), type,
     }));
 }
+const MEDIA_EXTENSIONS = {
+    image: ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
+    video: ["mp4", "mov", "webm", "mkv", "m4v"],
+    audio: ["wav", "mp3", "flac", "ogg", "m4a", "aac", "opus"],
+};
+const extensionOf = name => name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+const acceptList = kinds => kinds.flatMap(kind => MEDIA_EXTENSIONS[kind]).map(ext => "." + ext).join(",");
+function mediaKindOrNull(name) {
+    const ext = extensionOf(name);
+    return Object.keys(MEDIA_EXTENSIONS).find(kind => MEDIA_EXTENSIONS[kind].includes(ext)) ?? null;
+}
 function mediaKind(name) {
-    const ext = name.split(".").pop().toLowerCase();
-    if (["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].includes(ext)) return "image";
-    if (["mp4", "mov", "webm", "mkv", "m4v"].includes(ext)) return "video";
-    if (["wav", "mp3", "flac", "ogg", "m4a", "aac", "opus"].includes(ext)) return "audio";
-    throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
+    const kind = mediaKindOrNull(name);
+    if (!kind) throw new Error(text("Choose an image, video or audio file", "请选择图片、视频或音频文件"));
+    return kind;
+}
+function skippedNote(names) {
+    const found = [...new Set(names.map(extensionOf).filter(Boolean).map(ext => "." + ext))], kinds = found.slice(0, 3);
+    const more = found.length > 3, n = names.length;
+    return text(`Skipped ${n} unsupported file${n === 1 ? "" : "s"}${kinds.length ? ` (${kinds.join(", ")}${more ? " and more" : ""})` : ""}`,
+        `已跳过 ${n} 个不支持的文件${kinds.length ? `（${kinds.join("、")}${more ? " 等" : ""}）` : ""}`);
 }
 
 const referenceHelp = () => text('Each reference image counts as one media item.', '每张参考图片各占一个素材名额。');
@@ -118,13 +134,13 @@ function mediaPanel(node, mount = null) {
     const mode = el("div", "", "fv-mode");
     const cards = el("div"), connections = el("div", undefined, "fv-connected");
     const picker = el("input"); picker.type = "file"; picker.multiple = true;
-    picker.accept = "image/*,video/*,audio/*"; picker.hidden = true;
+    picker.accept = acceptList(["image", "video", "audio"]); picker.hidden = true;
     const add = button(text("Upload files", "上传文件"), text("Upload images, video or audio", "上传图片、视频或音频"), () => picker.click());
     const generateImage = button(text('Generate with AI', 'AI 生成'), text('Generate with AI', 'AI 生成'), () => newImage());
     generateImage.prepend(document.createRange().createContextualFragment(icon('generate')));
     generateImage.hidden = !imageGenerationSupported();
     const audioPicker = el('input'); audioPicker.type = 'file'; audioPicker.multiple = true;
-    audioPicker.accept = 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus'; audioPicker.hidden = true;
+    audioPicker.accept = acceptList(["audio"]); audioPicker.hidden = true;
     const addAudio = button(text('Reference audio', '参考音频'),
         text('Add a voice, music or rhythm reference (its first 15 seconds at most are used)', '添加音色、音乐或节奏参考（最多使用前 15 秒）'), () => audioPicker.click());
     const audioHelp = el('div', '', 'fv-note'); audioHelp.hidden = true;
@@ -158,10 +174,7 @@ function mediaPanel(node, mount = null) {
     };
     // One file into ComfyUI's input folder, through FreeVideo's streaming upload.
     async function uploadOne(file) {
-        const body = new FormData(); body.append('file', file);
-        const response = await api.fetchApi('/freevideo/media/upload', {method: 'POST', body});
-        const result = await response.json(); if (!response.ok) throw new Error(result.error || response.statusText);
-        return result;
+        return uploadMedia(api, file);
     }
     // An agent's edit leaves its editor document beside the picture: open that, so people continue its layers.
     async function agentEdit(file) {
@@ -247,7 +260,8 @@ function mediaPanel(node, mount = null) {
         // A Generate node that continues a video takes these keyframes as pictures, so they may sit beside references.
         const continuing = (node.outputs?.[0]?.links || []).some(id => {
             const target = node.graph?.getNodeById(node.graph?.links[id]?.target_id);
-            return target?.type === 'FreeVideoGenerate' && optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '';
+            return target?.type === 'FreeVideoGenerate' && (target.freevideoContinues?.()
+                || optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '');
         });
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
@@ -265,7 +279,7 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs > 32 ? text('There are more than 32 references; remove some before generating.', '参考素材超过 32 个，可移除部分后再生成。') : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Drop or paste files, or connect images and audio on the left.", "可拖入、粘贴文件，或连接左侧的图片和音频。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
+        message(refs > 32 ? text('There are more than 32 references; remove some before generating.', '参考素材超过 32 个，可移除部分后再生成。') : continuing && active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'image').length > 3 ? text('When continuing, only the first 3 images are used.', '接续时只用前 3\u00a0张图片。') : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Drop or paste files, or connect images and audio on the left.", "可拖入、粘贴文件，或连接左侧的图片和音频。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
         if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
         if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media comes from the connected inputs; no upload is needed.', '素材来自已连接的输入，无需上传。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
@@ -341,17 +355,21 @@ function mediaPanel(node, mount = null) {
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;
+        const chosen = Array.from(files);
+        const usable = chosen.filter(file => mediaKindOrNull(file.name));
+        const skipped = chosen.filter(file => !mediaKindOrNull(file.name)).map(file => file.name);
         uploading = true; node.isUploading = true; add.disabled = true; addAudio.disabled = true;
         try {
-            for (const [index, file] of Array.from(files).entries()) {
+            for (const [index, file] of usable.entries()) {
                 if (read().length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 const kind = mediaKind(file.name);
-                message(`${text("Uploading", "正在上传")} ${index + 1}/${files.length} · ${file.name}`);
+                message(`${text("Uploading", "正在上传")} ${index + 1}/${usable.length} · ${file.name}`);
                 const result = await uploadOne(file);
                 // Read again after the wait: another place may have changed the list meanwhile.
                 const rows = read(); if (rows.length >= 32) throw new Error(text("Use at most 32 media items", "最多使用 32 个素材"));
                 rows.push({file: result.file, role: kind === "image" ? role.value : "reference", enabled: true}); update(rows);
             }
+            if (skipped.length) message(skippedNote(skipped), !usable.length);
         } catch (error) { message(error.message, true); }
         finally { uploading = false; node.isUploading = false; add.disabled = false; addAudio.disabled = false; picker.value = ""; audioPicker.value = ''; }
     }
@@ -706,7 +724,7 @@ app.registerExtension({
                 }
                 // Characters mentioned with @ travel as <Subject N> plus their definitions; the draft keeps the typed names.
                 const prompt = this.widgets?.find(w => w.name === 'text');
-                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
+                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {continued: Boolean(owner.freevideoContinues?.())}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
                     quality.label = text('Two-pass acceleration', '二次采样加速');
@@ -718,6 +736,23 @@ app.registerExtension({
                         steps.label = text(en, zh);
                         steps.tooltip = text('Changing sampling steps may lower generation quality. Default: 8 first-pass and 3 second-pass steps. Two-pass acceleration runs only with 8 first-pass steps. Other step counts use a single pass. Other second-pass counts must be fewer than first-pass steps.',
                             '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；只有一采为 8 步时才会使用二次采样加速，其他步数只采样一遍；其他二采步数需小于一采步数。');
+                    }
+                }
+                if (cn) {
+                    // Reuse product wording; leave untranslated names with no established Chinese copy.
+                    for (const [name, label, tooltip] of [
+                        ['force_regenerate', '重新生成', '跳过已保存结果的缓存。'],
+                        ['preview', '先出预览', '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
+                        ['refine_from', '继续二采', '从这个预览继续生成全分辨率视频。'],
+                        ['continue_from', '接着生成'],
+                        ['frames', '帧数'],
+                        ['first_frame_reference', '首帧参考', '减小漂移'],
+                    ]) {
+                        const widget = this.widgets?.find(w => w.name === name);
+                        if (widget) {
+                            widget.label = label;
+                            if (tooltip) widget.tooltip = tooltip;
+                        }
                     }
                 }
                 for (const widget of this.widgets || []) {

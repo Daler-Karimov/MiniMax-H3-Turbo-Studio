@@ -156,8 +156,8 @@ export function createUpdateNotice(cn) {
             text = t(CANCEL_FAILURE.en, CANCEL_FAILURE.zh);
         } else if (busy) {
             text = model === 'switching' || (model && offline)
-                ? t('Switching to the faster model… ComfyUI restarts once and this page reconnects by itself.', '正在切换到更快的模型…ComfyUI 会重启一次，页面会自动恢复。')
-                : model === 'waiting' ? t('The faster model is ready. FreeVideo switches after the current video; ComfyUI restarts once.', '更快的模型已下载好，当前视频生成完后自动切换，ComfyUI 会重启一次。')
+                ? t('Switching to the faster model. This page reconnects by itself.', '正在切换到更快的模型，页面会自动恢复。')
+                : model === 'waiting' ? t('The faster model is ready. FreeVideo switches after the current video.', '更快的模型已下载好，当前视频完成后自动切换。')
                 : offline || phase === 'restarting' || phase === 'engine'
                 ? t('Restarting FreeVideo to finish the update. The page refreshes by itself.', '正在重启 FreeVideo 完成更新，页面会自动刷新。')
                 : phase === 'downloading' ? t('Downloading the update', '正在下载更新') + percent

@@ -468,12 +468,15 @@ def load(request, stage):
                 audio=torch.from_numpy(value['audio'].copy()))
 
 
-# Dialogue parts settle into an ending over their last ~1.5 s; 17 frames hid only the pause, 34 also the pose reset.
-HIDE_TAIL_FRAMES = 34
+# Dialogue parts settle into an ending over their last ~1.5 s. Hiding 34 frames also hid the pose reset, but the model
+# kept talking through the longer hidden tail and the next part opened with stray speech; 17 frames keep the seam
+# level steps as low with far less of it.
+HIDE_TAIL_FRAMES = 17
 
 
 def validate_hide_tail(frames):
-    if type(frames) is not int or frames not in (0, 17, HIDE_TAIL_FRAMES):
+    # 34 stays valid for continuations recorded by earlier versions.
+    if type(frames) is not int or frames not in (0, 17, 34):
         raise ValueError('Hidden tail must be 0, 17 or 34 frames')
     return frames
 

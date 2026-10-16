@@ -27,7 +27,10 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     // Icons only on the toolbar; the name lives in the label and hover.
     const textButton=button('',{onClick:()=>add('text')}), subtitleButton=button('',{onClick:()=>add('subtitle')});
     textButton.classList.add('fv-ed-add-text'); subtitleButton.classList.add('fv-ed-add-subtitle');
-    textButton.append(el('span','fv-ed-text-icon','T')); subtitleButton.append(el('span','fv-ed-text-icon','CC'));
+    // The same 16 px line glyphs as the other toolbar tools.
+    const glyph=d=>{const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 16 16');svg.setAttribute('aria-hidden','true');svg.classList.add('fv-ed-glyph');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',d);svg.append(path);return svg;};
+    textButton.classList.add('fv-ed-icon'); subtitleButton.classList.add('fv-ed-icon');
+    textButton.append(glyph('M3 5V3.5h10V5M8 3.5v9M6 12.5h4')); subtitleButton.append(glyph('M4 3.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2zM4.5 7.5h3M9.5 7.5h2M4.5 10h2M8.5 10h3'));
     textButton.setAttribute('aria-label',t('Text','文字')); subtitleButton.setAttribute('aria-label',t('Subtitles','字幕'));
     textButton.title=t('Text T','文字 T'); subtitleButton.title=t('Subtitles','字幕');
     buttons.append(textButton,subtitleButton);

@@ -68,7 +68,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 io.Boolean.Input('voice_reference', display_name='Voice reference', default=False,
                     optional=True, advanced=True, tooltip='Keeps the opening voice consistent in continued dialogue.'),
                 io.Boolean.Input('hide_tail', display_name='Hide dialogue tail', default=False,
-                    optional=True, advanced=True, tooltip='Generates and discards 34 extra frames to keep dialogue moving between parts.'),
+                    optional=True, advanced=True, tooltip='Generates and discards 17 extra frames to keep dialogue moving between parts.'),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -404,7 +404,7 @@ class FreeVideoLoRA(io.ComfyNode):
         return io.Schema(node_id='FreeVideoLoRA', display_name='FreeVideo · LoRA', category='FreeVideo',
             description='FreeVideo needs no acceleration LoRA.',
             inputs=[io.Combo.Input('lora', options=[NO_LORA, *names]),
-                    io.Float.Input('strength', default=1., min=-4., max=4., step=.05),
+                    io.Float.Input('strength', default=1., min=-100., max=100., step=.05),
                     LoRAs.Input('previous', optional=True)], outputs=[LoRAs.Output('loras')])
 
     @classmethod

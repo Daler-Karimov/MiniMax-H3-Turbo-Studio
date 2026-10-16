@@ -28,7 +28,7 @@ MESSAGE_ZH = {
     'worker_exit': '图像生成意外停止了，请再试一次。',
     'timeout': '这一张用时太长，已停止。请再试一次。',
     'generation_failed': '图像生成出错了，请再试一次。',
-    'invalid_request': '图像参数不合法。',
+    'invalid_request': '图片设置有误，请调整后重试。',
 }
 _DEVICE = re.compile(
     r'cuda.*(?:initializ|device.*(?:lost|unavailable|removed)|invalid device ordinal|'
