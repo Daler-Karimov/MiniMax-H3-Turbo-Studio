@@ -640,8 +640,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         option.onclick = () => choosePassMode(mode);
         return option;
     });
-    passOptions[2].title = t('Stops at a half-resolution preview. Choose "Continue" in the result when it looks right; the video matches a direct run.',
-        '先出半分辨率预览，满意后在结果里点“继续生成”，成片与直接生成一致。');
+    passOptions[2].title = t('Stops at a half-resolution preview. Choose "Run second pass" in the result when it looks right; the video matches a direct run.',
+        '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。');
     const previewPassHint = passOptions[2].title;
     passMode.append(...passOptions);
     passMode.addEventListener('keydown', event => {
