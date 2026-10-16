@@ -78,7 +78,9 @@ class ComfyHost:
                 values[name] = '' if independent else block_inputs[key]
         if 'voice_reference' in schema and values.get('continue_from'):
             values['voice_reference'] = True
-        if 'hide_tail' in schema and not independent and block_inputs.get('index', 0) < block_inputs.get('count', 0) - 1:
+        if ('hide_tail' in schema and not independent and block_inputs.get('index', 0) < block_inputs.get('count', 0) - 1
+                and continuation_supported()):
+            # Only a backend that continues videos makes the extra tail frames; others ignore the option.
             values['hide_tail'] = True
         return values
 
@@ -241,8 +243,13 @@ def continuation_directions():
     return {key for key, name in CONTINUE_INPUTS.items() if name in schema}
 
 
+def continuation_supported():
+    from .continuation import supported
+    return supported()[0]
+
+
 def continuation_available():
-    return 'after' in continuation_directions()
+    return 'after' in continuation_directions() and continuation_supported()
 
 
 def report_fields(chain):
