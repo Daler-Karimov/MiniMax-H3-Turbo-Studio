@@ -549,7 +549,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const mention = button('@', () => references.open(), 'fv-reference-trigger');
     mention.setAttribute('aria-label', t('Reference media (@)', '引用素材（@）'));
     mention.title = mention.getAttribute('aria-label');
-    mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault(); promptEditor.append(mention);
+    mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault();
+    const promptTools = el('div', null, 'fv-prompt-tools'); promptTools.append(mention); promptEditor.append(promptTools);
     cleanup.push(() => references.dispose());
     const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd, handleNames(castChoices()))});
     cleanup.push(() => terms.dispose());
