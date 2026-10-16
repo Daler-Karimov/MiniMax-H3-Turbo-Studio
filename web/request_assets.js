@@ -36,9 +36,17 @@ export function createRequestAssets({t, api, request, onError = () => {}}) {
     const size = bytes => bytes >= 2 ** 30 ? (bytes / 2 ** 30).toFixed(1) + ' GB' : Math.max(1, Math.round(bytes / 2 ** 20)) + ' MB';
     function lines(items) {
         const rows = [];
-        // Tables and the upscaler are one download to the user.
-        const auto = items.filter(item => item.action === 'auto').reduce((sum, item) => sum + item.bytes, 0);
-        if (auto) rows.push(t(`Downloads ${size(auto)} before generating`, `生成前会先下载 ${size(auto)}`));
+        // One line names what Generate will fetch first: the two-pass model, then the sampling data.
+        const names = {upscaler: t('two-pass model', '二次采样模型'), sampling: t('sampling data', '采样数据')};
+        const bytes = {};
+        for (const item of items) {
+            if (item.action !== 'auto') continue;
+            const kind = names[item.kind] ? item.kind : 'other';
+            bytes[kind] = (bytes[kind] || 0) + item.bytes;
+        }
+        const parts = [['upscaler', names.upscaler], ['sampling', names.sampling], ['other', t('other model files', '其他模型文件')]]
+            .filter(([kind]) => bytes[kind]).map(([kind, name]) => `${name} ${size(bytes[kind])}`);
+        if (parts.length) rows.push(t(`Downloads before generating: ${parts.join(', ')}`, `生成前会先下载：${parts.join('、')}`));
         for (const item of items) {
             if (item.kind === 'prompt-vlm') {
                 rows.push(t(`First prompt rewrite downloads ${size(item.bytes)}`, `首次改写提示词会先下载 ${size(item.bytes)}`));

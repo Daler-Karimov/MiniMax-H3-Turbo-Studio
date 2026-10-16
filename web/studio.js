@@ -1137,6 +1137,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
                 lastQueueError = null; status.textContent = ''; status.dataset.error = 'false';
             }
+            // Parts download what they need while they run; the line above Generate is read again when they stop.
+            if (chainWasActive && !active) requestAssets?.refresh(true);
             chainWasActive = active;
             partList.update(chain, active);
             busy = active || Boolean(queueState?.running || queueState?.pending.length); queued = chain?.state === 'queued';
@@ -1308,7 +1310,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (chainController?.active) { queueActions.hidden = false; updateRunButton(); return; }
         const active = state.running || state.pending[0];
         activePrompt = active?.id || null;
+        const wasBusy = busy;
         busy = Boolean(active) || progressLive(); queued = !state.running && Boolean(state.pending.length);
+        // A finished, failed or cancelled video may have downloaded what the line above Generate still lists.
+        if (wasBusy && !busy) requestAssets?.refresh(true);
         const g = active?.inputs;
         // The right-hand frame belongs to the submitted video. Draft edits on
         // the left must never reshape a video currently being generated.
