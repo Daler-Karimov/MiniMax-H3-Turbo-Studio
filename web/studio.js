@@ -1,5 +1,6 @@
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
 import {topDialog} from './dialog_keys.js';
+import {createExpandButton} from './editor_expand.js';
 import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
@@ -73,12 +74,17 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
     const rows = new Map(), timers = new Map();
     let editing = null, showing = null;
     function tag(row, text, kind = '') { row.tag.textContent = text; row.tag.dataset.kind = kind; }
+    function removeEditor(row) {
+        row.expand?.dispose(); row.expand = null;
+        row.editBox?.remove(); row.editBox = row.editor = null; row.draft = null;
+        row.text.hidden = false;
+    }
     function draw(row) {
         const {part} = row, writing = editing === row;
         row.element.dataset.state = part.editable ? 'pending' : part.state;
         row.text.textContent = part.text;
         row.text.disabled = !part.editable;
-        if (!writing && row.editor) { row.editor.remove(); row.editor = null; row.text.hidden = false; }
+        if (!writing && row.editor) removeEditor(row);
         // A note about a lost edit stays on its line until that part is done.
         if (row.tag.dataset.kind === 'error' && part.state === 'done') row.tag.dataset.kind = '';
         if (timers.has(part.id) || row.tag.dataset.kind === 'error') return;
@@ -90,6 +96,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
     }
     async function finish(row, keep) {
         if (editing !== row) return;
+        row.expand?.commit();
         const before = row.part.text, value = row.editor.value;
         editing = null;
         if (!keep || !value.trim() || value === before) { draw(row); return; }
@@ -111,29 +118,45 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
         if (editing) finish(editing, true);
         editing = row; clearTimeout(timers.get(row.part.id)); timers.delete(row.part.id); tag(row, '');
         const editor = row.editor = el('textarea', null, 'fv-chain-part-editor');
-        editor.maxLength = 20000; editor.value = row.part.text;
+        editor.maxLength = 20000; editor.value = row.draft = row.part.text;
         editor.setAttribute('aria-label', t(`Part ${row.part.index + 1} description`, `第 ${row.part.index + 1} 段描述`));
-        editor.addEventListener('blur', () => finish(row, true));
+        editor.addEventListener('input', () => { row.draft = editor.value; });
         editor.addEventListener('keydown', event => {
             // Escape leaves the edit, never the studio.
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(row, false); row.text.focus(); }
         });
-        row.text.hidden = true; row.text.after(editor); editor.focus();
+        const box = row.editBox = el('div', null, 'fv-chain-part-edit');
+        row.expand = createExpandButton({t, textarea: editor, canGenerate: () => false,
+            // Like the main description, keep a live draft while preserving the small box's undo history.
+            onDraft: text => { row.draft = text; }});
+        box.append(editor, row.expand.element);
+        box.addEventListener('focusout', event => {
+            if (!row.expand?.isOpen && !box.contains(event.relatedTarget)) finish(row, true);
+        });
+        row.text.hidden = true; row.text.after(box); editor.focus();
         editor.setSelectionRange(editor.value.length, editor.value.length);
         editor.scrollIntoView({block: 'nearest'});
     }
     function clear() {
         if (!element.hidden) onHide();
-        element.hidden = true; element.replaceChildren(); rows.clear(); editing = null; showing = null;
+        editing = null;
+        for (const row of rows.values()) removeEditor(row);
+        element.hidden = true; element.replaceChildren(); rows.clear(); showing = null;
         for (const id of timers.values()) clearTimeout(id); timers.clear();
     }
     return {element, clear, update(chain, active) {
         // The list belongs to one generation: it shows once the descriptions are written and closes when that ends.
-        if (!active || !chain?.split || chainSplit(chain).writing) { if (!active || showing !== chain?.id) clear(); return; }
+        if (!active || !chain?.split || chainSplit(chain).writing) { clear(); return; }
         if (showing !== chain.id) clear();
         showing = chain.id;
         const first = element.hidden; element.hidden = false;
-        chainParts(chain).forEach((part, index) => {
+        const parts = chainParts(chain), ids = new Set(parts.map(part => part.id));
+        for (const [id, row] of rows) if (!ids.has(id)) {
+            if (editing === row) editing = null;
+            removeEditor(row); row.element.remove(); rows.delete(id);
+            clearTimeout(timers.get(id)); timers.delete(id);
+        }
+        parts.forEach((part, index) => {
             part.state = chain.blocks[index].state === 'pending' && chain.blocks[index].prompt_id != null ? 'queued' : chain.blocks[index].state;
             let row = rows.get(part.id);
             if (!row) {
@@ -145,7 +168,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
             }
             if (editing === row && !part.editable) {
                 // The part began while it was open: the words typed so far cannot reach it.
-                const changed = row.editor.value !== row.part.text;
+                const changed = row.draft !== row.part.text;
                 editing = null; row.part = part; draw(row);
                 if (changed) flash(row, t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存'), 'error');
                 return;
