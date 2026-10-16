@@ -15,20 +15,22 @@ const cn = languageOverride === 'zh' || (languageOverride !== 'en'
 const t = (en, zh) => cn ? zh : en;
 const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好。要重装，请先点“检测并预览”。'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
+const SPEED_TEST_FAILED = 'The speed test did not finish. Click "Test source speeds".';
 const failureText = value => {
     const text = String(value || ''), matches = [...text.matchAll(/MODEL_MISMATCH_REPAIR: ([^\r\n]+)/g)];
     if (!matches.length && text.includes('The installation plan changed. Detect configuration again')) {
         const files = text.includes('A file in the installation folder changed after the review');
         return files
-            ? t('The installation plan changed: files in the installation folder changed after you confirmed the plan, so FreeVideo stopped instead of continuing with it. Click Detect & review, then Install / repair to review the new plan.',
-                '安装计划有变化：确认计划之后，安装位置里的文件又有变化，FreeVideo 因此停止，未按原计划继续。请先点击“检测并预览”，再点击“安装／修复”，查看新的计划。')
-            : t('The installation plan changed: something changed after you confirmed the plan (for example the settings, the GPU or the free disk space), so FreeVideo stopped instead of continuing with it. Click Detect & review, then Install / repair to review the new plan.',
-                '安装计划有变化：确认计划之后，设置、显卡或可用磁盘空间发生了变化，FreeVideo 因此停止，未按原计划继续。请先点击“检测并预览”，再点击“安装／修复”，查看新的计划。');
+            ? t('Files in the installation folder changed after you confirmed, so installation stopped. Click Detect & review, then Install / repair.',
+                '确认之后安装位置里的文件有变化，已停止。请先点“检测并预览”，再点“安装／修复”。')
+            : t('The settings, GPU or free disk space changed after you confirmed, so installation stopped. Click Detect & review, then Install / repair.',
+                '确认之后设置、显卡或磁盘空间有变化，已停止。请先点“检测并预览”，再点“安装／修复”。');
     }
+    if (text === SPEED_TEST_FAILED) return t('The speed test did not finish. Click "Test source speeds".', '测速没有完成，请点“重新测速”。');
     if (!matches.length) return text;
     const file = matches.at(-1)[1];
-    return t(`${file} differs from the version FreeVideo tests and was left unchanged. Click Detect & review, then Install / repair: the plan will list this file, and after you confirm, it is renamed and kept, and the tested version is downloaded.`,
-        `${file} 与 FreeVideo 测试过的版本不同，这次没有改动它。请先点击“检测并预览”，再点击“安装／修复”：计划里会列出这个文件，确认后会把它改名保留，再下载测试过的版本。`);
+    return t(`${file} differs from the tested version and was left unchanged. Click Detect & review, then Install / repair. After you confirm, the original is renamed and kept, and the tested version is downloaded.`,
+        `${file} 和测试过的版本不同，这次没有改动。请先点“检测并预览”，再点“安装／修复”，确认后原文件改名保留，再下载测试过的版本。`);
 };
 let current;
 
@@ -106,7 +108,7 @@ export async function openSetup() {
     reserve.value = '1.0'; reserve.disabled = true; reserve.className = 'fv-number';
     reserveLabel.append(reserve, document.createTextNode('GiB'));
     const saveReserve = node('button', t('Save', '保存')), reserveStatus = note('');
-    const reserveHelp = note(t('Keep this much additional VRAM free. Applies to new requests; current usage is already accounted for.', '额外保留的空闲显存。对后续请求生效；其他程序当前的占用已单独计入。'));
+    const reserveHelp = note(t('Extra VRAM to keep free. Applies from the next generation.', '额外保留的空闲显存，下次生成起生效。'));
     resources.append(autoLabel, reserveLabel, reserveHelp, saveReserve, reserveStatus);
     advanced.append(resources);
     const clearReserveStatus = () => { reserveStatus.textContent = ''; reserveStatus.className = 'fv-muted'; };
@@ -127,8 +129,8 @@ export async function openSetup() {
     const calibrateButton = node('button', t('Run placement test', '运行放置测试'));
     const calibrateStatus = note('');
     calibration.append(repeatsLabel, note(t(
-        'Measures the placement choices this machine can settle and writes a report. It does not change your settings. The card stays busy for roughly half an hour per pass and generation cannot run meanwhile.',
-        '测量本机能定下来的放置选择并生成报告，不会改动你的设置。每轮大约占用显卡半小时，期间无法生成。')),
+        'Measures this computer and writes a report without changing settings. Each pass keeps the GPU busy for about half an hour, and generation cannot run meanwhile.',
+        '测量这台电脑并生成报告，不改动设置。每轮约占用显卡半小时，期间不能生成。')),
         calibrateButton, calibrateStatus);
     advanced.append(calibration);
     const state = node("p"); state.setAttribute("role", "status");
@@ -184,8 +186,8 @@ export async function openSetup() {
         reserve.disabled = reserveAuto.checked;
         reserve.value = reserveAuto.checked ? (unified ? '2.0' : '1.0') : String(value[reserveField]);
         reserveHelp.textContent = unified
-            ? t('CPU and GPU share unified memory. Keep this much additional RAM available for macOS and other applications. Applies to new requests.', 'CPU 与 GPU 共用统一内存。额外保留这些 RAM 供 macOS 和其他程序使用，对后续请求生效。')
-            : t('Keep this much additional VRAM free. Applies to new requests; current usage is already accounted for.', '额外保留的空闲显存。对后续请求生效；其他程序当前的占用已单独计入。');
+            ? t('Extra memory to keep for the system and other apps. Applies from the next generation.', '额外保留给系统和其他程序的内存，下次生成起生效。')
+            : t('Extra VRAM to keep free. Applies from the next generation.', '额外保留的空闲显存，下次生成起生效。');
     };
     calibrateButton.onclick = async () => {
         if (!calibrateRepeats.checkValidity()) { calibrateRepeats.reportValidity(); return; }
@@ -246,16 +248,16 @@ export async function openSetup() {
             if (family.startsWith('torch-')) names[family] = t('GPU packages','GPU 依赖');
             const rate = row.bytes_per_second / 2**20;
             const speed = !row.ok ? t('Unavailable','未连通') : row.speed_measured === false || !Number.isFinite(rate) || rate <= 0 ?
-                t('Connected; insufficient sample','已连通，样本不足') : rate < .005 ? '<0.01 MiB/s' : `${rate.toFixed(rate < 1 ? 2 : 1)} MiB/s`;
-            for (const text of [names[family] || family, `${row.id} · ${row.route === 'direct' ? t('direct','直连') : t('current connection','当前连接')}`,speed]) tr.append(node('td',text));
+                t('Connected; speed not measured yet','已连通，速度还没测出') : rate < .005 ? '<0.01 MiB/s' : `${rate.toFixed(rate < 1 ? 2 : 1)} MiB/s`;
+            for (const text of [names[family] || family, `${row.id} · ${row.route === 'direct' ? t('Direct','直连') : t('Current connection','当前连接')}`,speed]) tr.append(node('td',text));
             if (!row.ok) tr.lastChild.className = 'fv-off';
             table.append(tr);
         }
-        speeds.append(table,note(t('HTTP transfer speed, excluding connection wait. Parallel/Xet downloads may differ.','HTTP 传输测速已扣除连接等待；多线程／Xet 下载速度可能不同。')));
+        speeds.append(table,note(t('Speeds are a guide; actual downloads may differ.','测速只作参考，实际下载速度可能不同。')));
     }
     source.onchange = async () => {
         source.disabled = true;
-        try { showDownloads(await request('network-source',{root:root.value,source:source.value})); sourceStatus.textContent=t('Switch requested for active downloads; retained fragments will be reused where compatible.','已请求立即切换当前下载，兼容的断点和分片将继续复用。'); }
+        try { showDownloads(await request('network-source',{root:root.value,source:source.value})); sourceStatus.textContent=t('Switching sources; downloaded parts are kept where possible.','正在切换下载源，能续传的部分会保留。'); }
         catch(error) { fail(error); }
         finally { source.disabled = false; }
     };
@@ -273,8 +275,8 @@ export async function openSetup() {
     const controls = () => {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
         cancel.hidden = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
-        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again to update the plan.", "设置已更改，请重新点击“检测并预览”更新安装计划。")
-            : planErrors ? t("The plan has problems shown in red above. Please resolve them, then click Detect & review again.", "安装计划中有标红的问题，请解决后重新点击“检测并预览”。")
+        const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again.", "设置已更改，请重新点“检测并预览”。")
+            : planErrors ? t("Fix the problems marked in red above, then click Detect & review again.", "上面有标红的问题，处理后请重新点“检测并预览”。")
             : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
             : !planId ? ""
             : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击“安装／修复”。") : "";
@@ -338,15 +340,15 @@ export async function openSetup() {
         acceptLabel.hidden = busy || !planId;
         const p = task.progress || {};
         state.className = task.status === "failed" ? "fv-failure" : task.ready && !savedMissing ? "fv-ready" : "";
-        state.textContent = failureText(task.error) || (task.ready ? t("Ready. Generate with your existing workflow.", "准备就绪，可使用现有工作流生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
+        state.textContent = failureText(task.error) || (task.ready ? t("Ready to generate.", "准备就绪，可以开始生成。") : busy ? p.label || t("Checking configuration and local models…", "正在检查配置和本地模型…") : task.status === "complete" && task.action === "plan" ? (planId ? t("Review the plan, then install.", "请确认计划后安装。") : "") : task.status === "cancelled" ? t("Stopped. Files retained for resuming.", "已停止，文件保留，可继续安装。") : "");
         const phases = task.phase_progress || {}, valid = Number.isFinite(p.total) && p.total > 0 && Number.isFinite(p.done) && p.done >= 0 && p.done <= p.total;
         overall.hidden = !busy;
         overallBar.max = phases.total > 0 ? phases.total : 1; overallBar.value = phases.done || 0;
-        overallText.textContent = phases.total > 0 ? `${t("Overall", "整体进度")} · ${phases.done} / ${phases.total} ${t("stages complete", "阶段已完成")} · ${Math.floor(100 * phases.done / phases.total)}%` : t("Preparing installation plan…", "正在准备安装计划…");
+        overallText.textContent = phases.total > 0 ? `${t("Overall", "整体进度")} · ${phases.done} / ${phases.total} ${t("stages complete", "阶段已完成")} · ${Math.floor(100 * phases.done / phases.total)}%` : t("Preparing installation…", "正在准备安装…");
         bar.hidden = !busy; bar.max = valid ? p.total : 1; bar.value = valid ? p.done : 0;
         const amount = n => p.total >= 2 ** 30 ? gib(n) : `${(n / 2 ** 20).toFixed(1)} MiB`;
         const count = valid ? `${Math.floor(100 * p.done / p.total)}% · ${p.unit === "bytes" ? `${amount(p.done)} / ${amount(p.total)}` : `${p.done} / ${p.total}`}` : t("Preparing…", "正在准备…");
-        const eta = valid && Number.isFinite(p.remaining_seconds) && p.remaining_seconds > 0 ? `${p.unit === "bytes" ? t("File ETA", "本文件预计剩余") : t("ETA", "预计剩余")} ~${Math.ceil(p.remaining_seconds)} s` : valid ? t("Estimating remaining time…", "正在估算剩余时间…") : `${t("Elapsed", "已用时")} ${Math.floor((Date.now() - (waitSince || Date.now())) / 1000)} s`;
+        const eta = valid && Number.isFinite(p.remaining_seconds) && p.remaining_seconds > 0 ? `${p.unit === "bytes" ? t("File time left", "本文件预计剩余") : t("Time left", "预计剩余")} ~${Math.ceil(p.remaining_seconds)} s` : valid ? t("Estimating remaining time…", "正在估算剩余时间…") : `${t("Elapsed", "已用时")} ${Math.floor((Date.now() - (waitSince || Date.now())) / 1000)} s`;
         counters.textContent = busy ? `${count} · ${eta}` : "";
         const others = (task.active_tasks || []).slice(1).map(p => p.label).filter(Boolean);
         const progressDetail = (p.detail || '').replace(/^Keeping the original file: /, t('Keeping the original file: ', '正在保留原文件：'));
@@ -394,7 +396,7 @@ export async function openSetup() {
         catch (error) { fail(error); }
     };
     use.onclick = async () => {
-        try { const result = await request("use", {root: root.value}); ready = Boolean(result.ready); state.textContent = result.ready ? t("Existing engine connected. Ready to generate.", "已连接现有引擎，可以生成。") : result.detail; state.className = "fv-ready"; invalidate(); }
+        try { const result = await request("use", {root: root.value}); ready = Boolean(result.ready); state.textContent = result.ready ? t("Existing installation connected. Ready to generate.", "已连接现有安装，可以生成。") : result.detail; state.className = "fv-ready"; invalidate(); }
         catch (error) { fail(error); }
     };
     cancel.onclick = async () => { try { render(await request("cancel")); poll(); } catch (error) { fail(error); } };
