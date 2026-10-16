@@ -614,10 +614,16 @@ export function openStudio(node, {extendFrom = null} = {}) {
     if (pixels === 1 && sizeSelection.value === .98) pixels = .98;
     for (const n of sizeSelection.options) { const option = el('option', n === .98 ? t('0.98 MP · Recommended', '0.98 MP · 推荐') : `${n.toFixed(2)} MP`); option.value = n; mp.append(option); }
     mp.value = sizeSelection.value;
+    // Keep the native menu's full labels; its closed face only needs the MP value.
+    const resolutionSelect = el('div', null, 'fv-resolution-select'), resolutionValue = el('span', '', 'fv-resolution-value');
+    resolutionValue.setAttribute('aria-hidden', 'true');
+    function syncResolutionLabel() { resolutionValue.textContent = `${Number(mp.value).toFixed(2)} MP`; }
+    syncResolutionLabel(); mp.addEventListener('input', syncResolutionLabel);
+    resolutionSelect.append(mp, resolutionValue, icon('chevron'));
     const legacyOption = [...mp.options].find(o => Number(o.value) === 1);
     mp.disabled = dimensionsLinked;
     const seconds = el('input'); seconds.type = 'number'; seconds.required = true; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）'));
-    const fields = el('div', null, 'fv-fields'); fields.append(field(t('Resolution', '清晰度'), mp), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
+    const fields = el('div', null, 'fv-fields'); fields.append(field(t('Resolution', '清晰度'), resolutionSelect), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
     const canvasNote = el('div', null, 'fv-canvas-note'), dimensions = el('span'), duration = el('span'); canvasNote.append(dimensions, duration); canvas.append(canvasNote);
     const rangeMount = el('div'); canvas.append(rangeMount);
     let capabilityView;
@@ -1421,6 +1427,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             : rest ? t(`${minutes} min ${rest} s`, `${minutes} 分 ${rest} 秒`) : t(`${minutes} min`, `${minutes} 分钟`)} · 24 fps`;
     }
     function updateCanvas() {
+        syncResolutionLabel();
         // Render committed dimensions without replacing either input draft.
         // Duration/estimate refreshes and edits to the other dimension also
         // come here; only an explicit size choice should fill both fields.
