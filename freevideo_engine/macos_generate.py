@@ -127,7 +127,7 @@ def run(args):
     require_native()
     from .preview import validate_flags, source as preview_source
     preview = getattr(args, 'preview', False) is True
-    validate_flags(preview, getattr(args, 'refine_from', None), args.two_pass)
+    validate_flags(preview, getattr(args, 'refine_from', None), args.two_pass, getattr(args, 'base_steps', None))
     refine_source = preview_source(args.refine_from, native=True) if getattr(args, 'refine_from', None) else None
     output = Path(args.out).expanduser().resolve()
     artifacts = output.with_suffix('.artifacts')

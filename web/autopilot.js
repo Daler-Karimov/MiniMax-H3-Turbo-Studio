@@ -6,6 +6,7 @@ import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
 import { productVersion } from './updates.js';
 import { openSetup } from './setup.js';
+import { feedbackButton } from './feedback.js';
 import { openExtendEditor, openStudio, showNodes } from './studio.js';
 import { viewChanged, viewSwitch } from './view_navigation.js';
 import { wordmark } from './wordmark.js';
@@ -33,7 +34,7 @@ export function openAutopilotView(node, {studio = null} = {}) {
     go.type = halt.type = 'button'; go.append(ring, name, more, percent, eta); now.append(go, halt);
     halt.title = t('Stop all', '全部停止'); halt.setAttribute('aria-label', halt.title);
     const line = el('i', 'fv-autopilot-line');
-    tools.append(now, lamp, settings);
+    tools.append(now, lamp, feedbackButton(t), settings);
     // The view chosen next takes over once this page has closed; Escape goes back to what is underneath.
     let next = () => studio?.open ? viewChanged('studio', node) : viewChanged('nodes', node);
     const leave = action => { next = action; closeDialog(dialog); };

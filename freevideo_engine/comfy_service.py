@@ -544,14 +544,29 @@ def host_url(scheme, address, port):
     return '%s://%s:%d' % (scheme, '[%s]' % address if ':' in address else address, port)
 
 
+def qr_lines(link):
+    """The link as a terminal QR code for a phone camera; nothing when it cannot be drawn."""
+    if not link:
+        return []
+    try:
+        from . import qr_code
+        return qr_code.terminal_lines(link)
+    except (ImportError, ValueError):
+        return []
+
+
 def describe(root, state, *, browser_opened=False, out=say):
     url = state['url'] + '/?freevideo=launch'
     access = state.get('access')
     if access:
         secret = token(root)
         out('FreeVideo is running. Open it from another computer with:')
-        for address in addresses(state.get('listen', '')):
-            out('  %s/?freevideo=launch&token=%s' % (host_url(access['scheme'], address, access['port']), secret))
+        links = ['%s/?freevideo=launch&token=%s' % (host_url(access['scheme'], address, access['port']), secret)
+                 for address in addresses(state.get('listen', ''))]
+        for link in links:
+            out('  ' + link)
+        for line in qr_lines(links[0] if links else ''):
+            out('  ' + line)
         out('Anyone with this link can use FreeVideo on this computer; freevideo server --new-token replaces it.')
         if access['scheme'] == 'http':
             out('The connection is not encrypted. Use it on a network you trust, add --tls-cert/--tls-key, or use an SSH tunnel.')

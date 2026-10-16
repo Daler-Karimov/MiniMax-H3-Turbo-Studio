@@ -19,7 +19,7 @@ from .terminal_ui import clean, duration
 from .setup_progress import number, progress_text
 
 
-FIREWALL_HINT = ('If Windows asks about the firewall the first time, choose Allow.', 'Windows 首次询问防火墙权限时，请选择“允许”。')
+FIREWALL_HINT = ('Windows will ask for permission. Check "Private networks", then click "Allow access".', 'Windows 会弹出确认框，请勾选“专用网络”，再点“允许访问”。')
 BROWSER_STARTING = ('Still starting. Your browser will open automatically when ready.', '还在启动，好了会自动打开')
 
 

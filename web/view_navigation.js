@@ -1,5 +1,6 @@
 import { app } from '../../scripts/app.js';
 import { openSetup } from './setup.js';
+import { feedbackButton } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createUpdateNotice, createVersionInfo } from './updates.js';
 import { makeMovable } from './toolbar_position.js';
@@ -11,7 +12,7 @@ const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
 const preference = 'freevideo.view';
-let toolbar, open, selected, currentView = 'nodes', agentTab = null;
+let toolbar, open, selected, currentView = 'nodes', agentTab = null, opening = null;
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./view_navigation.css', import.meta.url).href;
 document.head.append(style);
@@ -20,10 +21,13 @@ export function preferredView() {
     try { return localStorage.getItem(preference); } catch { return null; }
 }
 
+let collapsing = false;
+
 export function viewChanged(view, node) {
     currentView = view;
     if (node) selected = node;
-    try { localStorage.setItem(preference, view); } catch { /* Private browsing still works. */ }
+    // Making way for the user's own workflow is not a choice of view: the FreeVideo workflow reopens as it was left.
+    if (!collapsing) try { localStorage.setItem(preference, view); } catch { /* Private browsing still works. */ }
     refreshNavigation();
 }
 
@@ -62,11 +66,21 @@ export function viewSwitch(view, onStudio, onNodes, onEditor, onAutopilot) {
     return group;
 }
 
+const generateNodes = () => (app.graph?._nodes || []).filter(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
+
+// A workflow without a FreeVideo node is the user's own: nothing of ours stays over it.
+// Each workspace listens for this and closes itself.
+export function collapseWorkspaces() {
+    collapsing = true; setTimeout(() => { collapsing = false; }, 1000);
+    window.dispatchEvent(new Event('freevideo-collapse'));
+    for (const dialog of document.querySelectorAll('dialog.fv-studio[open]')) dialog.close();
+}
+
 export function refreshNavigation() {
     if (!toolbar) return;
-    const nodes = (app.graph?._nodes || []).filter(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate');
+    const nodes = generateNodes();
     if (!nodes.includes(selected)) selected = nodes[0];
-    toolbar.hidden = !app.graph || currentView !== 'nodes';
+    toolbar.hidden = !app.graph || !nodes.length || currentView !== 'nodes';
     for (const button of toolbar.querySelectorAll('[data-view]')) {
         button.setAttribute('aria-pressed', String(button.dataset.view === currentView));
     }
@@ -83,7 +97,7 @@ export function openCreativeWorkspace() {
     return true;
 }
 
-export function installNavigation(openStudio, agent = false) {
+export function installNavigation(openStudio, agent = false, {openWorkflow = null} = {}) {
     open = openStudio;
     if (!toolbar) agentTabReady(agent);
     if (toolbar) { refreshNavigation(); return; }
@@ -97,21 +111,27 @@ export function installNavigation(openStudio, agent = false) {
         const focused = Object.values(app.canvas?.selected_nodes || {}).find(n => (app.graph?._nodes || []).includes(n)
             && (n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate'));
         refreshNavigation();
-        let node = focused || selected, created = false;
+        let node = focused || selected;
         if (!node && create) {
-            try {
-                node = globalThis.LiteGraph?.createNode('FreeVideoGenerate');
-                if (!node) throw new Error('FreeVideo node unavailable');
-                app.graph.add(node); app.graph.change?.();
-                selected = node; created = true;
-            } catch (error) {
-                console.warn('FreeVideo edit project:', error);
-                app.extensionManager?.toast?.add({severity: 'error', summary: 'FreeVideo',
-                    detail: t('Could not complete. Try again.', '没有完成，请重试'), life: 9000});
-                return null;
-            }
+            // The user's own workflow stays as it is: FreeVideo gets a workflow of its own.
+            return (async () => {
+                try {
+                    // Clicks while the workflow is opening share that one workflow.
+                    const first = !opening;
+                    opening ||= Promise.resolve(openWorkflow?.()).finally(() => { opening = null; });
+                    node = await opening;
+                    if (!node) throw new Error('FreeVideo workflow unavailable');
+                    selected = node;
+                    return await action(node, first);
+                } catch (error) {
+                    console.warn('FreeVideo edit project:', error);
+                    app.extensionManager?.toast?.add({severity: 'error', summary: 'FreeVideo',
+                        detail: t('Could not complete. Try again.', '没有完成，请重试'), life: 9000});
+                    return null;
+                }
+            })();
         }
-        if (node) return action(node, created);
+        if (node) return action(node, false);
     };
     const settings = document.createElement('button'); settings.type = 'button';
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
@@ -119,7 +139,7 @@ export function installNavigation(openStudio, agent = false) {
         const handle = await openEditorView(node);
         if (created) handle?.notify(t('Created an editing project for you.', '已为你新建一个剪辑工程'));
         return handle;
-    }, true), () => choose(node => openAutopilot(node), true)), createVersionInfo(cn).element, settings); toolbar.append(row);
+    }, true), () => choose(node => openAutopilot(node), true)), createVersionInfo(cn).element, feedbackButton(t, 'fv-view-settings'), settings); toolbar.append(row);
     toolbar.append(createUpdateNotice(cn).element);
     document.body.append(toolbar); refreshNavigation();
     makeMovable(toolbar);

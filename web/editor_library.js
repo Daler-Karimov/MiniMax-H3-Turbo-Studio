@@ -20,7 +20,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
     let listRead = Promise.resolve(), refreshTask = null, retryTimer = null, finishRetry = null, refreshAgain = false;
     const expectedOutputs = new Set();
     const uploading = new Map(), recentImports = new Map(), pendingAdds = new Map();
-    const preparing = () => t('Preparing this clip. It goes on the timeline when ready.', '素材正在准备，准备好后会自动放到时间线上。');
+    const preparing = () => t('Preparing this clip. It goes on the timeline when ready.', '素材准备好后会自动放到时间线上。');
     const cannotOpen = () => t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS;
     function metadata(row, kind) {
         const g = row.geometry || row, cached = store.sources.get(`${kind}:${row.id}`);

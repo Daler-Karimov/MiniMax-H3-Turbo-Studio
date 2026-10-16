@@ -4,6 +4,7 @@ import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
+import { feedbackButton } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
@@ -16,7 +17,7 @@ import { animateDetails, closeDialog } from './motion.js';
 import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
-import { createStudioQueue, randomSeed } from './studio_queue.js';
+import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
@@ -83,8 +84,8 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
             row.saving = null;
             if (rows.get(row.part.id) !== row) return;
             row.part = {...row.part, text: before}; draw(row);
-            flash(row, error.status === 409 ? t('This part has started. Your edit was not saved.', '这一段已开始，修改未保存')
-                : t('Your edit was not saved.', '修改未保存'), 'error');
+            flash(row, error.status === 409 ? t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存')
+                : t('Your edit was not saved.', '改动没有保存'), 'error');
         }
     }
     function open(row) {
@@ -128,7 +129,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
                 // The part began while it was open: the words typed so far cannot reach it.
                 const changed = row.editor.value !== row.part.text;
                 editing = null; row.part = part; draw(row);
-                if (changed) flash(row, t('This part has started. Your edit was not saved.', '这一段已开始，修改未保存'), 'error');
+                if (changed) flash(row, t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存'), 'error');
                 return;
             }
             if (editing === row) { row.part = {...part, text: row.part.text}; return; }
@@ -356,7 +357,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     }
     const add = button(t('Add', '添加'), async () => {
         await refresh(); // The folder may have changed since the list was last read.
-        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '请把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); const next = recentLoras().find(n => names.includes(n) && !rows.some(row => row.name === n)) ?? names[0]; rememberLora(next); rows.push({name: next, strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
+        try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); const next = recentLoras().find(n => names.includes(n) && !rows.some(row => row.name === n)) ?? names[0]; rememberLora(next); rows.push({name: next, strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
     });
     async function refresh() {
         try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
@@ -445,7 +446,7 @@ export async function openExtendEditor(record, node = current?.node || app.graph
         node = app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate');
         if (!node) {
             node = globalThis.LiteGraph?.createNode('FreeVideoGenerate');
-            if (!node || !app.graph) throw new Error(t('Could not add the creation node. Try again.', '无法添加创作节点，请重试。'));
+            if (!node || !app.graph) throw new Error(t('Could not open the creative panel. Try again.', '没能打开创作面板，请重试。'));
             app.graph.add(node); app.graph.change?.();
         }
     }
@@ -472,7 +473,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const tools = el('div', null, 'fv-header-actions');
     const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
-    tools.append(button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    tools.append(feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     // The Agent's page is the fourth tab, shown where the Agent interface is on; the guide's last step circles it.
     agentTabReady(agentInterfaceEnabled(api));
     const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
@@ -588,7 +589,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const promptHelp = el('a', 'Skill ↗', 'fv-prompt-help');
     promptHelp.href = 'https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/SKILL.md';
     promptHelp.target = '_blank'; promptHelp.rel = 'noopener noreferrer';
-    promptHelp.title = t('MiniMax H3 prompt guide', 'MiniMax H3 提示词指南');
+    promptHelp.title = t('Prompt guide', '提示词指南');
     promptSection.querySelector('.fv-label').append(promptHelp);
     promptSection.append(enhancer.element);
     const canvas = section(t('Frame & duration', '画幅与时长'));
@@ -607,16 +608,16 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let pixels = selected !== 'custom' && Number.isFinite(node.properties?.freevideo_pixels)
         ? node.properties.freevideo_pixels : (initialWidth * initialHeight) / 1024 ** 2;
     let disposed = false;
-    const mp = el('select'); mp.setAttribute('aria-label', t('Total pixels', '总像素'));
+    const mp = el('select'); mp.setAttribute('aria-label', t('Resolution', '清晰度'));
     const presetRatio = {'16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1}[selected] || ratio;
     const sizeSelection = imageSizeSelection(pixels, selected === 'custom' ? null : presetRatio, Number(initialWidth), Number(initialHeight));
     if (pixels === 1 && sizeSelection.value === .98) pixels = .98;
-    for (const n of sizeSelection.options) { const option = el('option', n === .98 ? t('0.98 MP · Native', '0.98 MP · 原生') : `${n.toFixed(2)} MP`); option.value = n; mp.append(option); }
+    for (const n of sizeSelection.options) { const option = el('option', n === .98 ? t('0.98 MP · Recommended', '0.98 MP · 推荐') : `${n.toFixed(2)} MP`); option.value = n; mp.append(option); }
     mp.value = sizeSelection.value;
     const legacyOption = [...mp.options].find(o => Number(o.value) === 1);
-    mp.title = t('1 MP = 1024 × 1024, as in ComfyUI.', '1 MP = 1024 × 1024，与 ComfyUI 一致。'); mp.disabled = dimensionsLinked;
+    mp.disabled = dimensionsLinked;
     const seconds = el('input'); seconds.type = 'number'; seconds.required = true; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）'));
-    const fields = el('div', null, 'fv-fields'); fields.append(field(t('Total pixels', '总像素'), mp), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
+    const fields = el('div', null, 'fv-fields'); fields.append(field(t('Resolution', '清晰度'), mp), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
     const canvasNote = el('div', null, 'fv-canvas-note'), dimensions = el('span'), duration = el('span'); canvasNote.append(dimensions, duration); canvas.append(canvasNote);
     const rangeMount = el('div'); canvas.append(rangeMount);
     let capabilityView;
@@ -626,7 +627,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // Two-pass switched off only because first-pass steps left 8; returning to 8 restores it.
     let autoSinglePass = false;
     const twoPassLabel = el('div', null, 'fv-two-pass fv-pass-row');
-    twoPassLabel.title = t('Generate at a lower resolution, then upscale and finish sampling at the target size to save time.', '先以低分辨率生成，再放大到目标分辨率完成采样，缩短生成时间。');
+    twoPassLabel.title = t('Generates at a lower resolution, then upscales. Faster.', '先用低分辨率生成，再放大成片，更快。');
     const twoPassStatus = el('small', '', 'fv-two-pass-status');
     // Off, on, or on and paused after the first pass: a preview is one way to run two-pass.
     const passMode = el('div', null, 'fv-pass-mode'); passMode.setAttribute('role', 'radiogroup');
@@ -636,8 +637,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         option.onclick = () => choosePassMode(mode);
         return option;
     });
-    passOptions[2].title = t('Two-pass, paused after the half-resolution first pass so you can look at it. Run the second pass from the result when it looks right: the video matches generating it directly.',
-        '二次采样跑完半分辨率的一采先停下，给你看预览；满意后在结果里点「继续二采」，成片与直接生成一致。');
+    passOptions[2].title = t('Stops at a half-resolution preview. Choose "Continue" in the result when it looks right; the video matches a direct run.',
+        '先出半分辨率预览，满意后在结果里点“继续生成”，成片与直接生成一致。');
     const previewPassHint = passOptions[2].title;
     passMode.append(...passOptions);
     passMode.addEventListener('keydown', event => {
@@ -740,7 +741,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     const samplingFields = el('div', null, 'fv-fields'); samplingFields.style.marginTop = '14px';
     const baseSteps = el('input'), refineSteps = el('input');
-    const samplingWarning = el('p', t('Changing sampling steps may reduce generation quality. Defaults: 8 + 3 steps.', '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步。'), 'fv-muted');
+    const samplingWarning = el('p', t('Changing steps may lower quality. Default: 8 + 3 steps.', '改步数可能降低质量。默认 8 + 3 步。'), 'fv-muted');
     samplingWarning.id = `fv-sampling-warning-${node.id}`;
     samplingWarning.style.color = 'var(--fv-warning)';
     for (const [input, name, label, fallback, maximum] of [
@@ -775,7 +776,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         // uses it with other steps is shown as custom and left unchanged.
         const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked;
         twoPass.disabled = Boolean(extension.source) || unavailable || linked(node, 'two_pass') || !widget(node, 'two_pass');
-        twoPassStatus.textContent = unavailable ? t('Coming soon', '即将推出') : '';
+        twoPassStatus.textContent = Number(baseSteps.value) !== 8 ? t('Needs an 8-step first pass', '一采需 8 步') : '';
         twoPassLabel.classList.toggle('fv-two-pass-unavailable', unavailable);
         // A preview stops after the first pass, so it needs two-pass sampling.
         if (!twoPass.checked && previewFirst.checked) {
@@ -789,9 +790,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         baseSteps.min = twoPass.checked ? '2' : '1';
         refineSteps.max = baseLinked ? '31' : String(Math.max(3, Math.min(31, Number(baseSteps.value || 8) - 1)));
         refineSteps.setCustomValidity(twoPass.checked && !baseLinked && !refineSteps.disabled && Number(refineSteps.value) !== 3 && Number(refineSteps.value) >= Number(baseSteps.value)
-            ? t('Other second-pass counts must be fewer than first-pass steps.', '其他二采步数需小于一采步数。') : '');
-        refineSteps.title = twoPass.checked ? t('Three steps use the independent refinement schedule.', '3 步使用独立二采时间表。')
-            : t('Turn on two-pass acceleration to use this setting.', '开启二次采样加速后生效。');
+            ? t('Use 3 second-pass steps, or fewer steps than in the first pass.', '二采步数须为 3，或少于一采步数。') : '');
+        if (twoPass.checked) refineSteps.removeAttribute('title');
+        else refineSteps.title = t('Turn on two-pass acceleration to use this setting.', '开启二次采样加速后生效。');
         for (const [input, name] of [[baseSteps, 'base_steps'], [refineSteps, 'refine_steps']]) {
             if (!input.disabled && input.checkValidity() && Number(input.value) !== value(node, name)) {
                 set(node, name, Number(input.value));
@@ -829,7 +830,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const estimate = effortEstimate[mode]?.[steps];
         // A previewed level always refines three steps; the current plan may not.
         if (estimate?.status !== 'estimated' || (mode === 'two_pass' && !arguments.length && Number(refineSteps.value) !== 3)) {
-            effort.setEstimate('', t('Estimates appear after a matching generation on this computer.', '本机有相近生成记录后显示预计耗时。'));
+            effort.setEstimate('', t('No estimate is available for these settings.', '当前设置暂无预计用时。'));
             return;
         }
         const minutes = estimate.high_seconds >= 90, scale = minutes ? 60 : 1;
@@ -837,9 +838,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const high = Math.max(low + 1, Math.ceil(estimate.high_seconds / scale));
         const unit = minutes ? t('min', '分钟') : t('s', '秒');
         const extra = estimate.includes_text_encoding ? '' : t(' + prompt', ' + 提示词准备');
-        effort.setEstimate(`${t('~', '约 ')}${low}–${high} ${unit}${extra}`,
-            t('Based on complete local runs. Includes loading and decoding; first use or other applications may take longer.',
-                '根据本机完整生成记录估算，包含加载与解码；首次准备或其他程序占用可能延长时间。'));
+        effort.setEstimate(`${t('~', '约 ')}${low}–${high} ${unit}${extra}`);
     }
     function refreshEffortEstimate(force = false) {
         capabilityView?.update();
@@ -983,7 +982,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const stats = el('div', null, 'fv-stats'), budget = el('div', '', 'fv-budget'), links = el('div', null, 'fv-result-links');
     stats.hidden = true;
     const metrics = [], metricLabels = [];
-    for (const label of [t('Sampling', '采样耗时'), t('Request total', '请求总计'), t('VRAM peak', '显存峰值'), t('RAM peak', '内存峰值')]) { const box = el('div', null, 'fv-stat'), n = el('strong', '—'), caption = el('span', label); box.append(n, caption); stats.append(box); metrics.push(n); metricLabels.push(caption); }
+    for (const label of [t('Generation', '生成用时'), t('Total time', '总用时'), t('Peak VRAM', '最高显存'), t('Peak RAM', '最高内存')]) { const box = el('div', null, 'fv-stat'), n = el('strong', '—'), caption = el('span', label); box.append(n, caption); stats.append(box); metrics.push(n); metricLabels.push(caption); }
     const prewarm = el('div', node.freevideoPrewarm || '', 'fv-prewarm');
     const reuseRow = el('div', null, 'fv-reuse-result'); reuseRow.hidden = true;
     const reuseNotice = el('span', t('Reused previous result', '已复用上次结果'));
@@ -1008,7 +1007,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         try { await node.freevideoUpscaleResult(saved); await syncQueue(); }
         catch (error) { resultActionFailed(error); throw error; }
     };
-    const memoryNote = el('div', t('This video used the low-memory mode for this GPU, so it took longer than usual. A lower resolution or a shorter video runs faster.', '这段视频使用了省显存方式，所以比平时慢。降低分辨率或缩短时长会更快。'), 'fv-note'); memoryNote.hidden = true;
+    const memoryNote = el('div', t('This run used the low-memory mode, so it was slower. A lower resolution or a shorter video is faster.', '这次用了省显存方式，所以较慢。降低分辨率或缩短时长会更快。'), 'fv-note'); memoryNote.hidden = true;
     const thermalNote = el('div', '', 'fv-note'); thermalNote.hidden = true;
     const sharedGpuNote = el('div', '', 'fv-note'); sharedGpuNote.hidden = true;
     const encoderNote = el('div', '', 'fv-note'); encoderNote.hidden = true;
@@ -1053,8 +1052,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (encoderPath) encoderNote.append(el('pre', encoderPath, 'fv-encoder-path'));
         regenerate.disabled = false; regenerate.textContent = t('Regenerate', '重新生成');
         const unified = r.memory_model === 'unified';
-        metricLabels[2].textContent = unified ? t('Unified memory', '统一内存总量') : t('VRAM peak', '显存峰值');
-        metricLabels[3].textContent = unified ? t('Process RAM peak', '进程内存峰值') : t('RAM peak', '内存峰值');
+        metricLabels[2].textContent = unified ? t('Unified memory', '统一内存总量') : t('Peak VRAM', '最高显存');
+        metricLabels[3].textContent = unified ? t('Process peak RAM', '进程最高内存') : t('Peak RAM', '最高内存');
         const shown = [number(r.sample_seconds), number(r.request_seconds), number(unified ? r.unified_total_bytes : r.vram_peak_bytes, 2 ** 30, 'GiB'), number(r.ram_peak_bytes, 2 ** 30, 'GiB')]; metrics.forEach((e, i) => e.textContent = shown[i]);
         budget.textContent = r.result_cache_hit || r.preview ? '' : unified
             ? (Number.isFinite(r.unified_reserve_bytes) ? `${t('Reserved unified memory', '预留统一内存')} ${number(r.unified_reserve_bytes, 2 ** 30, 'GiB')}` : '')
@@ -1156,7 +1155,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const optionsPanel = el('div', null, 'fv-run-menu');
     optionsPanel.append(el('strong', t('Generation mode', '生成方式')));
     const modeButtons = [];
-    for (const [id, label] of [['single', t('One video', '单次生成')], ['batch', t('Batch', '批量生成')], ['loop', t('Loop', '循环生成')]]) {
+    for (const [id, label] of [['single', t('Single', '单次')], ['batch', t('Batch', '批量')], ['loop', t('Loop', '循环')]]) {
         const b = button(label, () => {
             runMode = id; node.properties.freevideo_run_mode = id;
             rememberPromptDraft(api, node); updateRunButton();
@@ -1198,13 +1197,13 @@ export function openStudio(node, {extendFrom = null} = {}) {
     queueActions.append(queueDetails, cancelCurrent, stopLoop, resumeChain);
     runbar.append(requestAssets.element, runrow, queueActions); controls.append(runbar);
     const queueError = error => ({
-        queue_unavailable: t('Could not read the queue. Any loop has been stopped; already submitted videos stay queued.', '暂时无法读取队列。循环已停止追加，已提交的任务仍在队列中。'),
-        cancel_failed: t('Could not cancel. Try again.', '暂时未能取消，请重试。'),
-        move_failed: t('Could not move it. Try again.', '暂时未能移动，请重试。'),
-        submit_failed: t('The workflow was not queued. Check the node settings.', '工作流未能提交，请检查节点设置。'),
+        queue_unavailable: t('Could not read the queue. The loop has stopped; videos already added stay queued.', '暂时读不到队列，循环已停止；已加入的视频还在队列中。'),
+        cancel_failed: t('Could not cancel. Try again.', '没有取消成功，请重试。'),
+        move_failed: t('Could not move it. Try again.', '没有移动成功，请重试。'),
+        submit_failed: t('Could not add to the queue. Check the settings in node view.', '没能加入队列，请在节点视图检查设置。'),
         loop_active: t('Stop the current loop before starting another.', '请先停止当前循环。'),
-        loop_stopped: t('The last request did not complete. The loop has stopped.', '上一条任务未完成，循环已停止。'),
-        linked_seed: t('Use the seed in this panel for batch or loop generation.', '批量和循环生成需使用面板内的种子，请先断开种子输入的连接。'),
+        loop_stopped: t('The last video did not finish. The loop has stopped.', '上一个视频没有生成完，循环已停止。'),
+        linked_seed: t('Batch and loop use the seed in this panel. Disconnect the seed link in node view.', '批量和循环要用面板里的种子，请在节点视图断开种子的连线。'),
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
         chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
         chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
@@ -1218,7 +1217,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (['loop_stopped', 'queue_unavailable'].includes(error?.message)
             && node.freevideoFailureReport && node.freevideoFailureReport.stage !== 'queue') return;
         status.textContent = error?.schema === 'freevideo.error-report'
-            ? t('Submission failed. See the details below.', '提交失败，具体原因见下方。')
+            ? t('Could not start. See the details below.', '没能开始生成，原因见下方。')
             : extensionCause(error) ? t('A browser extension is interfering with FreeVideo. See details below.', '浏览器扩展干扰了 FreeVideo，详见下方。')
             : queueError(error);
         // Recoverable chain actions need one visible sentence, not a second error card.
@@ -1244,7 +1243,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             : t(`Generating part ${position.index + 1}…`, `正在生成第 ${position.index + 1} 段…`);
         generate.disabled = submitting || chainController?.active || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
         generate.textContent = submitting ? t('Adding…', '正在添加…')
-            : chainReason || (runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 条任务`)
+            : chainReason || (runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 个视频`)
             : runMode === 'loop' ? (queueState?.looping ? t('Looping', '循环中') : t('Start loop', '开始循环'))
             : busy ? t('Add to queue', '添加到队列')
             : previewFirst.checked && !previewFirst.disabled ? t('Generate preview', '生成预览') : t('Generate video', '生成视频'));
@@ -1253,9 +1252,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         for (const b of modeButtons) if (b.dataset.mode !== 'single') b.disabled = multiple;
         countField.hidden = runMode !== 'batch'; count.disabled = runMode !== 'batch';
         modeHelp.hidden = runMode === 'single' && !multiple;
-        modeHelp.textContent = multiple ? t('Batch and loop are unavailable for videos made in parts.', '分段视频暂不支持批量和循环生成。') : runMode === 'loop'
-            ? t('Use these settings with a new seed each time. Closing this page stops adding videos.', '固定当前设置，每条使用不同种子。关闭网页后不再追加。')
-            : t('Use these settings with a different seed for each video.', '固定当前设置，每条使用不同种子。');
+        modeHelp.textContent = multiple ? t('Videos made in parts cannot use batch or loop.', '分段视频不能批量或循环生成。') : runMode === 'loop'
+            ? t('Same settings, a new seed each time. Stops when this page closes.', '用当前设置，每次换一个种子；关闭网页后停止。')
+            : t('Same settings, a new seed for each video.', '用当前设置，每个视频换一个种子。');
         cancelCurrent.hidden = !queueState?.running && !chainController?.active;
         cancelCurrent.disabled = cancelling;
         cancelCurrent.textContent = cancelling ? t('Cancelling…', '正在取消…') : t('Cancel current', '取消当前');
@@ -1280,7 +1279,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         // The right-hand frame belongs to the submitted video. Draft edits on
         // the left must never reshape a video currently being generated.
         if (Number.isFinite(g?.width) && Number.isFinite(g?.height)) previewSize(g.width, g.height);
-        queueToggle.textContent = t(`Queue · ${state.pending.length}`, `等待 ${state.pending.length} 条`);
+        queueToggle.textContent = t(`Queued · ${state.pending.length}`, `排队 ${state.pending.length} 个`);
         queueDetails.hidden = state.pending.length === 0;
         queueActions.hidden = !busy && !state.looping && resumeChain.hidden;
         const signature = JSON.stringify(state.pending.map(row => [row.id, row.inputs.width, row.inputs.height]));
@@ -1294,7 +1293,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
                     try { await queueController.cancel(row.id); }
                     catch (error) { showQueueError(error); remove.disabled = false; }
                 }, 'fv-quiet');
-                remove.setAttribute('aria-label', t(`Remove queued video ${index + 1}`, `移除第 ${index + 1} 条排队任务`));
+                remove.setAttribute('aria-label', t(`Remove queued video ${index + 1}`, `移除排队的第 ${index + 1} 个`));
                 item.append(description);
                 if (index > 0) {
                     const first = button(t('Move to front', '排到最前'), async () => {
@@ -1302,7 +1301,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
                         try { await queueController.moveFirst(row.id); }
                         catch (error) { showQueueError(error); first.disabled = remove.disabled = false; }
                     }, 'fv-quiet');
-                    first.setAttribute('aria-label', t(`Move queued video ${index + 1} to front`, `把第 ${index + 1} 条排队任务排到最前`));
+                    first.setAttribute('aria-label', t(`Move queued video ${index + 1} to front`, `把排队的第 ${index + 1} 个排到最前`));
                     item.append(first);
                 }
                 item.append(remove); queueList.append(item);
@@ -1348,6 +1347,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (!extension.source && !prompt.disabled && !prompt.value.trim() && !untouched()) { prompt.focus(); status.textContent = t('Describe your scene first.', '请先描述画面。'); return; }
         const chosenMode = runMode, batchCount = chosenMode === 'batch' ? Number(count.value) : 1;
         const originalSeed = value(node, 'seed'), seedMode = mode.value;
+        // A request that is not accepted leaves the node mode as the user had it; a retry turns it on again.
+        // Once the server has taken a request it stays taken; only a request it never took is undone.
+        let held = null, accepted = false;
+        const onAccepted = () => { accepted = true; };
         try {
             lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
             capturing = true; updateRunButton(); status.dataset.error = 'false'; runOptions.open = false;
@@ -1358,7 +1361,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             const lengthPlan = await lengthControl.ready();
             if (disposed || lengthControl.blocked) return;
             if (lengthControl.absent && !seconds.reportValidity()) return;
-            if (lengthPlan?.count > 1 && chosenMode !== 'single') { status.textContent = t('Batch and loop are unavailable for videos made in parts.', '分段视频暂不支持批量和循环生成。'); return; }
+            if (lengthPlan?.count > 1 && chosenMode !== 'single') { status.textContent = t('Videos made in parts cannot use batch or loop.', '分段视频不能批量或循环生成。'); return; }
             const lengthOptions = lengthControl.options();
             const source = extension.source;
             if (source && !await extendSourceExists(api, source)) throw new Error(extendText(t, 'unavailable'));
@@ -1366,18 +1369,19 @@ export function openStudio(node, {extendFrom = null} = {}) {
             // Only serialization briefly locks the editor. Network submission
             // and all GPU execution leave the next draft fully editable.
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = true;
+            held = turnNodeOn(node);
             const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(structuredClone(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
-            if (!snapshot) { status.textContent = t('Could not plan this single run. Try again.', '暂时无法计算这次单次生成，请重试。'); return; }
+            if (!snapshot) { status.textContent = t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。'); return; }
             const seedIndex = node.widgets.findIndex(w => w.name === 'seed');
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;
             if (lengthPlan?.count > 1) {
-                const chain = await chainController.start(snapshot, lengthOptions);
+                const chain = await chainController.start(snapshot, lengthOptions, {onAccepted});
                 if (disposed) return;
                 if (!chain) { if (source) throw new Error(extendText(t, 'unavailable')); lengthControl.fallback(); if (!seconds.reportValidity()) return;
-                    await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex}); }
-            } else await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex});
+                    await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted}); }
+            } else await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted});
             // Preserve draft changes made while the POST was in flight.
             if (chosenMode === 'single' && !linked(node, 'seed') && value(node, 'seed') === originalSeed) {
                 const max = Number.MAX_SAFE_INTEGER;
@@ -1386,9 +1390,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
                     ? (originalSeed <= 0 ? max : originalSeed - 1) : originalSeed;
                 set(node, 'seed', next); seed.value = next;
             }
-            if (!queueController.state().error) status.textContent = '';
+            if (!queueController.state().error) status.textContent = held
+                ? t('The FreeVideo node was off in Nodes view. It has been turned back on.', 'FreeVideo 节点在节点视图里是关闭的，已自动打开。') : '';
         } catch (error) { showQueueError(createErrorReport(error, {stage: 'submission', node, graph: app.graph})); }
         finally {
+            if (accepted) held?.done(); else held?.restore();
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;
             updateRunButton();
@@ -1430,7 +1436,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     function applySize() {
         if (dimensionsLinked || extension.source) return;
         const [w, h] = canvasDimensions(pixels, ratio);
-        if (w < 256 || h < 256 || w > 4096 || h > 4096) throw new Error(t('This aspect ratio and pixel count exceed the supported dimensions. Use custom dimensions.', '该比例与像素数超出尺寸范围，请使用自定义宽高。'));
+        if (w < 256 || h < 256 || w > 4096 || h > 4096) throw new Error(t('This aspect ratio and resolution are out of range. Use a custom width and height.', '这个比例和清晰度超出范围，请改用自定义宽高。'));
         set(node, 'width', w); set(node, 'height', h); node.properties.freevideo_aspect = selected; node.properties.freevideo_pixels = pixels; syncCanvasSize();
     }
     async function inputRatio(required = false) {
@@ -1577,7 +1583,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // Do not change any saved width/height simply by opening a workflow.
     syncQueue().then(async () => {
         if (disposed) return;
-        if (busy) { showProgress(node.freevideoProgress || {label: queued ? t('Waiting in queue', '正在排队') : t('Syncing generation progress', '正在同步生成进度')}); }
+        if (busy) { showProgress(node.freevideoProgress || {label: queued ? t('Waiting in queue', '正在排队') : t('Loading progress', '正在读取进度')}); }
         else if (!result) {
             const saved = (await recentLoad)[0];
             if (!disposed && !busy && !result && saved) showResult(saved);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {outputDownloadURL} from '../web/output_download.js';
-import {regenerateResult, upscaleResult, createSecondPassQueue} from '../web/studio_queue.js';
+import {regenerateResult, upscaleResult, createSecondPassQueue, enableNode} from '../web/studio_queue.js';
 import {referenceInputs, mediaRows} from '../web/prompt_references.js';
 import {expandCast} from '../web/cast_mention.js';
 import {cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue} from '../web/optional_inputs.js';
@@ -38,7 +38,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     const document = {head: new Element('head'), createElement: tag => new Element(tag),
         createRange: () => ({createContextualFragment: () => new Element('span')})};
     const dependencies = {
-        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue,
+        app, api, outputDownloadURL, regenerateResult, upscaleResult, createSecondPassQueue, enableNode, referenceInputs, mediaRows, expandCast, cleanOptionalPrompt, cleanOptionalWidgets, optionalInputValue,
         createCastLibrary: options => {
             const cast = {element: new Element('cast'), options, destroyed: false, destroy() { this.destroyed = true; }};
             casts.push(cast); return cast;
@@ -77,7 +77,7 @@ test('main browser entry registers both views and preserves node hooks', async t
     };
     const previous = new Map();
     for (const [name, value] of Object.entries({
-        document, navigator: {language: 'en'}, window: events,
+        document, navigator: {language: 'en'}, window: events, addEventListener: (type, fn, options) => events.addEventListener(type, fn, options),
         getComputedStyle: element => ({marginTop: '8px', marginBottom: '8px', display: element.hidden ? 'none' : 'block', ...element.style}),
         CustomEvent: class extends Event { constructor(name, options) { super(name); this.detail = options?.detail; } },
         requestAnimationFrame: callback => callback(), __freevideoEntryTest: dependencies,
@@ -106,10 +106,12 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { rememberPromptDraft, savePromptDraft, trackPromptDraft, watchPromptHistory, promptHistoryRestoring } from './prompt_draft.js';", 'const {rememberPromptDraft,savePromptDraft} = globalThis.__freevideoEntryTest; const trackPromptDraft = () => {}; const watchPromptHistory = () => {}; const promptHistoryRestoring = () => false;')
             .replace("import { cleanOptionalWidgets, cleanOptionalPrompt, optionalInputValue } from './optional_inputs.js';", 'const {cleanOptionalWidgets,cleanOptionalPrompt,optionalInputValue} = globalThis.__freevideoEntryTest;')
             .replace("import { regenerateResult, upscaleResult } from './studio_queue.js';", 'const {regenerateResult,upscaleResult} = globalThis.__freevideoEntryTest;')
-            .replace("import { regenerateResult, createSecondPassQueue } from './studio_queue.js';", 'const {regenerateResult,createSecondPassQueue} = globalThis.__freevideoEntryTest;')
+            .replace("import { regenerateResult, createSecondPassQueue, enableNode } from './studio_queue.js';", 'const {regenerateResult,createSecondPassQueue,enableNode} = globalThis.__freevideoEntryTest;')
             .replace("import { secondPassAction } from './result_actions.js';", 'const {secondPassAction} = globalThis.__freevideoEntryTest;')
             .replace("import { openImageEditor, icon } from './image_editor.js';", 'const {openImageEditor,icon} = globalThis.__freevideoEntryTest;')
-            .replace("import { installNavigation, refreshNavigation, preferredView } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest;')
+            .replace("import { installNavigation, refreshNavigation, preferredView, collapseWorkspaces } from './view_navigation.js';", 'const {installNavigation,refreshNavigation,preferredView} = globalThis.__freevideoEntryTest; const collapseWorkspaces = () => { globalThis.__freevideoEntryTest.collapsed = (globalThis.__freevideoEntryTest.collapsed || 0) + 1; };')
+            .replace("import { isLaunchVisit } from './launch_visit.js';", 'const isLaunchVisit = () => false;')
+            .replace("import { openFreeVideoWorkflow } from './launcher.js';", 'const openFreeVideoWorkflow = (...args) => globalThis.__freevideoEntryTest.openFreeVideoWorkflow?.(...args);')
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
             .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
@@ -140,6 +142,29 @@ test('main browser entry registers both views and preserves node hooks', async t
             arrange() { this.arranged = (this.arranged || 0) + 1; }
             computeSize() { return [this.size[0], this.dom.reduce((height, row) => height + (row.options?.getMinHeight?.() || 0), 0)]; }
         }
+        for (const [language, tooltip] of [
+            ['en', 'Changing sampling steps may lower generation quality. Default: 8 first-pass and 3 second-pass steps. Two-pass acceleration runs only with 8 first-pass steps. Other step counts use a single pass. Other second-pass counts must be fewer than first-pass steps.'],
+            ['zh', '修改采样步数可能降低生成质量。默认一采 8 步、二采 3 步；只有一采为 8 步时才会使用二次采样加速，其他步数只采样一遍；其他二采步数需小于一采步数。'],
+        ]) {
+            await t.test(`${language} node step tooltips include the three-step exception for valid plans`, async () => {
+                navigator.language = language;
+                try {
+                    await import('data:text/javascript;base64,' + Buffer.from(source + `\n// tooltip language: ${language}`).toString('base64'));
+                    const localized = extensions.at(-1);
+                    class LocalizedGenerateNode extends GenerateNode {}
+                    await localized.beforeRegisterNodeDef(LocalizedGenerateNode, {name: 'FreeVideoGenerate'});
+                    for (const [base, refine] of [[1, 3], [2, 3], [3, 3], [8, 3], [8, 2]]) {
+                        const node = new LocalizedGenerateNode();
+                        node.widgets[0].value = base; node.widgets[1].value = refine;
+                        node.onNodeCreated();
+                        assert.equal(node.widgets[0].tooltip, tooltip, `${base} + ${refine}: first-pass tooltip`);
+                        assert.equal(node.widgets[1].tooltip, tooltip, `${base} + ${refine}: refine tooltip`);
+                        assert.deepEqual(node.widgets.slice(0, 2).map(widget => widget.value), [base, refine]);
+                        node.onRemoved();
+                    }
+                } finally { navigator.language = 'en'; }
+            });
+        }
         await extension.beforeRegisterNodeDef(GenerateNode, {name: 'FreeVideoGenerate'});
         const node = new GenerateNode(); app.graph._nodes = [node];
         assert.equal(node.onNodeCreated(), 'created');
@@ -157,8 +182,28 @@ test('main browser entry registers both views and preserves node hooks', async t
         node.widgets[0].value = false; node.onConfigure();
         assert.equal(node.widgets[0].value, 8, 'Migrate the previous private force-checkbox slot');
         node.buttons[0].callback();
+        const quiet = opened.length;
+        extension.afterConfigureGraph();
+        assert.equal(opened.length, quiet, 'a tab restored with the page does not open the workspace on its own');
+        events.dispatchEvent(new Event('pointerdown'));
         extension.afterConfigureGraph();
         assert.deepEqual(opened, [node, node]);
+        // A workflow without FreeVideo nodes is the user's own: every workspace makes way and none opens.
+        const nodes = app.graph._nodes, collapsed = dependencies.collapsed || 0;
+        app.graph._nodes = [];
+        extension.afterConfigureGraph();
+        assert.equal(dependencies.collapsed, collapsed + 1); assert.deepEqual(opened, [node, node]);
+        // The menu entry opens the workspace of the workflow in front, or FreeVideo's own workflow when it has no node.
+        const entry = extension.commands.find(row => row.id === 'FreeVideo.Open');
+        assert.equal(entry.label, 'FreeVideo'); assert.deepEqual(extension.menuCommands[0].commands, ['FreeVideo.Open']);
+        let workflows = 0;
+        dependencies.openFreeVideoWorkflow = async () => { workflows++; return node; };
+        const before = opened.length;
+        await entry.function();
+        assert.equal(workflows, 1); assert.equal(opened.length, before + 1); assert.equal(app.graph._nodes.length, 0);
+        app.graph._nodes = nodes;
+        await entry.function();
+        assert.equal(workflows, 1); assert.equal(opened.length, before + 2);
         rememberedView = 'editor';
         const restored = [];
         dependencies.openEditorView = (value, options) => restored.push({node:value, studio:options.studio});

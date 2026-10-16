@@ -229,7 +229,7 @@ export function attachAudioTracks(element, {state, t = en => en, actions = {}}) 
             controls.replaceChildren();
             for (const name of track.kind === 'audio' ? ['muted', 'solo', 'locked'] : ['muted', 'locked']) {
                 const active = !!track[name], button = el('button', 'fv-ed-audio-track-switch'); button.type = 'button'; button.dataset.flag = name; button.dataset.track = track.id;
-                const labels = {muted: active ? t('Unmute', '取消静音') : t('Mute this track', '静音这条轨道'), solo: active ? t('Unsolo', '恢复全部轨道') : t('Solo this track', '只听这条轨道'), locked: active ? t('Unlock', '解除锁定') : t('Lock this track', '锁定这条轨道')};
+                const labels = {muted: active ? t('Unmute', '取消静音') : t('Mute this track', '静音这条轨道'), solo: active ? t('Hear all tracks', '恢复全部轨道') : t('Solo this track', '只听这条轨道'), locked: active ? t('Unlock', '解除锁定') : t('Lock this track', '锁定这条轨道')};
                 button.title = labels[name]; button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(active));
                 const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'), path = document.createElementNS(svg.namespaceURI, 'path'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true'); path.setAttribute('d', paths[name]); svg.append(path); button.append(svg);
                 // Switches are view settings: they change every snapshot alike and never enter the undo history.

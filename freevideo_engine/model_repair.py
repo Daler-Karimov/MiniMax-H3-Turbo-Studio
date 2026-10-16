@@ -41,8 +41,8 @@ BUSY = ('When the current task ends, a Repair button appears here; after you cli
         'FreeVideo renames and keeps this file, then downloads the tested version.',
         '当前任务结束后，这里会出现“修复”按钮；点击并确认后，FreeVideo 会把这个文件改名保留，再下载测试过的版本。')
 OFFLINE = ('This offline-package installation cannot switch back in one step yet. Move or rename the file below, '
-           'then import the Text encoder package again on the Installation page.',
-           '离线包安装暂时不能一键换回。请把下面这个文件移走或改名，再在“安装”页重新导入“文本编码器”包。')
+           'then import the Prompt model package (FreeVideo-文本编码器.zip) again on the Installation page.',
+           '离线包安装暂时不能一键换回。请把下面这个文件移走或改名，再在“安装”页重新导入“提示词模型（FreeVideo-文本编码器.zip）”包。')
 FIRST_INSTALL = (
     '{file} differs from the version FreeVideo tests and was left unchanged. Click Retry installation below: '
     'the confirmation page will list this file, and after you confirm, it is renamed and kept, '

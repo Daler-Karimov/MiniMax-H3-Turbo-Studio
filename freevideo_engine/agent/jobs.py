@@ -131,8 +131,14 @@ def continuation_problems(spec, prefix='', *, editor=None):
     problems = []
     if not spec['two_pass']:
         # The quality name is a contract enum, never caller text.
-        problem = schema.diagnostic(prefix + '/quality', '"light" (two-pass), or sampling.two_pass=true,' + why, None)
-        got = '"%s" (one pass)' % spec['quality']
+        if spec.get('sampling_note'):
+            # Two-pass was asked for with a first-pass count other than 8: it runs one pass.
+            problem = schema.diagnostic(prefix + '/quality',
+                                        '"light" (two-pass), or sampling.two_pass=true with base_steps=8,' + why, None)
+            got = '%d first-pass steps (one pass)' % spec['base_steps']
+        else:
+            problem = schema.diagnostic(prefix + '/quality', '"light" (two-pass), or sampling.two_pass=true,' + why, None)
+            got = '"%s" (one pass)' % spec['quality']
         problems.append(dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got)))
     if spec['preview']:
         problems.append(schema.diagnostic(prefix + '/preview', 'false' + why, True))
@@ -546,6 +552,12 @@ class Jobs:
                     self.finish(row, 'failed', error=dict(code='interrupted',
                                 message='ComfyUI restarted while this job ran; submit it again'), save=False)
                 row['_restored'] = True
+                if row['kind'] == 'generate' and row['status'] in ACTIVE:
+                    # Waiting, queued or running when the process restarted: this process runs it
+                    # under the one-pass rule, however it is started again. A finished job is left.
+                    note = self.legacy_one_pass_note(row['spec'])
+                    if note:
+                        row['spec']['sampling_note'] = note
                 if row['kind'] == 'generate' and not row['spec'].get('refine_from'):
                     # Before device-aware Agent planning, every accepted job used the unknown limit.
                     row['spec'].setdefault('single_max_frames', None)
@@ -1079,6 +1091,15 @@ class Jobs:
             result['chain_id'] = row['chain_id']
         if row['kind'] == 'generate':
             result.update(cancel_requested=row.get('cancel_requested', False), attempt=row.get('attempt', 1))
+            note = spec.get('sampling_note')
+            if (note is None and row['status'] not in DONE and spec.get('two_pass') and not spec.get('preview')
+                    and not spec.get('refine_from')):
+                # A job stored before the one-pass rule and not yet run: the engine applies it when it runs.
+                # A finished one keeps what it did, which a stored request cannot tell.
+                from ..two_pass import one_pass_note
+                note = one_pass_note(spec.get('base_steps', 8))
+            if note:
+                result['notice'] = note
         if row['status'] == 'waiting':
             pending = [d for d in row.get('depends_on', ()) if self.jobs.get(d, {}).get('status') not in DONE]
             result['waiting_for'] = pending or row.get('waiting_for') or (['gpu'] if row['kind'] in GPU_KINDS + ('generate',) else [])
@@ -1449,9 +1470,28 @@ class Jobs:
             relative = edited
         return relative
 
+    @staticmethod
+    def legacy_one_pass_note(spec):
+        """The note for an unfinished two-pass job stored before the one-pass rule, else None."""
+        base = spec.get('base_steps', 8)
+        if (spec.get('sampling_note') is None and spec.get('two_pass') is True and not spec.get('preview')
+                and not spec.get('refine_from') and type(base) is int and 1 <= base <= 32 and base != 8):
+            from ..two_pass import one_pass_note
+            return one_pass_note(base)
+        return None  # a damaged stored value gets no note; the row is judged where it is used
+
     async def start_generation(self, row):
         def prepare():
             spec = row['spec']
+            note = self.legacy_one_pass_note(spec)
+            if note:
+                # A job stored before the one-pass rule starts under it now, on a first start
+                # and on a resume alike: keep what it runs as, so the note outlasts the run and
+                # a reload (a stored request alone cannot tell, and a finished old job must
+                # not gain a note).
+                with self.lock:
+                    spec['sampling_note'] = note
+                self.touch(row)
             if row.get('resume_pending'):
                 self.start_chain(row, resume=True)
                 return

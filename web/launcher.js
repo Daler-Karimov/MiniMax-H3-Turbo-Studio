@@ -62,6 +62,21 @@ async function existingStudioWorkflow(target, bundled) {
     return restorePromptDraft(api, graph, target.path);
 }
 
+// Opens FreeVideo's own workflow in a tab of its own and returns its generate node. The workflow in front
+// is left as it is: an existing FreeVideo tab comes back with its project, otherwise a new one opens.
+export async function openFreeVideoWorkflow() {
+    const response = await api.fetchApi('/freevideo/launcher/workflow');
+    if (!response.ok) throw new Error(`FreeVideo workflow: HTTP ${response.status}`);
+    const workflow = await restorePromptDraft(api, await response.json());
+    const store = app.extensionManager?.workflow;
+    const existing = store?.getWorkflowByPath?.('workflows/FreeVideo.json')
+        || store?.openWorkflows?.find(row => studioWorkflow(row.changeTracker?.activeState));
+    const restored = existing ? await existingStudioWorkflow(existing, workflow) : null;
+    if (restored) await app.loadGraphData(restored, true, true, existing);
+    else await app.loadGraphData(structuredClone(workflow), true, true, 'FreeVideo');
+    return (app.graph?._nodes || []).find(n => n.comfyClass === 'FreeVideoGenerate' || n.type === 'FreeVideoGenerate') || null;
+}
+
 // ComfyUI restores the previous session's workflow and tabs after every
 // extension's setup, so that restore can bring another workflow to the front
 // over ours. Once startup is quiet, bring our tab back into view even if a

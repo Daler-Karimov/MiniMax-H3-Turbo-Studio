@@ -425,7 +425,7 @@ def _run(args):
     two_pass = getattr(args, 'two_pass', True)
     preview = getattr(args, 'preview', False) is True
     from .preview import validate_flags, source as preview_source
-    validate_flags(preview, getattr(args, 'refine_from', None), two_pass)
+    validate_flags(preview, getattr(args, 'refine_from', None), two_pass, requested_steps)
     refine_source = preview_source(args.refine_from) if getattr(args, 'refine_from', None) else None
     if requested_steps is not None:
         validate_steps(requested_steps, refine_steps, two_pass)
@@ -567,6 +567,8 @@ def _run(args):
         from .two_pass import plan as continuation_plan
         validate_route(task=profile['engine'].get('task', 't2va'), anchor=anchored)
         planned = continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps)
+        if two_pass and not planned['enabled'] and base_steps != 8:
+            raise ValueError(planned['reason'] + ' A continuation needs two-pass generation.')
         continuation_first = planned['first']
         continuation = usable_continuation(continuation, canvas, None if active_loras else manifest, planned)
     if manifest.get('precision') not in ('fp8', 'int8', 'bf16'):  # BF16: the unquantized reference
@@ -1007,9 +1009,9 @@ def _run(args):
                     request.pop('resume_refine', None)
                 request.pop('resume_first_pass', None)
                 if resume_decode is None and resume_refine is None and preview_pass is not None:
-                    from .decode_resume import refine_provenance
+                    from .decode_resume import refine_provenance, same_identity
                     receipt = json.loads(Path(preview_pass['metrics']).read_text(encoding='utf-8'))
-                    if refine_provenance(request) == receipt.get('refine_provenance'):
+                    if same_identity(refine_provenance(request), receipt.get('refine_provenance')):
                         request['resume_first_pass'] = dict(preview_pass)
                         report['upscaled_preview']['first_pass_reused'] = True
                     else:

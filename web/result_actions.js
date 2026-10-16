@@ -29,8 +29,8 @@ export function icon(name) {
 export function previewBadge(record, t) {
     const badge = document.createElement('span'); badge.className = 'fv-preview-badge';
     const g = record.preview_geometry;
-    badge.textContent = g?.width ? t(`First-pass preview · ${g.width} × ${g.height}`, `一采预览 · ${g.width} × ${g.height}`)
-        : t('First-pass preview', '一采预览');
+    badge.textContent = g?.width ? t(`Preview · ${g.width} × ${g.height}`, `预览 · ${g.width} × ${g.height}`)
+        : t('Preview', '预览');
     return badge;
 }
 
@@ -59,10 +59,10 @@ function popover(menu, summary, onClose = () => {}) {
 
 // The next step of a first-pass preview. `run` reports its own errors and throws.
 export function secondPassAction(t, run) {
-    const button = action('button', t('Run second pass', '继续二采'), 'expand', 'fv-action-primary fv-action-second-pass');
+    const button = action('button', t('Continue', '继续生成'), 'expand', 'fv-action-primary fv-action-second-pass');
     const label = button.lastElementChild;
-    button.title = t('Continue from this preview: latent upscale, the second pass and a full-resolution decode.',
-        '从这个预览接着跑：潜空间放大、二采，再以全分辨率解码。');
+    button.title = t('Continue from this preview to the full-resolution video.',
+        '从这个预览继续生成全分辨率视频。');
     button.onclick = async () => {
         if (button.disabled) return;
         button.disabled = true; button.setAttribute('aria-busy', 'true');
@@ -70,7 +70,7 @@ export function secondPassAction(t, run) {
         try { await run(); label.textContent = button.title = t('Queued', '已加入队列'); }
         catch {
             button.disabled = false;
-            label.textContent = button.title = t('Second pass did not start · Retry', '二采没有开始 · 重试');
+            label.textContent = button.title = t('Could not continue · Retry', '未能继续生成 · 重试');
         } finally { button.removeAttribute('aria-busy'); }
     };
     return button;
@@ -83,10 +83,10 @@ function deleteAction(t, remove) {
     const label = document.createElement('span'); label.textContent = t('Delete', '删除');
     summary.append(icon('trash'), label);
     const panel = document.createElement('div'); panel.className = 'fv-menu fv-confirm';
-    const title = document.createElement('strong'); title.textContent = t('Delete this creation?', '删除这条作品？');
+    const title = document.createElement('strong'); title.textContent = t('Delete this creation?', '删除这个作品？');
     const hint = document.createElement('small');
-    hint.textContent = t('The video, its generation records and preview data are removed. This cannot be undone.',
-        '视频、生成记录和一采中间结果都会删除，无法恢复。');
+    hint.textContent = t('The video and its files will be deleted.',
+        '视频和相关文件都会删除。');
     const problem = document.createElement('small'); problem.className = 'fv-confirm-problem'; problem.hidden = true;
     const row = document.createElement('div'); row.className = 'fv-confirm-actions';
     const cancel = action('button', t('Cancel', '取消'), null, 'fv-action-secondary');

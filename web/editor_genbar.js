@@ -1,6 +1,7 @@
 // The editor owns its generation controls; progress can use the optional component.
 import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
+import {createExpandButton} from './editor_expand.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
@@ -11,13 +12,14 @@ const painted = () => typeof document === 'undefined' || document.visibilityStat
 export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     const hint = el('span', 'fv-ed-gen-hint'), note = el('span', 'fv-ed-gen-note');
     note.setAttribute('role', 'status'); note.hidden = true;
-    const input = el('input', 'fv-ed-description'); input.type = 'text'; input.value = text;
+    const input = el('textarea', 'fv-ed-description'); input.rows = 1; input.value = text;
+    const description = el('div', 'fv-ed-description-box'); description.append(input);
     const generate = el('button', 'fv-ed-generate'), cancel = el('button', null, t('Cancel', '取消')), resume = el('button', null, t('Continue', '继续'));
     input.dataset.fvGuide = 'editor-describe'; generate.dataset.fvGuide = 'editor-generate';
     for (const button of [generate, cancel, resume]) button.type = 'button';
-    host.append(hint, note, input, generate, cancel, resume);
+    host.append(hint, note, description, generate, cancel, resume);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
-    input.after(firstFrame.element);
+    description.after(firstFrame.element);
     const failure = el('div', 'fv-ed-gen-failure fv-result-links'), failureBar = el('div', 'fv-ed-failure-actions fv-actions');
     const failureReason = el('span', 'fv-ed-failure-reason'); failureReason.setAttribute('role', 'status');
     const report = el('button', 'fv-ed-failure-report fv-action fv-action-secondary', t('Download diagnostic report', '下载诊断报告')); report.type = 'button';
@@ -25,7 +27,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     let failureId = null, downloading = false;
     // Reference pictures for a part that starts fresh: thumbnails and a small "+" before the description.
     const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: actions.error, notify: actions.references.notify}) : null;
-    if (references) input.before(references.element);
+    if (references) description.before(references.element);
     let status = null, serial = 0, disposed = false, pressing = new Set(), previewSelection = null, estimateCache = null, noteTimer = null, queuedAt = null;
     // Which parts are generating, or how the job ended: a "Queued" line goes once this moves on.
     const progressKey = () => ['done', 'failed', 'cancelled', 'interrupted'].includes(status?.state) ? status.state
@@ -114,6 +116,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         generate.textContent = t('Generate', '生成');
         // Never disabled for a reason the press itself can explain or fix.
         generate.disabled = busy || !!previewSelection;
+        resizeDescription();
+        input.dispatchEvent(new Event('change'));
         generate.title = '';
         if (selected && !busy) {
             const key = JSON.stringify(selection);
@@ -125,26 +129,50 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             generate.textContent = t('Generate', '生成') + label;
         }
     }
+    function resizeDescription() {
+        // 18 px lines + 16 px padding + 2 px border: one line is still 36 px, five lines 108 px.
+        input.style.height = '0px';
+        const height = Math.max(36, (input.scrollHeight || 34) + 2);
+        input.style.height = `${Math.min(108, height)}px`;
+        input.style.overflowY = height > 108 ? 'auto' : 'hidden';
+        host.closest('.fv-editor')?.style.setProperty('--fv-ed-description-growth', `${Math.min(108, height) - 36}px`);
+    }
+    let width = null;
+    const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
+        const next = entries[0]?.contentRect.width;
+        if (next === width) return;
+        width = next; resizeDescription();
+    }) : null;
+    resize?.observe(description);
     input.oninput = () => { state.setRangeText(input.value); render(); };
+    input.onkeydown = event => {
+        // The former text input did not submit or insert a line on Enter.
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) event.preventDefault();
+    };
     generate.onclick = async () => {
         const key = JSON.stringify(state.selection ?? null);
         if (pressing.has(key)) return;
         pressing.add(key); say(''); render();
         const typed = input.value;
+        let reason = '';
         try {
             // The press shows before any planning, however long that takes.
             await painted();
             const result = actions.press ? await actions.press(input.value) : await actions.generate({target: 'both', text: input.value});
             // Never over what the user typed meanwhile, for another part.
             if (result?.text != null && result.text !== input.value && input.value === typed) input.value = result.text;
-            if (result?.say) say(result.say, !!result.queued);
+            if (result?.say) { say(result.say, !!result.queued); reason = result.say; }
             if (result?.focus) { pressing.delete(key); render(); input.disabled = false; input.focus(); }
         }
         // A specific reason is said once; the planning limits are already shown above.
-        catch (error) { const result = actions.error(error, 'generate'); if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say);
-            else if (!result && !note.textContent) say(t('Could not start. Try again.', '没能开始，请重试。')); }
+        catch (error) { const result = actions.error(error, 'generate'); reason = result?.say || '';
+            if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say);
+            else if (!result && !note.textContent) { reason = t('Could not start. Try again.', '没能开始，请重试。'); say(reason); } }
         finally { pressing.delete(key); render(); }
+        return reason;
     };
+    const expand = createExpandButton({t, textarea: input, onGenerate: () => generate.onclick(), canGenerate: () => !generate.disabled, onDraft: text => state.setRangeText(text)});
+    description.append(expand.element);
     cancel.onclick = () => (!previewSelection && actions.selectionHeld?.() ? Promise.resolve(actions.unhold()).then(render) : actions.cancel()).catch(actions.error);
     resume.onclick = () => actions.resume().catch(value => actions.error(value, 'generate'));
     const unsubscribe = state.subscribe(event => {
@@ -160,8 +188,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         if (event.type === 'selection' || event.type === 'record') render();
     });
     render();
-    return {element: host, say, downloadFailure, getText() { return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); references?.dispose(); }};
+    return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.

@@ -422,7 +422,9 @@ def validate_answers(answers, value):
 # The small local model only sorts the events: spoken lines become placeholders it places, and the shared
 # description, the sound sections and the words themselves are put back by code, so they cannot drift.
 SPLIT_MAX_PARTS = 8
-CONTINUE = 'Continuing directly from the previous moment, with no pause: everything already in progress keeps going.'
+# Asking for no pause, or for everything in progress to keep going, makes the model keep talking past the
+# seam with invented words; the plain sentence keeps the picture going without that.
+CONTINUE = 'Continuing from the previous moment.'
 SPEAKER = re.compile(r'(?:\(S\d+(?:,S\d+)*\)\s*)?<d>(\[[A-Za-z]+\])?\s*([^<\n]{1,400}?)\s*</d>')
 
 
@@ -489,13 +491,15 @@ def split_instruction(value):
 previous one ended. Sort the user's description into what stays the same and what happens in each part:
 {chr(10).join(rows)}
 Shared: who is in the scene and how they look, the place, the lighting, the camera, the style and the
-background sound. Copy these words from the description. Leave out every action, event, change and every [L] marker.
+background sound. Copy these words from the description. Leave out every action, event, change, every [L]
+marker and all talking: how someone speaks belongs next to their marker.
 Part N: only what happens during that part, in the order of the description, so each action happens
 once. Part 1 {opening}; each later part picks up where the previous part ended. When the story is
-shorter than the video, the later parts continue the same activity calmly instead of repeating it.
+shorter than the video, the later parts go on with small, calm, silent actions instead of repeating it.
 The markers [L1], [L2], ... stand for spoken lines; their speaking time is given. Put each marker in
 exactly one part, in order, where it is said, as "he says [L2]" or "她说 [L2]"; spread them so each
-part's speech fits its seconds. Do not write any other speech.
+part's speech fits its seconds. Do not write any other speech: nobody talks, keeps talking or goes
+on speaking except at a marker.
 Example for a 2-part video. Description: A girl in a yellow raincoat stands on a wooden pier at dawn,
 filmed in a wide shot, gulls crying. She waves and shouts [L1], runs to the end of the pier and jumps
 into the sea. Speaking time: [L1] 2 s

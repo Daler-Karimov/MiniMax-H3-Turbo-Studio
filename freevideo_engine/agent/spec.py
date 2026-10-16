@@ -130,9 +130,16 @@ def sampling(value):
     two, base, refine = QUALITY[quality]
     custom = value.get('sampling', {})
     two, base, refine = custom.get('two_pass', two), custom.get('base_steps', base), custom.get('refine_steps', refine)
+    note = None
+    if two:
+        from ..two_pass import one_pass_note
+        # Only the 8-step first pass goes two-pass; any other count is one pass, said once in the answer.
+        note = one_pass_note(base)
+        two = two and note is None
     if custom:
         quality = next((k for k, v in QUALITY.items() if v == (two, base, refine)), 'custom')
-    return dict(quality=quality, two_pass=two, base_steps=base, refine_steps=refine)
+    return dict(quality=quality, two_pass=two, base_steps=base, refine_steps=refine,
+                **({'sampling_note': note} if note else {}))
 
 
 def generation_media(value):

@@ -51,7 +51,7 @@ const PLAIN_ERRORS = [
         title: ['This LoRA cannot be used with the int8 model yet', '这个 LoRA 暂时不能用于 int8 模型'],
         summary: ['This LoRA changes parts of the model that the int8 version cannot merge yet, so it cannot be used for now. LoRAs that change only linear layers work.', '这个 LoRA 修改了 int8 模型目前还不能合并的部分，暂时无法使用。只修改线性层的 LoRA 可以正常使用。']},
     {key: 'fa4-update', message: 'The attention speed-up component on this computer needs an update. Run freevideo setup --fa4-guard in a terminal, then restart FreeVideo.',
-        title: ['The attention speed-up component needs an update', '需要更新注意力加速组件'],
+        title: ['Runtime components need updating', '运行组件需要更新'],
         summary: ['The attention speed-up component on this computer needs an update. Run freevideo setup --fa4-guard in a terminal, then restart FreeVideo.', '注意力加速组件需要更新。请在终端运行 freevideo setup --fa4-guard，然后重新启动 FreeVideo。']},
     {key: 'duration-too-short', message: 'The video must be at least 1.625 s long.',
         title: ['The video is too short', '视频时长太短'],
@@ -82,11 +82,11 @@ function knownError(text) {
 
 // When a diagnostic report exists the card hides Export report; the same advice
 // then names Download report in the preview or node panel.
-const DOWNLOAD_ADVICE = ['If it still fails, click Download report in the preview or node panel and attach the report to a GitHub issue.',
-    '仍然失败时，请在预览区或节点面板中点击“下载报告”，并提交到 GitHub issue。'];
+const DOWNLOAD_ADVICE = ['If it still fails, use Download report in the preview and submit it in a GitHub issue.',
+    '仍然失败时，可点预览区的“下载报告”，提交到 GitHub issue。'];
 const EXPORT_TO_DOWNLOAD = [
     ['Export the report if it still fails.', DOWNLOAD_ADVICE[0]],
-    ['If it still fails, export the report and attach it to a GitHub issue.', DOWNLOAD_ADVICE[0]],
+    ['If it still fails, export the report and submit it in a GitHub issue.', DOWNLOAD_ADVICE[0]],
     ['仍失败时请导出报告。', DOWNLOAD_ADVICE[1]],
     ['仍然失败时，请导出报告并提交到 GitHub issue。', DOWNLOAD_ADVICE[1]],
     ['If it still fails, export the report.', DOWNLOAD_ADVICE[0]],
@@ -294,8 +294,8 @@ export function failureAdvice(value, t, known = knownError(value)) {
             return {...row(key, title, summary, ['', '']), plain: true};
     }
     if (/Prompt outputs failed validation|Required input is missing|Value not in list|Return type mismatch|Failed to validate prompt|value (?:\S+ )?(?:smaller|bigger) than/i.test(text))
-        return row('validation', ['Check the workflow inputs', '请检查工作流输入'],
-            ['ComfyUI rejected the workflow before generation. The affected nodes and reasons are listed below.', 'ComfyUI 在生成开始前拒绝了工作流，相关节点和具体原因列在下方。'],
+        return row('validation', ['Check generation settings', '检查生成设置'],
+            ['The generation settings did not pass validation; see the error details below.', '生成设置未通过检查，可查看下方错误详情。'],
             ['Check the named inputs, connections and model choices. Copy the details or export the error report when asking for help.', '检查下方指出的输入、节点连接和模型选项；反馈时可复制详情或导出错误报告。']);
     if (/FreeVideo resource planning could not admit/i.test(text)) {
         // The planner names smaller requests it admitted on this GPU just now.
@@ -304,46 +304,46 @@ export function failureAdvice(value, t, known = knownError(value)) {
         if (fits.length) {
             const en = fits.map(f => f.longest ? `${f.width}\u00a0×\u00a0${f.height} up to ${f.seconds.toFixed(1)}\u00a0s` : `${f.width}\u00a0×\u00a0${f.height} at ${f.seconds.toFixed(1)}\u00a0s`).join(', or ');
             const zh = fits.map(f => f.longest ? `${f.width}\u00a0×\u00a0${f.height} 最长 ${f.seconds.toFixed(1)}\u00a0秒` : `${f.width}\u00a0×\u00a0${f.height} 生成 ${f.seconds.toFixed(1)}\u00a0秒`).join('，或 ');
-            return row('resources', ['This video is too large for the free GPU memory', '这段视频超出了当前可用显存'],
-                ['Before generating, FreeVideo estimated the GPU memory this video needs, and it is more than the GPU has free right now.', 'FreeVideo 在开始生成前估算了所需显存，这段视频超过了显卡现在空闲的显存。'],
-                [`This computer can make ${en} right now. Change the duration or total pixels and generate again; closing other programs that use the GPU also frees memory.`,
-                 `现在可以生成：${zh}。请调整时长或总像素后重新生成；关闭其他占用显卡的程序也可以腾出显存。`]);
+            return row('resources', ['Not enough GPU memory', '显存不够'],
+                ['Generation needs more GPU memory than is currently available.', '生成所需显存超过当前可用量。'],
+                [`This computer can make ${en} right now. Change the duration or resolution and generate again; closing other programs that use the GPU also frees memory.`,
+                 `现在可以生成：${zh}。请调整时长或清晰度后重新生成；关闭其他占用显卡的程序也可以腾出显存。`]);
         }
         return row('resources', ['The request exceeds available memory', '当前任务的可用内存不足'],
-            ['Before generating, FreeVideo estimated the GPU memory and RAM this task needs, and it is more than is available right now.', 'FreeVideo 在开始生成前估算了所需的显存和内存，这次任务超过了现在可用的部分。'],
-            ['Close other memory-heavy programs, or lower the resolution or shorten the duration, and retry. The details show whether GPU memory or RAM ran short, and by how much.', '请关闭其他占用内存的程序，或调低分辨率、缩短时长后重试。详情里写明了是显存还是内存不足，以及还差多少。']);
+            ['Generation did not start because there is not enough available RAM or GPU memory.', '可用内存或显存不足，本次生成未开始。'],
+            ['Close memory-heavy applications, or lower the resolution or duration, then retry.', '可关闭占用内存较多的程序，或调低分辨率、缩短时长后重试。']);
     }
     if (/commit headroom exhausted|paging file is too small|WinError 1455/i.test(text))
-        return row('commit', ['Windows memory allocation limit reached', 'Windows 内存提交额度不足'],
-            ['Windows cannot back another memory allocation, even if physical RAM is still available.', 'Windows 已没有足够的内存提交额度；即使物理内存还有空闲，也无法再分配内存。'],
+        return row('commit', ['Not enough Windows memory', 'Windows 内存不足'],
+            ['Windows cannot provide enough memory for generation right now.', 'Windows 暂时无法提供生成所需的内存。'],
             ['Close memory-heavy applications and retry. In Windows virtual memory settings, use a system-managed paging file on a drive with free space.', '关闭占用内存较多的程序后重试。在 Windows 虚拟内存设置中，使用系统管理的分页文件，并确保所在磁盘有空闲空间。']);
     // Refused before it starts: more than this Mac can allocate at all, so closing
     // other applications cannot help (macos_generate.request_admission).
     if (/needs at least [\d.]+ GiB of unified memory for .*this Mac can allocate at most/i.test(text))
         return row('unified-memory-limit', ['Not enough unified memory', '统一内存不足'],
-            ['These settings need more unified memory than this Mac can allocate, even with other applications closed.', '这组设置需要的统一内存超过了这台 Mac 可分配的上限，关闭其他程序也无法满足。'],
+            ['These settings need more memory than the device can provide.', '这组设置需要的内存超过设备上限。'],
             ['Choose a lower resolution or a shorter duration and retry.', '请降低分辨率或缩短时长后重试。']);
     if (/MPS backend out of memory|MPS (?:generation|encoding|decoding) reached|No unified-memory allowance|Native generation needs at least .* unified memory/i.test(text))
         return row('unified-memory', ['Not enough unified memory', '统一内存不足'],
-            ['On a Mac, the CPU and GPU share unified memory. This step needed more unified memory than was available at the time.', 'Mac 的 CPU 和 GPU 共用统一内存。这一步需要的统一内存超过了当时可用的量。'],
-            ['Close memory-heavy applications and retry, or choose a lower resolution or a shorter duration. If you set a memory limit or reserve in Settings, check it as well. If it still fails, export the report.', '请关闭占用内存较多的程序后重试，或降低分辨率、缩短时长。如果在设置中手动设置了内存上限或预留，请一并检查。仍然失败时，请导出报告。']);
+            ['Generation needed more memory than was available.', '生成所需内存超过当时可用量。'],
+            ['Close memory-heavy applications, or lower the resolution or duration, then retry. Export the report if it still fails.', '可关闭占用内存较多的程序，或调低分辨率、缩短时长后重试。仍然失败时，请导出报告。']);
     if (/CUDA out of memory|torch\.OutOfMemoryError|cudaErrorMemoryAllocation/i.test(text))
-        return row('vram', ['GPU memory allocation failed', '显存分配失败'],
-            ['The GPU could not allocate the memory needed at this stage.', '这一阶段的显存申请没有成功。'],
-            ['Close other GPU workloads and retry so FreeVideo can replan using the newly available memory. Your resolution, duration and steps are kept.', '关闭其他占用显卡的任务后重试，FreeVideo 会根据新的可用显存重新规划，保留你的分辨率、时长和步数。']);
+        return row('vram', ['GPU memory unavailable', '显存暂不可用'],
+            ['', ''],
+            ['Close other programs using the GPU, then retry.', '关闭其他占用显卡的程序后重试。']);
     const ramReasons = /RAM guard:\s*([a-z_, ]+)\./i.exec(text)?.[1] || '';
     if (ramReasons.includes('system_or_commit_pressure') && !ramReasons.includes('working_memory_budget'))
         return row('ram', ['System memory headroom is too low', '系统可用内存不足'],
-            ['Memory headroom fell below the safety threshold during execution, so generation stopped. Earlier planning values may be higher.', '运行时测得的系统内存余量低于保护线，生成已停止。此前资源规划时的数值可能更高。'],
+            ['Generation stopped because available memory was too low.', '可用内存不足，生成已停止。'],
             ['Close memory-heavy applications and duplicate FreeVideo/ComfyUI instances, then retry. Export the report if it still fails.', '关闭占用内存较多的程序及重复运行的 FreeVideo／ComfyUI 后重试。仍失败时请导出报告。']);
     if (ramReasons.includes('working_memory_budget') && !ramReasons.includes('system_or_commit_pressure'))
-        return row('ram', ['The configured RAM limit was reached', '已触及设置的 RAM 限额'],
-            ['The worker exceeded the enforced RAM budget from a manual limit or selected profile.', '生成进程超过了手动限额或所选配置规定的 RAM 预算。'],
-            ['Review the RAM limit or selected profile. Automatic mode replans from available memory. Export the report if it still fails.', '检查 RAM 限额或所选配置；自动模式会根据可用内存重新规划。仍失败时请导出报告。']);
+        return row('ram', ['Memory limit reached', '已达到内存上限'],
+            ['This generation exceeded the configured memory limit.', '本次生成超过了设置的内存上限。'],
+            ['Check the memory limit in Settings, or switch back to automatic. Export the report if it still fails.', '请在设置里检查内存上限，或改回自动。仍然失败时，请导出报告。']);
     if (/RAM guard:|crossed its RAM budget|Insufficient currently available memory/i.test(text))
-        return row('ram', ['Available memory or an explicit RAM limit reached', '可用内存或手动 RAM 限额不足'],
-            ['Automatic RAM estimates can be exceeded while memory is available. This stop indicates system pressure or an explicitly enforced limit.', '自动模式允许在系统仍有余量时超出预估 RAM；停止意味着系统内存压力，或触及了手动设置的硬限制。'],
-            ['Close memory-heavy applications and retry. If you set a RAM limit for testing, remove or raise it for normal generation. Copy the details below if it still fails.', '关闭占用内存较多的程序后重试。如果设置过测试用 RAM 限制，正常生成时可取消或调高。仍失败时可复制下方详情。']);
+        return row('ram', ['Memory is low or its limit was reached', '内存不足或已达到上限'],
+            ['Generation stopped because memory was low or its configured limit was reached.', '内存不足或已达到设置的上限，生成已停止。'],
+            ['Close memory-heavy applications and retry. If you set a memory limit, remove or raise it. Copy the details below if it still fails.', '关闭占用内存较多的程序后重试；设置过内存上限的，请取消或调高。仍然失败时，可复制下方详情。']);
     if (/No space left on device|WinError 112|disk (?:is )?full/i.test(text))
         return row('disk', ['Disk space is insufficient', '磁盘空间不足'],
             ['FreeVideo could not write a required file.', 'FreeVideo 无法写入所需文件。'],
@@ -351,14 +351,14 @@ export function failureAdvice(value, t, known = knownError(value)) {
     if (/Model download paused|unexpected-transfer-size|ConnectionError|ConnectTimeout|ReadTimeout|Every download source failed|All Git sources failed|All package sources failed|curl-28/i.test(text))
         return row('download', ['Download needs attention', '下载未完成'],
             ['A transfer failed or its received data did not match the expected file.', '传输中断，或收到的数据与预期文件不一致。'],
-            ['Check your connection or select another download source in Settings, then retry. Existing download fragments are retained.', '检查网络，或在设置中切换下载源后重试。已有下载片段会保留。']);
+            ['Choose another download source in Settings and retry; download progress is kept.', '可在设置中切换下载源后重试，下载进度会保留。']);
     if (/ModuleNotFoundError|No module named|DLL load failed/i.test(text))
-        return row('dependencies', ['A runtime dependency could not load', '运行依赖无法加载'],
-            ['A component FreeVideo needs could not load. This usually means the environment is incomplete or an incompatible environment was selected.', 'FreeVideo 运行所需的组件没能加载，通常是运行环境不完整，或者选择了不兼容的环境。'],
-            ['In the FreeVideo launcher, open Settings › Environment and click Repair; it checks this installation and restores what is missing. If it still fails, export the report and attach it to a GitHub issue.', '请在 FreeVideo 启动器的“设置 → 环境”里点击“修复”，它会检查这份安装并补齐缺少的组件。仍然失败时，请导出报告并提交到 GitHub issue。']);
+        return row('dependencies', ['A runtime component could not load', '运行组件无法加载'],
+            ['A component needed to run FreeVideo could not load.', 'FreeVideo 所需的运行组件未能加载。'],
+            ['Select "Repair" in the launcher under Settings > Environment. If it still fails, export the report and submit it in a GitHub issue.', '可在启动器“设置 → 环境”里点“修复”。仍然失败时，请导出报告并提交到 GitHub issue。']);
     return row('unknown', ['Generation stopped', '生成已停止'],
-        ['FreeVideo hit an internal error, and this generation did not finish.', 'FreeVideo 内部出错，这次生成没有完成。'],
-        ['Click Export report and attach the report to a GitHub issue; we will look into it and fix the problem for you.', '请点击“导出报告”，并把报告提交到 GitHub issue，我们会专门排查，为您解决这个问题。']);
+        ['This generation did not finish.', '这次生成未完成。'],
+        ['Click Export report and submit it in a GitHub issue; we will look into it.', '请点“导出报告”，提交到 GitHub issue，我们会专门排查。']);
 }
 
 let activeDialog = null;
@@ -462,7 +462,7 @@ export function createErrorPanel(t) {
             // disabled by the browser or the page is served over plain HTTP.
             disclosure.open = true; details.value = JSON.stringify(currentReport, null, 2);
             details.focus(); details.select();
-            downloadStatus.textContent = t('Download unavailable. Use Copy error to copy the report below.', '浏览器未能下载，请点击“复制错误”复制下方完整报告。');
+            downloadStatus.textContent = t('The download did not finish; select "Copy error" to copy the report below.', '下载未完成，可点“复制错误”复制下方报告。');
         } finally {
             link?.remove();
             if (url) setTimeout(() => URL.revokeObjectURL(url), 30000);
@@ -477,15 +477,15 @@ export function createErrorPanel(t) {
             : failureAdvice(report.details, t, report.known_error ?? null);
         if (report.stage === 'submission' && advice.kind === 'unknown') {
             advice.title = t('The task could not be submitted', '任务提交失败');
-            advice.summary = t('The task submission returned an error. Its details are shown below.', '提交任务时返回了错误，具体原因显示在下方。');
+            advice.summary = t('The task could not be submitted; see the error details below.', '任务未提交成功，可查看下方错误详情。');
         }
         if (report.stage === 'queue' && advice.kind === 'unknown') {
             advice.title = t('The queue operation did not complete', '队列操作未完成');
             advice.summary = t('Check that ComfyUI is still running and connected, then retry.', '请确认 ComfyUI 仍在运行、连接正常后重试。');
         }
         if (advice.kind === 'unknown' && ['submission', 'queue'].includes(report.stage))
-            advice.action = t('Copy the error details when reporting the issue; they include the failed stage when available.', '反馈问题时请复制错误详情，其中会保留已记录的失败阶段。');
-        title.textContent = advice.title; explanation.textContent = advice.summary; action.textContent = advice.action;
+            advice.action = t('Select "Copy error" to keep the error details.', '可点“复制错误”保留错误详情。');
+        title.textContent = advice.title; explanation.textContent = advice.summary; explanation.hidden = !advice.summary; action.textContent = advice.action;
         element.querySelector('.fv-extension-steps')?.remove();
         if (advice.kind === 'browser-extension') action.after(extensionSteps(advice));
         element.freevideoKind = advice.kind; reload.hidden = advice.kind !== 'browser-extension';
@@ -497,7 +497,7 @@ export function createErrorPanel(t) {
         }
         action.hidden = !advice.action;
         const stage = report.stage === 'submission' ? t('Submitting task', '提交任务')
-            : report.stage === 'queue' ? t('Queue operation', '队列操作') : t('Executing workflow', '执行工作流');
+            : report.stage === 'queue' ? t('Queue operation', '队列操作') : t('Generating', '正在生成');
         location.textContent = stage + (report.http_status ? ` · HTTP ${report.http_status}` : '')
             + report.nodes.map(node => ` · ${node.type || t('Node', '节点')} #${node.id}`).join('');
         const reasons = report.nodes.flatMap(node => node.errors.map(error =>
@@ -516,15 +516,15 @@ export function createErrorPanel(t) {
         downloadStatus.textContent = '';
         download.hidden = diagnosticReports.has(report);
         if (internal && download.hidden)
-            action.textContent = t('Click Download report in the preview or node panel and attach the report to a GitHub issue; we will look into it and fix the problem for you.',
-                '请在预览区或节点面板中点击“下载报告”，并把报告提交到 GitHub issue，我们会专门排查，为您解决这个问题。');
+            action.textContent = t('Use Download report in the preview and submit it in a GitHub issue; we will look into it.',
+                '请点预览区的“下载报告”，提交到 GitHub issue，我们会专门排查。');
         else if (download.hidden) {
             // Advice that ends with "export the report" points at the report this card does offer.
             for (const [from, to] of EXPORT_TO_DOWNLOAD)
                 if (action.textContent.includes(from)) action.textContent = action.textContent.replace(from, to);
         }
         privacy.textContent = download.hidden
-            ? t('Use Download report in the preview or node panel for the diagnostic report.', '完整诊断请使用预览区或节点面板中的“下载报告”。')
+            ? t('Select "Download report" in the preview to save the full diagnostic information.', '可在预览区点“下载报告”保存完整诊断信息。')
             : t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
         copy.textContent = advice.kind === 'sampling-table' ? t('Copy details', '复制详情') : t('Copy error', '复制错误');
         if (popup) showFailureDialog(report, t);

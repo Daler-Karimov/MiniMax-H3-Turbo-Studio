@@ -13,27 +13,27 @@ const duration = value => {
 const progressFields = ['phase', 'stage', 'timing_phase', 'label', 'done', 'total', 'block'];
 // Iris's approved substage sentences. Unknown engine labels never reach the UI.
 const SUBACTIVITY = {
-    start: ['Starting the generation process', '正在启动生成进程'],
-    libraries: ["Loading the text encoder's libraries", '正在载入文本编码器的程序库'],
-    weights: ['Reading the text encoder from disk', '正在从硬盘读取文本编码器'],
-    gpu: ['Moving the text encoder to the GPU', '正在把文本编码器载入显卡'],
-    prompt: ['Encoding the prompt', '正在编码提示词'],
-    reference: ['Encoding the reference images and videos', '正在编码参考图片和视频'],
+    start: ['Starting generation', '正在启动生成'],
+    libraries: ["Preparing the prompt model", '正在准备提示词模型'],
+    weights: ['Reading the prompt model', '正在读取提示词模型'],
+    gpu: ['Loading the prompt model', '正在加载提示词模型'],
+    prompt: ['Processing the prompt', '正在处理提示词'],
+    reference: ['Processing reference images and videos', '正在处理参考图片和视频'],
     load: ['Loading the video model', '正在载入视频模型'],
     first: ['Running the first step (it takes longer the first time a size is used or after an update)',
         '正在进行第一步（首次使用这个尺寸或更新后，第一步要多花一些时间）'],
-    upscale: ['Upscaling the first pass', '正在放大第一遍的结果'],
-    decoder: ['Loading the video decoder', '正在载入视频解码器'],
-    decode: ['Decoding the video', '正在解码视频'],
-    audio: ['Decoding the audio', '正在解码音频'],
+    upscale: ['Upscaling the video', '正在放大画面'],
+    decoder: ['Preparing video output', '正在准备输出视频'],
+    decode: ['Rendering the video', '正在输出视频'],
+    audio: ['Rendering the audio', '正在输出音频'],
     save: ['Saving the video', '正在保存视频'],
 };
 // [EN, ZH, EN with a step, ZH with a step]; a request that samples twice adds which pass.
 const SAMPLING_NAME = {
-    single: ['Sampling', '正在采样', 'Sampling step', '正在采样第 '],
-    first: ['Sampling (first pass)', '正在采样（一采）', 'Sampling step', '正在采样第 '],
-    pass2: ['Sampling (second pass)', '正在采样（二采）', 'Sampling step', '正在采样第 '],
-    preview: ['Sampling (preview)', '正在采样（预览）', 'Sampling step', '正在采样第 '],
+    single: ['Sampling', '正在采样', 'Step', '正在生成 · 第 '],
+    first: ['Generating video', '正在生成视频', 'Step', '正在生成 · 第 '],
+    pass2: ['Generating video', '正在生成视频', 'Step', '正在生成 · 第 '],
+    preview: ['Generating a preview', '正在生成预览', 'Step', '正在生成 · 第 '],
 };
 const SAMPLING_PASS = {first: ['first pass', '一采'], pass2: ['second pass', '二采'], preview: ['preview', '预览']};
 const SUBACTIVITY_LABELS = {
@@ -105,10 +105,10 @@ const STALL_SECONDS_BY_PHASE = Object.freeze({
 const ACTIVITY = {
     prepare: ['Preparing', '正在准备'],
     describe: ['Writing part descriptions', '正在写各段描述'],
-    prompt: ['Encoding the prompt', '正在编码提示词'],
-    combined: ['Encoding the prompt and references', '正在编码提示词和参考素材'],
+    prompt: ['Processing the prompt', '正在处理提示词'],
+    combined: ['Processing the prompt and references', '正在处理提示词和参考素材'],
     load: ['Loading the video model', '正在载入视频模型'],
-    decode: ['Decoding the video', '正在解码视频'],
+    decode: ['Rendering the video', '正在输出视频'],
     save: ['Saving the video', '正在保存视频'],
 };
 const LABEL_ACTIVITY = {
@@ -139,12 +139,15 @@ const REFERENCE_WORK = new Set(['Encoding reference media', 'Encoding image/vide
     'Encoding long references', 'Encoding long references in smaller blocks']);
 const labelActivities = new Map(Object.entries(LABEL_ACTIVITY).flatMap(([key, labels]) => labels.map(label => [label, key])));
 const DOWNLOADS = {
-    preset_download: ['Downloading sampling tables', '下载采样表'],
-    dependencies: ['Downloading sampling tables', '下载采样表'],
+    preset_download: ['Downloading files for generation', '正在下载生成所需文件'],
+    dependencies: ['Downloading files for generation', '正在下载生成所需文件'],
     sources_download: ['Downloading model files', '下载模型文件'],
     reference_download: ['Downloading model files', '下载模型文件'],
 };
 const size = (bytes, unit) => (bytes / (unit === 'GiB' ? 2**30 : 2**20)).toFixed(1);
+// Asked for two passes with a first pass other than 8 steps: the engine ran one pass.
+const ranOnePass = plan => plan.requested === true && plan.enabled === false && plan.preview !== true
+    && Number.isInteger(plan.base_steps) && plan.base_steps > 0 && plan.base_steps !== 8;
 // The fixed stage key (for the small bar and replays) and its sentence. Each
 // number appears once: sampling says the step, a download says its size and speed.
 function activityLabel(message, t, plan = {}, secondPass = false, references = false) {
@@ -174,14 +177,19 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
     };
     const base = Number.isInteger(plan.base_steps) && plan.base_steps > 0 ? plan.base_steps : null;
     const second = plan.second || plan.upscale_target;
-    if (message.prediction || message.sampling_plan) return named('prepare');
+    if (message.prediction || message.sampling_plan) {
+        if (!ranOnePass(plan)) return named('prepare');
+        const n = plan.base_steps;
+        return {key: 'prepare', text: t(`Two-pass acceleration needs 8 first-pass steps. This video uses a single ${n}-step pass.`,
+            `只有一采为 8 步时才会使用二次采样加速，这次按 ${n} 步只采样一遍。`)};
+    }
     if (phase === 'recovery') return message.retry?.reuse_sampling === true ? named('decode')
         : message.retry?.reuse_first_pass === true ? steps('pass2', 'pass2') : named('prepare');
     if (phase === 'sample_finalize') return named('decode');
     if (message.stage === 'latent_upscale' || phase === 'latent_upscale')
         return {key: 'upscale', text: Number.isInteger(second?.width) && Number.isInteger(second?.height)
-            ? t(`Second pass · upscaling to ${second.width} × ${second.height}`,
-                `二采 · 放大到 ${second.width} × ${second.height}`)
+            ? t(`Second pass · upscaling to ${second.width} × ${second.height}`,
+                `二采 · 放大到 ${second.width} × ${second.height}`)
             : t('Second pass · upscaling', '二采 · 放大')};
     if (phase === 'sampling' || phase === 'refinement' || message.stage === 'preview_mismatch') {
         const done = Number.isInteger(message.done) ? message.done : null;
@@ -195,7 +203,10 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
         const count = twoPass ? base : total;
         const step = done === null || count === null ? null : Math.min(done + 1, count);
         if (twoPass && plan.preview) return steps('preview', 'preview', step, count);
-        return steps('pass1', twoPass ? 'first' : 'single', step, count);
+        const sampling = steps('pass1', twoPass ? 'first' : 'single', step, count);
+        if (!twoPass && ranOnePass(plan))
+            sampling.text += t(' (single pass; two-pass acceleration needs 8 first-pass steps)', '（只采样一遍；二次采样加速需一采 8 步）');
+        return sampling;
     }
     const key = labelActivities.get(message.label) || {
         starting: 'prepare', prepare: 'prepare', prediction: 'prepare', describe: 'describe', encoding: 'combined',
@@ -218,15 +229,11 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
 
 function retryText(retry, t) {
     const reason = {gpu_oom: ['Out of GPU memory', '显存不足'], ram_pressure: ['Out of RAM', '内存不足'],
-        unified_memory: ['Out of unified memory', '统一内存不足']}[retry.kind]
+        unified_memory: ['Not enough memory', '内存不够']}[retry.kind]
         || ['Previous attempt did not finish', '上一次尝试没有完成'];
-    if (retry.reuse_sampling === true) return t(`${reason[0]}; sampling kept, retrying decoding.`,
-        `${reason[1]}，采样已保留，正在重试解码。`);
-    const kept = retry.reuse_first_pass === true;
-    const action = retry.kind === 'gpu_oom' ? ['in low-memory mode', '改用省显存方式']
-        : ['using less memory', '改用更省内存的设置'];
-    return t(`${reason[0]}; ${kept ? 'first pass kept, ' : ''}retrying ${kept ? 'the second pass ' : ''}${action[0]}.`,
-        `${reason[1]}，${kept ? '第一遍已保留，' : ''}正在${action[1]}重试${kept ? '第二遍' : ''}。`);
+    if (retry.reuse_sampling === true) return t(`${reason[0]}; the generated result is kept, and a retry is in progress.`,
+        `${reason[1]}，已保留生成结果，正在重试。`);
+    return t(`${reason[0]}; adjusting settings and retrying.`, `${reason[1]}，正在调整设置后重试。`);
 }
 
 function trimStatus(rows, t) {
@@ -267,20 +274,19 @@ export function encoderFilePath(file) {
 }
 
 export function encoderFileText(file, t) {
-    const [actual, expected] = file.sizes;
-    let message = t(`This run used a ${actual} GiB text encoder file, not the ${expected} GiB file with the same name that FreeVideo tests. Results and speed are not guaranteed to match the tested version.`,
-        `这次使用的文本编码器文件（${actual} GiB）不是 FreeVideo 测试过的同名文件（${expected} GiB）。生成结果和速度都不保证与测试过的版本一致。`);
+    let message = t('The prompt model file differs from the tested one, so results and speed may differ.',
+        '提示词模型文件和测试过的版本不同，效果和速度可能不一样。');
     if (file.offline_installation === true) {
         const target = encoderFilePath(file) ? t('the file below', '下面这个文件') : t('this file', '这个文件');
         message += t(
-            ` This offline-package installation cannot switch back in one step yet. Close FreeVideo, move or rename ${target}, then import the Text encoder package again on the Installation page of the launcher.`,
-            `离线包安装暂时不能一键换回。请先关闭 FreeVideo，把${target}移走或改名，再在启动器的“安装”页重新导入“文本编码器”包。`);
+            ` This offline-package installation cannot switch back in one step yet. Close FreeVideo, move or rename ${target}, then import the Prompt model package (FreeVideo-文本编码器.zip) again on the Installation page of the launcher.`,
+            `离线包安装暂时不能一键换回。请先关闭 FreeVideo，把${target}移走或改名，再在启动器的“安装”页重新导入“提示词模型（FreeVideo-文本编码器.zip）”包。`);
     } else if (file.launcher === true) message += t(
-        ' In the FreeVideo launcher, open Settings › Environment and click Repair to switch back to the tested file; the current file is kept under a new name.',
-        '在 FreeVideo 启动器的“设置 → 环境”中点击“修复”，可以换回测试过的文件，原文件会改名保留。');
+        ' Select "Repair" in the launcher under Settings > Environment to restore the tested file; the current file is kept.',
+        '可在启动器“设置 → 环境”中点“修复”恢复已验证的文件，原文件会保留。');
     else message += t(
-        " Click Install / repair in FreeVideo's settings on this page (or, if you installed with setup.sh, run ./setup.sh again); after you confirm, the tested file is restored and the current file is kept under a new name.",
-        '请在页面的 FreeVideo 设置中点击“安装／修复”（用 setup.sh 安装的，也可以重新运行 ./setup.sh）；确认后会换回测试过的文件，原文件改名保留。');
+        ' Select "Install / repair" in the page settings to restore the tested file; the current file is kept.',
+        '可在页面设置中点“安装／修复”恢复已验证的文件，原文件会保留。');
     return message;
 }
 
@@ -535,7 +541,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             stopCount(); countShown = null;
             heading.hidden = true;
             element.dataset.counted = 'false'; element.dataset.complete = 'false'; count.textContent = ''; fill.style.width = '';
-            track.setAttribute('aria-label', t('Estimated overall video progress', '视频整体预估进度'));
+            track.setAttribute('aria-label', t('Generation progress', '生成进度'));
             track.removeAttribute('aria-valuenow'); track.removeAttribute('aria-valuemax'); track.removeAttribute('aria-valuetext');
             return;
         }
@@ -552,7 +558,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         heading.hidden = !known;
         element.dataset.counted = String(known);
         element.dataset.complete = String(complete);
-        track.setAttribute('aria-label', t('Estimated overall video progress', '视频整体预估进度'));
+        track.setAttribute('aria-label', t('Generation progress', '生成进度'));
         track.setAttribute('aria-valuemax', '100');
         if (known) {
             const percent = complete ? 100 : Math.floor(shownFraction * 100);
@@ -584,11 +590,11 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         const hasReport = diagnostic.hasReport();
         // The separate notice never adds another clock or blocks the run.
         if (shown && (stall.hidden || hasReport !== stallHasReport)) {
-            const first = t('No progress for a while. Generation is still running, so you can keep waiting.',
-                    '已经有一段时间没有新的进度，生成仍在进行，可以继续等待。');
+            const first = t('Progress has not updated recently; generation is still running.',
+                    '进度暂未更新，仍在生成中。');
             const sentence = hasReport ? first + t(
-                ' You can also use Download report below and submit the report in a GitHub issue; we will look into it and work on a fix for you.',
-                '也可以点击下方的“下载报告”并提交到 GitHub issue，我们会专门排查和优化，为您解决这个问题。') : first;
+                ' You can also use Download report below and submit it in a GitHub issue; we will look into it.',
+                '也可以点下方“下载报告”提交到 GitHub issue，我们会专门排查。') : first;
             if (hasReport) {
                 const buttonName = el('span', ''); buttonName.style.whiteSpace = 'nowrap';
                 buttonName.textContent = t('Download report', '“下载报告”');
@@ -653,7 +659,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
     // The current stage has lasted 2 s: the stage line names it from now on.
     function settle(at) {
         if (stageId !== null && stageId !== labelId && at - stageSince >= 2000) {
-            labelId = stageId; labelText = lastActivity ? withWorkPercent(lastActivity.text) : labelText; away = null;
+            labelId = stageId; labelText = lastActivity ? lastActivity.text : labelText; away = null;
         }
     }
     function enterStage(id, at) {
@@ -698,32 +704,20 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         if (!lastActivity) { labelId = null; return t(...ACTIVITY.prepare); }
         settle(now());
         if (labelId === null) { labelId = stageId; away = null; }
-        if (labelId === stageId) labelText = withWorkPercent(lastActivity.text);
+        if (labelId === stageId) labelText = lastActivity.text;
         return labelText;
-    }
-    function withWorkPercent(base) {
-        const percent = localShare === null ? null : Math.min(localShare === 1 ? 100 : 99, Math.floor(localShare * 100 + 1e-9));
-        // Keep the percentage with its own sentence while a new stage waits to be named.
-        return percent !== null && (detail?.key === 'load' || detail?.key === 'decode')
-            ? base + t(` (${percent}% of this step)`, `（本步 ${percent}%）`) : base;
     }
     function drawActivity(age, ended) {
         const paused = !ended && age > 15;
         const base = ended ? (overall.status === 'complete' || state.phase === 'complete' ? savedText() : t('Stopped', '已停止'))
             : paused ? detail?.text || stageText() : stageText();
-        const shown = !ended && paused && detail ? withWorkPercent(base) : base;
-        if (label.textContent !== shown) label.textContent = shown;
+        if (label.textContent !== base) label.textContent = base;
         drawMini(age, ended);
         const automatic = compatibility?.origin === 'automatic' && compatibility.level > 0;
-        const required = Number.isInteger(compatibility?.recovery_successes_required) && compatibility.recovery_successes_required > 0
-            ? compatibility.recovery_successes_required : 3;
-        const successes = Number.isInteger(compatibility?.consecutive_successes) ? compatibility.consecutive_successes : 0;
-        const remaining = Math.max(0, required - Math.max(0, successes));
         const compatibilityText = !ended && automatic ? compatibility.recovery_disabled
             ? t('Generation is slowed automatically for stability; you can change this in Settings.', '为了稳定，生成已自动放慢；可在设置里调整。')
-            : t(remaining === 1 ? 'Generation is slowed automatically for stability; it speeds up after one more successful generation.'
-                : `Generation is slowed automatically for stability; it speeds up after ${remaining} more successful generations.`,
-                `为了稳定，生成已自动放慢；再连续完成 ${remaining} 次后会加快一些。`) : '';
+            : t('Generation has slowed automatically and will gradually speed up as it stabilizes.',
+                '生成已自动放慢，稳定后会逐步加快。') : '';
         // All explanations share one row, including automatic compatibility.
         compatibilityNote.hidden = true;
         let pauseText = '';
@@ -751,18 +745,18 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
                     : splitFailed && !progressText ? 'split' : '';
         const explanation = {retry: recovery,
             pause: progressText,
-            memory: t('This video uses a memory-saving mode, so it takes longer than usual but will finish.',
-                '这次生成使用省显存方式，会比平时慢，但能完成。'),
+            memory: t('This video will take longer than usual, but it will finish.',
+                '这次生成会比平时慢，但能完成。'),
             // Mac, level 3 with low-memory mode (never both). The measured numbers go to the
             // report only. Closing applications during the first pass can still give the
             // second pass room, so that advice shows only until then.
             'unified-memory': memoryTight?.phase === 'refinement' && !firstPassOver
-                ? t('Less unified memory is available. Close memory-heavy applications before the first pass ends so the second pass is not slowed down.',
-                    '可用的统一内存较少。在第一遍结束前关闭占用内存较多的程序，第二遍就不会变慢。')
-                : t('Less unified memory is available, so this generation will be slower than usual.',
-                    '可用的统一内存较少，这次生成会比平时慢。'),
-            compatibility: compatibility ? t(`Compatibility setting ${compatibility.name_en} is on, so generation is slower than usual.`,
-                `已开启兼容性设置（${compatibility.name_zh}档），生成会比平时慢。`) : '',
+                ? t('Memory is low; closing memory-heavy applications will speed this up.',
+                    '可用内存较少，关闭占用内存较多的程序可以更快。')
+                : t('Less memory is available, so this generation will take longer.',
+                    '可用内存较少，这次生成会较慢。'),
+            compatibility: compatibility ? t('Compatibility settings are enabled, so generation will take longer.',
+                '已开启兼容性设置，生成会较慢。') : '',
             automatic: compatibilityText,
             notice: trimStatus([...trims.values()], t),
             // A long video whose part descriptions could not be written: the server's own words stay in the report.

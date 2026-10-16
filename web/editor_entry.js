@@ -6,6 +6,7 @@ import {openStudio, showNodes} from './studio.js';
 import {cleanOptionalPrompt} from './optional_inputs.js';
 import {openAutopilot, viewChanged} from './view_navigation.js';
 import {mediaReferences} from './editor_media_references.js';
+import {turnNodeOn} from './studio_queue.js';
 function editorPanel(node) {
     const values = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
     return {node: node.id, width: values.width, height: values.height, text: values.text || '', settings: Object.fromEntries(Object.entries({
@@ -14,7 +15,11 @@ function editorPanel(node) {
         references: mediaReferences(node),
         async snapshot() {
             if (node.freevideoEditorLooping?.()) throw new Error('loop_active');
-            const value = cleanOptionalPrompt(structuredClone(await app.graphToPrompt()));
+            // A muted or bypassed node would be left out of the request; if no request comes out, it stays as it was.
+            const held = turnNodeOn(node);
+            let value;
+            try { value = cleanOptionalPrompt(structuredClone(await app.graphToPrompt())); } catch (error) { held?.restore(); throw error; }
+            held?.done();
             return {node: String(node.id), prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};
         }};
 }

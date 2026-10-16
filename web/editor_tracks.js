@@ -1080,7 +1080,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         // following clips. The insertion line is an indication, not an edit.
         const at = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom).frame;
         if (actions.insertSource) Promise.resolve(actions.insertSource({...payload, at}, {loadMetadata: true})).catch(error => actions.editError?.(error));
-        else attempt(t('Insert source', '放入素材'), record => model.insertSource(record, {...payload, at}), {clearRange: true});
+        else attempt(t('Insert clip', '放入素材'), record => model.insertSource(record, {...payload, at}), {clearRange: true});
         showInsertion(null); showGuide(null); dropPoint = null; dropPreviewKey = ''; draggedSource = null;
     }
     function zoom(value, anchor = scroll.clientWidth / 2) {

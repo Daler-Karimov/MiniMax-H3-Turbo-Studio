@@ -12,6 +12,20 @@ from safetensors.torch import load_file, save_file
 import torch
 
 
+def all_finite(tensor):
+    """Whether every element is finite; reads half-precision bits instead of calling isfinite.
+
+    A bfloat16 or float16 table is finite exactly when its exponent field is not
+    all ones, so one integer mask answers the question about ten times faster on
+    the CPU than isfinite() on those dtypes.
+    """
+    mask = {torch.bfloat16: 0x7F80, torch.float16: 0x7C00}.get(tensor.dtype)
+    if mask is None:
+        return bool(torch.isfinite(tensor).all())
+    bits = tensor.reshape(-1).view(torch.int16)
+    return not bool((bits & mask).eq(mask).any())
+
+
 class ScheduleCursor:
     def __init__(self, timesteps):
         self.timesteps = timesteps
@@ -174,7 +188,7 @@ class TableCache:
         # These are small immutable constants; their producer's GPU/runtime is
         # deliberately irrelevant. Validate before transferring to this device.
         state = load_file(path, device=self.device)
-        if any(not bool(torch.isfinite(tensor).all()) for tensor in state.values()):
+        if any(not all_finite(tensor) for tensor in state.values()):
             raise ValueError('Nonfinite AdaLN model asset')
         return [state[f'step_{i}'].chunk(6, dim=-1) for i in range(steps)]
 
@@ -199,7 +213,7 @@ class TableCache:
         path = self.root / f'{index:02d}.safetensors'
         temporary = path.with_suffix('.partial')
         state = {name: tensor.cpu() for name, tensor in module.state_dict().items()}
-        if any(not bool(torch.isfinite(tensor).all()) for tensor in state.values()):
+        if any(not all_finite(tensor) for tensor in state.values()):
             raise ValueError('Cannot save nonfinite AdaLN constants')
         save_file(state, temporary)
         row = {'bytes': temporary.stat().st_size, 'sha256': assets.file_hash(temporary)}
