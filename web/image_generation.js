@@ -118,7 +118,7 @@ export function imageGenError(code, info, t) {
         worker_exit: ['Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'],
         timeout: ['This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'],
         cancelled: ['Image generation was cancelled.', '已取消图像生成。'],
-        invalid_request: ['The image settings are invalid. Check them and try again.', '图像生成参数不合法，请检查后重试。'],
+        invalid_request: ['The image settings are invalid. Adjust them and try again.', '图片设置有误，请调整后重试。'],
         invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
         reload: ['The image service restarted. Try again.', '图像服务已重启，请重试。'],
         generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],

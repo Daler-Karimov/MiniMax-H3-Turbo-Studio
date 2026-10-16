@@ -7,7 +7,7 @@ const KINDS = {
     generate: ['Generating', '生成中', 'M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm13 4 5-3v8l-5-3'],
     assemble: ['Assembling', '拼接中', 'M3 6h7v12H3zM14 6h7v12h-7zM10 12h4'],
     vlm: ['Checking', '检查中', 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
-    enhance: ['Writing prompt', '润色提示词', 'M4 20l4-1 10-10-3-3L5 16zM14 7l3 3M18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z'],
+    enhance: ['Enhancing prompt', '增强提示词', 'M4 20l4-1 10-10-3-3L5 16zM14 7l3 3M18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z'],
 };
 const NAMES = {generate: ['Video', '视频'], assemble: ['Sequence', '成片'], vlm: ['Check', '检查'], enhance: ['Prompt', '提示词']};
 
@@ -37,7 +37,7 @@ function phaseText(p, t) {
     if (p.phase === 'sampling' && step?.total) return step.done >= 1 ? t(`Step ${step.done} / ${step.total}`, `生成 ${step.done} / ${step.total}`) : t('Preparing', '准备中');
     return {encoding: t('Reading prompt and media', '读取提示词和素材'), load: t('Loading the model', '加载模型'),
         decode: t('Saving video and audio', '保存视频与音频'), starting: t('Starting', '启动中'),
-        loading: t('Loading the model', '加载模型'), answering: t('Answering', '回答中'), rewriting: t('Writing', '改写中'),
+        loading: t('Loading the model', '加载模型'), answering: t('Answering', '回答中'), rewriting: t('Enhancing prompt', '增强提示词'),
         assembling: t('Joining clips', '拼接片段'), 'preparing images': t('Preparing images', '准备图片'),
         finishing: t('Finishing', '收尾中')}[p.phase] || '';
 }
@@ -48,7 +48,7 @@ function status(job, t) {
     if (job.status === 'cancelling') return t('Stopping', '正在停止');
     if (job.status === 'queued') return job.progress?.queue_position
         ? t(`In queue · #${job.progress.queue_position}`, `排队 · 第 ${job.progress.queue_position} 位`) : t('Queued', '排队中');
-    if (job.status === 'waiting') return job.waiting_for ? t('Waiting for earlier steps', '等待前序任务') : t('Waiting for the GPU', '等待显卡');
+    if (job.status === 'waiting') return job.waiting_for ? t('Waiting for earlier tasks', '等待前面的任务') : t('Waiting for the GPU', '等待显卡');
     return {succeeded: t('Done', '已完成'), failed: t('Failed', '失败'), cancelled: t('Cancelled', '已取消')}[job.status] || job.status;
 }
 function title(job, t) {
@@ -76,7 +76,7 @@ function row(job, t, api, refresh, open, cancellationErrors) {
     if (job.status === 'running' && p.remaining_seconds > 0) meta.push(left(p.remaining_seconds, t));
     const reason = job.status === 'failed' && REASONS[job.error?.code];
     if (reason) meta.push(t(...reason));
-    else if (job.status === 'failed') meta.push(t(job.error?.message || 'The task failed.', job.error?.error_zh || '处理任务时出错，未能完成结果'));
+    else if (job.status === 'failed') meta.push(t(job.error?.message || 'Did not finish', job.error?.error_zh || '没有完成'));
     if (job.project) meta.push(job.project);
     const foot = el('div', 'fv-agent-foot');
     const details = el('p', 'fv-agent-meta', meta.join(' · '));
@@ -90,7 +90,7 @@ function row(job, t, api, refresh, open, cancellationErrors) {
             try {
                 const response = await retryAgentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
                 if (!response?.ok) {
-                    const message = t('Stopping failed after a retry. If still running, click again.', '停止没成功，已重试；仍在运行请再点一次');
+                    const message = t('Could not stop. Click again.', '没能停止，请再点一次。');
                     details.textContent = message;
                     cancellationErrors.set(job.id, message);
                 } else cancellationErrors.delete(job.id);
