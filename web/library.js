@@ -98,8 +98,9 @@ export async function libraryPage(t, {limit = 24, before = null, signal} = {}) {
 
 export function videoTimestamp(row, t) {
     const value = new Date(row.created_at);
-    return Number.isNaN(value.getTime()) ? t('Saved video', '已保存的视频')
-        : value.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+    if (Number.isNaN(value.getTime())) return t('Saved video', '已保存的视频');
+    if (t('en', 'zh') === 'zh') return `${value.getMonth() + 1}月${value.getDate()}日 ${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+    return value.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
 }
 
 export function videoDimensions(row) {
