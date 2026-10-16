@@ -76,7 +76,7 @@ export function createEditorFailures({api, state, jobStatuses, reasonText}) {
             } else blob = new Blob([JSON.stringify(report(id), null, 2)], {type: 'application/json'});
             const latest = receipt(id);
             if (!current() || latest?.attempt !== found.attempt || latest?.value.detail !== found.value.detail) return;
-            saveReport(blob);
+            await saveReport(blob);
             // Use exactly the video's card and submit flow, including no second download.
             return showReportTip(bar, anchor, t, {mode: 'downloaded',
                 submit: () => reportIssue(() => Promise.resolve(blob), productVersion(), {save: false})});

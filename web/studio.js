@@ -571,7 +571,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let requestAssets = null;
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
         prepare: text => expandCast(text, mediaRows(node), {active: !extension.source}).text,
-        onReport: row => { node.freevideoReportId = row.report_id; progress.updateReport(row); },
+        // The rewrite has its own report; the video's report entry is not touched.
+        onReport: row => { node.freevideoPromptReportId = row.rewrite_report_id || row.report_id; },
         onChange: () => { rememberPromptDraft(api, node); requestAssets?.refresh(); },
         setText: text => { set(node, 'text', text || (untouched() ? starter : '')); placeholder(); }, context: () => {
         const items = referenceItems(node);
@@ -1022,13 +1023,22 @@ export function openStudio(node, {extendFrom = null} = {}) {
     cleanup.push(() => recent.dispose());
     // A run this window watched. Its result can arrive before or after the
     // final progress message, and more than once; the tip stays with that video.
-    let reportTipTimer = null, watchedRun = false, reportTipFor = null;
+    let reportTipTimer = null, watchedRun = false, reportTipFor = null, shownReport = null;
     // chosen: a video picked from Recent videos. It only changes the picture; a run in progress keeps its progress.
     function showResult(r, {chosen = false} = {}) {
         if (!r?.video || disposed) return; result = r;
         recent.setSelected(r.video);
         refreshEffortEstimate(true);
-        progress.updateReport({report_id: node.freevideoReportId});
+        // The report belongs to the video that run made; a video picked from Recent videos
+        // shows its own report, or none when this window never saw its run.
+        const reports = node.freevideoVideoReports || (node.freevideoVideoReports = new Map());
+        if (!chosen && node.freevideoReportId) reports.set(r.video, node.freevideoReportId);
+        const wanted = reports.get(r.video) || null;
+        if (!(chosen && busy) && wanted !== shownReport) {
+            shownReport = wanted; progress.updateReport({new_request: true});
+            if (wanted) progress.updateReport({report_id: wanted});
+        }
+        if (wanted && !(chosen && busy)) progress.pinReport();
         stage.querySelector('video')?.pause(); stageMedia.replaceChildren();
         const video = el('video'); video.src = view(r.video, 'output') + (r.version ? `&fv=${encodeURIComponent(r.version)}` : ''); video.controls = true; video.preload = 'metadata'; video.playsInline = true; stageMedia.append(video);
         video.addEventListener('error', () => {

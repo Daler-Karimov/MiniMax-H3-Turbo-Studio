@@ -370,14 +370,15 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
         }
     }
     const report = el('button', 'fv-report-download fv-quiet'); report.type = 'button'; report.hidden = true;
-    let reportId = null, revision = 0;
+    // A finished video's report is fetched once and kept: the file saved and the one sent are the same.
+    let reportId = null, revision = 0, pinned = false, pinnedBlob = null;
     report.textContent = label();
     function updateReport(message) {
         if (message.new_request === true || message.overall?.reset === true || message.reset === true && !message.phase) {
-            reportId = null; revision++; report.hidden = true;
+            reportId = null; revision++; report.hidden = true; pinned = false; pinnedBlob = null;
         }
         if (typeof message.report_id === 'string' && /^[a-f0-9]{32}$/.test(message.report_id)) {
-            if (reportId !== message.report_id) { revision++; report.disabled = false; report.textContent = label(); }
+            if (reportId !== message.report_id) { revision++; pinned = false; pinnedBlob = null; report.disabled = false; report.textContent = label(); }
             reportId = message.report_id;
         }
         report.hidden = !reportId && !fallback;
@@ -385,15 +386,18 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
     }
     async function fetchReport() {
         if (reportId) {
-            const path = `/freevideo/report/${reportId}`;
+            if (pinned && pinnedBlob) return pinnedBlob;
+            const id = reportId, path = `/freevideo/report/${id}`;
             const response = await (api ? api.fetchApi(path) : fetch(path));
             if (!response.ok) throw new Error('Report unavailable');
-            return response.blob();
+            const blob = await response.blob();
+            if (pinned && reportId === id) pinnedBlob = blob;
+            return blob;
         }
         if (fallback) return fallback();
         throw new Error('Report unavailable');
     }
-    async function downloadReport() { saveReport(await fetchReport()); }
+    async function downloadReport() { await saveReport(await fetchReport()); }
     report.onclick = async () => {
         if (report.disabled || report.hidden) return;
         const current = revision;
@@ -409,7 +413,7 @@ export function createDiagnosticReportControl(t, {api = null, fallback = null, t
             if (current === revision) report.textContent = t('Report unavailable · retry', '报告暂不可用 · 重试');
         } finally { if (current === revision) report.disabled = false; }
     };
-    return {report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null};
+    return {report, updateReport, fetchReport, downloadReport, hasReport: () => reportId !== null, pin: () => { pinned = true; }};
 }
 
 export function createGenerationProgress(t, now = () => Date.now(), {compact = false, api = null, onLayout = null} = {}) {
@@ -1063,6 +1067,6 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
             mini_fraction: visible && !mini.hidden && miniMode === 'determinate' ? miniShown : null,
             mini_shimmer: visible && !mini.hidden && miniShimmer};
     }
-    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: diagnostic.hasReport, update, hide, dispose: hide,
+    return {element, stall, report, updateReport, fetchReport, downloadReport, hasReport: diagnostic.hasReport, pinReport: diagnostic.pin, update, hide, dispose: hide,
         noticeCount: () => trims.size, stallShown: () => !stall.hidden, percentShown: () => !heading.hidden, snapshot};
 }
