@@ -1287,6 +1287,21 @@ export function openStudio(node, {extendFrom = null} = {}) {
             button.title = capturing ? t('Adding…', '正在添加…') : '';
         }
     }
+    // The moved video keeps its place in view and is marked for a moment, so the list does not just look the same.
+    let movedId = null, movedTimer = 0;
+    function clearMoved() {
+        clearTimeout(movedTimer); movedId = null;
+        queueList.querySelectorAll('.fv-queue-moved').forEach(item => { item.classList.remove('fv-queue-moved'); item.querySelector('.fv-queue-chip')?.remove(); });
+    }
+    function showMoved() {
+        const item = [...queueList.children].find(child => child.dataset.id === movedId);
+        if (!item || item.classList.contains('fv-queue-moved')) return;
+        item.classList.add('fv-queue-moved');
+        const chip = el('span', t('Moved to front', '已排到最前'), 'fv-queue-chip');
+        item.insertBefore(chip, item.querySelector('button'));
+        queueList.scrollTop = 0;
+        clearTimeout(movedTimer); movedTimer = setTimeout(clearMoved, 2800);
+    }
     function renderQueue(state) {
         if (disposed) return;
         queueState = state;
@@ -1306,7 +1321,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
             queueList.dataset.signature = signature; queueList.replaceChildren();
             state.pending.forEach((row, index) => {
                 const item = el('div', null, 'fv-queue-item');
-                const description = el('span', `${index + 1} · ${row.inputs.width} × ${row.inputs.height} · ${row.inputs.seconds} s`);
+                item.dataset.id = row.id;
+                // Waiting videos often share every setting; the start of the prompt tells them apart.
+                const summary = String(row.inputs.text ?? '').replace(/\s+/g, ' ').trim();
+                const description = el('div', null, 'fv-queue-text');
+                if (summary) { const line = el('span', summary, 'fv-queue-summary'); line.title = summary; description.append(line); }
+                description.append(el('span', `${index + 1} · ${row.inputs.width} × ${row.inputs.height} · ${row.inputs.seconds} s`, 'fv-queue-meta'));
                 const remove = button(t('Remove', '移除'), async () => {
                     remove.disabled = true;
                     try { await queueController.cancel(row.id); }
@@ -1317,8 +1337,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 if (index > 0) {
                     const first = button(t('Move to front', '排到最前'), async () => {
                         first.disabled = remove.disabled = true;
-                        try { await queueController.moveFirst(row.id); }
-                        catch (error) { showQueueError(error); first.disabled = remove.disabled = false; }
+                        movedId = row.id;
+                        try { await queueController.moveFirst(row.id); showMoved(); }
+                        catch (error) { movedId = null; showQueueError(error); first.disabled = remove.disabled = false; }
                     }, 'fv-quiet');
                     first.setAttribute('aria-label', t(`Move queued video ${index + 1} to front`, `把排队的第 ${index + 1} 个排到最前`));
                     item.append(first);
@@ -1326,6 +1347,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 item.append(remove); queueList.append(item);
             });
         }
+        if (movedId && state.pending.some(row => row.id === movedId) && !queueList.querySelector('.fv-queue-moved')) showMoved();
         if (!busy) cancelling = false;
         if (state.error) showQueueError(state.error);
         updateRunButton();
