@@ -1600,7 +1600,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
             if (!disposed && !busy && !result && saved) showResult(saved);
         }
     }).catch(() => {});
-    requestAnimationFrame(() => { if (dialog.open && !dialog.querySelector('.fv-guide-layer') && !document.querySelector('dialog.fv-editor[open]')) (extension.source ? prompt : generate).focus({preventScroll: true}); });
+    // Opening leaves focus on the panel itself, not on the main button with a ring as if already pressed; Tab still reaches it.
+    dialog.tabIndex = -1;
+    requestAnimationFrame(() => { if (dialog.open && !dialog.querySelector('.fv-guide-layer') && !document.querySelector('dialog.fv-editor[open]')) (extension.source ? prompt : dialog).focus({preventScroll: true}); });
     // Establish the baseline after UI initialization; opening a panel is not an edit.
     trackPromptDraft(node);
     return dialog;
