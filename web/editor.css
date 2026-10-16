@@ -19,6 +19,8 @@
 .fv-editor .fv-ed-icon{height:32px;width:32px;min-height:32px;flex:none;padding:0;font-size:22px;background:transparent;border-color:transparent}
 .fv-ed-glyph{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}.fv-ed-name>span{overflow:hidden;text-overflow:ellipsis}
 .fv-ed-export-box{height:100%;display:flex;gap:12px;align-items:center;min-width:0}
+.fv-editor .fv-ed-export-box>.fv-ed-export-main{height:32px;min-height:32px;padding:0 16px;border:0;border-radius:8px;background:var(--fv-accent,#6db8fa);color:#0f1722;font-weight:600}
+.fv-editor .fv-ed-export-box>.fv-ed-export-main:hover{background:var(--fv-accent-hover,#91cbff);color:#0f1722}
 .fv-ed-export-hint{max-height:100%;overflow:auto;font-size:12px;color:var(--fv-muted)}
 .fv-ed-save-warning{max-height:100%;overflow:auto;font-size:12px;color:var(--fv-danger);min-width:0}.fv-ed-save-warning:not([hidden])+.fv-ed-export-hint{display:none}
 .fv-editor .fv-ed-library{grid-column:1;grid-row:2/4;border-right:1px solid var(--fv-border);padding:12px;overflow:auto;min-height:0;scrollbar-width:thin;scrollbar-color:var(--fv-border) transparent}
@@ -167,7 +169,7 @@
  .fv-editor .fv-ed-icon{width:28px;flex:none;font-size:20px}
  .fv-ed-export-box{gap:4px}
  .fv-ed-export-hint{display:none}
- .fv-editor .fv-ed-export-box>button{padding:0 8px;font-size:12px}
+ .fv-editor .fv-ed-export-box>button,.fv-editor .fv-ed-export-box>.fv-ed-export-main{padding:0 8px;font-size:12px}
  .fv-editor .fv-ed-drawer-toggle{display:inline-flex!important}
  .fv-editor .fv-ed-library{display:none;position:absolute;top:52px;bottom:0;left:0;width:264px;max-width:90vw;z-index:7;background:var(--fv-bg)}
  .fv-editor .fv-ed-library[data-open=true]{display:block}

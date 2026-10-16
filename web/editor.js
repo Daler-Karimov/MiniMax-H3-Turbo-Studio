@@ -180,7 +180,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const options = await openExportDialog({parent: element, state, sources: store.sources, t, onError: error});
             if (options && !disposed) await actions.export(options);
         } catch (value) { error(value, 'export'); }
-    }, 'fv-primary');
+    }, 'fv-primary fv-ed-export-main');
     const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(error)); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
     headerActions.append(exportBox, feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
