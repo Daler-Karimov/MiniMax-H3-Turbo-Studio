@@ -93,12 +93,12 @@ export function jobLevel(row, base, left, time) {
 // working, done, stopped or failed: which card a job shows.
 export const jobMode = job => WORKING.includes(job.status) ? 'working' : job.status === 'succeeded' ? 'done' : job.status === 'cancelled' ? 'stopped' : 'failed';
 const SAVING = ['decode', 'finishing', 'assembling'], stepped = p => p.phase === 'sampling' && p.step?.total && p.step.done >= 1;
-// The one line that says where a job is. No step count is written unless the engine gave one.
+// The one line that says where a job is. Sampling leaves it blank; the preview shows progress.
 export function jobLine(job, t) {
     const p = job.progress || {};
     if (job.status === 'cancelling') return t('Stopping', '正在停止');
     if (job.status !== 'running') return t('Queued', '排队中');
-    if (stepped(p)) return t(`Step ${p.step.done} / ${p.step.total}`, `生成 ${p.step.done} / ${p.step.total}`);
+    if (stepped(p)) return '';
     if (SAVING.includes(p.phase)) return t('Saving', '保存中');
     if (p.phase === 'encoding') return t('Reading the prompt', '读取提示词');
     // Before the first step of the first part the model is still settling in: the line does not turn back to "Preparing".
@@ -106,7 +106,7 @@ export function jobLine(job, t) {
     return t('Preparing', '准备中');
 }
 // The line a card shows. After the last step, and again after saving, the engine has a moment with no step and no
-// stage to report: a card that has counted steps or said "Saving" for a part keeps that line until there is a newer
+// stage to report: a card that has started sampling or said "Saving" for a part keeps that line until there is a newer
 // one, and does not go back to the lines from before the first step. `said` is the card's own memory.
 export function cardLine(said, job, t) {
     const p = job.progress || {}, part = p.block?.index ?? 0;
