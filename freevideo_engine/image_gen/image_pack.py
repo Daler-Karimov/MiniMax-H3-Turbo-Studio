@@ -537,7 +537,8 @@ def _transfer(plan, row, path, progress, check, background=None, diagnostic=None
             failures.clear()
             network.download(network.model_urls(plan, row), path, row['sha256'], progress,
                              network=plan, size=row['bytes'], category=FAMILY,
-                             keep_partial=True, stall_seconds=30)
+                             keep_partial=True, stall_seconds=30,
+                             slow_seconds=15, low_speed_limit=64 * 1024)
             return
         except SwitchRequested:
             if background is None:

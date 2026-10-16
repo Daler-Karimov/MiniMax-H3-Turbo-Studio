@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from types import SimpleNamespace
 from . import execution_paths
 from . import subprocess_output
 from .windows_ux import external_python, hidden_console
@@ -45,6 +46,15 @@ SAMPLE_BYTES = 256 * 1024
 SPEED_SAMPLE_BYTES = 32 * 2**20
 SPEED_SAMPLE_SECONDS = 3.
 MIN_TRANSFER_LIMIT = 1024 * 1024
+# A transfer that is moving but slowly is compared with the untried sources: after
+# SWITCH_AFTER_SECONDS the others get one bounded speed sample and the transfer
+# moves (resuming the same partial) when that saves a real amount of time.
+SWITCH_AFTER_SECONDS = 15.
+SWITCH_RECHECK_SECONDS = 180.
+SWITCH_MAX_CHECKS = 3
+SWITCH_MIN_REMAINING_SECONDS = 90.
+SWITCH_MIN_SAVING_SECONDS = 60.
+SWITCH_MIN_GAIN = 2.
 # One quick pass over sources/routes, followed by at most one patient pass.
 # These are inactivity timeouts, not deadlines for an entire installation.
 DOWNLOAD_RETRY_PROFILES = (('fast', '20', '1'), ('patient', '120', '5'))
@@ -771,6 +781,51 @@ class DownloadError(RuntimeError):
     """Every permitted source failed; an alternate artifact may be tried."""
 
 
+def _faster_source(compare, now, started, offset, done, size, alternatives, timeout, env, network, category, headers_for,
+                   full_restart=False):
+    """Return the untried candidate worth moving to, or None. Never blocks the transfer loop."""
+    thread = compare['thread']
+    if thread is None:
+        if now < compare['at']:
+            return None
+        rate = (done - offset) / max(.001, now - started)
+        remaining = size - done
+        if rate <= 0 or remaining / rate < SWITCH_MIN_REMAINING_SECONDS:
+            compare['at'] = now + SWITCH_RECHECK_SECONDS
+            return None
+        compare['current'], compare['remaining'], compare['rates'] = rate, remaining, {}
+        compare['checks'] += 1
+        names = {}
+        for row in alternatives:
+            names.setdefault(row[0], row)
+
+        def measure(row):
+            name, url, route = row
+            try:
+                headers = headers_for(name) if headers_for else ()
+                _, result = speed_sample(url, timeout, env=route_environment(network, category, name, env, route),
+                                         headers=headers)
+                value = result.get('bytes_per_second') if result.get('speed_measured') else None
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                value = None
+            if value:
+                compare['rates'][row[0], row[2]] = value
+        compare['thread'] = threading.Thread(target=lambda: [measure(r) for r in list(names.values())[:3]], daemon=True)
+        compare['thread'].start()
+        return None
+    if thread.is_alive():
+        return None
+    compare['thread'] = None
+    compare['at'] = now + SWITCH_RECHECK_SECONDS
+    best = max(compare['rates'].items(), key=lambda item: item[1], default=None)
+    if best is None:
+        return None
+    rate, remaining = compare['current'], compare['remaining']
+    if best[1] >= SWITCH_MIN_GAIN * rate and remaining / rate - (size if full_restart else remaining) / best[1] >= SWITCH_MIN_SAVING_SECONDS:
+        return next((row for row in alternatives if (row[0], row[2]) == best[0]), None)
+    return None
+
+
 def download(candidates, path, expected, progress=None, *, network=None, env=None, size=None,
              algorithm='sha256', git_blob=False, headers_for=None, stall_seconds=None, category='download',
              low_speed_limit=1024, max_seconds=None, cycles=2, slow_seconds=None, keep_partial=False):
@@ -828,7 +883,7 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
     for cycle in range(cycles):
         # Once every route has been tried, keep the fastest observed route even
         # if the user's entire connection is slow. Do not oscillate forever.
-        if cycle and slow_seconds is not None:
+        if cycle and measured_rates:
             candidates.sort(key=lambda row: -measured_rates.get((row[0], row[2]), 0))
         for candidate_index, (name, url, route) in enumerate(candidates):
             for restart in range(3 if model else 2):
@@ -872,11 +927,14 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                 if offset:
                     command += ['--continue-at', str(offset)]
                 process = curl_process(command, env=attempt_env, stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 started = time.monotonic()
                 oversized = None
                 stalled = False
                 slow = False
+                faster = None
+                compare = dict(thread=None, rates={}, checks=0, at=started + SWITCH_AFTER_SECONDS, current=0.)
+                alternatives_ahead = [row for row in candidates[candidate_index+1:] if row[0] != name]
                 last_body, previous_done = started, offset
                 recent = deque([(started, offset)])
                 try:
@@ -908,6 +966,12 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                                 and (done - recent[0][1]) / (now - recent[0][0]) < low_speed_limit):
                             slow = True
                             break
+                        if (cycle == 0 and size and alternatives_ahead and compare['checks'] < SWITCH_MAX_CHECKS
+                                and not network.get('manual_source_switch')):
+                            faster = _faster_source(compare, now, started, offset, done, size, alternatives_ahead,
+                                                    timeout, env, network, category, headers_for)
+                            if faster is not None:
+                                break
                         if progress:
                             sample = next((row for row in recent if row[0] >= now - 5), recent[0])
                             progress(done, size or 0, max(0, done - sample[1]) / max(.001, now - sample[0]))
@@ -916,6 +980,9 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                         except subprocess.TimeoutExpired:
                             pass
                 finally:
+                    thread = compare['thread']
+                    if thread is not None and thread.is_alive():
+                        thread.join(timeout=timeout + SPEED_SAMPLE_SECONDS + 3)
                     if process.poll() is None:
                         process.terminate()
                         try:
@@ -925,10 +992,19 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                             process.wait()
                     status = process.stdout.read(16).decode(errors='replace')
                     process.stdout.close()
+                    # --silent --show-error keeps this to a line or two.
+                    curl_message = _package_failure(SimpleNamespace(stderr=process.stderr.read(2048)))[1] if process.returncode else ''
+                    process.stderr.close()
                 current_size = partial.stat().st_size if partial.exists() else 0
                 if slow_seconds is not None:
                     measured_rates[name, route] = (max(0, current_size - offset) /
                         max(.001, time.monotonic() - started)) if slow else 0
+                if faster is not None:
+                    measured_rates[name, route] = compare['current']
+                    measured_rates.update(compare['rates'])
+                    # The faster source is tried next, with the retained prefix.
+                    position = candidates.index(faster)
+                    candidates.insert(candidate_index + 1, candidates.pop(position))
                 if model and current_size > offset:
                     remember_source()
                 if oversized is not None:
@@ -958,19 +1034,24 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                     # A mirror lacking Range must start over, with previous bytes kept.
                     retain_partial(partial, 'resume-unavailable')
                     continue
-                transient = stalled or process.returncode in (5, 6, 7, 18, 28, 35, 52, 55, 56, 92, 95) or status in ('429', '500', '502', '503', '504')
+                # A connection that was moving bytes and then ended with an
+                # unclassified exit is an interruption, not a refusal.
+                interrupted = process.returncode not in (0, 22, 33, 63) and current_size > offset
+                transient = (stalled or interrupted or process.returncode in (5, 6, 7, 18, 28, 35, 52, 55, 56, 92, 95)
+                             or status in ('429', '500', '502', '503', '504'))
                 if model and transient and restart < 2 and candidate_index + 1 == len(candidates) and process.returncode not in (5, 7):
                     retry_wait(network, restart, category=category, source=name, file=path.name,
                                resume_bytes=current_size, reason='no-progress' if stalled else 'connection-interrupted')
                     continue
-                reason = 'no-progress' if stalled else 'slow-transfer' if slow else 'curl-' + str(process.returncode)
+                reason = 'no-progress' if stalled else 'slow-transfer' if slow else 'faster-source' if faster else 'curl-' + str(process.returncode)
                 alternatives = route_order(network, category, name, env)
                 if alternatives.index(route) + 1 < len(alternatives):
                     event(network, category=category, source=name, route=alternatives[alternatives.index(route)+1],
                           file=path.name, action='route-retry', reason=reason, resume_bytes=current_size)
                 else:
                     source_health(network, category, name, False)
-                    event(network, category=category, source=name, route=route, file=path.name, action='fallback', reason=reason, http_status=status, resume_bytes=current_size)
+                    event(network, category=category, source=name, route=route, file=path.name, action='fallback', reason=reason, http_status=status, resume_bytes=current_size,
+                          **(dict(detail=curl_message) if curl_message else {}))
                 break
         if model and partial.exists() and partial.stat().st_size:
             if not network.get('allow_model_restart'):
