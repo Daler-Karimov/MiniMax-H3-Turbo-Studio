@@ -227,3 +227,9 @@
  .fv-editor .fv-ed-library{grid-area:auto;top:116px;bottom:0;z-index:8}
  .fv-editor:has(.fv-ed-library[data-open=true]) .fv-ed-drawer-toggle{position:fixed;top:128px;right:20px;z-index:9}
 }
+/* Narrow window: the picture sits right under the header, the row takes the project's own shape (a
+   16:9 project is about 200 px tall at 400 px wide), and whatever height is left goes to the timeline. */
+@media(max-width:680px){
+ .fv-studio.fv-editor,.fv-studio.fv-editor:has(.fv-ed-gen-failure:not([hidden])){grid-template-rows:auto minmax(0,auto) 40px var(--fv-ed-generation-row,max-content) auto minmax(160px,1fr)}
+ .fv-editor .fv-ed-preview{box-sizing:border-box;align-self:start;aspect-ratio:var(--fv-ed-project-width,16)/var(--fv-ed-project-height,9);max-height:max(116px,calc(100dvh - 470px));padding-top:12px;padding-bottom:8px}
+}
