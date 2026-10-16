@@ -80,7 +80,9 @@ def available_levels(cache, shared, manifest, kind, catalog):
             not refinement(t) and len(t['identity']['timesteps']) == steps and ready(t) for t in task_tables)
 
     refine_ready = any(refinement(t) and ready(t) for t in task_tables)
-    return [i for i, steps in enumerate((8, 12, 16, 20)) if base_ready(steps) and (i != 0 or refine_ready)]
+    from .tiers import table
+    return [i for i, tier in enumerate(table(sys.platform == 'darwin').values())
+            if base_ready(tier['steps']) and (not tier['two_pass'] or refine_ready)]
 
 
 @plain_errors
@@ -380,7 +382,8 @@ def prepare(root, machine, sampling, task, *, progress, interrupted=None, enviro
         details = dict(base_steps=sampling['base_steps'], two_pass=bool(sampling.get('enabled')),
                        refine_steps=sampling.get('refine_steps', 0), missing_bytes=total,
                        available=available_levels(cache, shared, manifest, kind, catalog),
-                       decimal_sizes=sys.platform == 'darwin')
+                       decimal_sizes=sys.platform == 'darwin',
+                       **({'step_cache': sampling['step_cache']} if sampling.get('step_cache') else {}))
         raise SamplingTableUnavailable(details, failure.cause) from failure.cause
     if failure is not None:
         raise failure

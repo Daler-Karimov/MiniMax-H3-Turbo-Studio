@@ -185,6 +185,8 @@ test('main browser entry registers both views and preserves node hooks', async t
                         ['continue_from', 'Continue from video', '接着生成', 'previous.mp4'],
                         ['frames', 'Total frames', '帧数', 141],
                         ['first_frame_reference', 'First-frame reference', '首帧参考', true, '减小漂移'],
+                        ['step_cache', 'Step cache', '步间缓存', 'none',
+                            '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
                         ['voice_reference', 'Voice reference', 'Voice reference', true],
                         ['hide_tail', 'Hide dialogue tail', 'Hide dialogue tail', true],
                     ];

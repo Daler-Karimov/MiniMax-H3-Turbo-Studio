@@ -56,7 +56,7 @@ export async function readExtendRecord(api, record) {
 }
 
 export function createExtendState(node, read, write) {
-    const keys = ['width', 'height', 'seconds', 'two_pass', 'preview', 'base_steps', 'refine_steps'];
+    const keys = ['width', 'height', 'seconds', 'two_pass', 'preview', 'base_steps', 'refine_steps', 'step_cache'];
     return {
         get source() { return node.properties?.[EXTEND_PROPERTY]?.source || null; },
         enter(record) {
@@ -76,8 +76,8 @@ export function createExtendState(node, read, write) {
             node.properties[EXTEND_PROPERTY] = {source, previous};
             for (const [key, value] of Object.entries({width: g.width, height: g.height,
                 seconds: Math.min(60, seconds), text: '', preview: false,
-                // A continuation always runs the Light plan: two passes, 8 + 3 steps.
-                two_pass: true, base_steps: 8, refine_steps: 3})) write(key, value);
+                // A continuation always runs the Light plan: two passes, 8 + 3 steps, no step cache.
+                two_pass: true, base_steps: 8, refine_steps: 3, step_cache: 'none'})) write(key, value);
             node.properties.freevideo_seconds = seconds;
             node.properties.freevideo_aspect = 'custom';
             node.properties.freevideo_pixels = g.width * g.height / 1024 ** 2;
@@ -101,7 +101,7 @@ export function extendSnapshot(snapshot, node, source, {multiple = false} = {}) 
     const copy = structuredClone(snapshot), inputs = copy.output[String(node)].inputs;
     inputs.width = source.geometry.width; inputs.height = source.geometry.height;
     inputs.preview = false; inputs.refine_from = ''; inputs.two_pass = true;
-    for (const [key, value] of [['base_steps', 8], ['refine_steps', 3]]) if (key in inputs) inputs[key] = value;
+    for (const [key, value] of [['base_steps', 8], ['refine_steps', 3], ['step_cache', 'none']]) if (key in inputs) inputs[key] = value;
     // A continuation takes no first or last frame and no pre-encoded conditioning.
     for (const key of ['first', 'last', 'conditioning']) delete inputs[key];
     if (multiple) delete inputs.continue_from; else inputs.continue_from = source.video;

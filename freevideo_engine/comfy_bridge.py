@@ -4,6 +4,7 @@ The installed engine owns resource policy, input caches, retries and history.
 This bridge only retains a request, supervises that CLI and forwards progress.
 """
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -208,7 +209,7 @@ class WholeVideoProgress:
     @classmethod
     def for_request(cls, machine, canvas, output_directory, *, base_steps=8,
                     refine_steps=3, two_pass=True, preview=False, upscale=False,
-                    encoder_prewarm=None, options=None):
+                    encoder_prewarm=None, options=None, step_cache=None):
         import platform
         from .effort_forecast import start_context
         started, opened = time.perf_counter(), time.monotonic()
@@ -222,7 +223,8 @@ class WholeVideoProgress:
             flags['encoder_cold'] = False
         tracker = cls(hardware=hardware, records=records, cold_flags=flags, started=started,
                       request=dict(canvas, base_steps=base_steps, refine_steps=refine_steps,
-                                   two_pass=two_pass, flow='upscale' if upscale else 'preview' if preview else 'full'),
+                                   two_pass=two_pass, flow='upscale' if upscale else 'preview' if preview else 'full',
+                                   step_cache=step_cache),
                       **(options or {}))
         tracker.history = (output_directory, machine, opened)
         return tracker
@@ -300,6 +302,13 @@ class WholeVideoProgress:
                 self.request['decoder_resident_blocks'] = blocks
             if type(decoder.get('offload')) is bool:
                 self.request['decoder_offload'] = decoder['offload']
+            if self.request.get('step_cache') is not None:
+                # The planner keeps the first-block cache only where it fits; the
+                # estimate follows the cache this placement actually uses.
+                if engine.get('step_cache') is None:
+                    self.request.pop('step_cache')
+                else:
+                    self.request['step_cache'] = engine['step_cache']
         if media is not None:
             self.request.update(task=task_for(media), lora_count=len(media.get('loras') or []),
                                 reference_count=len(media.get('references') or []) +
@@ -1170,7 +1179,13 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              release_models=None, export_inputs=None, two_pass=True, encoder_prewarm=None,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
-             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False):
+             continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False,
+             step_cache=None):
+    from .tiers import STEP_CACHES
+    if step_cache == 'none':
+        step_cache = None
+    if step_cache not in STEP_CACHES:
+        raise ValueError('Step cache must be none, ' + ', '.join(c for c in STEP_CACHES if c))
     if type(first_frame_reference) is not bool:
         raise ValueError('First-frame reference must be a boolean')
     if type(voice_reference) is not bool:
@@ -1202,6 +1217,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         two_pass, preview = True, False
         base_steps = int(argument(arguments, '--base-steps', 8))
         refine_steps = int(argument(arguments, '--refine-steps', 3))
+        # The second pass never uses a step cache; the preview's own command keeps its flag.
+        step_cache = argument(arguments, '--step-cache')
     from .preview import validate_flags
     validate_flags(preview, upscale, two_pass, base_steps)
     from .two_pass import validate_steps
@@ -1216,6 +1233,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         from .two_pass import sampling_canvas
         check(continue_from, sampling_canvas(canvas)[0])
 
+    if step_cache is not None and machine.get('device_backend') == 'mps':
+        # The step caches are not ported to Mac yet: the request samples every step,
+        # and its identity is that of the same request without a cache.
+        logging.warning('[FreeVideo] Step caches are not available on Mac yet; sampling every step.')
+        step_cache = None
     if continue_from is not None:
         validate_route(backend=machine.get('device_backend', 'cuda'))
         from .continuation import MISSING, prepare, summary
@@ -1263,6 +1285,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                '--width', str(width), '--height', str(height), '--seconds', str(seconds), '--seed', str(seed),
                '--two-pass' if two_pass else '--no-two-pass',
                '--base-steps', str(base_steps), '--refine-steps', str(refine_steps)]
+    if step_cache is not None:
+        command += ['--step-cache', step_cache]
     if frames is not None:
         position = command.index('--seconds')
         command[position:position + 2] = ['--frames', str(frames)]
@@ -1300,7 +1324,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     try:
         whole_progress = WholeVideoProgress.for_request(machine, canvas, output_directory,
             base_steps=base_steps, refine_steps=refine_steps, two_pass=two_pass,
-            preview=preview, upscale=bool(upscale), encoder_prewarm=state['encoder_prewarm'])
+            preview=preview, upscale=bool(upscale), encoder_prewarm=state['encoder_prewarm'],
+            step_cache=None if upscale else step_cache)
     except Exception:
         # A progress estimate cannot prevent generation, even without its parameters.
         try:
@@ -1414,6 +1439,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                                              new_frames=sampled['frames'] - hide_tail_frames - OVERLAP_FRAMES, encoded=True)
         # A preview is its own result; an upscale is always run from its preview.
         keyed = dict(planned, preview=True) if preview else planned
+        if step_cache is not None:
+            # A cache changes the arithmetic; without one the identity stays that of earlier versions.
+            keyed = dict(keyed, step_cache=step_cache)
         if hide_tail_frames:
             keyed = dict(keyed, hide_tail_frames=hide_tail_frames)
         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
@@ -1448,7 +1476,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             # Reference audio selects its own tables; match the encoder's choice.
             asset_task = ((ANCHOR_ADALN_TASK if anchored or pictured else ADALN_TASK) if continue_from is not None
                           else engine_task(extra.get('media', {}), media_base))
-            preparation = prepare_sampling_assets(root, machine, planned, asset_task,
+            # The cache only names the level of a missing table (high or max at 20 steps).
+            preparation = prepare_sampling_assets(root, machine, dict(planned, step_cache=step_cache) if step_cache else planned,
+                                                  asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)
         except BaseException:
             elapsed = time.monotonic() - preparation_started

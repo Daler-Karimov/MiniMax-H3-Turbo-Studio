@@ -434,7 +434,12 @@ def next_placement(profile, failure, phase, canvas=None, *, previous_ram_retries
     host_pins = failure['kind'] == 'gpu_oom' and nonlocal_exhausted(failure)
     compute = None
     if failure['kind'] == 'gpu_oom':
-        if host_pins and phase in ('load', 'sample') and (engine.get('pin_host_gb', 0.) > 0 or engine.get('pin_host_weights')):
+        if phase == 'sample' and engine.get('step_cache') == 'fbcache' and not host_pins:
+            # Its two packed residuals are the newest GPU allocation in the
+            # pass; sample every step in full before moving any weights.
+            changes['engine.step_cache'] = {'from': 'fbcache', 'to': None}
+            del engine['step_cache']
+        elif host_pins and phase in ('load', 'sample') and (engine.get('pin_host_gb', 0.) > 0 or engine.get('pin_host_weights')):
             # Page-locked memory ran out, not VRAM: return pinned weights and
             # keep every GPU setting. Halve once, then pin nothing.
             change('engine', 'pin_host_gb', 0. if previous_gpu_retries else round(engine.get('pin_host_gb', 0.) / 2, 3))

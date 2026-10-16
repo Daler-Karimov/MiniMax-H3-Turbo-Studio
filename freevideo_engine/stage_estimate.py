@@ -435,12 +435,19 @@ def predict_prior(hardware, request, cold_flags, params=None):
 
     video_decode is a diagnostic SUBSET of decode: never add it to total.
     Input hardware RAM/VRAM use GiB. pcie_bandwidth_gbs is decimal GB/s.
-    request uses schema names plus optional pass1_resident_blocks, reference_seconds.
+    request uses schema names plus optional pass1_resident_blocks, reference_seconds,
+    step_cache (the effective first-pass cache).
     Cold flags may include pass1/2_canvas_compiled and pass1/2_compile_cold.
     Unknown flags must be None, never inferred from future observed first steps.
     """
     p=_params(params)
     v,d=_raw(hardware,request,cold_flags or {},p)
+    if request.get('step_cache'):
+        # The fit has only plain passes; a step cache shortens the first pass alone.
+        from .tiers import sampling_share
+        d['step_cache_share']=sampling_share(request['step_cache'])
+        v['pass1']*=d['step_cache_share']
+        _sum_total(v)
     wide=_apple(hardware) or _gpu_item(hardware,p) is None
     return _decode_save({'stages':{k:_interval(k,x,p,wide=wide) for k,x in v.items() if k!='total'},
         'total':_interval('total',v['total'],p,wide=wide), 'diagnostics':d,

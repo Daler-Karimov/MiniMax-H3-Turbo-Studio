@@ -126,6 +126,8 @@ def canvas_size(value):
 
 
 def sampling(value):
+    from .. import tiers
+    mac = tiers.on_mac()
     quality = value.get('quality', contract.generate()['properties']['quality']['default'])
     two, base, refine = QUALITY[quality]
     custom = value.get('sampling', {})
@@ -136,10 +138,13 @@ def sampling(value):
         # Only the 8-step first pass goes two-pass; any other count is one pass, said once in the answer.
         note = one_pass_note(base)
         two = two and note is None
+    # A level's step cache stays only with that level's own plan; custom sampling runs every step.
+    cache = tiers.step_cache(quality, mac) if QUALITY[quality] == (two, base, refine) else None
     if custom:
-        quality = next((k for k, v in QUALITY.items() if v == (two, base, refine)), 'custom')
+        quality = next((k for k, v in QUALITY.items() if v == (two, base, refine)
+                        and tiers.step_cache(k, mac) == cache), 'custom')
     return dict(quality=quality, two_pass=two, base_steps=base, refine_steps=refine,
-                **({'sampling_note': note} if note else {}))
+                **({'step_cache': cache} if cache else {}), **({'sampling_note': note} if note else {}))
 
 
 def generation_media(value):
@@ -276,6 +281,8 @@ def comfy_prompt(spec, node, *, prompt, assets, refine_from=''):
     if spec.get('first_frame_reference'):
         # Every part of the video carries it; the part that continues nothing ignores it.
         inputs['first_frame_reference'] = True
+    if spec.get('step_cache'):
+        inputs['step_cache'] = spec['step_cache']
     graph = {node: {'class_type': 'FreeVideoGenerate', 'inputs': inputs,
                     '_meta': {'title': 'FreeVideo · ' + (spec.get('label') or 'Agent job')}}}
     if assets:

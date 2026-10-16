@@ -1012,9 +1012,12 @@ class Productions:
             tiers = table.get('tiers', {})
             tier = tiers.get(normalized['quality'])
             if tier is None:
-                tier = next((row for row in tiers.values()
-                             if row.get('steps') == normalized['base_steps'] and row.get('two_pass') == normalized['two_pass']
-                             and (not normalized['two_pass'] or normalized['refine_steps'] == 3)), None)
+                # Same plan and step cache first, then the same plan (see length.single_frame_limit).
+                same = [row for row in tiers.values()
+                        if row.get('steps') == normalized['base_steps'] and row.get('two_pass') == normalized['two_pass']
+                        and (not normalized['two_pass'] or normalized['refine_steps'] == 3)]
+                tier = next((row for row in same if row.get('step_cache') == normalized.get('step_cache')),
+                            same[0] if same else None)
             maxima = tier.get('max_frames') if tier else None
             if index is None or not isinstance(maxima, list) or index >= len(maxima):
                 return False

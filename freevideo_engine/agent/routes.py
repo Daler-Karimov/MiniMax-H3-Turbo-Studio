@@ -25,6 +25,7 @@ from . import API_VERSION, enabled
 from . import assets
 from . import private_file
 from . import spec as specs
+from .. import tiers as quality_tiers
 from . import schema as contract, errors, access
 from .jobs import ACTIVE, DONE, JobError, Jobs, chain_error, library_view
 
@@ -213,7 +214,8 @@ def capabilities(port, jobs):
                     seconds_tested=[4, 15],
                     fps=24, base_steps=[1, 32], refine_steps=[1, 31], references=32, loras=32, lora_strength=[-4, 4],
                     upload_bytes=2 * 1024 ** 3, vlm_images=24, takes=8, batch_jobs=64),
-        quality={name: dict(two_pass=plan[0], base_steps=plan[1], refine_steps=plan[2])
+        quality={name: dict(two_pass=plan[0], base_steps=plan[1], refine_steps=plan[2],
+                            step_cache=quality_tiers.step_cache(name, quality_tiers.on_mac()))
                  for name, plan in specs.QUALITY.items()},
         aspects=sorted(specs.ASPECTS), native_megapixels=.98,
         tasks=GUIDE['tasks'], media_extensions={k: sorted(v) for k, v in EXTENSIONS.items()},

@@ -751,6 +751,7 @@ app.registerExtension({
                         ['continue_from', '接着生成'],
                         ['frames', '帧数'],
                         ['first_frame_reference', '首帧参考', '减小漂移'],
+                        ['step_cache', '步间缓存', '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
                     ]) {
                         const widget = this.widgets?.find(w => w.name === name);
                         if (widget) {

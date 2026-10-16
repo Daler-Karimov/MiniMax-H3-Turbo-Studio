@@ -17,8 +17,8 @@ WEB = Path(__file__).resolve().parents[2] / 'web'
 # import does. editor_model and editor_text_model import each other: the
 # module still loading is reached only through a namespace import.
 MODULES = ('editor_picture_fields', 'editor_transport_model', 'editor_audio_model', 'editor_speed_model',
-           'editor_text_model', 'editor_model', 'editor_room', 'editor_actions', 'editor_generation', 'chain_support',
-           'editor_store')
+           'editor_text_model', 'editor_model', 'editor_room', 'editor_actions', 'editor_generation', 'sampling_effort',
+           'chain_support', 'editor_store')
 TIME_LIMIT = 5.0
 MEMORY_LIMIT = 256 * 2**20
 STACK_LIMIT = 4 * 2**20

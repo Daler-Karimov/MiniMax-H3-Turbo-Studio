@@ -62,7 +62,9 @@ class Engine:
                  fp8_gemm='auto', window_varlen=False, varlen_smooth_k=True,
                  task='t2va', stream_weights=False, canvas=None, head_parallelism=1,
                  residual_offload=False, device_backend=None, gpu_allocation_bytes=None,
-                 fetch_tables=True, adaln_task=None):
+                 fetch_tables=True, adaln_task=None, step_cache=None):
+        from .step_cache import requested
+        requested(step_cache)  # Validate the effective selection before loading weights.
         self.device_backend = device_backend if device_backend is not None else get_backend()
         if gpu_allocation_bytes is not None and (type(gpu_allocation_bytes) is not int or gpu_allocation_bytes < 0):
             raise ValueError('GPU allocation limit must be a nonnegative byte count')
@@ -519,6 +521,8 @@ class Engine:
                        'window_varlen': window_varlen,
                        'varlen_smooth_k': varlen_smooth_k if window_varlen else None,
                        'steps': steps, 'source_id': manifest['source_id']}
+        if step_cache is not None:
+            self.config['step_cache'] = step_cache
         if self.adaln_task != self.task:
             self.config['adaln_task'] = self.adaln_task
 
@@ -833,9 +837,18 @@ class Engine:
                     frame_preview.observing(latent_frames=canvas.get('latent_frames'), frame_h=height // 32,
                                             frame_w=width // 32, step_offset=progress_offset,
                                             total=progress_total if progress_total is not None else active_steps):
-                latents, audio = generate_latents(self.transformer, prompt, tags, frames,
-                                                self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
-                                                conditions=conditions, **sampling_kwargs)
+                from .step_cache import begin_pass, end_pass
+                if not refining:
+                    disabled = ('residual_offload' if self.config.get('residual_offload') and self.config.get('step_cache') == 'fbcache' else
+                                'streamed_forward_unavailable' if not self.config.get('projection_chunk') else None)
+                    begin_pass(self.transformer, active_steps, self.config.get('step_cache'),
+                               offloader=offloader if self.offload_layers else None, disabled_reason=disabled)
+                try:
+                    latents, audio = generate_latents(self.transformer, prompt, tags, frames,
+                                                    self.steps, seed, self.device_backend.device, step_seconds=step_seconds,
+                                                    conditions=conditions, **sampling_kwargs)
+                finally:
+                    step_cache = end_pass(self.transformer)
                 if prefix is not None:
                     latents, audio = prefix.finish(latents, audio)
                 stats = offloader.stats()
@@ -858,7 +871,7 @@ class Engine:
                            'head_execution': dict(requested_parallelism=self.config.get('head_parallelism', 1),
                                **{name: getattr(self.attention, name, 0) - count
                                   for name, count in parallel_before.items()}),
-                           'text_refinement': refinement,
+                           'text_refinement': refinement, 'step_cache': step_cache,
                            'torch_peak_allocated_bytes': self.device_backend.max_memory_allocated(),
                            'torch_peak_reserved_bytes': self.device_backend.max_memory_reserved()}
                 if watch is not None:

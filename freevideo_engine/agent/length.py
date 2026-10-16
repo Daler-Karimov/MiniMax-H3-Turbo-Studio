@@ -41,9 +41,14 @@ def single_frame_limit(spec, *, port=None, table=None):
     tiers = table.get('tiers', {})
     tier = tiers.get(spec['quality'])
     if tier is None:
-        tier = next((row for row in tiers.values()
-                     if row.get('steps') == spec['base_steps'] and row.get('two_pass') == spec['two_pass']
-                     and (not spec['two_pass'] or spec['refine_steps'] == 3)), {})
+        # The same plan with the same step cache first. A cache keeps the length a
+        # card fits (the planner drops a first-block cache that does not fit),
+        # so the same plan with another cache is the next best row.
+        same = [row for row in tiers.values()
+                if row.get('steps') == spec['base_steps'] and row.get('two_pass') == spec['two_pass']
+                and (not spec['two_pass'] or spec['refine_steps'] == 3)]
+        tier = next((row for row in same if row.get('step_cache') == spec.get('step_cache')),
+                    same[0] if same else {})
     index = next((i for i, row in enumerate(table.get('sizes', []))
                   if (row['width'], row['height']) == (spec['width'], spec['height'])), None)
     if index is None:
