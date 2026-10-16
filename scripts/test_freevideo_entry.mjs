@@ -174,6 +174,10 @@ test('main browser entry registers both views and preserves node hooks', async t
                     class LocalizedGenerateNode extends GenerateNode {}
                     await localized.beforeRegisterNodeDef(LocalizedGenerateNode, {name: 'FreeVideoGenerate'});
                     const rows = [
+                        ['width', 'width', '宽度', 1344],
+                        ['height', 'height', '高度', 768],
+                        ['seconds', 'Duration (s)', '时长（秒）', 10],
+                        ['seed', 'seed', '种子', 2026090903],
                         ['force_regenerate', 'Force regeneration', '重新生成', false, '跳过已保存结果的缓存。'],
                         ['preview', 'Two-pass: preview first pass', '先出预览', false,
                             '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
@@ -193,8 +197,8 @@ test('main browser entry registers both views and preserves node hooks', async t
                         assert.equal(widget.label, language === 'zh' ? zh : en, name);
                         assert.equal(widget.tooltip, language === 'zh' && tooltip ? tooltip : `original ${name}`, name);
                     }
-                    assert.equal(node.widgets[0].type, 'hidden');
-                    assert.equal(node.widgets[0].serializeValue(), false);
+                    assert.equal(node.widgets.find(w => w.name === 'force_regenerate').type, 'hidden');
+                    assert.equal(node.widgets.find(w => w.name === 'force_regenerate').serializeValue(), false);
                     node.onRemoved();
                 } finally { navigator.language = 'en'; }
             });
