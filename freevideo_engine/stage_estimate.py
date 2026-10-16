@@ -20,6 +20,11 @@ import re
 from statistics import median
 
 TOKEN_UNIT = 72576.
+# Every generated query attends to the reference rows, so a reference video
+# row costs one token plus this many more per canvas-sized unit of tokens
+# (B200: linear in the row count, 1.4x at 960x544 and 1.85x at 1664x960);
+# canvases past the measured size keep the largest measured weight.
+REFERENCE_VIDEO_PAIR_WEIGHT = 4.
 DEFAULT_INTERVAL = [.45, 2.2]
 STAGES = ('encode', 'load', 'pass1', 'upscale', 'pass2', 'decode_save')
 PARAMS_PATH = Path(__file__).with_name('stage_estimate_params.json')
@@ -179,13 +184,19 @@ def stream_features(h, r, i):
     return [1.] + tiers + [f*laptop]
 
 
+def _reference_rows(h, r, x):
+    # Measured on NVIDIA only; the Apple fit keeps one row per reference token.
+    weight = 1. if _apple(h) else 1. + REFERENCE_VIDEO_PAIR_WEIGHT*min(x, 1.)
+    return (weight*float(_num(r, 'reference_video_tokens', 0.))
+            + float(_num(r, 'reference_audio_tokens', 0.)))
+
+
 def step_parts(h, r, i, p):
     canvas = canvases(r)[i-1]
     x = token_count(canvas)/TOKEN_UNIT
     # Reference tokens affect the actual attention sequence (policy.py:697).
     # No guessed duration is substituted when unavailable.
-    ref = float(_num(r, 'reference_video_tokens', 0.)) + float(_num(r, 'reference_audio_tokens', 0.))
-    x += ref/TOKEN_UNIT
+    x += _reference_rows(h, r, x)/TOKEN_UNIT
     if _apple(h):
         b, c = p['apple']['step_bc']
         return p['apple']['step_fixed'], x*(b+c*x)
@@ -313,8 +324,8 @@ def _area(r):
 def _physical_transfer(h, r, p, measured, coef):
     b = p['step']['bc_normalized'][0]
     c, ss = coef[0], coef[1:]
-    ref = float(_num(r, 'reference_video_tokens', 0.)) + float(_num(r, 'reference_audio_tokens', 0.))
-    x = [(token_count(g)+ref)/TOKEN_UNIT for g in canvases(r)[:2]]
+    x = [token_count(g)/TOKEN_UNIT for g in canvases(r)[:2]]
+    x = [v+_reference_rows(h, r, v)/TOKEN_UNIT for v in x]
     s = [_dot(stream_features(h, r, i), ss) for i in [1, 2]]
     if _apple(h):
         s1, comp1 = step_parts(h, r, 1, p)
