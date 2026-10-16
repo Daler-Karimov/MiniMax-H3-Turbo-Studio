@@ -1,35 +1,72 @@
 {
   "schema": 1,
-  "product_version": "0.4.7",
+  "product_version": "0.4.8",
   "en": {
-    "summary": "Your creations can now be selected and deleted several at a time with a short undo window, every view gets a Feedback button, and the launcher shows a QR code for opening FreeVideo from a phone. The description box in the editing view grows with its text, wording across the app is shorter and plainer, and long videos keep a steadier loudness from part to part.",
+    "summary": "Long videos keep the voice steadier from part to part, @characters carry their pictures into continued videos and the editing view, large downloads switch to a faster source, and many hints and layouts are shorter and clearer.",
     "changes": [
-      "Your creations: select several creations (click, Shift-click, a whole day, or all) and delete them in one step, with the size shown before you confirm and ten seconds to undo. Creations that are still in use are kept.",
-      "Feedback: every view has a Feedback button beside Settings. Write one sentence, optionally attach a screenshot of the page and a diagnostic summary (no prompts or images), and the GitHub suggestion page opens with the text filled in.",
-      "Launcher: local network access shows a QR code to open FreeVideo from a phone and offers an optional password for other devices; freevideo status prints the same QR code on Linux.",
-      "Your own ComfyUI: the FreeVideo toolbar appears only on FreeVideo workflows, no longer opens over your other workflows or adds nodes to them, and FreeVideo can be opened from the Extensions menu. Opening ComfyUI from the launcher keeps your other plugins; if a plugin stops FreeVideo from loading, the launcher starts again with FreeVideo only and says so.",
-      "Long videos: steadier loudness from part to part.",
-      "Editing view: the description box grows with its text and can be expanded into a larger window; errors and shortcut labels use plainer wording.",
-      "Studio: shorter hints. Generate no longer fails with \"missing node\" when the creation node was muted or bypassed in the workflow; the node is turned back on and a line says so. Two-pass sampling runs only with 8 first-pass steps; other step counts use a single pass, and the progress line, the ComfyUI node and Agent results say so.",
-      "Installation and launcher: install progress is steadier, with the total following the GPU acceleration build and the final start-up; sublines no longer show file names, and the terminal stays closed unless something goes wrong. Installation and update wording is plainer.",
-      "Progress and error messages: shorter, plainer wording."
+      "Second pass: the result button, preview badge and related messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
+      "LoRA: you can type a strength beyond -4 to 4, up to 100, and a note marks values outside the usual range; the slider and default strength are unchanged. A trigger word that only appears inside a longer word (sks in asks) is now added.",
+      "Media uploads: the upload buttons list only the file types FreeVideo can use, and unsupported files in a multiple selection are skipped. Files over 2 GiB are turned away in the page, a failed or interrupted upload no longer leaves a partial file, and upload errors appear in your language.",
+      "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date. Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
+      "The missing-model hint names each download and its size, and is checked again after a generation ends. Feedback stays in the header on narrow windows.",
+      "Image generation: if its background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well now checks free space on the drive that holds the models and is not offered when there is not enough room. When it runs out of memory, the message says at which step and size, and the progress line shows the smaller size while retrying.",
+      "Character @mentions: two names written back to back are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used. In the editing view, an @character written in the generation bar now carries that character's description and pictures, as it does in the creation panel.",
+      "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech.",
+      "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well.",
+      "Diagnostic report: the prompt-rewrite report no longer replaces the video's, the same file is saved and sent, and a large report is saved as a zip.",
+      "Wording: Agent chat, Settings, image generation and editor messages are shorter and say what to do next; the character library uses \"character\" throughout and its view labels are clearer.",
+      "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
     ]
   },
   "zh": {
-    "summary": "作品库可以多选、一次删除，并在短时间内撤销；每个视图新增“反馈”按钮；启动器显示二维码，手机扫码即可打开。剪辑视图的描述框随内容长高，各处说法更短、更直白，长视频各段的声音响度也更稳定。",
+    "summary": "长视频各段的人声更稳定，@角色在接续视频和剪辑视图里会带上图片，大文件下载会自动换到更快的下载源，许多提示和排布更简短清楚。",
     "changes": [
-      "作品库：可多选作品（点选、Shift 连选、选择某一天或全选），确认前显示大小，一次删除，10 秒内可撤销；仍在使用的作品会保留。",
-      "反馈：每个视图的“设置”左边新增“反馈”按钮。写一句话，可选附上这一页的截图和诊断信息（不含提示词和画面），点一下即打开已填好文字的 GitHub 反馈页。",
-      "启动器：局域网访问显示二维码，手机扫码即可打开 FreeVideo，并可为其他设备设置密码；Linux 的 freevideo status 也会显示二维码。",
-      "自己的 ComfyUI：工具条只在 FreeVideo 工作流上出现，不再盖住其他工作流，也不往里面加节点；Extensions 菜单里可以打开 FreeVideo。从启动器打开时保留已装的其他插件；如有插件让 FreeVideo 载入失败，会自动只载入 FreeVideo 再启动一次，并提示一句。",
-      "长视频：各段声音响度更稳定。",
-      "剪辑视图：描述框随内容长高，可放大成大窗口编辑；出错和快捷键的说法更直白。",
-      "创作面板：提示更简短。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用二次采样，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
-      "安装和启动器：安装进度更平稳，总进度会跟随显卡加速编译和最后的启动步骤，副行不再显示文件名，终端只在出错时需要打开；安装和更新的说法更直白。",
-      "进度与出错提示：说法更短、更直白。"
+      "二次采样：结果卡按钮、预览角标和相关提示恢复 0.4.6 的说法（继续二采、一采预览）。",
+      "LoRA：强度可以手动输入超出 -4 到 4 的数，最大到 100，超出常用范围时有提示；滑块和默认强度不变。触发词只出现在更长的单词里（如 asks 里的 sks）时，现在也会自动加上。",
+      "素材上传：上传按钮只列出能用的文件格式，一次选多个时跳过不支持的；超过 2 GiB 的文件在页面上直接拦下；上传失败或中断不再留下残留文件，出错提示用当前界面语言。",
+      "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
+      "缺模型提示写明是哪几项、各多大，生成结束后重新检查。窗口较窄时，顶栏仍保留“反馈”入口。",
+      "图像生成：后台进程刚启动就退出时，自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始。“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。显存不够时会写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸。",
+      "角色 @ 提及：紧挨着写的两个名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么。在创作面板接着生成视频时，会保留参考图和人物，人物前后保持一致；最多使用 3 张图片。剪辑视图的生成条里写 @角色，现在和创作面板一样会带上该角色的描述和图片。",
+      "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。",
+      "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。",
+      "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
+      "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
+      "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.7",
+      "en": {
+        "summary": "Your creations can now be selected and deleted several at a time with a short undo window, every view gets a Feedback button, and the launcher shows a QR code for opening FreeVideo from a phone. The description box in the editing view grows with its text, wording across the app is shorter and plainer, and long videos keep a steadier loudness from part to part.",
+        "changes": [
+          "Your creations: select several creations (click, Shift-click, a whole day, or all) and delete them in one step, with the size shown before you confirm and ten seconds to undo. Creations that are still in use are kept.",
+          "Feedback: every view has a Feedback button beside Settings. Write one sentence, optionally attach a screenshot of the page and a diagnostic summary (no prompts or images), and the GitHub suggestion page opens with the text filled in.",
+          "Launcher: local network access shows a QR code to open FreeVideo from a phone and offers an optional password for other devices; freevideo status prints the same QR code on Linux.",
+          "Your own ComfyUI: the FreeVideo toolbar appears only on FreeVideo workflows, no longer opens over your other workflows or adds nodes to them, and FreeVideo can be opened from the Extensions menu. Opening ComfyUI from the launcher keeps your other plugins; if a plugin stops FreeVideo from loading, the launcher starts again with FreeVideo only and says so.",
+          "Long videos: steadier loudness from part to part.",
+          "Editing view: the description box grows with its text and can be expanded into a larger window; errors and shortcut labels use plainer wording.",
+          "Studio: shorter hints. Generate no longer fails with \"missing node\" when the creation node was muted or bypassed in the workflow; the node is turned back on and a line says so. Two-pass sampling runs only with 8 first-pass steps; other step counts use a single pass, and the progress line, the ComfyUI node and Agent results say so.",
+          "Installation and launcher: install progress is steadier, with the total following the GPU acceleration build and the final start-up; sublines no longer show file names, and the terminal stays closed unless something goes wrong. Installation and update wording is plainer.",
+          "Progress and error messages: shorter, plainer wording."
+        ]
+      },
+      "zh": {
+        "summary": "作品库可以多选、一次删除，并在短时间内撤销；每个视图新增“反馈”按钮；启动器显示二维码，手机扫码即可打开。剪辑视图的描述框随内容长高，各处说法更短、更直白，长视频各段的声音响度也更稳定。",
+        "changes": [
+          "作品库：可多选作品（点选、Shift 连选、选择某一天或全选），确认前显示大小，一次删除，10 秒内可撤销；仍在使用的作品会保留。",
+          "反馈：每个视图的“设置”左边新增“反馈”按钮。写一句话，可选附上这一页的截图和诊断信息（不含提示词和画面），点一下即打开已填好文字的 GitHub 反馈页。",
+          "启动器：局域网访问显示二维码，手机扫码即可打开 FreeVideo，并可为其他设备设置密码；Linux 的 freevideo status 也会显示二维码。",
+          "自己的 ComfyUI：工具条只在 FreeVideo 工作流上出现，不再盖住其他工作流，也不往里面加节点；Extensions 菜单里可以打开 FreeVideo。从启动器打开时保留已装的其他插件；如有插件让 FreeVideo 载入失败，会自动只载入 FreeVideo 再启动一次，并提示一句。",
+          "长视频：各段声音响度更稳定。",
+          "剪辑视图：描述框随内容长高，可放大成大窗口编辑；出错和快捷键的说法更直白。",
+          "创作面板：提示更简短。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用二次采样，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
+          "安装和启动器：安装进度更平稳，总进度会跟随显卡加速编译和最后的启动步骤，副行不再显示文件名，终端只在出错时需要打开；安装和更新的说法更直白。",
+          "进度与出错提示：说法更短、更直白。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.6",
       "en": {
@@ -188,43 +225,6 @@
           "启动器出错后，设置里正在输入的地址或路径不再被换回原值。",
           "Agent 拍片时，接上一镜的镜头每段至少 10 秒，没写长度时默认 10 秒；这台电脑一次生成不了的长度会在开始前说明。",
           "“AI 全自动”里任务开始或停止后，对话列表立刻更新；快速切换对话时停在所选的那一段。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.1",
-      "en": {
-        "summary": "Fixes Extend on videos made earlier, and improves progress display and several agent details.",
-        "changes": [
-          "Extend works again on videos made earlier, including ones whose size was changed, and the new part now uses the previous video's picture size automatically. Clicking Extend on a result or in Creations now opens Edit with the video on the timeline and a new part already placed after it, ready to generate.",
-          "Autopilot can start a new conversation, and earlier ones stay in a list to return to; the agent also keeps listening after it answers, so it still responds when the conversation resumes later.",
-          "A percentage and the time left appear as soon as a video starts; progress keeps moving while the model loads and runs smoothly to the end, on Autopilot job cards as well.",
-          "In Edit, an agent can start a new timeline from just a name, and writes a short note on each clip so it is clear at a glance what the clip is.",
-          "A video added to the timeline from Creations now brings the description it was generated from, so it can be regenerated right away.",
-          "A video of 16 to 29 seconds requested through an agent is now made in one generation when the computer allows it, the same as in Create.",
-          "When a specific camera path, placement or order of actions keeps coming out wrong, the agent can offer to make a rough camera draft first and generate from it.",
-          "The question about freeing the disk space used by old model files now appears after updating.",
-          "At smaller sizes, more of the model stays in GPU memory, so computers with less memory read less from the drive while generating.",
-          "When the network is slow or a step takes a while, the install page now shows what it is doing.",
-          "Third-party download during setup now lists only the files this computer needs, and the list can be exported; after downloading, choose the folder and the files that pass the check are used directly.",
-          "When other programs use a large part of the GPU during a generation, or the GPU overheats, a short note appears under the result."
-        ]
-      },
-      "zh": {
-        "summary": "修复了之前生成的视频不能“接着生成”的问题，并改进了进度显示和 Agent 的几处体验。",
-        "changes": [
-          "之前生成的视频（包括换过尺寸的）都可以“接着生成”，不再提示不能接续；新的一段会自动用上一段的画面大小。在结果或作品上点“接着生成”，会打开剪辑视图：原视频已在时间线上，后面接好了新的一段，点“生成”继续。",
-          "“AI 全自动”里可以开新对话，旧对话留在列表里，可以回去接着做；Agent 答完以后会一直等下一句，隔一会儿再说也有回应。",
-          "点“生成”后马上显示百分比和预计剩余时间；加载模型时进度照常前进，平稳走到结束，“AI 全自动”的任务卡也一样。",
-          "剪辑视图里，Agent 只凭一个名字就能新建时间线，并会在每一段上写一句说明，一眼就能看出这一段是什么。",
-          "从“作品”放上时间线的视频会带上当时的生成描述，可以直接重新生成。",
-          "通过 Agent 生成 16–29 秒的视频时，电脑条件允许就一次生成，和创作面板一致。",
-          "指定的镜头路线、位置或动作顺序总是生成得不对时，Agent 会提议先做一个粗略的镜头草稿，再照草稿生成。",
-          "更新后询问是否释放旧模型文件所占硬盘空间的提示，现在会正常出现。",
-          "画面较小时，更多模型留在显存里，内存较小的电脑生成时读取硬盘更少。",
-          "安装时网络较慢或某一步较久时，安装页会显示当前正在做什么。",
-          "安装时选第三方下载，现在只列出这台电脑需要的文件，并可以导出下载清单；下载完成后选中那个文件夹，校验通过的文件直接使用。",
-          "生成期间其他程序占用了较多显卡，或显卡过热时，结果下方会出现一句简短的提示。"
         ]
       }
     }
