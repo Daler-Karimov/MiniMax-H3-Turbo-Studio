@@ -23,6 +23,7 @@ import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
 import { attachMentionOverlay } from './cast_overlay.js';
 import { openCastLibrary } from './cast_source.js';
+import { uploadMedia } from './media_upload.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
 import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
@@ -506,12 +507,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let castLibrary = null;
     const castAssets = () => { const owner = upstream(node, 'media'); const field = owner && widget(owner, 'assets'); return field ? {owner, field} : null; };
     // The library's own upload of a picture goes to the same streaming upload the media panel uses.
-    const castUpload = async file => {
-        const body = new FormData(); body.append('file', file);
-        const response = await api.fetchApi('/freevideo/media/upload', {method: 'POST', body});
-        const result = await response.json(); if (!response.ok) throw new Error(result.error || response.statusText);
-        return result;
-    };
+    const castUpload = file => uploadMedia(api, file);
     const castBlocked = reason => ({frames: t('Not available with first and last frames', '首尾帧不能和角色同时使用'),
         people: t('Up to 3 characters', '最多 3 个角色'), full: t('Up to 32 references', '参考素材最多 32 个'),
         continued: t('Up to 3 images when continuing', '接续时最多 3\u00a0张')}[reason] || '');

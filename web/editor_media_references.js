@@ -2,6 +2,7 @@
 import {api} from '../../scripts/api.js';
 import {openImageEditor} from './image_editor.js';
 import {imageGenerationSupported} from './image_generation.js';
+import {uploadMedia} from './media_upload.js';
 export const MAX_REFERENCES = 32;
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 export const isImageFile = file => IMAGE.test(file || '');
@@ -46,11 +47,7 @@ export function mediaReferences(node) {
             if (owner?.isUploading) throw new Error('uploading');
             if (owner) owner.isUploading = true;
             try {
-                const body = new FormData(); body.append('file', file);
-                const response = await api.fetchApi('/freevideo/media/upload', {method: 'POST', body});
-                const result = await response.json();
-                if (!response.ok) throw new Error(result.error || response.statusText);
-                return result;
+                return await uploadMedia(api, file);
             } finally { if (owner) owner.isUploading = false; }
         },
         canGenerateImage: imageGenerationSupported,

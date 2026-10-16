@@ -24,6 +24,7 @@ import { secondPassAction } from './result_actions.js';
 import { openImageEditor, icon } from './image_editor.js';
 import { imageGenerationSupported } from './image_generation.js';
 import { createCastLibrary } from './cast_library.js';
+import { uploadMedia } from './media_upload.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -173,10 +174,7 @@ function mediaPanel(node, mount = null) {
     };
     // One file into ComfyUI's input folder, through FreeVideo's streaming upload.
     async function uploadOne(file) {
-        const body = new FormData(); body.append('file', file);
-        const response = await api.fetchApi('/freevideo/media/upload', {method: 'POST', body});
-        const result = await response.json(); if (!response.ok) throw new Error(result.error || response.statusText);
-        return result;
+        return uploadMedia(api, file);
     }
     // An agent's edit leaves its editor document beside the picture: open that, so people continue its layers.
     async function agentEdit(file) {

@@ -18,7 +18,7 @@ export const MODULES = ['agent_activity.js', 'agent_connect.js', 'agent_session.
     'editor_loader.js', 'editor_text_coverage.js', 'editor_text.js', 'editor_toolbar_more.js', 'editor_text_model.js', 'editor_text_layout.js', 'editor_notes.js', 'editor_icons.js', 'dialog_keys.js', 'done_notify.js', 'feedback.js', 'frame_sizes.js', 'health.js', 'image_commands.js', 'image_editor.js', 'image_editor_engine.js', 'image_generation.js', 'launcher.js', 'length_plan.js', 'lora_triggers.js', 'library.js', 'motion.js', 'output_download.js', 'port_notice.js', 'preview_scene.js',
     'progress_connection.js', 'prompt_draft.js', 'prompt_enhance.js', 'prompt_references.js', 'prompt_terms.js', 'request_assets.js', 'report_issue.js', 'studio_recent.js',
     'result_actions.js', 'sampling_effort.js', 'setup.js', 'share.js', 'share_layout.js', 'studio.js', 'studio_chain.js', 'studio_extend.js', 'studio_length.js', 'first_frame_row.js', 'optional_inputs.js', 'studio_queue.js', 'studio_size.js',
-    'toolbar_position.js', 'updates.js', 'view_navigation.js', 'wordmark.js', 'cast_library.js'];
+    'toolbar_position.js', 'updates.js', 'view_navigation.js', 'wordmark.js', 'cast_library.js', 'media_upload.js'];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let visibleAt = 0;
 async function waitForVisible() {
