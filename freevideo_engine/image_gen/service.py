@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import queue
+import re
 import secrets
 import subprocess
 import threading
@@ -30,6 +31,17 @@ class WorkerIdleExit(RuntimeError):
     """The worker closed itself after its idle timeout before it answered anything."""
 
 
+FAILURE_KINDS = tuple((name, re.compile(pattern, re.I)) for name, pattern in (
+    ('panic', r'\bpanick?ed\b'), ('CUDA error', r'\bcuda\b[^\n]{0,40}\berror\b|\bcublas\w*_status|\bcudnn\w*_status'),
+    ('out of memory', r'out of memory|\bOOM\b'), ('MemoryError', r'\bMemoryError\b'),
+    ('access violation', r'access violation|segmentation fault|\bSIGSEGV\b'),
+    ('DLL load failed', r'DLL load failed|cannot open shared object'), ('ImportError', r'\b(Import|ModuleNotFound)Error\b')))
+
+
+class WorkerEarlyExit(WorkerIdleExit):
+    """The worker process ended with an error before it answered anything: nothing ran."""
+
+
 class Worker:
     """One reader owns each pipe; stderr is drained without retaining user text."""
     def __init__(self, process):
@@ -38,6 +50,7 @@ class Worker:
         self.writer_mutex = threading.Lock()
         self.reader = threading.Thread(target=self.read, daemon=True)
         self.error_reader = threading.Thread(target=self.read_errors, daemon=True)
+        self.tail = ''
         self.reader.start()
         self.error_reader.start()
 
@@ -56,8 +69,9 @@ class Worker:
             self.rows.put(None)
 
     def read_errors(self):
-        for _ in iter(lambda: self.process.stderr.read(1024), ''):
-            pass
+        # Only the last words are kept, for the report of a worker that ended abnormally.
+        for chunk in iter(lambda: self.process.stderr.read(1024), ''):
+            self.tail = (self.tail + chunk)[-1500:]
 
     def send(self, **row):
         with self.writer_mutex:
@@ -560,14 +574,20 @@ class Service:
                             respawn()
                         try:
                             self.infer(session, value)
-                        except WorkerIdleExit:
+                        except WorkerIdleExit as error:
                             # The request reached a worker that was already unloading after
                             # its idle timeout and was never read. Nothing ran: send it to a
                             # fresh worker once; a second exit is reported as a failure.
                             if self.stop.is_set() or self.session_stop.is_set():
                                 raise
+                            earlier = str(error)
                             respawn()
-                            self.infer(session, value)
+                            try:
+                                self.infer(session, value)
+                            except RuntimeError as second:
+                                if earlier.startswith('worker_exit (') and str(second).startswith('worker_exit'):
+                                    raise RuntimeError('%s; first try: %s' % (second, earlier[len('worker_exit '):])) from None
+                                raise
                 finally:
                     # Keep the parent's lease until the whole owned process tree exits.
                     if session is not None:
@@ -646,7 +666,17 @@ class Service:
             code = None
         if code == 0 and not heard:
             return WorkerIdleExit('worker_exit (exit code 0, before any answer)')
-        return RuntimeError('worker_exit' if code is None else 'worker_exit (exit code %d)' % code)
+        if code is None:
+            return RuntimeError('worker_exit')
+        session.error_reader.join(timeout=1)
+        # What the worker wrote can hold a prompt or a user's folder: only a fixed word for
+        # the kind of failure leaves this function, never any of the text.
+        kind = next((name for name, pattern in FAILURE_KINDS if pattern.search(session.tail)), '')
+        session.tail = ''
+        message = 'worker_exit (exit code %d%s)' % (code, ', ' + kind if kind else '')
+        # A worker that ended with an error before answering never ran the request; one
+        # fresh worker gets it, and a second exit is reported with its own last words.
+        return (WorkerEarlyExit if not heard and code > 0 else RuntimeError)(message)
 
     def infer(self, session, value):
         context = self.context or Context('generate', value)
