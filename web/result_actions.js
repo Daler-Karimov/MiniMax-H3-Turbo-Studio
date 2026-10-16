@@ -150,7 +150,7 @@ export function resultActions(record, t, {diagnostic = null, secondPass = null, 
     if (diagnostic) {
         const reportLabel = t('Diagnostic report', '诊断报告');
         const report = action('button', reportLabel, 'report', 'fv-action-secondary fv-action-report');
-        report.title = t('Redacted diagnostic report: hardware, settings and timings', '已脱敏的诊断报告：硬件、设置和耗时');
+        report.title = t('Diagnostic report: hardware, settings and timings', '诊断报告：硬件、设置和耗时');
         const text = report.lastElementChild;
         report.onclick = async () => {
             if (report.disabled) return;

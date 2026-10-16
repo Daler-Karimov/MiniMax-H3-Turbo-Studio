@@ -120,7 +120,7 @@ export function imageGenError(code, info, t) {
         cancelled: ['Image generation was cancelled.', '已取消图像生成。'],
         invalid_request: ['The image settings are invalid. Adjust them and try again.', '图片设置有误，请调整后重试。'],
         invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
-        reload: ['The image service restarted. Try again.', '图像服务已重启，请重试。'],
+        reload: ['Image generation was interrupted. Try again.', '图片生成中途被打断，请重试。'],
         generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
     };
     if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);
@@ -152,7 +152,7 @@ export const fittedNote = (size, t) => t(`Not enough GPU memory. Made at ${size.
     `显存不足，已改为 ${size.width}\u00a0×\u00a0${size.height} 生成。`);
 export const REPORT_LABELS = Object.freeze({
     download: ['Diagnostic report', '诊断报告'],
-    description: ['Redacted diagnostic report: hardware, settings and timings', '已脱敏的诊断报告：硬件、设置和耗时'],
+    description: ['Diagnostic report: hardware, settings and timings', '诊断报告：硬件、设置和耗时'],
     preparing: ['Preparing…', '正在整理…'],
     unavailable: ['Report unavailable · retry', '报告暂不可用 · 重试'],
 });
@@ -558,7 +558,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         action.textContent = state.running ? t('Stop', '停止') : t('Generate', '生成');
         action.classList.toggle('fv-ie-primary', !state.running);
         action.setAttribute('aria-disabled', String(!state.running && (disabled || !prompt.trim())));
-        action.title = !state.running && !prompt.trim() ? t('Write a short description first', '请先写一句画面描述') : '';
+        action.title = !state.running && !prompt.trim() ? t('Write a prompt first', '请先写提示词') : '';
         action.hidden = !!missing;
         const percent = Math.floor(state.fraction * 100) + '%';
         if (state.error && !promptRequired) {
@@ -570,7 +570,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         } else {
             mounted.failureKey = null;
             note.textContent = missing ? imagePackUnavailableMessage(state.info, t)
-                : promptRequired ? t('Write a short description first.', '请先写一句画面描述。')
+                : promptRequired ? t('Write a prompt first.', '请先写提示词。')
                 : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
                 : state.running && state.fitted ? t(`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
                     `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`) + ' · ' + percent

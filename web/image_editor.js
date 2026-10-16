@@ -182,13 +182,13 @@ export async function openImageEditor({source = null, name = source || '', targe
 
     // ----- frame --------------------------------------------------------------
     const dialog = el('dialog', null, 'fv-image-editor');
-    dialog.setAttribute('aria-label', t('Edit image', '编辑素材图'));
+    dialog.setAttribute('aria-label', t('Edit image', '编辑图片'));
     const header = el('header', null, 'fv-ie-header');
     const title = el('div', null, 'fv-ie-title');
     // The picture's size; clicking it opens Image size.
     const sizeLabel = el('button', '', 'fv-ie-size'); sizeLabel.type = 'button';
     sizeLabel.title = t('Image size…', '图像大小…'); sizeLabel.onclick = () => imageSizeDialog();
-    title.append(el('strong', t('Edit image', '编辑素材图')), el('span', name.split('/').pop(), 'fv-ie-file'), sizeLabel);
+    title.append(el('strong', t('Edit image', '编辑图片')), el('span', name.split('/').pop(), 'fv-ie-file'), sizeLabel);
     const zoomLabel = button('100%', t('Fit to window (Ctrl+0)', '适合窗口（Ctrl+0）'), () => fit(), 'fv-ie-zoom-label');
     const zoom = el('div', null, 'fv-ie-zoom');
     zoom.append(iconButton('minus', t('Zoom out (Ctrl −)', '缩小（Ctrl −）'), () => zoomBy(1 / 1.25)), zoomLabel,
@@ -254,7 +254,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     bgInput.title = t('Background color', '背景色'); bgInput.setAttribute('aria-label', bgInput.title);
     fgInput.oninput = () => { fg = fgInput.value; };
     bgInput.oninput = () => { bg = bgInput.value; };
-    colors.append(bgInput, fgInput, iconButton('swap', t('Swap colors (X)', '交换前景色和背景色（X）'), () => swapColors(), 'fv-ie-swap'));
+    colors.append(bgInput, fgInput, iconButton('swap', t('Swap colors (X)', '交换颜色（X）'), () => swapColors(), 'fv-ie-swap'));
     toolbar.append(el('span', null, 'fv-ie-tool-fill'), colors);
     function swapColors() { [fg, bg] = [bg, fg]; fgInput.value = fg; bgInput.value = bg; }
 
@@ -511,7 +511,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         hint.textContent = text; hint.hidden = !text;
     }
     const ratioLabel = id => ({
-        video: target ? t(`Video ${target.width}×${target.height}`, `视频画面 ${target.width}×${target.height}`) : t('Video', '视频画面'),
+        video: target ? t(`Video ${target.width} × ${target.height}`, `视频 ${target.width} × ${target.height}`) : t('Video', '视频'),
         original: t('Original', '原图比例'), free: t('Free', '自由'),
     })[id] || id;
     function renderOptions() {
@@ -537,8 +537,8 @@ export async function openImageEditor({source = null, name = source || '', targe
             const auto = el('label', null, 'fv-ie-check'); const box = el('input'); box.type = 'checkbox'; box.checked = opts.move.auto;
             box.onchange = () => { opts.move.auto = box.checked; }; auto.append(box, el('span', t('Pick layer by clicking', '点击自动选择图层')));
             add(auto, sep(),
-                iconButton('flipX', t('Flip layer horizontally', '水平翻转图层'), () => transformLayer(l => ({flipX: !l.flipX}))),
-                iconButton('flipY', t('Flip layer vertically', '垂直翻转图层'), () => transformLayer(l => ({flipY: !l.flipY}))),
+                iconButton('flipX', t('Flip horizontally', '水平翻转'), () => transformLayer(l => ({flipX: !l.flipX}))),
+                iconButton('flipY', t('Flip vertically', '垂直翻转'), () => transformLayer(l => ({flipY: !l.flipY}))),
                 button(t('Reset size', '原始大小'), null, () => transformLayer(l => ({w: l.nw, h: l.nh, ...upright(l.nw, l.nh), cx: l.cx, cy: l.cy}))),
                 button(t('Cover canvas', '铺满画布'), null, () => transformLayer(cover)));
         } else if (tool === 'crop') {
@@ -571,7 +571,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             const o = opts.heal;
             add(sizeSlider(o), segmented([['all', t('Whole stroke', '整个涂抹区域')], ['text', t('Captions only', '只去字幕')]], o.text ? 'text' : 'all',
                 v => { o.text = v === 'text'; renderOptions(); }, t('Heal', '修复范围')).group,
-                note(o.text ? t('Paint over a caption: only its white letters and outline are replaced, the picture between them stays.', '涂过字幕即可：只替换白色文字和描边，字与字之间的画面保留。')
+                note(o.text ? t('Paint over a caption. Only the white letters and outline are removed; the picture between them stays.', '涂过字幕，只去掉白字和描边，字间的画面保留。')
                     : t('Paint over the whole mark in one stroke; it is filled with texture from around it.', '一笔涂满要去掉的部分，松开后用周围的纹理补上。')));
         } else if (tool === 'clone') {
             const o = opts.clone;
@@ -594,7 +594,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         } else if (tool === 'eyedropper') {
             add(note(t('Click to pick the foreground color; Alt-click for the background color.', '点击吸取前景色；按住 Alt 点击吸取背景色。')));
         } else if (tool === 'hand') {
-            add(note(t('Drag to pan. With any tool, hold Space to pan; Ctrl + wheel zooms.', '拖动平移画面。任何工具下按住空格都能平移，Ctrl + 滚轮缩放。')));
+            add(note(t('Drag to pan. Hold Space to pan with any tool; Ctrl + wheel zooms.', '拖动平移。用任何工具时按住空格也能平移，Ctrl + 滚轮缩放。')));
         }
     }
     function maskToggle() {
@@ -758,7 +758,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         const summary = el('summary'); summary.innerHTML = SVG(ICONS.image, 16); summary.title = t('Add image layer', '添加图片图层'); summary.setAttribute('aria-label', summary.title);
         const menu = el('div', null, 'fv-ie-menu-list');
         if (upload) menu.append(button(t('From this computer…', '从电脑选择…'), null, () => { addMenu.open = false; filePicker.click(); }, 'fv-ie-menu-item'));
-        if (library.length) menu.append(el('div', t('From Media', '来自素材'), 'fv-ie-menu-label'));
+        if (library.length) menu.append(el('div', t('From media', '来自素材'), 'fv-ie-menu-label'));
         for (const item of library) {
             const b = button('', null, () => { addMenu.open = false; addImageLayer(item.file, item.label); }, 'fv-ie-menu-item');
             const img = el('img'); img.src = resolve(item.file); img.alt = ''; img.loading = 'lazy';
@@ -876,7 +876,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             commitInserted(commands.addImageLayer(doc, {src: file, nw: img.naturalWidth, nh: img.naturalHeight,
                 name: label || file.split('/').pop()}));
             select('move');
-        } catch { message(t('The image could not be added.', '图片无法添加。')); }
+        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。')); }
     }
     filePicker.onchange = async () => {
         const file = filePicker.files?.[0]; filePicker.value = '';
@@ -938,7 +938,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         const color = el('input'); color.type = 'color'; color.value = e.color || bg; color.id = 'fv-ie-pad-color';
         const buttons = el('div', null, 'fv-ie-row fv-ie-end');
         const advice = t(`The picture is ${ow} × ${oh} px. Add space on each side:`, `画面 ${ow} × ${oh} 像素，在四周补充空间：`);
-        const reason = t('Use whole numbers. The new width and height must be 1 to 20000 px.', '请填整数，调整后的宽和高须在 1 到 20000 像素之间。');
+        const reason = t('Enter whole numbers from 1 to 20000 for width and height.', '宽和高请填 1 到 20000 的整数。');
         const note = el('p', advice, 'fv-ie-opt-note');
         const values = () => Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, input.value.trim() ? Number(input.value) : NaN]));
         function update() {
@@ -1012,7 +1012,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         width.oninput = () => { preset = null; if (keep && valid(number(width))) height.value = String(Math.max(1, Math.round(number(width) * ch / cw))); update(); };
         height.oninput = () => { preset = null; if (keep && valid(number(height))) width.value = String(Math.max(1, Math.round(number(height) * cw / ch))); update(); };
         const dims = el('div', null, 'fv-ie-dims');
-        dims.append(field(t('Width (px)', '宽 (px)'), width), chain, field(t('Height (px)', '高 (px)'), height));
+        dims.append(field(t('Width (px)', '宽（px）'), width), chain, field(t('Height (px)', '高（px）'), height));
         const notes = el('div', null, 'fv-ie-notes'), result = el('p', '', 'fv-ie-opt-note');
         const stretch = el('p', t('With the proportions changed, pictures and shapes stretch; text keeps its shape.', '比例改变后，图片和形状会拉伸，文字保持原样。'), 'fv-ie-opt-note');
         const vector = doc.layers.some(l => l.kind === 'text' || l.kind === 'shape');
@@ -1558,12 +1558,12 @@ export async function openImageEditor({source = null, name = source || '', targe
         commitText();
         if (strip(doc) === strip(original())) { close(fresh ? null : {restore: true}); return; }
         if (!changed() && !fresh) { close(null); return; }
-        save.disabled = cancel.disabled = true; message(t('Saving the edited image…', '正在保存编辑后的图片…'));
+        save.disabled = cancel.disabled = true; message(t('Saving the image…', '正在保存图片…'));
         try {
             const {blob, width, height} = await renderer.export(doc, extension === 'jpg' ? 'image/jpeg' : 'image/png');
             close({blob, name: name ? `${stem}-edit.${extension}` : `${stem}.${extension}`, edit: doc, width, height});
         } catch {
-            message(t('The image could not be rendered. Try a smaller canvas or reload the page.', '图片生成失败，请缩小画布或刷新页面后重试。'));
+            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'));
             save.disabled = cancel.disabled = false;
         }
     }
