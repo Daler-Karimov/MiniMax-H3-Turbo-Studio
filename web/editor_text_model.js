@@ -65,6 +65,9 @@ export function readTextProject(raw, parseMedia) {
 export function assertUnlocked(record, ids) {
     check(!record.tracks.some(t => t.locked && t.clips.some(c => ids.includes(c.id))), 'locked');
 }
+// Timeline moves keep their original lanes, but text cannot land over a locked overlay lane.
+export const textDropLocked = (record, clips, trackId) => clips.some(isText)
+    && record.tracks.some(track => track.id === trackId && isTextTrack(track) && track.locked);
 export function addText(record, {kind = 'text', at = 0, text = '', style, frames = kind === 'subtitle' ? 48 : 72} = {}) {
     check(['text', 'subtitle'].includes(kind));
     const next = model.serialize(record); let row = next.tracks.find(t => t.kind === kind);
