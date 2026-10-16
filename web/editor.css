@@ -146,7 +146,6 @@
 .fv-ed-more-panel[data-up=true]{top:auto;bottom:calc(100% - 2px)}
 .fv-editor .fv-ed-toolbar .fv-ed-more-panel button:has(svg)>span{display:none}
 .fv-ed-more-panel button::after{content:attr(data-more-label)}
-.fv-ed-more-panel .fv-ed-text-icon{width:18px;text-align:center;flex:none}
 /* A switch that is on shows it in its icon; the row tint stays for hover and focus. */
 .fv-editor .fv-ed-toolbar .fv-ed-more-panel button[aria-pressed=true]{color:var(--fv-ink);background:transparent}
 .fv-editor .fv-ed-toolbar .fv-ed-more-panel button[aria-pressed=true] svg{color:var(--fv-accent)}
