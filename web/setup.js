@@ -77,11 +77,12 @@ export async function openSetup() {
     for (const [id, name] of [['auto',t('Automatic','自动选择')],['official','Hugging Face'],['hf-mirror','HF Mirror'],['modelscope','ModelScope']]) {
         const option = node('option',name); option.value = id; source.append(option);
     }
-    sourceLabel.append(source); downloads.append(sourceLabel);
     const probeButton = node('button', t('Test source speeds', '重新测速'));
+    const sourceRow = node('div'); sourceRow.className = 'fv-source-row'; sourceRow.append(source, probeButton);
+    sourceLabel.append(sourceRow); downloads.append(sourceLabel);
     const sourceStatus = note(''), speeds = node('div');
-    downloads.append(probeButton, sourceStatus, speeds);
-    const auth = node('details');
+    downloads.append(sourceStatus, speeds);
+    const auth = node('details'); auth.className = 'fv-token';
     auth.append(node('summary', t('Hugging Face token · optional', 'Hugging Face Token · 可选')));
     auth.append(note(t('Use your account’s download quota instead of the anonymous limit. Kept for this session only.', '使用账号下载额度，避开匿名限流。仅本次会话有效。')));
     const hfTokenLabel = node('label', 'Hugging Face Token');
