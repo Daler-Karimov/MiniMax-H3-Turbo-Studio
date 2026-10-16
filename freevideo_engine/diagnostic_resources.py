@@ -466,7 +466,8 @@ WINDOWS_BUDGET = ('peak_usage_bytes', 'minimum_budget_bytes', 'maximum_budget_by
                  'first_budget_bytes', 'last_budget_bytes', 'budget_changes', 'over_budget_samples', 'samples')
 # Whole-device NVML samples inside one sampling step (monitoring.step_activity).
 STEP_ACTIVITY = ('samples', 'busy_samples', 'gpu_util_mean_percent', 'sm_clock_mean_mhz', 'power_mean_mw',
-                 'device_used_peak_bytes', 'device_used_minimum_bytes', 'device_total_bytes')
+                 'device_used_peak_bytes', 'device_used_minimum_bytes', 'device_total_bytes',
+                 'other_programs_checks', 'other_programs_percent_mean', 'other_programs_percent_peak')
 
 
 def dynamic_budget(value):

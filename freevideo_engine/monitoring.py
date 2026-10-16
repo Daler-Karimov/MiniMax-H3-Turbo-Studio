@@ -181,20 +181,23 @@ class OtherPrograms:
             self.ours = self.ours or {pid for pid in (os.getpid(), self.pid) if pid}
 
     def check(self, util):
-        """Read once a second; count the reading when the worker is computing on a busy device."""
+        """Read once a second; count the reading when the worker is computing on a busy device.
+
+        Returns the other programs' share of the cores in percent for a reading that was counted, else None.
+        """
         now = time.monotonic()
         if self.supported is False or now - self.checked < self.seconds:
-            return
+            return None
         self.checked = now
         found = self.read()
         if found is None:
             self.failures += 1
             if self.supported is None and self.failures >= self.failures_allowed:
                 self.supported = False
-            return
+            return None
         self.supported = True
         if not found or util is None or util < 50:
-            return
+            return None
         # A process we have not seen may be a child the worker just started.
         if now - self.refreshed >= self.refresh_seconds or any(pid not in self.seen for pid in found):
             self.refresh()
@@ -207,12 +210,13 @@ class OtherPrograms:
             # device did beyond the other programs was the worker's.
             own = max(0., util - other)
         if own < self.own_percent:
-            return
+            return None
         self.checks += 1
         self.shared += other >= self.share_percent
         self.other_total += other
         self.own_total += own
         self.other_peak = max(self.other_peak, other)
+        return other
 
     def result(self):
         result = dict(supported=bool(self.supported), own_reported=self.own_reported, checks=self.checks,
@@ -433,7 +437,8 @@ class Monitor:
         with self.path.open('w', buffering=1, encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch_seconds', 'monotonic_seconds', 'used_bytes', 'total_bytes', 'gpu_util_percent',
-                             'temperature_c', 'power_mw', 'sm_clock_mhz', 'memory_clock_mhz', 'clock_reason_mask'])
+                             'temperature_c', 'power_mw', 'sm_clock_mhz', 'memory_clock_mhz', 'clock_reason_mask',
+                             'other_programs_percent'])
             while not self.stop_event.is_set():
                 try:
                     used, total, util = self.sample()
@@ -449,8 +454,12 @@ class Monitor:
                         self.max_temperature = max(self.max_temperature or 0, auxiliary[0])
                     if auxiliary[1] is not None:
                         self.max_power_mw = max(self.max_power_mw or 0, auxiliary[1])
-                    writer.writerow([time.time(), time.monotonic(), used, total, util, *auxiliary, reasons])
-                    self.programs.check(util)
+                    try:
+                        other = self.programs.check(util)
+                    except Exception:
+                        other = None
+                    writer.writerow([time.time(), time.monotonic(), used, total, util, *auxiliary, reasons,
+                                     '' if other is None else '%.1f' % other])
                 except Exception as e:
                     if str(e) not in self.errors and len(self.errors) < 20:
                         self.errors.append(str(e))
@@ -526,6 +535,13 @@ def step_activity(csv_path, steps, *, limit_bytes=64 * 2**20):
                 total = item['sums'].setdefault(key, [0., 0])
                 total[0] += value
                 total[1] += 1
+        other = number(sample, 'other_programs_percent')
+        if other is not None and other <= 100:
+            item['other_programs_checks'] = item.get('other_programs_checks', 0) + 1
+            item['other_programs_percent_peak'] = max(item.get('other_programs_percent_peak', 0.), other)
+            total = item['sums'].setdefault('other_programs_percent_mean', [0., 0])
+            total[0] += other
+            total[1] += 1
         used, size = number(sample, 'used_bytes'), number(sample, 'total_bytes')
         if used is not None:
             item['device_used_peak_bytes'] = max(item.get('device_used_peak_bytes', 0), int(used))
