@@ -42,7 +42,9 @@ export function insertionPoint(clips, frame, exceptIds = []) {
 // A range starts where it was pressed (ends there when drawn leftwards); its length is whole seconds, at least two.
 export function rangeParameters(anchor, frame, tracks = ['v1', 'a1'], fps = model.FPS) {
     const from = Math.max(0, Math.round(anchor)), to = Math.max(0, Math.round(frame));
-    const frames = Math.max(2 * fps, Math.round(Math.abs(to - from) / fps) * fps);
+    let frames = Math.max(2 * fps, Math.round(Math.abs(to - from) / fps) * fps);
+    // Drawn leftwards past the start, the end stays put: the length shrinks to the whole seconds that fit before it.
+    if (to < from && frames > from) frames = Math.max(2 * fps, Math.floor(from / fps) * fps);
     return {kind: 'range', start: to < from ? Math.max(0, from - frames) : from, frames, tracks: [...tracks]};
 }
 
