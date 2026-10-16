@@ -164,6 +164,38 @@ test('main browser entry registers both views and preserves node hooks', async t
                     }
                 } finally { navigator.language = 'en'; }
             });
+            await t.test(`${language} advanced node labels preserve keys, values and untranslated copy`, async () => {
+                navigator.language = language;
+                try {
+                    await import('data:text/javascript;base64,' + Buffer.from(source + `\n// label language: ${language}`).toString('base64'));
+                    const localized = extensions.at(-1);
+                    class LocalizedGenerateNode extends GenerateNode {}
+                    await localized.beforeRegisterNodeDef(LocalizedGenerateNode, {name: 'FreeVideoGenerate'});
+                    const rows = [
+                        ['force_regenerate', 'Force regeneration', '重新生成', false, '跳过已保存结果的缓存。'],
+                        ['preview', 'Two-pass: preview first pass', '先出预览', false,
+                            '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
+                        ['refine_from', 'Second pass of preview', '继续二采', 'preview.mp4', '从这个预览继续生成全分辨率视频。'],
+                        ['continue_from', 'Continue from video', '接着生成', 'previous.mp4'],
+                        ['frames', 'Total frames', '帧数', 141],
+                        ['first_frame_reference', 'First-frame reference', '首帧参考', true, '减小漂移'],
+                        ['voice_reference', 'Voice reference', 'Voice reference', true],
+                        ['hide_tail', 'Hide dialogue tail', 'Hide dialogue tail', true],
+                    ];
+                    const node = new LocalizedGenerateNode();
+                    node.widgets = rows.map(([name, label, , value]) => ({name, label, value, tooltip: `original ${name}`}));
+                    node.onNodeCreated();
+                    assert.deepEqual(node.widgets.map(w => [w.name, w.value]), rows.map(([name, , , value]) => [name, value]));
+                    for (const [name, en, zh, , tooltip] of rows) {
+                        const widget = node.widgets.find(w => w.name === name);
+                        assert.equal(widget.label, language === 'zh' ? zh : en, name);
+                        assert.equal(widget.tooltip, language === 'zh' && tooltip ? tooltip : `original ${name}`, name);
+                    }
+                    assert.equal(node.widgets[0].type, 'hidden');
+                    assert.equal(node.widgets[0].serializeValue(), false);
+                    node.onRemoved();
+                } finally { navigator.language = 'en'; }
+            });
         }
         await extension.beforeRegisterNodeDef(GenerateNode, {name: 'FreeVideoGenerate'});
         const node = new GenerateNode(); app.graph._nodes = [node];
