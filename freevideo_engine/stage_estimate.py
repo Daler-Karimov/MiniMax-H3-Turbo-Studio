@@ -20,6 +20,11 @@ import re
 from statistics import median
 
 TOKEN_UNIT = 72576.
+# Every generated query attends to the reference rows, so a reference video
+# row costs one token plus this many more per canvas-sized unit of tokens
+# (B200: linear in the row count, 1.4x at 960x544 and 1.85x at 1664x960);
+# canvases past the measured size keep the largest measured weight.
+REFERENCE_VIDEO_PAIR_WEIGHT = 4.
 DEFAULT_INTERVAL = [.45, 2.2]
 STAGES = ('encode', 'load', 'pass1', 'upscale', 'pass2', 'decode_save')
 PARAMS_PATH = Path(__file__).with_name('stage_estimate_params.json')
@@ -179,13 +184,19 @@ def stream_features(h, r, i):
     return [1.] + tiers + [f*laptop]
 
 
+def _reference_rows(h, r, x):
+    # Measured on NVIDIA only; the Apple fit keeps one row per reference token.
+    weight = 1. if _apple(h) else 1. + REFERENCE_VIDEO_PAIR_WEIGHT*min(x, 1.)
+    return (weight*float(_num(r, 'reference_video_tokens', 0.))
+            + float(_num(r, 'reference_audio_tokens', 0.)))
+
+
 def step_parts(h, r, i, p):
     canvas = canvases(r)[i-1]
     x = token_count(canvas)/TOKEN_UNIT
     # Reference tokens affect the actual attention sequence (policy.py:697).
     # No guessed duration is substituted when unavailable.
-    ref = float(_num(r, 'reference_video_tokens', 0.)) + float(_num(r, 'reference_audio_tokens', 0.))
-    x += ref/TOKEN_UNIT
+    x += _reference_rows(h, r, x)/TOKEN_UNIT
     if _apple(h):
         b, c = p['apple']['step_bc']
         return p['apple']['step_fixed'], x*(b+c*x)
@@ -313,8 +324,8 @@ def _area(r):
 def _physical_transfer(h, r, p, measured, coef):
     b = p['step']['bc_normalized'][0]
     c, ss = coef[0], coef[1:]
-    ref = float(_num(r, 'reference_video_tokens', 0.)) + float(_num(r, 'reference_audio_tokens', 0.))
-    x = [(token_count(g)+ref)/TOKEN_UNIT for g in canvases(r)[:2]]
+    x = [token_count(g)/TOKEN_UNIT for g in canvases(r)[:2]]
+    x = [v+_reference_rows(h, r, v)/TOKEN_UNIT for v in x]
     s = [_dot(stream_features(h, r, i), ss) for i in [1, 2]]
     if _apple(h):
         s1, comp1 = step_parts(h, r, 1, p)
@@ -435,12 +446,19 @@ def predict_prior(hardware, request, cold_flags, params=None):
 
     video_decode is a diagnostic SUBSET of decode: never add it to total.
     Input hardware RAM/VRAM use GiB. pcie_bandwidth_gbs is decimal GB/s.
-    request uses schema names plus optional pass1_resident_blocks, reference_seconds.
+    request uses schema names plus optional pass1_resident_blocks, reference_seconds,
+    step_cache (the effective first-pass cache).
     Cold flags may include pass1/2_canvas_compiled and pass1/2_compile_cold.
     Unknown flags must be None, never inferred from future observed first steps.
     """
     p=_params(params)
     v,d=_raw(hardware,request,cold_flags or {},p)
+    if request.get('step_cache'):
+        # The fit has only plain passes; a step cache shortens the first pass alone.
+        from .tiers import sampling_share
+        d['step_cache_share']=sampling_share(request['step_cache'])
+        v['pass1']*=d['step_cache_share']
+        _sum_total(v)
     wide=_apple(hardware) or _gpu_item(hardware,p) is None
     return _decode_save({'stages':{k:_interval(k,x,p,wide=wide) for k,x in v.items() if k!='total'},
         'total':_interval('total',v['total'],p,wide=wide), 'diagnostics':d,

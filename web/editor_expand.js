@@ -35,10 +35,10 @@ export function createExpandButton({t = en => en, textarea, onGenerate, canGener
         if (!dialog) return;
         // The small box changed from outside (another part selected, text restored): the dialog follows.
         if (textarea.value !== seen) { seen = textarea.value; large.value = seen; }
-        large.disabled = !writable(); generate.disabled = !allowed();
+        large.disabled = !writable(); if (generate) generate.disabled = !allowed();
     }
     async function submit() {
-        if (!allowed()) return;
+        if (!onGenerate || !allowed()) return;
         commit(); notice.textContent = '';
         pending = true; sync();
         let reason = '';
@@ -83,6 +83,7 @@ export function createExpandButton({t = en => en, textarea, onGenerate, canGener
         dialog.setAttribute('aria-label', t('Expand', '放大'));
         seen = textarea.value;
         large = el('textarea', 'fv-ed-expand-text'); large.value = seen;
+        if (textarea.maxLength >= 0) large.maxLength = textarea.maxLength;
         large.setAttribute('aria-label', textarea.getAttribute('aria-label') || t('Expand', '放大'));
         notice = el('div', 'fv-ed-expand-note'); notice.setAttribute('role', 'status');
         large.oninput = () => {
@@ -92,9 +93,10 @@ export function createExpandButton({t = en => en, textarea, onGenerate, canGener
             sync();
         };
         const buttons = el('div', 'fv-ed-expand-buttons');
-        generate = el('button', 'fv-primary', t('Generate', '生成')); generate.type = 'button'; generate.onclick = submit;
+        // Without a way to generate (a single part cannot be generated alone) only Close is offered.
+        if (onGenerate) { generate = el('button', 'fv-primary', t('Generate', '生成')); generate.type = 'button'; generate.onclick = submit; }
         const dismiss = el('button', '', t('Close', '关闭')); dismiss.type = 'button'; dismiss.onclick = close;
-        buttons.append(generate, dismiss); dialog.append(large, notice, buttons);
+        if (generate) buttons.append(generate); buttons.append(dismiss); dialog.append(large, notice, buttons);
         cleanups.push(listenDialogKey(dialog, 'keydown', event => {
             if (event.isComposing || event.keyCode === 229) return;
             if (event.key === 'Escape') { event.preventDefault(); close(); }
@@ -102,7 +104,7 @@ export function createExpandButton({t = en => en, textarea, onGenerate, canGener
                 event.preventDefault(); if (!event.repeat) submit();
             } else if (event.key === 'Tab') {
                 event.preventDefault();
-                const controls = [large, generate, dismiss].filter(node => !node.disabled);
+                const controls = [large, generate, dismiss].filter(node => node && !node.disabled);
                 const index = controls.indexOf(document.activeElement);
                 controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
             }
@@ -132,7 +134,7 @@ export function createExpandButton({t = en => en, textarea, onGenerate, canGener
     const observer = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
     observer?.observe(textarea, {attributes: true, attributeFilter: ['disabled', 'readonly']});
     sync();
-    return {element, open, close, commit, dispose() {
+    return {element, open, close, commit, get isOpen() { return !!dialog; }, dispose() {
         close(); disposed = true; observer?.disconnect();
         textarea.removeEventListener('input', sync); textarea.removeEventListener('change', sync);
         element.onclick = null; element.remove();

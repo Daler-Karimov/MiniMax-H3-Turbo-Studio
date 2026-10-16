@@ -741,12 +741,17 @@ app.registerExtension({
                 if (cn) {
                     // Reuse product wording; leave untranslated names with no established Chinese copy.
                     for (const [name, label, tooltip] of [
+                        ['width', '宽度'],
+                        ['height', '高度'],
+                        ['seconds', '时长（秒）'],
+                        ['seed', '种子'],
                         ['force_regenerate', '重新生成', '跳过已保存结果的缓存。'],
                         ['preview', '先出预览', '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
                         ['refine_from', '继续二采', '从这个预览继续生成全分辨率视频。'],
                         ['continue_from', '接着生成'],
                         ['frames', '帧数'],
                         ['first_frame_reference', '首帧参考', '减小漂移'],
+                        ['step_cache', '步间缓存', '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
                     ]) {
                         const widget = this.widgets?.find(w => w.name === name);
                         if (widget) {

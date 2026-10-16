@@ -319,9 +319,11 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
         editing={id,input};boundsLayer.replaceChildren(input);
         input.oninput=()=>updateContent(c,input.value,true);
         input.onkeydown=e=>{e.stopPropagation();if(e.key==='Escape'){e.preventDefault();finishInline();} };input.onkeyup=e=>e.stopPropagation();
-        input.onblur=()=>finishInline();render();input.focus();if(selectAll)input.select();
+        input.onblur=e=>finishInline(e.relatedTarget);render();input.focus();if(selectAll)input.select();
     }
-    function finishInline(){if(!editing)return;const old=editing;editing=null;old.input.onblur=null;const c=model.find(state.record,old.id);if(!old.input.value.trim())endEditing(old.id);else if(c&&c.text!==old.input.value)updateContent(c,old.input.value);else commitDraft();old.input.remove();render();}
+    function finishInline(next){if(!editing)return;const old=editing;editing=null;old.input.onblur=null;const c=model.find(state.record,old.id);
+        // Moving to the side panel's Content box keeps typing the same text; an empty one is cleaned up when that box is left.
+        if(!old.input.value.trim()&&next?.classList?.contains('fv-ed-text-content')&&selectedText()?.id===old.id)typing=old.id;else if(!old.input.value.trim())endEditing(old.id);else if(c&&c.text!==old.input.value)updateContent(c,old.input.value);else commitDraft();old.input.remove();render();}
     function guide(axis,value){const line=el('span','fv-ed-text-guide '+axis);line.style[axis==='x'?'left':'top']=`${value*100}%`;boundsLayer.append(line);}
     function beginDrag(e,c){
         if(e.button!==0||locked(c)||editing)return;e.preventDefault();e.stopPropagation();

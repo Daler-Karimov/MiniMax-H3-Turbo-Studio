@@ -1101,6 +1101,6 @@ export function restoreVersion(record, id, index, {by = 'user'} = {}) {
     }
     return finish(next);
 }
-connectSpeedOperations({copy, finish, detachAttempt, trackOf, freshId,
+connectSpeedOperations({copy, finish, detachAttempt, trackOf, freshId, splitAudioFields,
     makeRoom: (record, track, start, frames, excluded) => applyRoom(record, start, frames, {tracks: [].concat(track), excluded: [...excluded]}),
 });

@@ -11,7 +11,7 @@ function editorPanel(node) {
     const values = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
     return {node: node.id, width: values.width, height: values.height, text: values.text || '', settings: Object.fromEntries(Object.entries({
         two_pass: values.two_pass, base_steps: values.base_steps, refine_steps: values.refine_steps,
-        seed: values.seed, sampling_effort: values.sampling_effort}).filter(([, value]) => value !== undefined)),
+        step_cache: values.step_cache, seed: values.seed, sampling_effort: values.sampling_effort}).filter(([, value]) => value !== undefined)),
         references: mediaReferences(node),
         async snapshot() {
             if (node.freevideoEditorLooping?.()) throw new Error('loop_active');

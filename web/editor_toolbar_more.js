@@ -16,7 +16,7 @@ export function createToolbarMore({toolbar, t, keep}) {
         .filter(node => node !== more && node !== panel && !node.matches(keep));
     // Each row names its tool; labels are read on opening because tools rename themselves (shortcut hints dropped).
     function open(value) {
-        if (value) for (const control of panel.querySelectorAll('button')) control.dataset.moreLabel = (control.getAttribute('aria-label') || control.textContent).replace(/\s*[（(][^（）()]*[）)]$/, '');
+        if (value) for (const control of panel.querySelectorAll('button')) { control.dataset.moreLabel = (control.getAttribute('aria-label') || control.textContent).replace(/\s*[（(][^（）()]*[）)]$/, ''); control.toggleAttribute('data-more-icon', !!control.querySelector('svg')); }
         panel.hidden = !value; more.setAttribute('aria-expanded', String(value));
         // Open downward when the rows fit below the toolbar, otherwise upward over the preview.
         if (value) { const room = innerHeight - toolbar.getBoundingClientRect().bottom; panel.dataset.up = String(panel.offsetHeight > room - 8 && toolbar.getBoundingClientRect().top > room); }
@@ -31,7 +31,7 @@ export function createToolbarMore({toolbar, t, keep}) {
         } else if (!media?.matches && moved.length) {
             for (const [node, place] of moved.splice(0)) {
                 place.replaceWith(node);
-                for (const control of node.matches('button') ? [node] : node.querySelectorAll('button')) delete control.dataset.moreLabel;
+                for (const control of node.matches('button') ? [node] : node.querySelectorAll('button')) { delete control.dataset.moreLabel; control.removeAttribute('data-more-icon'); }
             }
         }
         more.hidden = !media?.matches;

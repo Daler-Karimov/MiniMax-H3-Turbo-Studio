@@ -1084,11 +1084,18 @@ def register():
             device = machine.get('device_identity') if machine.get('device_backend') == 'mps' else machine.get('gpu_uuid')
             rows = await asyncio.to_thread(local_records, folder_paths.get_output_directory(), device)
             adapters = request.query.get('adapters') == '1'
-            # A small canvas runs in one pass whatever the switch says.
-            result = {name: {str(steps): estimate(rows, canvas, base_steps=steps,
-                                                 two_pass=plan(canvas, enabled, task, base_steps=steps)['enabled'],
-                                                 task=task, adapters=adapters)
-                              for steps in ((8,) if enabled else (8, 12, 16, 20))}
+            # A small canvas runs in one pass whatever the switch says. A cached
+            # level is keyed "<steps>:<cache>". Without a run of it, plain runs
+            # stand in: the first-block cache is counted at full time, since the
+            # planner may not keep it on this card.
+            share = {'fbcache': 1.}
+            result = {name: {(str(steps) + (':' + cache if cache else '')):
+                             estimate(rows, canvas, base_steps=steps,
+                                      two_pass=plan(canvas, enabled, task, base_steps=steps)['enabled'],
+                                      task=task, adapters=adapters, step_cache=cache, cache_share=share.get(cache))
+                             for steps, cache in (((8, None),) if enabled else
+                                                  ((8, None), (12, None), (16, None), (20, None),
+                                                   (20, 'easycache-av'), (20, 'fbcache')))}
                       for name, enabled in (('single', False), ('two_pass', True))}
             return web.json_response(result, headers={'Cache-Control': 'no-store'})
         except (OSError, ValueError, TypeError, KeyError):

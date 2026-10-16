@@ -180,6 +180,9 @@ def automatic_profile(args, canvas, *, stage, evidence, descriptor=None, environ
             planning_canvas = dict(canvas)
             if getattr(args, 'task', None):
                 planning_canvas['task'] = args.task
+            if getattr(args, 'step_cache', None):
+                # The planner keeps the first-block cache only where it fits.
+                planning_canvas['step_cache'] = args.step_cache
             options.update(available_backends=available_backends(hardware, probe_missing=False), canvas=planning_canvas,
                 demonstrated_ram_bytes=demonstrated_local_ram(hardware, args, canvas))
             cache = getattr(args, 'cache', None)
@@ -548,6 +551,8 @@ def _run(args):
     base_steps = requested_steps if requested_steps is not None else profile['engine'].get('steps', 8)
     validate_steps(base_steps, refine_steps, two_pass)
     profile['engine']['steps'] = base_steps
+    if args.profile and getattr(args, 'step_cache', None):
+        profile['engine']['step_cache'] = args.step_cache
     if 'engine' in profile.get('policy', {}):
         profile['policy']['engine']['steps'] = base_steps
     if base_steps != 8:

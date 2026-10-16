@@ -1,5 +1,5 @@
 import {editorIcon} from './editor_icons.js';
-import {displayTracks, isText, isTextTrack} from './editor_text_model.js';
+import {displayTracks, isText, isTextTrack, textDropLocked} from './editor_text_model.js';
 // Pointer gestures translate coordinates into model calls; the model owns edits.
 // These exports deliberately have no DOM dependencies, so input arithmetic can
 // be checked in Node with the same code that runs in the browser.
@@ -42,7 +42,9 @@ export function insertionPoint(clips, frame, exceptIds = []) {
 // A range starts where it was pressed (ends there when drawn leftwards); its length is whole seconds, at least two.
 export function rangeParameters(anchor, frame, tracks = ['v1', 'a1'], fps = model.FPS) {
     const from = Math.max(0, Math.round(anchor)), to = Math.max(0, Math.round(frame));
-    const frames = Math.max(2 * fps, Math.round(Math.abs(to - from) / fps) * fps);
+    let frames = Math.max(2 * fps, Math.round(Math.abs(to - from) / fps) * fps);
+    // Drawn leftwards past the start, the end stays put: the length shrinks to the whole seconds that fit before it.
+    if (to < from && frames > from) frames = Math.max(2 * fps, Math.floor(from / fps) * fps);
     return {kind: 'range', start: to < from ? Math.max(0, from - frames) : from, frames, tracks: [...tracks]};
 }
 
@@ -774,6 +776,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             plannedLines.hidden = true;
             const desired = gesture.clip.start + frame - gesture.anchor;
             const result = moveParameters(gesture.clip, gesture.anchor, frame, dragPoints(desired, gesture.clip.frames), state.zoom);
+            result.track = isText(gesture.clip) ? pointerHit(event).track : null;
             gesture.result = result;
             const track = state.record.tracks.find(row => row.id === gesture.track);
             const drop = isText(gesture.clip) ? {hit: false} : insertionPoint(track.clips, result.frame, gesture.ids);
@@ -783,7 +786,10 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             }
             gesture.rightPreviewIds = [];
             let preview, error, shifted = 0;
-            try { preview = model.move(state.record, gesture.id, result.frame); }
+            try {
+                if (textDropLocked(state.record, gesture.members, result.track)) throw new model.EditError('locked');
+                preview = model.move(state.record, gesture.id, result.frame);
+            }
             catch (caught) { if (!(caught instanceof model.EditError)) throw caught; error = caught; }
             if (preview) for (const row of preview.tracks) for (const clip of row.clips) {
                 const item = locate(clip.id);
@@ -913,7 +919,10 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         if (['range', 'rangeMove', 'rangeEdge', 'rangeBoundary'].includes(finished.type)) { state.select(finished.selection, {history: true}); return; }
         const result = finished.result;
         if (!result) return;
-        if (finished.type === 'move') attempt(t('Move', '移动'), record => model.move(record, finished.id, result.frame));
+        if (finished.type === 'move') attempt(t('Move', '移动'), record => {
+            if (textDropLocked(record, finished.members, result.track)) throw new model.EditError('locked');
+            return model.move(record, finished.id, result.frame);
+        });
         else if (finished.type === 'plannedBoundary') attempt(t('Resize parts', '调整段长'), record => model.resizePlannedBoundary(record, finished.id, finished.neighbor.clip.id, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'extend') {

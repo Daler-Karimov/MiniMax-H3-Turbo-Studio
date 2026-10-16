@@ -70,6 +70,7 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     refine = plan.get('refine_steps', 0) if plan.get('enabled') and not preview else 0
     if measured[0]['steps'] != base or (refine and measured[1]['steps'] != refine):
         return None
+    cache = effective_step_cache(passes[0])
     encoding = report.get('encoding') or {}
     cached = bool(encoding.get('cache_hit') or report.get('input_cache', {}).get('conditioning_hit')
                   or report.get('tuning', {}).get('conditioning_cache_hit'))
@@ -82,6 +83,9 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
         task=video.get('config', {}).get('task', 't2va'),
         adapters=bool(report.get('profile', {}).get('engine', {}).get('loras') or
                       report.get('lora') or video.get('config', {}).get('online_lora')))
+    if cache is not None:
+        # Rows without the key are plain runs, as every run before the caches was.
+        record['step_cache'] = cache
     if not stage_details:
         return record
     upscale = video.get('latent_upscale') or {}
@@ -131,13 +135,41 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     return record
 
 
-def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, task='t2va', adapters=False):
+def effective_step_cache(part):
+    """The step cache a first pass actually used, from its report; None for a plain pass."""
+    from .tiers import STEP_CACHES
+    stats = part.get('step_cache') if isinstance(part, dict) else None
+    if not isinstance(stats, dict) or stats.get('disabled_reason') or stats.get('kind') not in STEP_CACHES:
+        return None
+    return stats['kind']
+
+
+def report_step_cache(report):
+    """The first-pass step cache a finished request used, from its report."""
+    video = report.get('video') or {} if isinstance(report, dict) else {}
+    passes = video.get('sampling_passes')
+    return effective_step_cache(passes[0] if isinstance(passes, list) and passes else video)
+
+
+def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, task='t2va', adapters=False,
+             step_cache=None, cache_share=None):
+    """Whole-request seconds from local runs of this shape.
+
+    Runs with the requested step cache come first. Without one, plain runs stand
+    in with their first pass scaled by `cache_share` (tiers.sampling_share by
+    default) and a wider range; a cached run never stands in for a plain request.
+    """
     from .two_pass import validate_steps
+    from .tiers import sampling_share
     validate_steps(base_steps, refine_steps, two_pass)
+    share = sampling_share(step_cache) if cache_share is None else cache_share
     candidates = []
     for row in records:
         if (row.get('flow', 'full') != 'full' or row['task'] != task or row['adapters'] != adapters
                 or row['shape'] != {k: canvas[k] for k in ('width', 'height', 'frames')}):
+            continue
+        cache = row.get('step_cache')
+        if cache != step_cache and (cache is not None or row['two_pass'] != two_pass):
             continue
         # Both passes retain their own resolution costs. Never multiply the
         # entire generation by a step ratio or confuse eight low-res steps
@@ -152,7 +184,12 @@ def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, ta
             seconds = row['request_seconds'] - row['sampling_seconds'] + last['seconds'] + (base_steps - last['steps']) * last['incremental']
         else:
             seconds = row['request_seconds'] + (base_steps - row['base_steps']) * row['passes'][0]['incremental']
-        if two_pass and not switched:
+            if cache != step_cache:
+                # A plain run of the same plan: only its first pass changes with a cache.
+                first = row['passes'][0]['seconds'] + (base_steps - row['base_steps']) * row['passes'][0]['incremental']
+                seconds -= (1 - share) * first
+                switched = True
+        if two_pass and row['two_pass'] == two_pass:
             seconds += (refine_steps - row['refine_steps']) * row['passes'][1]['incremental']
         if positive(seconds):
             candidates.append((seconds, row, switched))
@@ -255,10 +292,13 @@ def _stage_forecast(records, request, cold_flags, prior):
                 if positive(stages.get('decode_save')):
                     found.append(('decode_save', stages['decode_save']))
             similar_passes = row['two_pass'] == request.get('two_pass', True)
+            # A step cache changes the first pass only; its steps and totals stay with their own cache.
+            same_cache = row.get('step_cache') == request.get('step_cache')
             for i, (target, observed, count) in enumerate(zip((first, second), (r1, r2), counts), 1):
                 near = _near(token_count(target), token_count(observed))
                 similar_passes = similar_passes and (near or not count)
-                if not (count and same_task and same_lora and near and i <= len(row['passes'])):
+                if not (count and same_task and same_lora and near and i <= len(row['passes'])
+                        and (same_cache or i == 2)):
                     continue
                 part = row['passes'][i-1]
                 seconds = part['seconds'] + (count-part['steps']) * part['incremental']
@@ -271,7 +311,7 @@ def _stage_forecast(records, request, cold_flags, prior):
             if similar_passes and same_task and same_lora and positive(stages.get('upscale')):
                 found.append(('upscale', stages['upscale']))
             if (request.get('flow', 'full') == row.get('flow', 'full') and similar_passes and same_task and same_lora
-                    and same_refs):
+                    and same_refs and same_cache):
                 total = row['request_seconds'] + (counts[0] - row['base_steps']) * row['passes'][0]['incremental']
                 if counts[1]:
                     total += (counts[1] - row['refine_steps']) * row['passes'][1]['incremental']

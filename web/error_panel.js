@@ -1,5 +1,6 @@
 // Shared by the Studio and graph view. Text only; never render exception HTML.
 import {detectBrowserExtension, browserExtensionAdvice, extensionSteps} from './browser_extension.js';
+import {SAMPLING_EFFORTS, STEP_CACHES, tableLevel} from './sampling_effort.js';
 const reports = new WeakSet();
 const captured = new WeakMap();
 const diagnosticReports = new WeakSet();
@@ -72,9 +73,11 @@ function knownError(text) {
             if (Number.isInteger(d.base_steps) && d.base_steps >= 1 && d.base_steps <= 32
                 && typeof d.two_pass === 'boolean' && Number.isInteger(d.refine_steps) && d.refine_steps >= 0 && d.refine_steps <= 31
                 && Number.isSafeInteger(d.missing_bytes) && d.missing_bytes > 0 && typeof d.decimal_sizes === 'boolean'
-                && Array.isArray(d.available) && d.available.every(i => Number.isInteger(i) && i >= 0 && i <= 3))
+                && Array.isArray(d.available) && d.available.every(i => Number.isInteger(i) && i >= 0 && i <= 3)
+                && (d.step_cache === undefined || STEP_CACHES.includes(d.step_cache)))
                 return {kind: 'sampling-table', base_steps: d.base_steps, two_pass: d.two_pass, refine_steps: d.refine_steps,
-                    missing_bytes: d.missing_bytes, decimal_sizes: d.decimal_sizes, available: [...new Set(d.available)].sort()};
+                    missing_bytes: d.missing_bytes, decimal_sizes: d.decimal_sizes, available: [...new Set(d.available)].sort(),
+                    ...(d.step_cache ? {step_cache: d.step_cache} : {})};
         } catch { /* Malformed metadata stays in technical details. */ }
     }
     return PLAIN_ERRORS.find(error => line === error.message || error.aliases?.includes(line))?.key ?? null;
@@ -214,6 +217,8 @@ export function createErrorReport(detail, context = {}) {
         const value = Array.isArray(inputs?.[key]) && inputs[key].length === 1 ? inputs[key][0] : inputs?.[key];
         if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) settings[key] = value;
     }
+    const cache = Array.isArray(inputs?.step_cache) && inputs.step_cache.length === 1 ? inputs.step_cache[0] : inputs?.step_cache;
+    if (typeof cache === 'string' && (cache === 'none' || STEP_CACHES.includes(cache))) settings.step_cache = cache;
     const progress = {};
     for (const key of ['phase', 'stage']) if (typeof context.progress?.[key] === 'string') progress[key] = clean(context.progress[key]);
     for (const key of ['done', 'total']) if (Number.isFinite(context.progress?.[key])) progress[key] = context.progress[key];
@@ -258,9 +263,9 @@ export function failureAdvice(value, t, known = knownError(value)) {
     const row = (kind, title, summary, action) => ({kind, title: t(...title), summary: t(...summary), action: t(...action)});
     if (known?.kind === 'sampling-table') {
         // Names and plan matching follow sampling_effort.js; metadata carries no user text.
-        const levels = [['Light', '轻量'], ['Medium', '标准'], ['High', '精细'], ['Max', '极致']];
-        const index = [8, 12, 16, 20].findIndex((steps, i) => known.base_steps === steps
-            && known.two_pass === (i === 0) && (i !== 0 || known.refine_steps === 3));
+        const levels = SAMPLING_EFFORTS.map(tier => [tier.name, tier.zh]);
+        const level = tableLevel(known.base_steps, known.two_pass, known.refine_steps, known.step_cache ?? null);
+        const index = SAMPLING_EFFORTS.findIndex(tier => tier.name === level?.name);
         const custom = index < 0;
         // Iris: a level name and its 档 never break apart. The summary is set as text,
         // so word joiners (U+2060) keep each group on one line instead of markup.
@@ -313,7 +318,7 @@ export function failureAdvice(value, t, known = knownError(value)) {
             ['Generation did not start because there is not enough available RAM or GPU memory.', '可用内存或显存不足，本次生成未开始。'],
             ['Close memory-heavy applications, or lower the resolution or duration, then retry.', '可关闭占用内存较多的程序，或调低分辨率、缩短时长后重试。']);
     }
-    if (/commit headroom exhausted|paging file is too small|WinError 1455/i.test(text))
+    if (/commit headroom exhausted|paging file is too small|WinError 1455|os error 1455/i.test(text))
         return row('commit', ['Not enough Windows memory', 'Windows 内存不足'],
             ['Windows cannot provide enough memory for generation right now.', 'Windows 暂时无法提供生成所需的内存。'],
             ['Close memory-heavy applications and retry. In Windows virtual memory settings, use a system-managed paging file on a drive with free space.', '关闭占用内存较多的程序后重试。在 Windows 虚拟内存设置中，使用系统管理的分页文件，并确保所在磁盘有空闲空间。']);

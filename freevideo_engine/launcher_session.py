@@ -949,7 +949,8 @@ class Session:
         # compatible; only the browser hint is added at launch time.
         try:
             if not open_browser(address):
-                raise OSError('The system did not accept the browser request')
+                raise OSError(self.t("Couldn't open the browser. Click Copy address and open it in your browser.",
+                                     '没能自动打开浏览器，请点“复制地址”，在浏览器里打开。'))
             if moved_from:
                 self.port_notice_url = self.browser_url
             self.browser_error = ''

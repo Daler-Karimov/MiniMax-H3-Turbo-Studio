@@ -12,6 +12,13 @@ References = io.Custom('FREEVIDEO_REFERENCES')
 LoRAs = io.Custom('FREEVIDEO_LORAS')
 Media = io.Custom('FREEVIDEO_MEDIA')
 NO_LORA = 'None'
+STEP_CACHE_OPTIONS = ('none', 'easycache-av', 'fbcache')
+
+
+def step_cache_option(value):
+    """Bridge keyword for the Step cache widget; a workflow without it, or with 'none', adds nothing."""
+    return {} if value in (None, 'none') else {'step_cache': value}
+
 
 class FreeVideoGenerate(io.ComfyNode):
     @classmethod
@@ -69,6 +76,11 @@ class FreeVideoGenerate(io.ComfyNode):
                     optional=True, advanced=True, tooltip='Keeps the opening voice consistent in continued dialogue.'),
                 io.Boolean.Input('hide_tail', display_name='Hide dialogue tail', default=False,
                     optional=True, advanced=True, tooltip='Generates and discards 17 extra frames to keep dialogue moving between parts.'),
+                # Last, so the widget values of saved workflows keep their positions.
+                io.Combo.Input('step_cache', display_name='Step cache', options=list(STEP_CACHE_OPTIONS), default='none',
+                    optional=True, advanced=True,
+                    tooltip='Reuses work between similar sampling steps to finish sooner, with a small change to the result. '
+                        'High uses easycache-av; Max uses fbcache.'),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -114,7 +126,8 @@ class FreeVideoGenerate(io.ComfyNode):
     def execute(cls, text, width, height, seconds, seed, first=None, last=None,
                 references=None, loras=None, conditioning=None, media=None, two_pass=True,
                 force_regenerate=False, base_steps=8, refine_steps=3, preview=False, refine_from='',
-                continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False):
+                continue_from='', frames=0, first_frame_reference=False, voice_reference=False, hide_tail=False,
+                step_cache='none'):
         from server import PromptServer
         from .comfy_chain import block_context, block_finished, report_fields
         refine_from, continue_from = optional_text(refine_from), optional_text(continue_from)
@@ -257,6 +270,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 **({'first_frame_reference': True} if first_frame_reference is True and options.get('continue_from') else {}),
                 **({'voice_reference': True} if voice_reference is True and options.get('continue_from') else {}),
                 **({'hide_tail': True} if hide_tail is True else {}),
+                **step_cache_option(step_cache),
                 **({'report_extra': {'chain': report_fields(chain)}} if chain is not None else {}))
             relative = output.relative_to(output_root)
             report = output.with_suffix('.request.json').read_text(encoding='utf-8')

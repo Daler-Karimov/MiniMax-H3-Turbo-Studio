@@ -1,4 +1,5 @@
 import { referenceItems } from './prompt_references.js';
+import { stepCacheOf } from './sampling_effort.js';
 
 const PRESETS = [.5, .75, .98, 1.5, 2];
 const COLUMN_SPACING = 'equal'; // 'equal' or 'width'
@@ -44,7 +45,7 @@ export function aboutTime(seconds, t) {
 // documented task fallback, rather than pretending the known subset is all of it.
 export function capabilityContext(node, state) {
     if (linked(node, 'conditioning') || linked(node, 'width') || linked(node, 'height')
-            || ['base_steps', 'refine_steps', 'two_pass'].some(name => linked(node, name))) return null;
+            || ['base_steps', 'refine_steps', 'two_pass', 'step_cache'].some(name => linked(node, name))) return null;
     let items, assets;
     try { items = referenceItems(node); assets = JSON.parse(value(upstream(node, 'media'), 'assets') || '[]'); }
     catch { return null; }
@@ -76,12 +77,15 @@ export function capabilityContext(node, state) {
     return query.toString();
 }
 
+// The grid's level with exactly this plan; a step cache tells High from Max at 20 steps.
+const gridTier = (grid, steps, twoPass, refine, stepCache) => Object.values(grid.tiers || {}).find(v => v.steps === steps
+    && v.two_pass === twoPass && (!v.two_pass || refine === 3) && stepCacheOf(v.step_cache) === stepCacheOf(stepCache));
+
 export function capabilitySurface(grid, state) {
     if (grid?.version !== 1 || grid.status !== 'ready' || typeof grid.revision !== 'string' || !grid.machine?.system
             || /darwin|mac|apple/i.test(grid.machine.system)
             || !Array.isArray(grid.sizes) || !grid.sizes.length || !Array.isArray(grid.lengths)) return null;
-    const tier = Object.values(grid.tiers || {}).find(v => v.steps === state.steps && v.two_pass === state.twoPass
-        && (!v.two_pass || state.refine === 3));
+    const tier = gridTier(grid, state.steps, state.twoPass, state.refine, state.stepCache);
     if (!tier || !Array.isArray(tier.estimate_seconds) || !Array.isArray(tier.max_seconds)) return null;
     const lengths = grid.lengths.map(l => l.seconds);
     if (!lengths.length || lengths.some((s, i) => !Number.isInteger(s) || s < 2 || (i && s <= lengths[i - 1]))) return null;
@@ -171,7 +175,7 @@ export function surfacePixels(surface, width, height) {
 }
 
 let serial = 0;
-export function createCapabilityView({node, api, t, getState, onPick, onEstimate}) {
+export function createCapabilityView({node, api, t, getState, onPick, onEstimate, onGrid}) {
     if (!document.querySelector('link[data-fv-capability]')) {
         const css = el('link', ''); css.rel = 'stylesheet'; css.dataset.fvCapability = '';
         css.href = new URL('./capability_view.css', import.meta.url).href; document.head.append(css);
@@ -241,7 +245,7 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     function paint(animate = false) {
         if (!surface || !opened || element.hidden || !plot.clientWidth) return;
         const dpr = Math.max(1, window.devicePixelRatio || 1), width = Math.round(plot.clientWidth * dpr), height = Math.round(plot.clientHeight * dpr);
-        const key = `${grid.revision}:${getState().steps}:${getState().twoPass}:${width}:${height}:${query}`;
+        const key = `${grid.revision}:${getState().steps}:${getState().twoPass}:${stepCacheOf(getState().stepCache)}:${width}:${height}:${query}`;
         if (key === drawn) { current(); return; }
         drawn = key;
         if (animate && canvas.width && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -266,6 +270,7 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
         current(); hideHover();
     }
     function applyGrid(animate = false) {
+        if (grid?.version === 1 && grid.status === 'ready') onGrid?.(grid);
         surface = capabilitySurface(grid, getState()); element.hidden = !surface;
         onEstimate?.();
         if (!surface) { hideHover(); return; }
@@ -370,9 +375,9 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     api.addEventListener('freevideo_capabilities', changed);
     const outside = event => { if (!plot.contains(event.target)) hideHover(); };
     node && window.addEventListener('pointerdown', outside);
-    return {element, update, estimate(steps, twoPass, refine) {
+    return {element, update, estimate(steps, twoPass, refine, stepCache = null) {
         if (!grid || !surface) return '';
-        const tier = Object.values(grid.tiers || {}).find(v => v.steps === steps && v.two_pass === twoPass && (!twoPass || refine === 3));
+        const tier = gridTier(grid, steps, twoPass, refine, stepCache);
         const i = grid.sizes.findIndex(s => s.width === Number(value(node, 'width')) && s.height === Number(value(node, 'height')));
         const j = grid.lengths.findIndex(l => l.seconds === Number(value(node, 'seconds')));
         const seconds = tier?.estimate_seconds?.[i]?.[j];

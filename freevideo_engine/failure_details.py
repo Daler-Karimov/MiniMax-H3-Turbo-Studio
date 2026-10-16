@@ -7,10 +7,11 @@ import sys
 
 from .long_paths import io_path, plain_text
 from .diagnostics import Redactor
+from .tiers import STEP_CACHES, TIERS, on_mac, table_level
 
 
 STEP_OUTPUT = '\n\nFull step output:\n'
-QUALITY_LEVELS = (('Light', '轻量'), ('Medium', '标准'), ('High', '精细'), ('Max', '极致'))
+QUALITY_LEVELS = (('Light', '轻量'), ('Medium', '标准'), ('High', '精细'), ('Max', '极致'))  # tiers.TIERS order
 
 
 IMAGE_PACK_FAILURES = {
@@ -69,9 +70,11 @@ def sampling_table_details(value):
                     and type(details['refine_steps']) is int and 0 <= details['refine_steps'] <= 31
                     and type(details['missing_bytes']) is int and details['missing_bytes'] > 0
                     and type(details['decimal_sizes']) is bool and isinstance(details['available'], list)
-                    and all(type(i) is int and 0 <= i <= 3 for i in details['available'])):
+                    and all(type(i) is int and 0 <= i <= 3 for i in details['available'])
+                    and details.get('step_cache') in STEP_CACHES):
                 return {key: details[key] for key in
-                        ('base_steps', 'two_pass', 'refine_steps', 'missing_bytes', 'available', 'decimal_sizes')}
+                        ('base_steps', 'two_pass', 'refine_steps', 'missing_bytes', 'available', 'decimal_sizes', 'step_cache')
+                        if key in details}
         except (ValueError, KeyError, TypeError):
             pass
     return None
@@ -83,9 +86,10 @@ def sampling_table_failure(value, *, zh=False):
         return None
     from .launcher_copy import size_text
     language = 1 if zh else 0
-    index = next((i for i, steps in enumerate((8, 12, 16, 20))
-                  if details['base_steps'] == steps and details['two_pass'] == (i == 0)
-                  and (i != 0 or details['refine_steps'] == 3)), None)
+    # Tables follow the step count; the cache tells high from max at 20 steps.
+    level = table_level(details['base_steps'], details['two_pass'], details['refine_steps'],
+                        details.get('step_cache'), on_mac())
+    index = list(TIERS).index(level) if level else None
     names = [('“%s”' if zh else '%s') % QUALITY_LEVELS[i][language] for i in sorted(set(details['available']))]
     available = ''
     if names:
@@ -577,7 +581,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('Click Repair to reinstall a complete copy of PyTorch. Models and videos are kept.',
           '请点“修复”，FreeVideo 会重新安装运行组件，模型和视频都会保留。')),
         (r'ModuleNotFoundError|No module named|DLL load failed', 'dependencies', *DEPENDENCIES),
-        (r'CUDA (?:error: )?out of memory|torch\.OutOfMemoryError|Insufficient currently available memory|crossed its RAM budget|paging file is too small|WinError 1455', 'memory',
+        (r'CUDA (?:error: )?out of memory|torch\.OutOfMemoryError|Insufficient currently available memory|crossed its RAM budget|paging file is too small|WinError 1455|os error 1455', 'memory',
          ('Memory is unavailable for this step', '这一步可用内存不足'),
          ('Close other memory-heavy applications and retry. Copy the details if it continues.', '关闭占用内存较多的程序后重试；仍失败时可复制详情反馈。')),
     )

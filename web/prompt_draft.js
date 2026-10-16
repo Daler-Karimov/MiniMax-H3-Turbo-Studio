@@ -2,9 +2,12 @@
 // alongside the existing schema-1 prompt draft; ordinary reloads keep their graph.
 const FILE = '/userdata/' + encodeURIComponent('freevideo/prompt-draft.json');
 const WIDGETS = ['text', 'width', 'height', 'seconds', 'seed', 'control_after_generate', 'two_pass',
-    'base_steps', 'refine_steps', 'force_regenerate', 'preview', 'refine_from', 'continue_from', 'frames', 'first_frame_reference'];
-const DEFAULTS = ['', 1344, 768, 10, 2026090903, 'randomize', true, 8, 3, false, false, '', '', 0, false];
-const SAVED_WIDGETS = WIDGETS.filter(name => !['text', 'force_regenerate', 'refine_from', 'continue_from', 'frames'].includes(name));
+    'base_steps', 'refine_steps', 'force_regenerate', 'preview', 'refine_from', 'continue_from', 'frames', 'first_frame_reference',
+    'voice_reference', 'hide_tail', 'step_cache'];
+const DEFAULTS = ['', 1344, 768, 10, 2026090903, 'randomize', true, 8, 3, false, false, '', '', 0, false, false, false, 'none'];
+const SAVED_WIDGETS = WIDGETS.filter(name => !['text', 'force_regenerate', 'refine_from', 'continue_from', 'frames',
+    'voice_reference', 'hide_tail'].includes(name));
+const STEP_CACHE_OPTIONS = ['none', 'easycache-av', 'fbcache'];
 const PROPERTIES = ['freevideo_aspect', 'freevideo_pixels', 'freevideo_seconds', 'freevideo_single',
     'freevideo_block_seconds', 'freevideo_run_mode', 'freevideo_batch_count'];
 const OUTBOX = 'freevideo.prompt-pending';
@@ -46,7 +49,8 @@ export function applyPromptDraft(workflow, draft) {
     for (const name of SAVED_WIDGETS) {
         const value = draft.widgets?.[name], index = WIDGETS.indexOf(name);
         if (value === undefined || typeof value !== typeof DEFAULTS[index]
-            || (typeof value === 'number' && !Number.isFinite(value))) continue;
+            || (typeof value === 'number' && !Number.isFinite(value))
+            || (name === 'step_cache' && !STEP_CACHE_OPTIONS.includes(value))) continue;
         while (node.widgets_values.length <= index) node.widgets_values.push(DEFAULTS[node.widgets_values.length]);
         node.widgets_values[index] = value;
     }

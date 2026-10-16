@@ -156,6 +156,13 @@ def connect_assets(assets, *, first=None, last=None, reference=None, reference_a
     return result
 
 
+def sampling_plan(report):
+    """The report's sampling plan, with the step cache its first pass used (names High and Max)."""
+    from .effort_forecast import report_step_cache
+    plan, cache = report.get('sampling_plan'), report_step_cache(report)
+    return dict(plan, step_cache=cache) if isinstance(plan, dict) and cache else plan
+
+
 def output_summary(report, relative_video):
     video = report.get('video', {})
     encoding = report.get('encoding', {})
@@ -175,7 +182,7 @@ def output_summary(report, relative_video):
                 gpu_total_bytes=report.get('profile', {}).get('policy', {}).get('hardware', {}).get('vram_total'),
                 # A small size is sampled larger and scaled back; people see the size they asked for.
                 geometry=dict(report.get('geometry', {}), **(report.get('output_size') or {})),
-                sampling_plan=report.get('sampling_plan'),
+                sampling_plan=sampling_plan(report),
                 low_memory=bool(report.get('low_memory_mode')),
                 thermal=thermal_slowdown(worker_gpu(report)),
                 shared_gpu=shared_gpu_note(worker_gpu(report)),

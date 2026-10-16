@@ -463,7 +463,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (focus && session === state.session) input.focus(); else if (narrow()) chats.focus();
         render(); void readConversations(true); void poll();
     }
-    async function startChat() {
+    // `from` is the message whose "New chat" was clicked: a failure is also written there, where the reader is looking.
+    async function startChat(from = null) {
         closeMenu();
         if (creating || !active() || conversations.supported !== true) return;
         creating = true; newError.hidden = true; renderConversations(); render();
@@ -476,7 +477,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 unsaidSessions.add(data.session); chooseChat(data.session, true);
             } else throw await requestError(response);
         } catch (error) {
-            if (!stopped) { newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = false; }
+            if (!stopped) {
+                newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = false;
+                if (from) from.error = newError.textContent;
+            }
         }
         finally { creating = false; if (!stopped) { renderConversations(); render(); } }
     }
@@ -598,12 +602,15 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                     error = el('span', 'fv-chat-error'); error.setAttribute('role', 'alert');
                     retry = press('fv-chat-retry', t('Retry', '重试'), () => {
                         const original = pending.find(value => value.id === entry.id);
+                        if (entry.errorCode === 'session_full') { void startChat(original || entry); return; }
                         if (original) void send(original.text, original);
                     });
                     status.append(error, retry); item.append(status);
                 }
                 error.textContent = entry.error || ''; error.hidden = !entry.error;
-                retry.disabled = entry.sending || !sendingAllowed();
+                const full = entry.errorCode === 'session_full';
+                retry.textContent = full ? t('New chat', '新对话') : t('Retry', '重试');
+                retry.disabled = entry.sending || (full ? creating : !sendingAllowed());
             } else if (status) { status.remove(); status = null; }
         }};
     }
@@ -933,6 +940,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (draft) entry.draft = draft;
         if (!original) pending.push(entry);
         if (!automatic) entry.attempts = 0;
+        entry.errorCode = null;
         if (!sendingAllowed()) {
             entry.automatic = true; entry.error = waitingNotice();
             say(entry.error); render(); report(); return false;
@@ -955,6 +963,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 return true;
             }
             const error = await sendError(response), refused = sendRefused(error, response);
+            entry.errorCode = error?.code;
             const waiting = !refused && (WAIT_FOR_AGENT.includes(error?.code) || !error && state.agent.connected !== true);
             const exhausted = entry.attempts >= SEND_ATTEMPTS;
             entry.automatic = waiting && !exhausted;
@@ -965,7 +974,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             if (entry.session === state.session) {
                 if (waiting && error?.code === 'not_connected') state = {...state, agent: {connected: false, name: null}};
                 if (waiting && error?.code === 'not_listening') state = {...state, agent: {...state.agent, listening: false}};
-                say(explanation);
+                say(entry.errorCode === 'session_full' ? '' : explanation);
             }
             return false;
         } finally {

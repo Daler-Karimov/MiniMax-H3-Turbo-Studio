@@ -9,10 +9,13 @@ import math
 import re
 
 from . import API_VERSION
+from .. import tiers
 
 S = 'https://json-schema.org/draft/2020-12/schema'
 PREFIX = '/freevideo/agent/v1'
-QUALITY = {'light': (True, 8, 3), 'medium': (False, 12, 3), 'high': (False, 16, 3), 'max': (False, 20, 3)}
+# (two_pass, base_steps, refine_steps) of each level on this platform; the step
+# cache a level adds is tiers.step_cache(name, mac) (none on Mac).
+QUALITY = {name: tiers.plan(name, mac=tiers.on_mac()) for name in tiers.TIERS}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),
            '21:9': (21, 9), '2:3': (2, 3), '3:2': (3, 2)}
 IMAGE_ASPECTS = {'1:1': (1024, 1024), '16:9': (1344, 768), '9:16': (768, 1344),
@@ -191,7 +194,7 @@ def generate(*, local=False):
                     {'required': ['sampling', 'quality'], 'properties': {
                         'sampling': {'required': ['two_pass'], 'not': {'required': ['base_steps']},
                                      'properties': {'two_pass': {'const': True}}},
-                        'quality': {'enum': ['medium', 'high', 'max']}}}]}}}],
+                        'quality': {'enum': [name for name, plan in QUALITY.items() if plan[1] != 8]}}}]}}}],
         description='x-job-kind selects normalization and checks derived geometry and sampling step comparisons; these calculations are not JSON Schema constraints.',
         **{'x-job-kind': 'generate'})
 

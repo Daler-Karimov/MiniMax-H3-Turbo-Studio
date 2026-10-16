@@ -1,41 +1,78 @@
 {
   "schema": 1,
-  "product_version": "0.4.8",
+  "product_version": "0.4.9",
   "en": {
-    "summary": "Long videos keep a steadier voice from part to part, and continuing a video keeps your reference pictures and characters. LoRA strength can be typed up to 100, large downloads move to a faster source on their own, and the second-pass button uses the earlier wording again, with smaller fixes to uploads, your creations, the waiting queue, diagnostic reports and the interface.",
+    "summary": "Quality levels are reworked: Medium is one pass of 8 steps, and High and Max use step caches to finish much sooner; decoding on Windows reads ahead earlier on slow drives, and the editor handles ranges, splits and text tracks more reliably.",
     "changes": [
-      "Second pass: the result button, preview badge, library and delete messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
-      "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used.",
-      "Characters: two @names written back to back are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. An @character written in the editing view's generation bar now carries that character's description and pictures, as it does in the creation panel.",
-      "LoRA: you can type a strength beyond -4 to 4, up to 100, and a note marks values outside the usual range; the slider and default strength are unchanged. A trigger word that only appears inside a longer word (sks in asks) is now added.",
-      "Image generation: an out-of-memory failure says where memory ran out and at which size, and the progress line shows the smaller size while retrying; if the background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well checks free space on the drive that holds the models and is not offered when there is not enough room.",
-      "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well. The missing-model hint names each download and its size, and is checked again after a generation ends.",
-      "Media uploads: the upload buttons list only the file types FreeVideo can use, and unsupported files in a multiple selection are skipped. Files over 2 GiB are turned away in the page, a failed or interrupted upload no longer leaves a partial file, and upload errors appear in your language.",
-      "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date.",
-      "Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
-      "Diagnostic report: the prompt-rewrite report no longer replaces the video's, the same file is saved and sent, and a large report is saved as a zip.",
-      "Wording: Agent chat, Settings, image generation and editor messages are shorter and say what to do next; the character library uses \"character\" throughout and its view labels are clearer.",
-      "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better and keep Feedback in the header; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
+      "Quality levels: Medium is one pass of 8 steps; High and Max run 20 steps with step caches and finish much sooner than plain 20 steps.",
+      "Decoding on Windows: read-ahead is sized by physical memory and starts earlier on slow drives, so the end of a run waits less for the disk.",
+      "When Windows runs out of virtual memory, in any system language, FreeVideo now retries the generation automatically in a fresh process and reports a memory shortage if it still fails.",
+      "The progress estimate counts reference images, so requests with reference images show a closer total time from the start.",
+      "Editor: dragging a range's left edge to the start of the timeline no longer pushes its right edge later; splitting a sped-up or reversed part keeps the fade-in only on the first half and the fade-out only on the second.",
+      "Editor: drag-selecting parts is smooth again on timelines with many parts.",
+      "Editor text: clicking the side Content box right after pressing T keeps the new text track, and dropping text onto a locked text track says the track is locked.",
+      "Long videos: each part's description can also be edited in a larger window.",
+      "Chat: when a conversation is full, the notice appears once under the message and its button starts a new chat instead of retrying.",
+      "Export: the sizes offered in the export dialog are rounded the same way as the saved work.",
+      "Diagnostic reports record how much of the graphics card other programs were using during each sampling step.",
+      "Launcher: when the browser cannot be opened automatically, the message says to click Copy address and open it in a browser, in Chinese as well. Canvas margin labels stay readable and aligned. Nodes: width, height, duration and seed have Chinese labels."
     ]
   },
   "zh": {
-    "summary": "长视频各段人声更一致，接着生成时保留参考图和角色。LoRA 强度可以手动输入到 100，大文件下载会自动换到更快的下载源，二次采样按钮恢复此前的说法；上传、作品库、等待队列、诊断报告和界面细节也有多处改进。",
+    "summary": "质量档位调整：标准为单遍 8 步，精细和极致用步间缓存，快得多；Windows 解码在慢硬盘上更早预读；编辑器的区间、切分和文字轨更可靠。",
     "changes": [
-      "二次采样：结果卡按钮、预览角标、作品库和删除提示恢复 0.4.6 的说法（继续二采、一采预览）。",
-      "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。在创作面板接着生成视频时，会保留参考图和角色，人物前后保持一致，最多使用 3 张图片。",
-      "角色：紧挨着写的两个 @名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么；剪辑视图的生成条里写 @角色，也会和创作面板一样带上该角色的描述和图片。",
-      "LoRA：强度可以手动输入超出 -4 到 4 的数，最大到 100，超出常用范围时有提示；滑块和默认强度不变。触发词只出现在更长的单词里（如 asks 里的 sks）时，现在也会自动加上。",
-      "图像生成：显存不够时写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸；后台进程刚启动就退出时自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始；“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。",
-      "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。缺模型提示写明是哪几项、各多大，生成结束后重新检查。",
-      "素材上传：上传按钮只列出能用的文件格式，一次选多个时跳过不支持的；超过 2 GiB 的文件在页面上直接拦下；上传失败或中断不再留下残留文件，出错提示用当前界面语言。",
-      "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。",
-      "等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
-      "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
-      "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
-      "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理，顶栏仍保留“反馈”入口；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
+      "质量档位：标准为单遍 8 步；精细和极致为 20 步加步间缓存，比纯 20 步快得多。",
+      "Windows 解码：预读按物理内存决定大小，并在慢硬盘上更早开始，生成收尾时等硬盘的时间更短。",
+      "Windows 虚拟内存耗尽时，不论系统语言，FreeVideo 现在会在新进程中自动重试生成，仍失败时提示内存不足。",
+      "进度估计把参考图计入，带参考图的请求一开始就显示更接近实际的总时间。",
+      "编辑器：把区间左边拖到时间线开头，右边不再被往后推；切分加速或倒放的片段时，淡入只留在前半段，淡出只留在后半段。",
+      "编辑器：片段很多时，框选重新变得流畅。",
+      "编辑器文字：按 T 后马上点侧边“内容”框，新文字轨会保留；把文字拖到已锁定的文字轨上会提示该轨已锁定。",
+      "长视频：每段描述也能在放大窗口里编辑。",
+      "对话：对话已满时，提示只在消息下出现一次，按钮换成“新对话”。",
+      "导出：导出窗口里给出的尺寸和保存的作品用同样的方式取整。",
+      "诊断报告记录每一步采样时其他程序占用显卡的比例。",
+      "启动器：浏览器没能自动打开时，提示点“复制地址”到浏览器里打开，中文界面也显示中文。画布边距标签更清楚、对齐。节点：宽度、高度、时长和种子有中文标签。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.8",
+      "en": {
+        "summary": "Long videos keep a steadier voice from part to part, and continuing a video keeps your reference pictures and characters. LoRA strength can be typed up to 100, large downloads move to a faster source on their own, and the second-pass button uses the earlier wording again, with smaller fixes to uploads, your creations, the waiting queue, diagnostic reports and the interface.",
+        "changes": [
+          "Second pass: the result button, preview badge, library and delete messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
+          "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used.",
+          "Characters: two character names typed back to back after the @ key are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. A character mentioned with @ in the editing view's generation bar now carries that character's description and pictures, as it does in the creation panel.",
+          "LoRA: you can type a strength beyond -4 to 4, up to 100, and a note marks values outside the usual range; the slider and default strength are unchanged. A trigger word that only appears inside a longer word (sks in asks) is now added.",
+          "Image generation: an out-of-memory failure says where memory ran out and at which size, and the progress line shows the smaller size while retrying; if the background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well checks free space on the drive that holds the models and is not offered when there is not enough room.",
+          "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well. The missing-model hint names each download and its size, and is checked again after a generation ends.",
+          "Media uploads: the upload buttons list only the file types FreeVideo can use, and unsupported files in a multiple selection are skipped. Files over 2 GiB are turned away in the page, a failed or interrupted upload no longer leaves a partial file, and upload errors appear in your language.",
+          "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date.",
+          "Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
+          "Diagnostic report: the prompt-rewrite report no longer replaces the video's, the same file is saved and sent, and a large report is saved as a zip.",
+          "Wording: Agent chat, Settings, image generation and editor messages are shorter and say what to do next; the character library uses \"character\" throughout and its view labels are clearer.",
+          "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better and keep Feedback in the header; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
+        ]
+      },
+      "zh": {
+        "summary": "长视频各段人声更一致，接着生成时保留参考图和角色。LoRA 强度可以手动输入到 100，大文件下载会自动换到更快的下载源，二次采样按钮恢复此前的说法；上传、作品库、等待队列、诊断报告和界面细节也有多处改进。",
+        "changes": [
+          "二次采样：结果卡按钮、预览角标、作品库和删除提示恢复 0.4.6 的说法（继续二采、一采预览）。",
+          "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。在创作面板接着生成视频时，会保留参考图和角色，人物前后保持一致，最多使用 3 张图片。",
+          "角色：紧挨着写的两个 @名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么；剪辑视图的生成条里写 @角色，也会和创作面板一样带上该角色的描述和图片。",
+          "LoRA：强度可以手动输入超出 -4 到 4 的数，最大到 100，超出常用范围时有提示；滑块和默认强度不变。触发词只出现在更长的单词里（如 asks 里的 sks）时，现在也会自动加上。",
+          "图像生成：显存不够时写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸；后台进程刚启动就退出时自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始；“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。",
+          "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。缺模型提示写明是哪几项、各多大，生成结束后重新检查。",
+          "素材上传：上传按钮只列出能用的文件格式，一次选多个时跳过不支持的；超过 2 GiB 的文件在页面上直接拦下；上传失败或中断不再留下残留文件，出错提示用当前界面语言。",
+          "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。",
+          "等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
+          "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
+          "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
+          "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理，顶栏仍保留“反馈”入口；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.7",
       "en": {
@@ -192,39 +229,6 @@
           "在页面上停止任务后，Agent 不再另外回复，也不会自行重试。",
           "Agent 请求的视频长度超出这台电脑能做的范围时，会收到明确的说明，不再出错。",
           "图像生成模型现在可以正常下载和安装。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.2",
-      "en": {
-        "summary": "Adds optional image generation models: generate and edit pictures, make several views for character cards, and let the agent use them. Also fixes several install and launcher issues.",
-        "changes": [
-          "Adds optional image generation models. \"Generate with AI\" in the media panel makes a picture from one sentence on a blank canvas, and \"Edit this\" in the image editor changes the current picture, with up to two more pictures from your media as references.",
-          "With the image generation models installed, character cards start from a front view and use it as the reference for three-quarter, side, back and close-up views; scene cards are made the same way.",
-          "The agent can generate or edit pictures and add them to your media, and can first make a frame with people placed as described, then generate the video from it.",
-          "Setup can install the image generation models at the same time (about 16 GB), and existing installs can download them in the background from the launcher; the download pauses while a video is generating.",
-          "Online installs into a folder the system code page cannot spell, such as a Chinese folder on an English system, no longer fail at the kernel check.",
-          "On Linux, when the system compiler is newer than the installed GPU toolkit supports, setup now uses a compatible compiler instead of stopping while building the GPU attention component.",
-          "When a Windows security feature blocks files FreeVideo needs, the error card now says so and notes that the setting may need to be changed in Windows.",
-          "After a launcher error, an address or path being typed in the settings is no longer reset to its previous value.",
-          "When the agent makes a film, a shot that continues the previous one is at least 10 seconds long, 10 seconds by default; a length this computer cannot make in one run is reported before generation starts.",
-          "In AI Autopilot, the conversation list updates as soon as a job starts or stops, and switching conversations quickly stays on the one selected."
-        ]
-      },
-      "zh": {
-        "summary": "新增可选的图像生成模型，可以生成和修改图片，为角色卡生成多个角度，Agent 也能使用；并修复了几处安装和启动器的问题。",
-        "changes": [
-          "新增可选的图像生成模型。素材面板的“AI 生成”可以在空白画布上用一句话生成一张图；图片编辑器里的“改这张”可以修改当前图片，还可以再选最多两张素材图作参考。",
-          "装有图像生成模型时，角色卡先生成正面像，再以它为参考生成四分之三侧面、侧面、背面和脸部特写；场景卡也用它生成。",
-          "Agent 可以生成或修改图片并放进素材，也可以先按描述的人物站位生成一张首帧，再用它生成视频。",
-          "安装时可以选择同时安装图像生成模型（约 16 GB）；已经安装 FreeVideo 的，可以在启动器里下载，下载在后台进行，生成视频时自动暂停。",
-          "英文系统上在线安装到中文文件夹时，内核检查不再因为路径无法识别而失败。",
-          "Linux 上系统编译器比 GPU 工具包支持的版本更新时，安装会换用兼容的编译器，不再停在编译 GPU 注意力加速组件这一步。",
-          "Windows 的安全功能拦下运行所需的文件时，错误卡会说明原因，并提示可能需要在 Windows 中调整这项设置。",
-          "启动器出错后，设置里正在输入的地址或路径不再被换回原值。",
-          "Agent 拍片时，接上一镜的镜头每段至少 10 秒，没写长度时默认 10 秒；这台电脑一次生成不了的长度会在开始前说明。",
-          "“AI 全自动”里任务开始或停止后，对话列表立刻更新；快速切换对话时停在所选的那一段。"
         ]
       }
     }

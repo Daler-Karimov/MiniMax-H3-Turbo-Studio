@@ -767,10 +767,74 @@ def adaln_extra_bytes(canvas=None):
     return max(0, steps - 8) * times_per_step * 50 * 3 * 6 * 5376 * 2
 
 
-def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
-           gpu_reserve_gib=None, ram_reserve_gib=None, available_backends=None, canvas=None,
-           demonstrated_ram_bytes=None, allow_capacity_trial=False, stage='generation',
-           lora_max_block_bytes=0, lora_root_bytes=0, precision='fp8'):
+STEP_CACHES = ('easycache-av', 'fbcache')
+# Engine choices the first-block cache may change. B200 at 24 GiB, 20 steps with the
+# cache against without: 8 resident blocks given up 297 s vs 396 s sampling (20 s),
+# head chunk 16 -> 8 368 s vs 439 s, 28 -> 16 149-166 s vs 184-200 s (10 s). Host pins
+# follow the GPU placement. Anything else (prefetch, attention outputs on the CPU, ...)
+# costs more than the skipped steps save, and the request runs every step instead.
+FIRST_BLOCK_CACHE_MAY_CHANGE = ('pin_host_gb', 'resident_blocks', 'head_chunk')
+# Reserved growth over the counted video rows: 3.34 GiB measured / 2.87 GiB counted (B200, 20 s 1344x768).
+FIRST_BLOCK_CACHE_RESERVED_SCALE = 1.17
+
+
+def first_block_cache_bytes(canvas):
+    """GPU storage the first-block cache keeps through a sampling pass.
+
+    It holds two packed residuals of the last full step: block 0's output and
+    the remaining blocks' contribution, BF16 rows of 5376 channels. At 20 s of
+    1344x768 the video rows are 2 x 1.43 GiB; B200 measured 2.98 GiB more
+    allocated and 3.34 GiB more reserved than the same request without it (text
+    and audio rows, allocator rounding), so the rows are scaled to the reserved
+    growth.
+    """
+    from .two_pass import placement_tokens
+    return math.ceil(2 * placement_tokens(canvas) * 5376 * 2 * FIRST_BLOCK_CACHE_RESERVED_SCALE)
+
+
+def choose(hardware: Hardware, *, canvas=None, stage='generation', **options):
+    """Placement for a request; canvas['step_cache'] asks for a step cache.
+
+    The first-block cache is kept when reserving its storage only gives up
+    resident blocks or at most halves the head chunk; otherwise the request
+    samples every step in full. EasyCache keeps only latent-sized tensors and
+    is always kept.
+    """
+    wanted = (canvas or {}).get('step_cache') if stage == 'generation' else None
+    if wanted is None:
+        plain = canvas if canvas is None or 'step_cache' not in canvas else {
+            key: value for key, value in canvas.items() if key != 'step_cache'}
+        return _choose(hardware, canvas=plain, stage=stage, **options)
+    if wanted not in STEP_CACHES:
+        raise ValueError('Step cache must be one of ' + ', '.join(STEP_CACHES))
+    from dataclasses import replace
+    plain = {key: value for key, value in canvas.items() if key != 'step_cache'}
+    base = _choose(hardware, canvas=plain, stage=stage, **options)
+    kept, note = True, None
+    if wanted == 'fbcache':
+        try:
+            cached = _choose(hardware, canvas=plain, stage=stage, step_cache_bytes=first_block_cache_bytes(plain), **options)
+        except ResourceBudgetError:
+            cached = None
+        route = lambda engine: {key: value for key, value in engine.items() if key not in FIRST_BLOCK_CACHE_MAY_CHANGE}
+        kept = (cached is not None and route(cached.engine) == route(base.engine)
+                and 2 * (cached.engine.get('head_chunk') or 0) >= (base.engine.get('head_chunk') or 0))
+        note = ('First-block cache keeps %.2f GiB of residuals in free GPU memory.' if kept else
+                'First-block cache needs %.2f GiB the placement does not leave free; every step runs in full.'
+                ) % (first_block_cache_bytes(plain) / GiB)
+        if kept:
+            # Decoding starts after the pass has released the cache.
+            base = replace(base, engine=cached.engine)
+    # Without a cache the engine options stay exactly those of a plain request,
+    # so its history and identities still match.
+    return replace(base, engine=dict(base.engine, step_cache=wanted) if kept else base.engine,
+                   notes=list(base.notes) + ([note] if note else []))
+
+
+def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
+            gpu_reserve_gib=None, ram_reserve_gib=None, available_backends=None, canvas=None,
+            demonstrated_ram_bytes=None, allow_capacity_trial=False, stage='generation',
+            lora_max_block_bytes=0, lora_root_bytes=0, precision='fp8', step_cache_bytes=0):
     """precision is the prepared cache's: int8 caches run int8 projections."""
     from .geometry import geometry
     if stage not in ('encoding', 'generation'):
@@ -791,7 +855,7 @@ def choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto',
     lora_workspace = (128 * 2**20 + 2 * lora_max_block_bytes + lora_root_bytes
                       if lora_max_block_bytes or lora_root_bytes else 0)
     table_workspace = adaln_extra_bytes(canvas) if stage == 'generation' else 0
-    placement_workspace = lora_workspace + table_workspace
+    placement_workspace = lora_workspace + table_workspace + step_cache_bytes
     if canvas is not None:
         checked = geometry(canvas['width'], canvas['height'], frames=canvas['frames'])
         if any(canvas.get(k) != checked[k] for k in ('width', 'height', 'frames', 'video_tokens')):

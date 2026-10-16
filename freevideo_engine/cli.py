@@ -113,6 +113,8 @@ def main():
     generate.add_argument('--seed', type=int, default=2026090901)
     generate.add_argument('--two-pass', action=argparse.BooleanOptionalAction, default=True,
                           help='Sample a smaller canvas, upscale latents and refine (default: on; 8 + 3 steps)')
+    generate.add_argument('--step-cache', choices=('easycache-av', 'fbcache'),
+                          help='Approximate reuse between sampling steps (disabled by default)')
     generate.add_argument('--base-steps', type=int, choices=range(1, 33), metavar='1..32',
                           help='First-pass steps (default: 8, or explicit profile). Changes may reduce quality.')
     generate.add_argument('--refine-steps', type=int, choices=range(1, 32), default=3, metavar='1..31',
