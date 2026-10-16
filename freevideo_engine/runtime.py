@@ -780,6 +780,15 @@ class Engine:
                     step_callback(value)
                 if active_steps > 1 and len(self) == prefetch_step:
                     trigger_prefetch()
+                elif active_steps > 1 and 1 < len(self) < prefetch_step and owner.drive_idle:
+                    # A drive too slow to read the decoder in the last two steps
+                    # starts sooner. The first step carries compilation, so the
+                    # remaining time comes from the steps after it.
+                    due = getattr(final_step_callback, 'due', None)
+                    if due is not None and prefetch_timing['trigger_step'] is None:
+                        steady = list(self)[1:]
+                        if due(sum(steady) / len(steady) * (active_steps - len(self))):
+                            trigger_prefetch()
 
         owner = self
         step_seconds = StepTimes()

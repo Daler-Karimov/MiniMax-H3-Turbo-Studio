@@ -267,6 +267,8 @@ def generate(request, resident=None):
             metrics['latent_reload_seconds'] = time.perf_counter() - tick
             metrics['transformer_released_before_decode'] = resident is None or not resident.engine_on_gpu()
         else:
+            from .sampling_memory import SamplingMemory as _Counters
+            load_read_start = _Counters.process_counters().get('read_bytes')
             tick = time.perf_counter()
             # Windows charges the allocator room still to be reserved to commit;
             # the engine keeps that room out of its locked weights.
@@ -279,6 +281,8 @@ def generate(request, resident=None):
                               'epoch': time.time(), 'seconds': time.perf_counter() - started}), flush=True)
             engine, reused = resident.engine(request, factory) if resident is not None else (factory(), False)
             loaded_seconds = time.perf_counter() - tick
+            load_read_end = _Counters.process_counters().get('read_bytes')
+            load_read_bytes = (load_read_end - load_read_start) if all(isinstance(v, (int, float)) for v in (load_read_start, load_read_end)) else None
             metrics.update(config=dict(engine.config), load_seconds=loaded_seconds,
                            resident_engine_cache_hit=reused,
                            load_breakdown=({'resident_lookup_seconds': loaded_seconds} if reused else engine.load_breakdown), phase='sample',
@@ -303,6 +307,11 @@ def generate(request, resident=None):
             def read_decoder_ahead():
                 # Every offloaded layer in memory and none read in the last step.
                 decode_read_ahead.start(drive_idle=getattr(engine, 'drive_idle', False) is True)
+            if hasattr(decode_read_ahead, 'due'):
+                read_decoder_ahead.due = decode_read_ahead.due
+                if not reused and isinstance(load_read_bytes, (int, float)) and loaded_seconds > 0:
+                    decode_read_ahead.load_read_rate = load_read_bytes / loaded_seconds
+                    decode_read_ahead.result['load_read_bytes_per_second'] = round(decode_read_ahead.load_read_rate)
             from .sampling_memory import SamplingMemory
             memory_diagnostics = SamplingMemory(torch, Path(request['output']).with_suffix('.sampling-memory.json')).start()
             from . import frame_preview
