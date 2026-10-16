@@ -1,6 +1,6 @@
 import { api } from '../../scripts/api.js';
 import { closeDialog } from './motion.js';
-import { resultActions, previewBadge } from './result_actions.js';
+import { resultActions, previewBadge, icon } from './result_actions.js';
 import { videoUnavailableText } from './studio_extend.js';
 import { topDialog } from './dialog_keys.js';
 
@@ -167,12 +167,21 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     dialog.setAttribute('aria-label', t('Your creations', '我的作品'));
     const header = el('header', null, 'fv-library-header');
     // Closing returns to the view this was opened from; that view names itself on the button.
-    const back = button(backLabel || t('Back to create', '返回创作'), () => closeDialog(dialog), 'fv-quiet');
+    const backText = backLabel || t('Back to create', '返回创作');
+    const back = button('', () => closeDialog(dialog), 'fv-quiet fv-library-back');
+    back.setAttribute('aria-label', backText); back.title = backText;
+    back.append(icon('back'), el('span', backText, 'fv-library-back-label'));
     const title = el('h2', t('Your creations', '我的作品'));
     const refresh = button(t('Refresh', '刷新'), () => load(false), 'fv-quiet');
     const choose = button(t('Select', '选择'), () => setSelecting(!selecting), 'fv-quiet fv-library-choose');
     const tools = el('div', null, 'fv-library-tools'); tools.append(choose, refresh);
     header.append(back, title, tools);
+    // Try the full label on each resize, so wider windows restore it too.
+    const headerObserver = new ResizeObserver(() => {
+        header.dataset.compact = 'false';
+        header.dataset.compact = String(title.scrollWidth > title.clientWidth || header.scrollWidth > header.clientWidth);
+    });
+    headerObserver.observe(header); headerObserver.observe(tools);
     const body = el('div', null, 'fv-library-body');
     const collection = el('section', null, 'fv-library-collection'); collection.setAttribute('aria-label', t('Saved videos', '已保存的视频'));
     const grid = el('div', null, 'fv-library-grid');
@@ -668,6 +677,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     window.addEventListener('freevideo-result', completed);
     dialog.addEventListener('cancel', event => { event.preventDefault(); if (selecting && !deleting) setSelecting(false); else closeDialog(dialog); });
     dialog.onclose = () => {
+        headerObserver.disconnect();
         disposed = true; abort.abort(); thumbnails.disconnect(); releasePlayer(); clearTimeout(undoTimer); clearTimeout(sizeTimer); clearTimeout(syncTimer);
         window.removeEventListener('freevideo-result', completed); window.removeEventListener('storage', undoChanged); window.removeEventListener('freevideo-library-undo', showUndo); window.removeEventListener('freevideo-library-deleted', deletedElsewhere); dialog.remove();
         if (opened === dialog) opened = null;
