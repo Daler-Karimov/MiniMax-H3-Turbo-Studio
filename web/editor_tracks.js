@@ -521,6 +521,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 if (seam === 'continued' && pixels(clip.frames) >= 26) {
                     if (!mark) { mark = create('span', 'fv-ed-seam-mark'); mark.setAttribute('aria-hidden', 'true'); mark.dataset.kind = seam; mark.append(icon('link')); item.element.append(mark); }
                 } else mark?.remove();
+                item.element.classList.toggle('fv-ed-seamed', !!item.element.querySelector(':scope > .fv-ed-seam-mark'));
                 const failureText = visual === 'failed' ? actions.failureText?.(clip.id) || actions.reasonText?.(clip.reason) || clip.reason || t('Generation failed', '生成时出错') : '';
                 if (visual === 'failed') item.status.replaceChildren(icon('warning'), create('span', 'fv-ed-clip-failure-reason', failureText));
                 else item.status.replaceChildren();
