@@ -185,7 +185,8 @@
  .fv-ed-ref-chips{max-width:calc(100vw - 96px)}
  .fv-ed-gen-hint{flex:1 0 auto;white-space:nowrap}
  .fv-ed-gen-note{order:-1;flex:1 1 100%;white-space:normal}
- .fv-editor .fv-ed-genbar>button{margin-left:auto;max-width:100%;font-size:12px}
+ .fv-editor .fv-ed-genbar>button{margin-left:auto;max-width:100%;height:36px;min-height:36px;font-size:12px}
+ .fv-editor .fv-ed-genbar>button:not([hidden]) ~ button:not([hidden]){margin-left:0}
  .fv-ed-name-menu{position:fixed;top:120px;left:8px}
  .fv-ed-notice{top:60px;bottom:auto;pointer-events:none}
  .fv-ed-save-warning{position:absolute;top:60px;left:8px;right:8px;border:1px solid var(--fv-border);background:var(--fv-card);padding:8px 12px;border-radius:8px;z-index:9}
