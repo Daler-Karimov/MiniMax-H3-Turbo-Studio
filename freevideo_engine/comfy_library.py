@@ -182,7 +182,8 @@ def video_download(output_directory, identity):
 _OWNED_FILE = re.compile(r'(?:video\.[A-Za-z0-9._-]+|prompt\.txt|workflow\.json|comfy-request\.json|generate\.log'
                          r'|continuation-source\.safetensors'
                          r'|media\.json|prompt-rewrite\.json|input-conditioning\.pt|(?:first|last)\.png'
-                         r'|reference-\d{2}\.(?:png|mp4|wav))(?:\.[a-z0-9_]{8}\.tmp)?')
+                         r'|reference-\d{2}\.(?:png|mp4|wav)'
+                         r'|\.(?:share|editor-export)-[0-9a-f]{32}\.mp4)(?:\.[a-z0-9_]{8}\.tmp)?')
 _OWNED_FOLDER = 'video.artifacts'
 _REPARSE_POINT = 0x400
 
@@ -333,6 +334,45 @@ def release_decoded(folder):
     except OSError:
         # Listed as left, so a later start tries the whole folder again.
         return dict(freed_bytes=0, left=['.'], skipped='unreadable')
+
+
+# What an interrupted share or editor export leaves beside a creation: its working copy,
+# written under a random name and renamed only when finished.
+_INTERRUPTED = re.compile(r'\.(?:share|editor-export)-[0-9a-f]{32}\.mp4')
+
+
+def clean_interrupted(output_directory, *, older=3600., now=None):
+    """Delete working copies of shares and exports that a closed program left behind.
+
+    Only files not written to for ``older`` seconds, so one being written now stays. A folder
+    that holds nothing else afterwards (an export that never finished) goes with it.
+    Returns the bytes freed.
+    """
+    try:
+        output_directory = checked_real_path(output_directory)
+    except AliasUnavailable:
+        return 0
+    root = Path(output_directory).resolve() / 'FreeVideo'
+    now = time.time() if now is None else now
+    freed = 0
+    for path in sorted(root.glob('*/*/.*.mp4')):
+        try:
+            folder = path.parent
+            if (not _INTERRUPTED.fullmatch(path.name) or not _ID.fullmatch(folder.relative_to(root).as_posix())
+                    or not _plain(folder.parent) or not _plain(folder) or not _plain(path)):
+                continue
+            info = path.stat()
+            if now - info.st_mtime < older:
+                continue
+            path.unlink()
+            freed += info.st_size
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            continue
+    return freed
 
 
 def release_later(output_directory):
@@ -1016,6 +1056,12 @@ def register():
                              result['freed_bytes'] / 1e9, result['videos'])
         except Exception:
             logging.warning('FreeVideo could not free the decoded files of earlier videos.', exc_info=True)
+        try:
+            freed = clean_interrupted(folder_paths.get_output_directory())
+            if freed:
+                logging.info('FreeVideo removed %.1f MB left by an interrupted share or export.', freed / 1e6)
+        except Exception:
+            logging.warning('FreeVideo could not remove files left by an interrupted share or export.', exc_info=True)
         try:
             # A deletion the last session did not finish: its undo time is long over.
             finish_deleted(folder_paths.get_output_directory(), everything=True)
