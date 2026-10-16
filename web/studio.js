@@ -18,7 +18,7 @@ import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, mediaRows } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, handleNames, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
 import { attachMentionOverlay } from './cast_overlay.js';
@@ -552,7 +552,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     mention.title = mention.getAttribute('aria-label');
     mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault(); promptEditor.append(mention);
     cleanup.push(() => references.dispose());
-    const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd)});
+    const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd, handleNames(castChoices()))});
     cleanup.push(() => terms.dispose());
     const castOverlay = attachMentionOverlay(prompt, {people: () => castInRows(mediaRows(node))});
     // The library's entry row rings the characters this prompt uses.

@@ -122,12 +122,22 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             status.textContent = content; status.hidden = !content; status.classList.toggle('fv-cast-notice', notice);
         };
         const aiBusy = () => aiState.busy || !!generator?.isBusy();
+        // What is still missing before Save works ('' when nothing is); the button says so on hover and when pressed.
+        let missing = '';
+        const missingNow = () => !name.value.trim() ? text('Enter a name first', '先填写名字')
+            : aiBusy() ? text('Wait for the five pictures to finish', '等待五张图生成完成')
+            : active === 'upload' ? (frontless ? slots.some(Boolean) : slots[0]) ? '' : frontless ? text('Add an image first', '先添加图片') : text('Add a front image first', '先添加正面图片')
+            : aiState.done ? '' : text('Generate the images first', '先生成角色图片');
         function sync() {
             const busy = loading || saving;
             name.disabled = busy; remove.disabled = busy;
             uploadTab.disabled = aiTab.disabled = busy;
-            save.disabled = busy || aiBusy() || !name.value.trim()
-                || (active === 'upload' ? !(frontless ? slots.some(Boolean) : slots[0]) : !aiState.done);
+            const before = missing;
+            missing = busy ? '' : missingNow();
+            save.disabled = busy;
+            if (missing) { save.setAttribute('aria-disabled', 'true'); save.title = missing; }
+            else { save.removeAttribute('aria-disabled'); save.removeAttribute('title'); }
+            if (before && before !== missing && status.textContent === before) message('');
             for (let index = 0; index < slotUI.length; index++) {
                 slotUI[index].choose.disabled = busy; slotUI[index].remove.disabled = busy;
             }
@@ -218,7 +228,8 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             } else message(error.message);
         }
         async function saveCard() {
-            if (save.disabled || closed) return;
+            if (closed || save.disabled) return;
+            if (missing) { message(missing, true); return; }
             saving = true; resetDelete(); message(''); sync();
             try {
                 const pictures = active === 'upload' ? slots.filter(Boolean) : generator.getPictures().map((picture, index) => ({

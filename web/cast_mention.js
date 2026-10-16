@@ -63,19 +63,17 @@ export function mentionedIds(text, rows) {
 }
 
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// Where `@name` of a present character stands in the text; longer names win, an @ right after a word or an address is not
-// a mention (the same rule as the @ list's).
+// Where `@name` of a present character stands in the text; longer names win, an @ right after a Latin word or an address is
+// not a mention (the same rule as the @ list's), but one right after another name or a Chinese character is.
 export function mentionRanges(text, people) {
     const names = [...new Set(people.map(person => person.handle ?? person.name).filter(Boolean))].sort((a, b) => b.length - a.length);
     if (!names.length || !text.includes('@')) return [];
     // A name written in Latin letters does not end in the middle of a longer word ("@Su Wanda" is not "@Su Wan").
     const whole = name => escape(name) + (/[A-Za-z0-9_]$/.test(name) ? '(?![A-Za-z0-9_])' : '');
-    const pattern = new RegExp('(^|[^\\w.%+\\-])@(' + names.map(whole).join('|') + ')', 'gu');
+    const pattern = new RegExp('(?<![\\w.%+\\-])@(' + names.map(whole).join('|') + ')', 'gu');
     const ranges = [];
-    for (const match of text.matchAll(pattern)) {
-        const start = match.index + match[1].length;
-        ranges.push({start, end: start + 1 + match[2].length, name: match[2]});
-    }
+    for (const match of text.matchAll(pattern))
+        ranges.push({start: match.index, end: match.index + 1 + match[1].length, name: match[1]});
     return ranges;
 }
 
