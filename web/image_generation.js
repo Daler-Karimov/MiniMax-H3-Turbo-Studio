@@ -36,6 +36,7 @@ export function blankCanvasSize(ratio, sizes = null) {
 }
 const failure = (code, info = {}) => Object.assign(new Error(code || 'generation_failed'), {
     code: code || 'generation_failed', report_id: info.report_id || null, stage: info.stage || '',
+    fitted: info.fitted || null,
 });
 
 export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThis)) {
@@ -123,6 +124,20 @@ export function imageGenError(code, info, t) {
         generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
     };
     if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);
+    if (code === 'no_memory') {
+        // Where it ran out decides what helps: the reference pictures are read at a fixed size,
+        // so a smaller canvas does not change that stage.
+        const stage = info?.stage, size = info?.fitted;
+        if (stage === 'encode')
+            return t('Not enough GPU memory to load the reference images. Use fewer reference images, or close other apps using the GPU, then try again.',
+                '显存不够，参考图没能载入。少用几张参考图，或关掉其他占用显卡的程序后再试。');
+        if (stage === 'load' || stage === 'text')
+            return t('Not enough GPU memory to load the model. Close other apps using the GPU, then try again.',
+                '显存不够，模型没能载入。关掉其他占用显卡的程序后再试。');
+        if (size?.width && size?.height)
+            return t(`Not enough GPU memory, even at ${size.width}\u00a0×\u00a0${size.height}. Close other apps using the GPU, then try again.`,
+                `显存不够，${size.width}\u00a0×\u00a0${size.height} 也没能生成。关掉其他占用显卡的程序后再试。`);
+    }
     return t(...(Object.hasOwn(reasons, code) ? reasons[code] : reasons.generation_failed));
 }
 
@@ -144,7 +159,7 @@ export const REPORT_LABELS = Object.freeze({
 
 // Shared by the editor and the other image entry points. Only the opaque report
 // ID goes in the request; raw service messages are never shown in the page.
-export function renderImageFailure(host, {error, report_id} = {}, t,
+export function renderImageFailure(host, {error, report_id, stage, fitted} = {}, t,
     {productVersion = () => null, fetchApi = globalThis.fetch.bind(globalThis)} = {}) {
     host.replaceChildren();
     if (!error || error === 'cancelled') return null;
@@ -155,7 +170,7 @@ export function renderImageFailure(host, {error, report_id} = {}, t,
     }
     const card = doc.createElement('div'); card.className = 'fv-result-links';
     const reason = doc.createElement('div'); reason.className = 'fv-image-failure-reason';
-    reason.setAttribute('role', 'status'); reason.textContent = imageGenError(error, null, t);
+    reason.setAttribute('role', 'status'); reason.textContent = imageGenError(error, {stage, fitted}, t);
     card.append(reason); host.append(card);
     if (!report_id) return card;
     const fetchReport = async () => {
@@ -297,7 +312,8 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
         waiting: '', fitted: null};
     const emit = patch => { state = {...state, ...patch}; if (!disposed) onChange(state); };
     const failed = error => error.code === 'cancelled' ? {error: '', report_id: null, stage: ''}
-        : {error: error.code || 'generation_failed', report_id: error.report_id || null, stage: error.stage || ''};
+        : {error: error.code || 'generation_failed', report_id: error.report_id || null, stage: error.stage || '',
+            ...(error.fitted ? {fitted: error.fitted} : {})};
     const cancelJob = job => Promise.resolve().then(() => client.cancel(job)).catch(() => {});
     const forget = () => { try { store?.clear(); } catch { /* the job is only not resumed after a reload */ } };
     function scheduleInfo() {
@@ -546,7 +562,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         action.hidden = !!missing;
         const percent = Math.floor(state.fraction * 100) + '%';
         if (state.error && !promptRequired) {
-            const failureKey = `${state.error}:${state.report_id || ''}`;
+            const failureKey = `${state.error}:${state.report_id || ''}:${state.stage || ''}`;
             if (mounted.failureKey !== failureKey) {
                 renderImageFailure(note, state, t, {productVersion, fetchApi});
                 mounted.failureKey = failureKey;
@@ -556,6 +572,8 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             note.textContent = missing ? imagePackUnavailableMessage(state.info, t)
                 : promptRequired ? t('Write a short description first.', '请先写一句画面描述。')
                 : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
+                : state.running && state.fitted ? t(`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
+                    `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`) + ' · ' + percent
                 : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent
                 : state.fitted ? fittedNote(state.fitted, t) : '';
         }

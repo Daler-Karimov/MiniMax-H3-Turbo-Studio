@@ -14,7 +14,8 @@ const VIEW_TITLES = Object.freeze({
 });
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-const failureOf = error => ({error: error?.code || 'generation_failed', report_id: error?.report_id || null});
+const failureOf = error => ({error: error?.code || 'generation_failed', report_id: error?.report_id || null,
+    stage: error?.stage || '', fitted: error?.fitted || null});
 const randomSeed = () => crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
 
 // The five pictures of one description. No DOM: the page below draws its state.
@@ -40,7 +41,8 @@ export function createCastGenerator({client, onChange = () => {}, schedule = set
             const status = await client.status(job);
             if (!alive()) return null;
             if (status.state === 'error') {
-                throw Object.assign(new Error(status.error), {code: status.error, report_id: status.report_id});
+                throw Object.assign(new Error(status.error), {code: status.error, report_id: status.report_id,
+                    stage: status.stage, fitted: status.fitted});
             }
             if (status.state === 'done') {
                 if (!status.file) throw new Error('generation_failed');
@@ -175,7 +177,7 @@ export function mountCastGenerate({container, api, text, t = text, viewURL, onSt
             cell.fill.style.width = (active ? row.fraction * 100 : 0) + '%';
         });
         if (state.error) {
-            const key = `${state.error}:${state.report_id || ''}`;
+            const key = `${state.error}:${state.report_id || ''}:${state.stage || ''}`;
             if (failureKey !== key) { renderImageFailure(note, state, tr, {fetchApi: fetcher}); failureKey = key; }
         } else {
             failureKey = null;
