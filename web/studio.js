@@ -45,6 +45,23 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
+// The usual LoRA strength range is -4 to 4; a value the user types by hand may go further, up to 100.
+const LORA_USUAL = 4, LORA_LIMIT = 100;
+let loraRangeCount = 0;
+function loraStrengthBox(initial, commit) {
+    const input = document.createElement('input'), mark = document.createElement('span');
+    input.type = 'number'; input.step = '.05'; input.value = initial;
+    mark.id = 'fv-lora-range-' + ++loraRangeCount; input.setAttribute('aria-describedby', mark.id);
+    mark.className = 'fv-lora-range'; mark.textContent = t('Outside usual range', '超出常用范围');
+    const sync = () => {
+        const number = Number(input.value), filled = input.value !== '';
+        mark.hidden = !(filled && Math.abs(number) > LORA_USUAL && Math.abs(number) <= LORA_LIMIT);
+        input.setCustomValidity(filled && !(Math.abs(number) <= LORA_LIMIT) ? t('Enter a value from -100 to 100.', '请输入 -100 到 100 之间的数。') : '');
+    };
+    input.oninput = sync; input.onchange = () => { sync(); if (input.reportValidity()) commit(); };
+    sync();
+    return {input, mark};
+}
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./studio.css', import.meta.url).href; document.head.append(css);
 const effortCss = document.createElement('link'); effortCss.rel = 'stylesheet'; effortCss.href = new URL('./sampling_effort.css', import.meta.url).href; document.head.append(effortCss);
 const enhanceCss = document.createElement('link'); enhanceCss.rel = 'stylesheet'; enhanceCss.href = new URL('./prompt_enhance.css', import.meta.url).href; document.head.append(enhanceCss);
@@ -306,8 +323,8 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 const pinned = recentLoras().filter(n => names.includes(n));
                 for (const name of [...new Set([...pinned, ...names, row.name])].filter(Boolean)) { const option = el('option', name); option.value = name; select.append(option); }
                 select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; rememberLora(row.name); write(rows); };
-                const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = row.strength ?? 1;
-                strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度')); strength.onchange = () => { if (strength.reportValidity() && strength.value !== '') { row.strength = Number(strength.value); write(rows); } };
+                const {input: strength, mark: strengthMark} = loraStrengthBox(row.strength ?? 1, () => { if (strength.value !== '') { row.strength = Number(strength.value); write(rows); } });
+                strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度'));
                 const trigger = el('input', null, 'fv-lora-trigger'); trigger.type = 'text'; trigger.maxLength = 300;
                 trigger.dataset.name = row.name;
                 trigger.placeholder = t('Trigger words', '触发词'); trigger.setAttribute('aria-label', trigger.placeholder);
@@ -332,7 +349,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 };
                 select.disabled = strength.disabled = trigger.disabled = row.enabled === false;
                 const remove = button('×', () => { rows.splice(index, 1); write(rows); }); remove.setAttribute('aria-label', t('Remove LoRA', '移除 LoRA'));
-                wrap.append(enabled, select, strength, remove, trigger);
+                wrap.append(enabled, select, strength, remove, trigger, strengthMark);
                 if (rows.length > 1) {
                     const order = el('div', null, 'fv-lora-order');
                     for (const [label, delta] of [['↑', -1], ['↓', 1]]) {
@@ -708,8 +725,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
         for (const name of widget(loraNode, 'lora').options?.values || ['None']) { const o = el('option', name); o.value = name; select.append(o); }
         select.value = value(loraNode, 'lora'); select.onchange = () => { set(loraNode, 'lora', select.value); requestAssets?.refresh(); };
-        const strength = el('input'); strength.type = 'number'; strength.min = '-4'; strength.max = '4'; strength.step = '.05'; strength.value = value(loraNode, 'strength'); strength.onchange = () => { if (strength.reportValidity()) { set(loraNode, 'strength', Number(strength.value)); requestAssets?.refresh(); } };
-        loraMount.append(field(t('LoRA', 'LoRA'), select), field(t('Strength', '强度'), strength), el('p', loraWarning(), 'fv-lora-note'));
+        const {input: strength, mark: strengthMark} = loraStrengthBox(value(loraNode, 'strength'), () => { set(loraNode, 'strength', Number(strength.value)); requestAssets?.refresh(); });
+        loraMount.append(field(t('LoRA', 'LoRA'), select), field(t('Strength', '强度'), strength), strengthMark, el('p', loraWarning(), 'fv-lora-note'));
     } else loraMount.append(el('p', loraWarning(), 'fv-lora-note'));
     const [, advanced] = expand(t('Advanced', '高级选项'));
     const custom = el('div', null, 'fv-fields');

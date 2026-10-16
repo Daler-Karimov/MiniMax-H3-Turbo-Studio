@@ -404,7 +404,7 @@ class FreeVideoLoRA(io.ComfyNode):
         return io.Schema(node_id='FreeVideoLoRA', display_name='FreeVideo · LoRA', category='FreeVideo',
             description='FreeVideo needs no acceleration LoRA.',
             inputs=[io.Combo.Input('lora', options=[NO_LORA, *names]),
-                    io.Float.Input('strength', default=1., min=-4., max=4., step=.05),
+                    io.Float.Input('strength', default=1., min=-100., max=100., step=.05),
                     LoRAs.Input('previous', optional=True)], outputs=[LoRAs.Output('loras')])
 
     @classmethod
