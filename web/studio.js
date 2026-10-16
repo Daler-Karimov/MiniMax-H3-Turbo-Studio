@@ -893,8 +893,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     mode.value = value(node, 'control_after_generate') || 'fixed'; mode.onchange = () => set(node, 'control_after_generate', mode.value);
     seedFields.append(field(t('Seed', '种子'), seed), field(t('After generation', '生成后'), mode)); advanced.append(seedFields);
     const previewHead = el('div', null, 'fv-preview-head'); previewHead.append(el('strong', t('Preview', '预览')));
-    const previewCaption = el('span'), previewTools = el('div', null, 'fv-preview-tools');
-    previewTools.append(previewCaption);
+    const previewTools = el('div', null, 'fv-preview-tools');
     previewTools.append(button(t('Creations', '作品'), () => {
         stage.querySelector('video')?.pause(); openLibrary(t, {upscale: value => node.freevideoUpscaleResult(value),
             extend: (saved, options) => openExtendEditor(saved, node, {studio: dialog, ...options})});
@@ -951,7 +950,6 @@ export function openStudio(node, {extendFrom = null} = {}) {
     function previewSize(w, h) {
         if (!(w > 0 && h > 0)) return;
         previewRatio = w / h; ratioStyle();
-        dimensionText(previewCaption, `${w} × ${h}`);
         fitPreview();
     }
     function dimensionText(element, text) {
