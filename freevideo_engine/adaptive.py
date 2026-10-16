@@ -36,6 +36,11 @@ def cuda_runtime_error(error):
     return False
 
 
+def commit_exhausted(error):
+    from .diagnostic_resources import commit_exhausted as found
+    return found(error)
+
+
 def classify_failure(error, metrics=None):
     """Only positively identified resource failures are retriable.
 
@@ -63,7 +68,7 @@ def classify_failure(error, metrics=None):
         kind, outcome, retry = 'timeout', 'cancelled', False
     elif details.get('kind') == 'gpu_oom' or 'cuda out of memory' in text or 'cuda error: out of memory' in text:
         kind, outcome, retry = 'gpu_oom', 'resource_failure', True
-    elif isinstance(error, MemoryError) or details.get('kind') == 'ram_pressure':
+    elif isinstance(error, MemoryError) or details.get('kind') == 'ram_pressure' or commit_exhausted(error):
         kind, outcome, retry = 'ram_pressure', 'resource_failure', True
     elif isinstance(error, WorkerExit) and not (metrics or {}).get('error'):
         kind, outcome, retry = 'unknown_worker_exit', 'discarded', False

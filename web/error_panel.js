@@ -318,7 +318,7 @@ export function failureAdvice(value, t, known = knownError(value)) {
             ['Generation did not start because there is not enough available RAM or GPU memory.', '可用内存或显存不足，本次生成未开始。'],
             ['Close memory-heavy applications, or lower the resolution or duration, then retry.', '可关闭占用内存较多的程序，或调低分辨率、缩短时长后重试。']);
     }
-    if (/commit headroom exhausted|paging file is too small|WinError 1455/i.test(text))
+    if (/commit headroom exhausted|paging file is too small|WinError 1455|os error 1455/i.test(text))
         return row('commit', ['Not enough Windows memory', 'Windows 内存不足'],
             ['Windows cannot provide enough memory for generation right now.', 'Windows 暂时无法提供生成所需的内存。'],
             ['Close memory-heavy applications and retry. In Windows virtual memory settings, use a system-managed paging file on a drive with free space.', '关闭占用内存较多的程序后重试。在 Windows 虚拟内存设置中，使用系统管理的分页文件，并确保所在磁盘有空闲空间。']);

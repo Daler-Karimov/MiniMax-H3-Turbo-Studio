@@ -47,6 +47,21 @@ ENCODER_DTYPES = ('uint8', 'int8', 'int16', 'int32', 'int64', 'float16', 'bfloat
 TENSOR_VARIABLES = ('input', 'output', 'x', 'q', 'scale', 'indices', 'qdata', 'weight', 'mat1', 'mat2')
 
 
+def commit_exhausted(error):
+    """Windows error 1455 anywhere in the chain: the system commit limit is spent.
+
+    Rust-backed file readers raise a plain OSError carrying only the localized
+    system message plus "(os error 1455)", so the numeric attributes are unset.
+    """
+    seen = set()
+    while isinstance(error, BaseException) and id(error) not in seen:
+        seen.add(id(error))
+        if getattr(error, 'winerror', None) == 1455 or re.search(r'(?:os error|winerror)\s*1455\b', str(error), re.I):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
 def error_details(error):
     """Extract fixed classifications and numbers, never the exception message.
 
@@ -59,7 +74,7 @@ def error_details(error):
         result.update(category='cuda_out_of_memory', error_code=2)
     elif 'CUDA out of memory' in message:
         result['category'] = 'torch_allocator_out_of_memory'
-    elif isinstance(error, MemoryError) or getattr(error, 'winerror', None) == 1455:
+    elif isinstance(error, MemoryError) or commit_exhausted(error):
         result['category'] = 'host_memory_allocation'
     elif 'CUDA error:' in message:
         result['category'] = 'cuda_error'

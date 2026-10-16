@@ -581,7 +581,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('Click Repair to reinstall a complete copy of PyTorch. Models and videos are kept.',
           '请点“修复”，FreeVideo 会重新安装运行组件，模型和视频都会保留。')),
         (r'ModuleNotFoundError|No module named|DLL load failed', 'dependencies', *DEPENDENCIES),
-        (r'CUDA (?:error: )?out of memory|torch\.OutOfMemoryError|Insufficient currently available memory|crossed its RAM budget|paging file is too small|WinError 1455', 'memory',
+        (r'CUDA (?:error: )?out of memory|torch\.OutOfMemoryError|Insufficient currently available memory|crossed its RAM budget|paging file is too small|WinError 1455|os error 1455', 'memory',
          ('Memory is unavailable for this step', '这一步可用内存不足'),
          ('Close other memory-heavy applications and retry. Copy the details if it continues.', '关闭占用内存较多的程序后重试；仍失败时可复制详情反馈。')),
     )
