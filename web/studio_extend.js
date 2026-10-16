@@ -108,9 +108,9 @@ export function extendSnapshot(snapshot, node, source, {multiple = false} = {}) 
     // The predecessor's tail replaces the draft's first frame.
     const media = copy.output[String(inputs.media?.[0])];
     if (media?.class_type === 'FreeVideoMedia') {
-        // The continuation's own last frames stand in for every first, last and reference item.
+        // The continuation's own last frames stand in for connected media; the panel's pictures (characters, references)
+        // go with it, and the engine keeps up to three of them (continuation.PICTURES_MAX).
         for (const key of Object.keys(media.inputs)) if (key !== 'assets') delete media.inputs[key];
-        if (media.inputs.assets) media.inputs.assets = '[]';
     }
     return copy;
 }

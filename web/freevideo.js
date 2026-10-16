@@ -247,7 +247,8 @@ function mediaPanel(node, mount = null) {
         // A Generate node that continues a video takes these keyframes as pictures, so they may sit beside references.
         const continuing = (node.outputs?.[0]?.links || []).some(id => {
             const target = node.graph?.getNodeById(node.graph?.links[id]?.target_id);
-            return target?.type === 'FreeVideoGenerate' && optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '';
+            return target?.type === 'FreeVideoGenerate' && (target.freevideoContinues?.()
+                || optionalInputValue('continue_from', target.widgets?.find(w => w.name === 'continue_from')?.value) !== '');
         });
         const first = active.filter(row => row.role === "first").length + Number(linked('first'));
         const last = active.filter(row => row.role === "last").length + Number(linked('last'));
@@ -265,7 +266,7 @@ function mediaPanel(node, mount = null) {
             chip.title = source?.title || source?.type || label; connections.append(chip);
         }
         mode.textContent = refs ? text("Reference video · experimental", "参考生成 · 实验性") : first && last ? text("First + last frame", "首尾帧生成") : first ? text("Image to video", "图生视频") : last ? text("Last frame to video", "尾帧生成") : text("Text to video · media is optional", "文生视频 · 素材可留空");
-        message(refs > 32 ? text('There are more than 32 references; remove some before generating.', '参考素材超过 32 个，可移除部分后再生成。') : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Drop or paste files, or connect images and audio on the left.", "可拖入、粘贴文件，或连接左侧的图片和音频。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
+        message(refs > 32 ? text('There are more than 32 references; remove some before generating.', '参考素材超过 32 个，可移除部分后再生成。') : continuing && active.filter(row => row.role === 'reference' && mediaKind(row.file) === 'image').length > 3 ? text('When continuing, only the first 3 images are used.', '接续时只用前 3\u00a0张图片。') : (first || last) && continuing ? text("When continuing a video, the first and last frames are used as references.", "接续视频时，首尾帧会用作参考图。") : refs && (first || last) ? text("Choose keyframes or references. Disable unused cards.", "首尾帧与参考模式不能混用，请关闭本次不用的素材。") : first > 1 || last > 1 ? text("Keep only one first frame and one last frame enabled.", "首帧和尾帧各只能启用一张图片。") : text("Drop or paste files, or connect images and audio on the left.", "可拖入、粘贴文件，或连接左侧的图片和音频。"), Boolean(refs > 32 || refs && (first || last) && !continuing || first > 1 || last > 1));
         if (!rows.length && !connections.childElementCount) cards.append(el("div", text("Leave empty for text to video.", "留空则为文生视频。"), "fv-empty"));
         if (!rows.length && connections.childElementCount) cards.append(el('div', text('Media comes from the connected inputs; no upload is needed.', '素材来自已连接的输入，无需上传。'), 'fv-connected-card'));
         rows.forEach((row, index) => {
@@ -706,7 +707,7 @@ app.registerExtension({
                 }
                 // Characters mentioned with @ travel as <Subject N> plus their definitions; the draft keeps the typed names.
                 const prompt = this.widgets?.find(w => w.name === 'text');
-                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {active: !owner.freevideoCastOff?.()}).text; }
+                if (prompt) { const owner = this; prompt.serializeValue = () => expandCast(prompt.value, mediaRows(owner), {continued: Boolean(owner.freevideoContinues?.())}).text; }
                 const quality = this.widgets?.find(w => w.name === 'two_pass');
                 if (quality) {
                     quality.label = text('Two-pass acceleration', '二次采样加速');

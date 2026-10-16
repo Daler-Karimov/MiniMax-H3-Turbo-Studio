@@ -514,29 +514,28 @@ export function openStudio(node, {extendFrom = null} = {}) {
     };
     const castBlocked = reason => ({frames: t('Not available with first and last frames', '首尾帧不能和角色同时使用'),
         people: t('Up to 3 characters', '最多 3 个角色'), full: t('Up to 32 references', '参考素材最多 32 个'),
-        extend: t('Not available when continuing a video', '接着生成时不能使用角色')}[reason] || '');
+        continued: t('Up to 3 images when continuing', '接续时最多 3\u00a0张')}[reason] || '');
     const castPending = new Map();
     function castChoices() {
         if (!castLibrary || linked(node, 'text') || !castAssets()) return [];
         const rows = mediaRows(node);
         return castLibrary.list().filter(card => card.name).map(card => {
-            const state = extension.source ? {ok: false, reason: 'extend'}
-                : mentionState(rows, card, Math.min(MAX_PICTURES_EACH, Number(card.images) || 0));
+            const state = mentionState(rows, card, Math.min(MAX_PICTURES_EACH, Number(card.images) || 0), {continued: Boolean(extension.source)});
             return {id: card.id, name: card.name, handle: mentionHandle(rows, card, castPending), thumb: card.thumbnail?.file ? view(card.thumbnail.file) : card.thumbnail?.url || '',
                 blocked: state.ok ? '' : castBlocked(state.reason)};
         });
     }
     // The name goes into the text at once; the card's pictures follow when the full card has been read.
     function mentionCharacter(person) {
-        if (!castLibrary || extension.source) return false;
+        if (!castLibrary) return false;
         if (castInRows(mediaRows(node)).some(entry => entry.id === person.id)) return true;
-        if (!mentionState(mediaRows(node), {id: person.id}, 1).ok) return false;
+        if (!mentionState(mediaRows(node), {id: person.id}, 1, {continued: Boolean(extension.source)}).ok) return false;
         const typed = person.handle || person.name;
         castPending.set(person.id, typed);
         castLibrary.get(person.id).then(card => {
             if (disposed) return;
             const rows = mediaRows(node), target = castAssets();
-            if (!target || !mentionState(rows, card).ok) return;
+            if (!target || !mentionState(rows, card, undefined, {continued: Boolean(extension.source)}).ok) return;
             target.field.value = JSON.stringify(withCharacter(rows, card, typed));
             target.owner.graph?.change?.();
             window.dispatchEvent(new CustomEvent('freevideo-media', {detail: target.owner.id}));
@@ -564,13 +563,13 @@ export function openStudio(node, {extendFrom = null} = {}) {
     prompt.addEventListener('input', announceCast);
     const castChanged = event => { if (String(event.detail) === String(mediaNode?.id)) { castOverlay.refresh(); references.refresh(); announceCast(); } };
     window.addEventListener('freevideo-media', castChanged);
-    node.freevideoCastOff = () => Boolean(extension.source);
-    cleanup.push(() => { castLibrary?.destroy?.(); castLibrary = null; window.removeEventListener('freevideo-media', castChanged); prompt.removeEventListener('input', announceCast); castOverlay.dispose(); delete node.freevideoCastOff; });
+    node.freevideoContinues = () => Boolean(extension.source);
+    cleanup.push(() => { castLibrary?.destroy?.(); castLibrary = null; window.removeEventListener('freevideo-media', castChanged); prompt.removeEventListener('input', announceCast); castOverlay.dispose(); delete node.freevideoContinues; });
     openCastLibrary({api, text: t, viewURL: view, uploadOne: castUpload, onChange: () => { castOverlay.refresh(); references.refresh(); }})
         .then(library => { if (disposed) library?.destroy?.(); else castLibrary = library; });
     let requestAssets = null;
     const enhancer = createPromptEnhancer({node, input: prompt, editor: promptEditor, api, t, starter,
-        prepare: text => expandCast(text, mediaRows(node), {active: !extension.source}).text,
+        prepare: text => expandCast(text, mediaRows(node), {continued: Boolean(extension.source)}).text,
         // The rewrite has its own report; the video's report entry is not touched.
         onReport: row => { node.freevideoPromptReportId = row.rewrite_report_id || row.report_id; },
         onChange: () => { rememberPromptDraft(api, node); requestAssets?.refresh(); },
@@ -1567,6 +1566,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         twoPass.checked = Boolean(source) || value(node, 'two_pass') !== false;
         previewFirst.checked = !source && value(node, 'preview') === true;
         prompt.value = shown(value(node, 'text')); placeholder(); enhancer.sync();
+        // The media panel and the @ list read whether a video is being continued.
+        if (mediaNode) window.dispatchEvent(new CustomEvent('freevideo-media', {detail: mediaNode.id}));
         syncSamplingSteps(); syncCanvasSize(); seconds.dispatchEvent(new Event('input'));
         prompt.focus({preventScroll: true});
     }

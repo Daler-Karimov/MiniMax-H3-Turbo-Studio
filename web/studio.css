@@ -170,7 +170,6 @@
 @media(max-width:480px){.fv-studio .fv-header:has(.fv-view-switch){height:auto;min-height:98px;grid-template-columns:1fr auto;padding-block:10px}.fv-studio .fv-header>.fv-view-switch{grid-column:1/-1;grid-row:2}.fv-studio .fv-header>.fv-header-actions{grid-column:2;grid-row:1}.fv-studio .fv-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .fv-studio .fv-extend-source{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px;border:1px solid var(--fv-border);border-radius:var(--fv-r-md);background:var(--fv-card)}
 .fv-studio .fv-extend-source[hidden]{display:none}
-.fv-studio .fv-extend-active>:not(.fv-extend-source){display:none}
 .fv-studio .fv-extend-source img{width:80px;height:50px;object-fit:cover;border-radius:var(--fv-r-sm)}
 .fv-studio .fv-extend-source>span{flex:1;font-size:var(--fv-micro)}
 .fv-studio .fv-canvas-lock{display:inline-flex;margin-left:6px;vertical-align:-3px;color:var(--fv-muted)}
