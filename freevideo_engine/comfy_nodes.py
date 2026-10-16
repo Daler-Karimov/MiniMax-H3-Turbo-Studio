@@ -68,7 +68,7 @@ class FreeVideoGenerate(io.ComfyNode):
                 io.Boolean.Input('voice_reference', display_name='Voice reference', default=False,
                     optional=True, advanced=True, tooltip='Keeps the opening voice consistent in continued dialogue.'),
                 io.Boolean.Input('hide_tail', display_name='Hide dialogue tail', default=False,
-                    optional=True, advanced=True, tooltip='Generates and discards 34 extra frames to keep dialogue moving between parts.'),
+                    optional=True, advanced=True, tooltip='Generates and discards 17 extra frames to keep dialogue moving between parts.'),
             ],
             outputs=[io.Video.Output('video'), io.String.Output('report', display_name='Report JSON')],
             hidden=[io.Hidden.unique_id, io.Hidden.prompt, io.Hidden.extra_pnginfo],
