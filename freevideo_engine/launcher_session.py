@@ -1127,6 +1127,12 @@ class Session:
             return
         if self._open_release_page():
             return
+        if (self.image_installer and self.image_installer.busy and not self.controller.busy
+                and not self.importer.busy and not self.cleaner.busy and not self.archives_busy
+                and not self.closing and not self.upgrade.active and not self.model_switch):
+            # An explicit update goes first. The image model download is the long, quiet kind and
+            # keeps what it has; it carries on from there when the user continues it.
+            self.image_installer.cancel()
         if self.task_busy() or self.updater and self.updater.busy:
             self.pending_update = (token, source)
             self.action_notice = 'update_queued'
