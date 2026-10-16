@@ -175,8 +175,11 @@ class ComfyHost:
         frames = planned['frames'] if planned and not planned['single'] and len(blocks) == len(record['blocks']) else None
         kept = {'leads': record['lead_reader'], 'expected_seams': record.get('expected_seams')} \
             if record.get('lead_reader') is not None else {}
+        from .chain_level import voiced
+        # Parts with spoken lines keep their voice level and fullness to the first part's.
+        speaking = [voiced(block.get('inputs', {}).get('text')) for block in blocks]
         return join_outputs([block['output'] for block in blocks], record['id'], cancelled,
-                            frames=frames, replace=record.get('output'), **kept)
+                            frames=frames, replace=record.get('output'), speaking=speaking, **kept)
 
     def split_texts(self, value, cancelled):
         """One description per part from the local prompt model: (parts, None) or (None, reason)."""
