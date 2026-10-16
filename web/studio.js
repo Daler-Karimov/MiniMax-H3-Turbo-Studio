@@ -25,7 +25,7 @@ import { attachMentionOverlay } from './cast_overlay.js';
 import { openCastLibrary } from './cast_source.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createSamplingEffort } from './sampling_effort.js';
-import { resultActions, previewBadge, icon } from './result_actions.js';
+import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { createRequestAssets, enabledLoras, referenceFiles } from './request_assets.js';
 import { rememberPromptDraft, trackPromptDraft } from './prompt_draft.js';
@@ -1047,6 +1047,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         video.addEventListener('error', () => {
             if (!disposed && result === r && video.isConnected) {
                 stageMedia.replaceChildren(el('p', videoUnavailableText(t), 'fv-note fv-video-problem'));
+                actionsUnavailable(links.querySelector('.fv-actions'));
                 if (r.preview) stageMedia.append(previewBadge(r, t));
             }
         }, {once: true});
@@ -1067,7 +1068,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const unified = r.memory_model === 'unified';
         metricLabels[2].textContent = unified ? t('Unified memory', '统一内存总量') : t('Peak VRAM', '最高显存');
         metricLabels[3].textContent = unified ? t('Process peak RAM', '进程最高内存') : t('Peak RAM', '最高内存');
-        const shown = [number(r.sample_seconds), number(r.request_seconds), number(unified ? r.unified_total_bytes : r.vram_peak_bytes, 2 ** 30, 'GiB'), number(r.ram_peak_bytes, 2 ** 30, 'GiB')]; metrics.forEach((e, i) => e.textContent = shown[i]);
+        const shown = [number(r.sample_seconds), number(r.request_seconds), number(unified ? r.unified_total_bytes : r.vram_peak_bytes, 2 ** 30, 'GiB'), number(r.ram_peak_bytes, 2 ** 30, 'GiB')]; metrics.forEach((e, i) => { e.textContent = shown[i]; e.parentElement.hidden = shown[i] === '—'; });
+        // Cells without a number are left out, and the rest share the width; none at all hides the strip.
+        const present = shown.filter(value => value !== '—').length;
+        stats.dataset.count = String(present);
+        if (!present) stats.hidden = true;
         budget.textContent = r.result_cache_hit || r.preview ? '' : unified
             ? (Number.isFinite(r.unified_reserve_bytes) ? `${t('Reserved unified memory', '预留统一内存')} ${number(r.unified_reserve_bytes, 2 ** 30, 'GiB')}` : '')
             : (Number.isFinite(r.gpu_budget_bytes) ? `${t('VRAM budget', '可用显存预算')} ${number(r.gpu_budget_bytes, 2 ** 30, 'GiB')} · ${t('Device', '显卡总量')} ${number(r.gpu_total_bytes, 2 ** 30, 'GiB')}` : '');

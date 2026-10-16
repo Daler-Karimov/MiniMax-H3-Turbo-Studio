@@ -107,6 +107,16 @@ function deleteAction(t, remove) {
     return menu;
 }
 
+// The video cannot be opened: what works on the file (download, extend, share) goes quiet and cannot be used.
+export function actionsUnavailable(bar) {
+    if (!bar) return;
+    bar.dataset.unavailable = 'true';
+    for (const item of bar.querySelectorAll('a.fv-action[download], .fv-action-extend, .fv-share-trigger')) {
+        item.setAttribute('aria-disabled', 'true'); item.tabIndex = -1;
+        if (item.tagName === 'A') item.removeAttribute('href'); else item.disabled = true;
+    }
+}
+
 // Download the video first; share and the report follow. A first-pass preview
 // leads with `secondPass` instead, and saved creations end with `remove`.
 // `diagnostic` downloads the redacted report (and may offer to send it); a
