@@ -160,7 +160,8 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-popover{position:absolute;top:12px;right:12px;width:min(320px,calc(100% - 24px));display:flex;flex-direction:column;gap:10px;padding:14px;
   border:1px solid var(--fv-border);border-radius:var(--fv-r-md);background:var(--fv-card);box-shadow:0 14px 40px rgba(0,0,0,.5);z-index:2}
 .fv-ie-popover h3{margin:0;font-size:var(--fv-body);font-weight:var(--fv-semibold)}
-.fv-ie-pad-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.fv-ie-pad-grid{display:grid;grid-template-columns:minmax(52px,max-content) minmax(0,1fr) minmax(52px,max-content) minmax(0,1fr);gap:8px}
+.fv-ie-pad-grid .fv-ie-field{display:grid;grid-template-columns:subgrid;grid-column:span 2}
 /* Image size: presets as wide as their words, width and height either side of the chain. */
 .fv-ie-image-size p{margin:0}
 .fv-ie-presets{display:flex;flex-wrap:nowrap}
