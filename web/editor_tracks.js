@@ -603,8 +603,15 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             Promise.resolve().then(() => actions.retry?.(item.clip.id)).catch(error => actions.editError?.(error, 'generate')); };
         popover.replaceChildren(reason, report, retry); popover.hidden = false;
         const bounds = element.getBoundingClientRect(), clipBounds = item.element.getBoundingClientRect();
-        popover.style.left = `${clamp(clipBounds.left - bounds.left, 8, Math.max(8, bounds.width - 288))}px`;
-        popover.style.top = `${Math.max(8, Math.min(clipBounds.bottom - bounds.top + 4, bounds.height - popover.getBoundingClientRect().height - 8))}px`;
+        // The card is as wide as the clip it belongs to (never narrower than before, so its two buttons stay on one row) and sits against the clip's lower edge;
+        // where that would cover the track below, it opens upward from the clip's top when there is room.
+        const width = Math.min(Math.max(clipBounds.width, 280), bounds.width - 16);
+        popover.style.width = `${width}px`;
+        popover.style.left = `${clamp(clipBounds.left - bounds.left, 8, Math.max(8, bounds.width - width - 8))}px`;
+        const height = popover.getBoundingClientRect().height, below = clipBounds.bottom - bounds.top + 4, above = clipBounds.top - bounds.top - 4 - height;
+        const next = [...element.querySelectorAll('.fv-ed-track-row')].map(row => row.getBoundingClientRect().top - bounds.top).filter(top => top >= clipBounds.bottom - bounds.top - 1);
+        const room = next.length ? Math.min(...next) : bounds.height;
+        popover.style.top = `${Math.max(8, below + height <= room || above < 8 ? Math.min(below, bounds.height - height - 8) : above)}px`;
     }
     function clickSelection(event) {
         if (event.range) return;
