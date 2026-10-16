@@ -124,7 +124,7 @@ export function mountCastGenerate({container, api, text, t = text, viewURL, onSt
     const side = el('div', 'fv-cg-side');
     const foot = el('div', 'fv-cg-foot');
     const field = el('textarea', 'fv-cg-text');
-    field.placeholder = tr('Describe the character', '描述人物');
+    field.placeholder = tr('Describe the character', '描述角色');
     field.setAttribute('aria-label', field.placeholder);
     field.maxLength = 1000;
     const note = el('div', 'fv-cg-note'); note.setAttribute('role', 'status');
@@ -207,7 +207,7 @@ export function mountCastGenerate({container, api, text, t = text, viewURL, onSt
 
     function begin() {
         if (!field.value.trim()) {
-            attention = tr('Describe the character first.', '请先描述人物。');
+            attention = tr('Describe the character first.', '请先描述角色。');
             render(); field.focus();
             return;
         }
