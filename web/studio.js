@@ -37,6 +37,7 @@ import { createCapabilityView } from './capability_view.js';
 import { openEditorView } from './editor_loader.js';
 import { frameShapes, frameSize } from './frame_sizes.js';
 import { createFirstRunGuide } from './first_run_guide.js';
+import { SHOWCASE_SCENE } from './entry_showcase.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261014-parts';
@@ -1760,7 +1761,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let guide = null, closed = false;
     cleanup.push(() => { closed = true; guide?.dispose(); });
     agentDiscovery.then(() => {
-        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing, targets: {media: mediaGuideTarget}});
+        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing, targets: {media: mediaGuideTarget},
+            onShowcaseTry: () => openAutopilot(node, {studio: dialog, initialScene: SHOWCASE_SCENE})});
     });
     const recentLoad = recent.refresh();
     if (node.freevideoProgress && !node.freevideoProgress.chain) showProgress(node.freevideoProgress);

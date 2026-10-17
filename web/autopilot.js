@@ -21,7 +21,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 
 let current = null;
 // Opens above the studio when one is open, as the editing view does, so going back finds it as it was.
-export function openAutopilotView(node, {studio = null} = {}) {
+export function openAutopilotView(node, {studio = null, initialPrompt = '', initialScene = ''} = {}) {
     if (current?.open) { viewChanged('autopilot', node); return current; }
     studio?.querySelectorAll('video,audio').forEach(media => media.pause());
     const dialog = el('dialog', 'fv-studio fv-autopilot'); dialog.lang = cn ? 'zh' : 'en'; dialog.setAttribute('aria-label', t('Autopilot', 'AI 全自动'));
@@ -55,7 +55,8 @@ export function openAutopilotView(node, {studio = null} = {}) {
             base_steps: value.base_steps ?? 8, refine_steps: value.refine_steps ?? 3, two_pass: value.two_pass === false ? '0' : '1',
             enhance: node.properties?.freevideo_prompt_versions?.enabled ? '1' : '0'});
     }});
-    const chat = agentChat(t, api, {shown: inSight, productVersion, hint: assets,
+    // The showcase's example opts into preview, but remains an editable, unsent draft.
+    const chat = agentChat(t, api, {shown: inSight, productVersion, hint: assets, initialPrompt, initialWhiteboxPreview: !!initialPrompt, initialScene,
         // Creations continues the work on the editor timeline; this page gives way first.
         open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
             extend: async (record, options) => { await closed(); return openExtendEditor(record, node, {studio, ...options}); }}),

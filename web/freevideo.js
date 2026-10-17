@@ -9,6 +9,7 @@ import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText
 import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
+import { startWhiteboxWorker } from './whitebox_worker.js';
 import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView, collapseWorkspaces } from './view_navigation.js';
 import { isLaunchVisit } from './launch_visit.js';
@@ -679,7 +680,8 @@ app.registerExtension({
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
         for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api), {openWorkflow: openFreeVideoWorkflow})],
-            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled, isFreeVideoNode})]]) {
+            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled, isFreeVideoNode})],
+            ['whitebox', () => startWhiteboxWorker({api})]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));

@@ -1,6 +1,7 @@
 // The conversation with the connected agent: what the user says, what the agent answers, and the agent's jobs as
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost, retryAgentPost} from './agent_session.js';
+import {SCENE_TEXT, sceneList, startScene, watchScene} from './whitebox_scenes.js';
 import {isolateDialogKeys, routeDialogKey} from './dialog_keys.js';
 import {closeDialog} from './motion.js';
 import { estimatedFraction, remainingAbove, remainingShown, createDiagnosticReportControl } from './generation_progress.js';
@@ -19,11 +20,24 @@ function glyph(path, width = 2.2) {
     return svg;
 }
 const press = (cls, text, action) => { const b = el('button', cls, text); b.type = 'button'; b.onclick = action; return b; };
+// Frontend placeholder contract; Drew can rename the request field here, and Iris can replace the copy/icon here.
+export const WHITEBOX_PREVIEW = Object.freeze({
+    field: 'whitebox_preview', storageKey: 'freevideo.chat.whitebox-preview',
+    label: ['Whitebox', '白模'], name: ['Preview a whitebox first', '先生成白模预览'],
+    icon: 'M12 3l9 5v8l-9 5-9-5V8l9-5M3 8l9 5 9-5M12 13v8',
+});
 let chatNumber = 0;
 
 const WORKING = ['running', 'queued', 'waiting', 'cancelling'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
 const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Enhancing prompt', '增强提示词']};
+const WHITEBOX = {
+    generate: ['Generate video', '生成视频'], edit: ['Edit prompt', '改描述'], decline: ['Skip', '跳过'],
+    approved: ['Approved', '已确认'], superseded: ['Replaced', '已被替换'], declined: ['Skipped', '已跳过'],
+    preview: ['Whitebox preview', '白模预览'], unavailable: ['Preview could not load', '预览加载失败'],
+    play: ['Play', '播放'], pause: ['Pause', '暂停'], seconds: ['s', '秒'],
+    failure: ['Could not start: ', '无法开始生成：'],
+};
 const SEND_ATTEMPTS = 3, WAIT_FOR_AGENT = ['not_connected', 'not_listening'];
 const GENERIC_FAILURE_ZH = '没有完成';
 // A listening/connection race is queued; other 4xx refusals never repeat automatically.
@@ -33,6 +47,23 @@ async function sendError(response) {
     if (!response) return null;
     try { return (await (response.clone?.() || response).json())?.error || null; }
     catch { return null; }
+}
+// Only an explicit field-validation refusal is safe to resend without the optional field.
+// An older backend that ignores it already succeeds; unrelated errors keep the existing retry policy.
+async function previewUnsupported(response) {
+    if (![400, 422].includes(response?.status)) return false;
+    try {
+        const value = await response.clone().json(), error = value.error;
+        // The current server redacts unknown field names. The only boolean true we add is this flag.
+        const detail = error?.details?.[0];
+        if (error?.code === 'invalid_request' && error.details?.length === 1 && detail?.path === '/<unknown>'
+            && detail.allowed === 'absent (unknown field)' && detail.got === 'True') return true;
+        if (Array.isArray(value.detail) && value.detail.some(item => item.type === 'extra_forbidden'
+            && item.loc?.includes(WHITEBOX_PREVIEW.field))) return true;
+        const named = error?.field === WHITEBOX_PREVIEW.field || error?.message?.includes(WHITEBOX_PREVIEW.field);
+        return !!named && (['unknown_field', 'unsupported_field', 'unsupported_parameter', 'extra_forbidden'].includes(error?.code)
+            || /unknown|unsupported|unexpected|unrecognized|not supported|extra field/i.test(error?.message || ''));
+    } catch { return false; }
 }
 // Sends and failure cards use the same public reason, including the engine's Chinese mapping.
 function failureReason(value, t) {
@@ -233,7 +264,7 @@ function imageViewer(t, src, name, opener, failed) {
 // open(job) shows a finished video in Creations, edit(job) takes it to the editing view. shown() says whether the
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
-export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null, hint = null} = {}) {
+export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null, initialPrompt = '', initialWhiteboxPreview = false, initialScene = '', hint = null} = {}) {
     const element = el('section', 'fv-chat'), main = el('div', 'fv-chat-main'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
     log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Conversation', '对话'));
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
@@ -241,7 +272,45 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     const form = el('form', 'fv-chat-input'), input = el('textarea'), sendButton = el('button', 'fv-chat-send');
     input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '对 Agent 说'));
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
-    form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
+    let whiteboxPreview = false;
+    try { whiteboxPreview = localStorage.getItem(WHITEBOX_PREVIEW.storageKey) === 'true'; } catch {}
+    const whiteboxButton = press('fv-chat-whitebox', null, () => setWhiteboxPreview(!whiteboxPreview));
+    whiteboxButton.append(glyph(WHITEBOX_PREVIEW.icon), el('span', null, t(...WHITEBOX_PREVIEW.label)));
+    whiteboxButton.title = t(...WHITEBOX_PREVIEW.name); whiteboxButton.setAttribute('aria-label', whiteboxButton.title);
+    function setWhiteboxPreview(enabled) {
+        whiteboxPreview = enabled; whiteboxButton.setAttribute('aria-pressed', String(enabled));
+        try { localStorage.setItem(WHITEBOX_PREVIEW.storageKey, String(enabled)); } catch {}
+    }
+    whiteboxButton.setAttribute('aria-pressed', String(whiteboxPreview));
+    if (initialWhiteboxPreview) setWhiteboxPreview(true);
+    const scenesButton = press('fv-chat-scenes', null, () => toggleScenes());
+    scenesButton.append(glyph(SCENE_TEXT.icon), el('span', null, t(...SCENE_TEXT.label)));
+    scenesButton.title = t(...SCENE_TEXT.name); scenesButton.setAttribute('aria-label', scenesButton.title);
+    scenesButton.setAttribute('aria-haspopup', 'menu'); scenesButton.setAttribute('aria-expanded', 'false');
+    const sceneMenu = el('div', 'fv-chat-scene-menu'); sceneMenu.setAttribute('role', 'menu'); sceneMenu.hidden = true;
+    let sceneRows = null, entryScene = initialScene || null, sceneWaiting = false;
+    function toggleScenes(open = sceneMenu.hidden) {
+        sceneMenu.hidden = !open; scenesButton.setAttribute('aria-expanded', String(open));
+        if (!open || sceneRows) return;
+        sceneRows = [];
+        void sceneList(api).then(rows => {
+            sceneRows = rows; sceneMenu.replaceChildren(...rows.map(row => {
+                const item = press('fv-chat-scene-item', row.name, () => { toggleScenes(false); void runScene(row.id); });
+                item.setAttribute('role', 'menuitem'); return item;
+            }));
+        }).catch(() => { sceneRows = null; toggleScenes(false); say(t(...SCENE_TEXT.failed) + t('Connection lost. Try again.', '连接中断，请重试。')); });
+    }
+    async function runScene(preset, session = state.session) {
+        if (!session || stopped) return;
+        say(t(...SCENE_TEXT.preparing)); sceneWaiting = true;
+        try {
+            const id = await startScene(api, preset, session);
+            const result = id ? await watchScene(api, id, {stopped: () => stopped}) : {status: 'ready'};
+            if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '')); }
+            else if (result.status === 'timeout') { sceneWaiting = false; say(''); }
+        } catch (failure) { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + reason(failure)); }
+    }
+    form.append(input, scenesButton, whiteboxButton, sendButton); scroller.append(log); main.append(scroller, down, sceneMenu, form); element.append(main);
     const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status'); main.insertBefore(notice, form);
     // What the next video would download first, the studio's line, above the box the request is typed in.
     if (hint) main.insertBefore(hint.element, form);
@@ -256,7 +325,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     let dismissImage = null;
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
     let conversations = emptyConversations(), selectedSession, selection = 0, reread = false, focusSession = null, creating = false;
-    // Only the reading position is persisted, scoped to this server; drafts stay in this open page.
+    // The reading position is scoped to this server; drafts stay in this open page.
     let selectionKey = null;
     try {
         selectionKey = `freevideo.chat.selected:${new URL(api.apiURL('/freevideo/agent/chat'), location.href).href}`;
@@ -267,11 +336,20 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     const drafts = new Map(), unsaidSessions = new Set();
     let draftSession = selectedSession ?? null;
+    let entryDraft = initialPrompt || null;
+    input.value = initialPrompt;
     function saveDraft() {
         if (drafts.get(draftSession)?.text !== input.value) drafts.set(draftSession, {text: input.value});
         return drafts.get(draftSession);
     }
     function showDraft(session) {
+        // Attach the entry example to the first resolved conversation, even if
+        // the server selects a different one. This is a draft, never a send.
+        if (entryScene !== null && session) { const preset = entryScene; entryScene = null; void runScene(preset, session); }
+        if (entryDraft !== null) {
+            draftSession = session; input.value = entryDraft; entryDraft = null;
+            saveDraft(); grow(); return;
+        }
         if (draftSession === session) return;
         saveDraft(); draftSession = session; input.value = drafts.get(session)?.text || ''; grow();
     }
@@ -547,6 +625,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     let pinned = true;
     const closed = new AbortController();
     const nodes = new Map(), answers = new Map(), stopping = new Set(), retrying = new Set(), confirming = new Set(), confirmErrors = new Map();
+    const supersededWhiteboxes = new Set();
     let bulkStopping = false;
     const cardKey = (session, id) => JSON.stringify([session, id]);
     // The fraction each job shows: the estimate, never backwards, short of 100% until the video is saved.
@@ -795,10 +874,91 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const again = item.querySelector('.fv-chat-retry'); if (again) again.disabled = !sendingAllowed() || retrying.has(key);
         }};
     }
+    function whiteboxState(entry) {
+        const key = cardKey(state.session, entry.id);
+        const value = answers.get(key) || state.confirms[entry.id] || entry.state || 'asked';
+        if (value !== 'asked') return value;
+        // A version is opaque. Timeline order replaces previews of the same work;
+        // a later user message also retires the preview while its replacement is made.
+        const replaced = [...state.items.values()].some(next => next.seq > entry.seq && (
+            next.type === 'message' && next.role === 'user'
+            || next.type === 'confirm' && next.whitebox && next.whitebox.work === entry.whitebox.work));
+        return supersededWhiteboxes.has(key) || replaced ? 'superseded' : 'asked';
+    }
+    function whiteboxCard(item) {
+        item.classList.add('fv-chat-whitebox-card');
+        const preview = el('div', 'fv-whitebox-preview'), video = el('video');
+        const unavailable = el('p', 'fv-chat-meta', t(...WHITEBOX.unavailable)); unavailable.hidden = true;
+        video.muted = true; video.loop = true; video.playsInline = true; video.preload = 'metadata';
+        video.disablePictureInPicture = true; video.setAttribute('aria-label', t(...WHITEBOX.preview));
+        let entry, session, key, value, source = null, disabled = true;
+        const play = press('fv-chat-play', '', () => {
+            if (value === 'superseded') return;
+            if (video.paused) void video.play().catch(() => {}); else video.pause();
+        });
+        const playing = () => {
+            if (value === 'superseded' && !video.paused) video.pause();
+            preview.dataset.playing = String(!video.paused);
+            play.setAttribute('aria-label', t(...WHITEBOX[video.paused ? 'play' : 'pause']));
+        };
+        video.onplay = video.onpause = playing;
+        const failed = () => { video.pause(); video.hidden = play.hidden = true; unavailable.hidden = false; };
+        video.onerror = failed;
+        preview.append(video, play, unavailable);
+        const summary = el('p', 'fv-whitebox-summary'), seconds = el('p', 'fv-chat-meta');
+        const buttons = el('div', 'fv-chat-actions'), status = el('p', 'fv-whitebox-status');
+        status.setAttribute('role', 'status');
+        const error = el('p', 'fv-chat-error'); error.setAttribute('role', 'alert');
+        const write = (node, text) => { if (node.textContent !== text) node.textContent = text; node.hidden = !text; };
+        const answer = approve => async () => {
+            if (disabled || confirming.has(key) || !inSelectedChat() || state.session !== session || whiteboxState(entry) !== 'asked') return;
+            const requestKey = key, requestSession = session, id = entry.id;
+            confirming.add(requestKey); confirmErrors.delete(requestKey); render();
+            try {
+                const response = await agentPost(api, '/freevideo/agent/chat/confirm', {id, approve, session: requestSession});
+                if (!response.ok) throw await requestError(response);
+                answers.set(requestKey, (await response.json()).state || (approve ? 'approved' : 'declined'));
+            } catch (failure) { confirmErrors.set(requestKey, t(...WHITEBOX.failure) + reason(failure)); }
+            finally { confirming.delete(requestKey); }
+            if (!stopped) { render(); void poll(); }
+        };
+        buttons.append(press('fv-chat-yes fv-primary', t(...WHITEBOX.generate), answer(true)),
+            press('fv-whitebox-edit', t(...WHITEBOX.edit), () => {
+                if (!disabled && whiteboxState(entry) === 'asked') input.focus();
+            }), press('fv-chat-no fv-quiet', t(...WHITEBOX.decline), answer(false)));
+        item.replaceChildren(preview, summary, seconds, buttons, status, error);
+        return {update(next) {
+            entry = next; session = state.session; key = cardKey(session, entry.id);
+            if (sceneWaiting) { sceneWaiting = false; say(''); }
+            const previous = value; value = whiteboxState(entry);
+            item.dataset.state = value;
+            disabled = value !== 'asked' || confirming.has(key) || !inSelectedChat() || state.agent.connected !== true;
+            item.setAttribute('aria-busy', String(confirming.has(key)));
+            buttons.hidden = value !== 'asked'; buttons.querySelectorAll('button').forEach(button => { button.disabled = disabled; });
+            write(status, value === 'asked' ? '' : t(...(WHITEBOX[value] || WHITEBOX.superseded)));
+            write(summary, entry.whitebox.summary || entry.whitebox.scene_summary || '');
+            write(seconds, Number(entry.whitebox.seconds) > 0 ? `${entry.whitebox.seconds} ${t(...WHITEBOX.seconds)}` : '');
+            write(error, value === 'asked' ? confirmErrors.get(key) || '' : '');
+            const url = entry.whitebox.video_url || (entry.whitebox.work ? api.apiURL('/freevideo/agent/chat/video?id=' + encodeURIComponent(entry.whitebox.work)) : '');
+            if (url !== source) {
+                source = url; video.pause(); video.hidden = play.hidden = !url; unavailable.hidden = !!url;
+                video.autoplay = value === 'asked';
+                if (url) video.src = url; else { video.removeAttribute('src'); video.load(); }
+            }
+            if (value !== 'asked') {
+                video.autoplay = false;
+                if (previous !== value) video.pause();
+            }
+            play.hidden = video.hidden || value === 'superseded';
+            playing();
+        }};
+    }
     function confirmCard() {
         const item = el('li', 'fv-chat-confirm');
         let shownState = null;
+        let whitebox = null;
         return {element: item, update(entry) {
+            if (entry.whitebox) { whitebox ||= whiteboxCard(item); whitebox.update(entry); return; }
             const session = state.session, key = cardKey(session, entry.id);
             const value = answers.get(key) || state.confirms[entry.id] || entry.state || 'asked';
             const disabled = confirming.has(key) || !inSelectedChat() || state.agent.connected !== true, error = confirmErrors.get(key) || '';
@@ -849,6 +1009,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     const MAKE = {hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
 
     function render(follow = false) {
+        const builtin = state.agent?.builtin === true;
+        whiteboxButton.disabled = builtin;
+        whiteboxButton.title = builtin ? t('Not available with the built-in AI', '内置 AI 不支持白模') : t(...WHITEBOX_PREVIEW.name);
+        whiteboxButton.setAttribute('aria-label', whiteboxButton.title);
         const entries = chatEntries(state), ids = new Set(entries.map(entry => entry.id).filter(Boolean));
         for (const entry of pending) if (entry.session === state.session && ids.has(entry.id)) acknowledge(entry);
         pending = pending.filter(entry => entry.sending || entry.session !== state.session || !ids.has(entry.id));
@@ -945,7 +1109,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             say(creating ? t('Creating a new chat…', '正在新建对话…') : t('Loading this chat. Please send again shortly.', '正在读取对话，请稍后再发一次'));
             return false;
         }
-        const entry = original || {id: newId(), text, session: state.session ?? null, draft};
+        const entry = original || {id: newId(), text, session: state.session ?? null, draft, whiteboxPreview: whiteboxPreview && state.agent?.builtin !== true};
         if (draft) entry.draft = draft;
         if (!original) pending.push(entry);
         if (!automatic) entry.attempts = 0;
@@ -954,18 +1118,26 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             entry.automatic = true; entry.error = waitingNotice();
             say(entry.error); render(); report(); return false;
         }
+        const whiteboxes = [...state.items.values()].filter(card => card.type === 'confirm' && card.whitebox && whiteboxState(card) === 'asked');
         entry.sending = true; entry.retried = !!original; entry.error = null; entry.automatic = false; render(true); report();
         try {
             const body = {id: entry.id, text: entry.text};
             if (conversations.supported === true && entry.session) body.session = entry.session;
+            if (entry.whiteboxPreview) body[WHITEBOX_PREVIEW.field] = true;
             entry.attempts++;
             const response = await retryAgentPost(api, '/freevideo/agent/chat', body, {retry: async response => {
+                if (!stopped && !entry.acknowledged && entry.whiteboxPreview && entry.attempts < SEND_ATTEMPTS && await previewUnsupported(response)) {
+                    entry.whiteboxPreview = false; delete body[WHITEBOX_PREVIEW.field];
+                    entry.attempts++; return body;
+                }
                 if (stopped || entry.acknowledged || sendRefused(await sendError(response), response) || entry.attempts >= SEND_ATTEMPTS) return null;
                 entry.attempts++; return body;
             }});
             if (entry.acknowledged) return true;
             if (response?.ok) {
                 const value = await response.json().catch(() => ({}));
+                if (entry.session === state.session) for (const card of whiteboxes)
+                    supersededWhiteboxes.add(cardKey(entry.session, card.id));
                 acknowledge(entry);
                 if (!entry.session && value.session) entry.session = value.session;
                 if (!stopped) { void poll(); void readConversations(true); }
@@ -999,6 +1171,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         sendButton.disabled = !composeAllowed() || draftSending() || !input.value.trim();
     }
     input.addEventListener('input', () => {
+        if (entryDraft !== null) entryDraft = input.value;
         saveDraft();
         // Editing a queued draft cancels its automatic delivery. Its original message remains available for manual retry.
         for (const entry of pending) if (entry.automatic && entry.session === draftSession && entry.draft !== drafts.get(draftSession)) {

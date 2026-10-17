@@ -57,11 +57,12 @@ def source_files(root):
     names += [name for name in files_optional if (root / name).is_file()]
     # Notice and licence files are carried when present; a launcher never fails to start without one.
     names += [name for name in NOTICE_FILES if (root / name).is_file()]
+    names += ['web/vendor/three/LICENSE'] if (root / 'web/vendor/three/LICENSE').is_file() else []
     files = [root / name for name in names]
     files += [p for folder in ('freevideo_engine', 'constraints', 'web', 'example_workflows')
               for p in (root / folder).rglob('*')
               if p.is_file() and p.suffix in ('.py', '.json', '.txt', '.ps1', '.sh', '.js', '.css', '.svg', '.png', '.ico', '.qml',
-                                             '.woff2')]
+                                             '.woff2', '.webp')]
     return sorted(files)
 
 

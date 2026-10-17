@@ -26,6 +26,7 @@ import {createSelectionActions, deletionStatus, isMultiple, isTyping, playheadId
 import {isolateDialogKeys, topDialog} from './dialog_keys.js';
 import {createBlockNotes, describedTrack} from './editor_notes.js';
 import {createFirstRunGuide} from './first_run_guide.js';
+import {SHOWCASE_SCENE} from './entry_showcase.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
 import {optionalText} from './optional_inputs.js';
@@ -1424,6 +1425,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     });
     if (typeof MutationObserver !== 'undefined') guide = createFirstRunGuide({dialog: element, api,
         cn: String(language()).toLowerCase().startsWith('zh'), group: 'editor',
+        onShowcaseTry: async () => { if (await handle.close() !== false) await onView('autopilot', {initialScene: SHOWCASE_SCENE}); },
         isBusy: () => initializing || !tracks || genHost.inert || pointerEditing || jobActive() || ['running', 'queued'].includes(exportStatus?.state),
         targets: {'editor-trim': () => tracks?.guideTarget('trim'), 'editor-empty': () => tracks?.guideTarget('empty')}});
     updateTop(); return handle;

@@ -50,9 +50,9 @@ export function openEditorView(node, {studio, work = null, extend = false, onPro
                 left: Number.isFinite(left) ? left : null, over: words('.fv-generation-late') !== ''};
         };
     }
-    const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view) {
+    const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view, options = {}) {
         if (view === 'nodes') showNodes(node, studio);
-        else if (view === 'autopilot') openAutopilot(node, {studio});
+        else if (view === 'autopilot') openAutopilot(node, {studio, ...options});
         else if (studio?.open) viewChanged('studio', node);
         else openStudio(node);
     }});

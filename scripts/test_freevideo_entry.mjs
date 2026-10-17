@@ -74,6 +74,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         createProgressConnection: () => ({start() {}, refresh() {}, reset() {}}),
         notifyCompatibility: async () => { compatibilityChecks++; },
         startUpdateChecks: () => { updateChecks++; },
+        startWhiteboxWorker: () => ({stop() {}}),
         startDoneNotify: () => { doneNotifyStarts++; }, askDesktopPermission: () => {},
         installNavigation: callback => installed.push(callback),
         refreshNavigation: () => refreshed++, preferredView: () => rememberedView,
@@ -104,6 +105,7 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';", 'const {createGenerationProgress,referenceTrimText,thermalText,sharedGpuText,encoderFileText,encoderFilePath} = globalThis.__freevideoEntryTest;')
             .replace("import { createProgressConnection } from './progress_connection.js';", 'const {createProgressConnection} = globalThis.__freevideoEntryTest;')
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
+            .replace("import { startWhiteboxWorker } from './whitebox_worker.js';", 'const {startWhiteboxWorker} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
             .replace("import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';", 'const {startDoneNotify,askDesktopPermission} = globalThis.__freevideoEntryTest; const DESKTOP_SETTING = "FreeVideo.DoneNotify.Desktop";')
             .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs,mediaRows} = globalThis.__freevideoEntryTest;')
