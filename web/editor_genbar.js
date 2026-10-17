@@ -9,13 +9,13 @@ export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     : t(`about ${Math.ceil(seconds / 60)} minutes`, `约 ${Math.ceil(seconds / 60)} 分钟`);
 // Provisional copy keys for Iris; decode/save sentences follow Studio's stage vocabulary.
 export const CLIP_FINALIZATION_COPY = {
-    prepareDecode: ['Preparing video decoding', '正在准备解码视频'],
+    prepareDecode: ['Preparing video output', '正在准备输出视频'],
     loadDecoder: ['Loading the video decoder', '正在载入视频解码器'],
-    decodeVideo: ['Decoding the video', '正在解码视频'],
-    decodeAudio: ['Decoding the audio', '正在解码音频'],
+    decodeVideo: ['Rendering the video', '正在输出视频'],
+    decodeAudio: ['Rendering the audio', '正在输出音频'],
     saveVideo: ['Saving the video', '正在保存视频'],
-    openClip: ['Loading the generated clip', '正在载入生成片段'],
-    joinClips: ['Combining the clips', '正在合成片段'],
+    openClip: ['Adding it to the timeline', '正在放到时间线上'],
+    joinClips: ['Joining the parts', '正在拼接各段'],
 };
 export function clipFinalization(job) {
     if (!job || !['running', 'queued'].includes(job.state)) return null;

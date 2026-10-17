@@ -649,7 +649,7 @@ async function check() {
         show(found); send('error', found);
     }
     await waitForVisible();
-    if (checkStudio && studioWorkflow(app.graph) && preferredView() !== 'nodes' && !document.querySelector('dialog.fv-studio[open]')
+    if (checkStudio && studioWorkflow(app.graph) && preferredView() !== 'nodes' && !['dialog.fv-workspace-opening[open]', 'dialog.fv-editor[open]', 'dialog.fv-studio[open]'].some(selector => document.querySelector(selector))
         && !reports.some(item => item.type === 'error' && item.where === 'studio'))
         problems.unshift({text: t('The creative workspace did not open.', '创作面板没有打开。'), advice: 'reload'});
     problems.push(...lastProblems);

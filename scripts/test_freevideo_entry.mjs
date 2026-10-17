@@ -271,6 +271,34 @@ test('main browser entry registers both views and preserves node hooks', async t
         finishEditor(); await Promise.resolve(); await Promise.resolve();
         assert.deepEqual(openingEvents.at(-1), ['finish'], 'keep the opening status and update suppression until editor.ready');
         launchReady = null;
+        await t.test('a graph replaced while launcher restoration waits cannot reopen its editor', async () => {
+            let release, calls = 0;
+            launchReady = new Promise(resolve => { release = resolve; });
+            dependencies.openEditorView = () => { calls++; return {ready: Promise.resolve()}; };
+            extension.beforeConfigureGraph(); extension.afterConfigureGraph();
+            extension.beforeConfigureGraph(); app.graph._nodes = [];
+            const releases = restoreReleases; extension.afterConfigureGraph();
+            assert.equal(restoreReleases, releases + 1);
+            release(); await Promise.resolve(); await Promise.resolve();
+            assert.equal(calls, 0, 'a stale launcher callback must not import or open an editor');
+            launchReady = null; app.graph._nodes = nodes;
+        });
+        await t.test('a graph replaced while the editor import waits cannot cover the new workflow', async () => {
+            let release, options;
+            dependencies.openEditorView = async (_node, value) => {
+                options = value;
+                await new Promise(resolve => { release = resolve; });
+                return value.isCurrent() ? {ready: Promise.resolve()} : null;
+            };
+            extension.beforeConfigureGraph(); extension.afterConfigureGraph();
+            assert.equal(options.isCurrent(), true);
+            extension.beforeConfigureGraph(); app.graph._nodes = []; extension.afterConfigureGraph();
+            const covered = openingEvents.filter(row => row[0] === 'cover').length;
+            assert.equal(options.isCurrent(), false);
+            release(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            assert.equal(openingEvents.filter(row => row[0] === 'cover').length, covered);
+            app.graph._nodes = nodes;
+        });
         // The lazy loader owns failed imports: it notifies, reports through onFailure and resolves null.
         dependencies.openEditorView = async (node, options) => { options.onFailure(new Error('editor unavailable')); return null; };
         extension.afterConfigureGraph(); await Promise.resolve();
