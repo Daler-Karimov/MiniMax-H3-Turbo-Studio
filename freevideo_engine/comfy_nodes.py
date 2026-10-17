@@ -458,6 +458,9 @@ class FreeVideoLoRA(io.ComfyNode):
             return io.NodeOutput(list(previous or []))
         import folder_paths
         path = folder_paths.get_full_path_or_raise('loras', lora)
+        if strength != 0:
+            from .lora_check import require_usable
+            require_usable(path)
         return io.NodeOutput(list(previous or []) + [{'path': str(Path(path).resolve()), 'strength': strength}])
 
 
@@ -473,8 +476,12 @@ class FreeVideoLoRAStack(io.ComfyNode):
     def execute(cls, adapters, previous=None):
         from .comfy_assets import resolve_loras
         import folder_paths
-        return io.NodeOutput(resolve_loras(adapters, folder_paths.get_filename_list('loras'),
-            lambda name: folder_paths.get_full_path_or_raise('loras', name), previous))
+        from .lora_check import require_usable
+        result = resolve_loras(adapters, folder_paths.get_filename_list('loras'),
+            lambda name: folder_paths.get_full_path_or_raise('loras', name), previous)
+        for row in result[len(previous or []):]:
+            require_usable(row['path'])
+        return io.NodeOutput(result)
 
     @classmethod
     def fingerprint_inputs(cls, **kwargs):

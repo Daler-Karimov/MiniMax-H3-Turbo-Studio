@@ -1,6 +1,7 @@
 // Shared by the Studio and graph view. Text only; never render exception HTML.
 import {detectBrowserExtension, browserExtensionAdvice, extensionSteps} from './browser_extension.js';
 import {SAMPLING_EFFORTS, STEP_CACHES, tableLevel} from './sampling_effort.js';
+import {failureIssue, failureStage} from './failure_issue.js';
 const reports = new WeakSet();
 const captured = new WeakMap();
 const diagnosticReports = new WeakSet();
@@ -48,9 +49,15 @@ const PLAIN_ERRORS = [
     {key: 'video-no-picture', message: 'No picture could be read from this video file. Choose another video.',
         title: ['This video could not be read', '无法读取这个视频'],
         summary: ['No picture could be read from this video file. Choose another video.', '无法从这个视频文件里读出画面，请换一个视频。']},
+    {key: 'lora-unusable', message: 'This LoRA was not trained for the FreeVideo model and cannot be used.',
+        prefixes: ['LoRA target/shape incompatible with this VDN model', 'Full-difference LoRA target/shape incompatible with this VDN model',
+            'Unsupported LoRA tensor (no patches are ignored): ', 'Adapter contains no LoRA factors', 'Expected matching 2-D LoRA factors', 'Incomplete LoRA pair'],
+        title: ['This LoRA cannot be used', '此 LoRA 无法使用'],
+        summary: ['This LoRA is not made for the FreeVideo model. Turn it off or remove it, then generate again.', '此 LoRA 不适用于 FreeVideo 的模型。请关闭或移除后重新生成。']},
     {key: 'lora-int8', message: 'This LoRA changes parts of the model that the int8 version cannot merge yet, so it cannot be used for now. LoRAs that change only linear layers work.',
-        title: ['This LoRA cannot be used with the int8 model yet', '这个 LoRA 暂时不能用于 int8 模型'],
-        summary: ['This LoRA changes parts of the model that the int8 version cannot merge yet, so it cannot be used for now. LoRAs that change only linear layers work.', '这个 LoRA 修改了 int8 模型目前还不能合并的部分，暂时无法使用。只修改线性层的 LoRA 可以正常使用。']},
+        title: ['This LoRA cannot be used', '此 LoRA 无法使用'],
+        summary: ['The int8 version cannot merge the layers this LoRA changes yet. Turn it off or remove it, then generate again.',
+            'int8 版本暂时无法合并此 LoRA 修改的层。请关闭或移除后重新生成。']},
     {key: 'fa4-update', message: 'The attention speed-up component on this computer needs an update. Run freevideo setup --fa4-guard in a terminal, then restart FreeVideo.',
         title: ['Runtime components need updating', '运行组件需要更新'],
         summary: ['The attention speed-up component on this computer needs an update. Run freevideo setup --fa4-guard in a terminal, then restart FreeVideo.', '注意力加速组件需要更新。请在终端运行 freevideo setup --fa4-guard，然后重新启动 FreeVideo。']},
@@ -80,7 +87,8 @@ function knownError(text) {
                     ...(d.step_cache ? {step_cache: d.step_cache} : {})};
         } catch { /* Malformed metadata stays in technical details. */ }
     }
-    return PLAIN_ERRORS.find(error => line === error.message || error.aliases?.includes(line))?.key ?? null;
+    return PLAIN_ERRORS.find(error => line === error.message || error.aliases?.includes(line)
+        || error.prefixes?.some(prefix => line.startsWith(prefix)))?.key ?? null;
 }
 
 // When a diagnostic report exists the card hides Export report; the same advice
@@ -362,8 +370,7 @@ export function failureAdvice(value, t, known = knownError(value)) {
             ['A component needed to run FreeVideo could not load.', 'FreeVideo 所需的运行组件未能加载。'],
             ['Select "Repair" in the launcher under Settings > Environment. If it still fails, export the report and submit it in a GitHub issue.', '可在启动器“设置 → 环境”里点“修复”。仍然失败时，请导出报告并提交到 GitHub issue。']);
     return row('unknown', ['Generation stopped', '生成已停止'],
-        ['This generation did not finish.', '这次生成未完成。'],
-        ['Click Export report and submit it in a GitHub issue; we will look into it.', '请点“导出报告”，提交到 GitHub issue，我们会专门排查。']);
+        ['', ''], ['', '']);
 }
 
 let activeDialog = null;
@@ -414,7 +421,7 @@ export function createErrorPanel(t) {
 .fv-failure code{display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:inherit;white-space:nowrap;background:var(--fv-raised);border-radius:var(--fv-r-xs,3px);padding:0 3px}
 .fv-failure-dialog{box-sizing:border-box;font-size:14px;width:min(560px,94vw);max-height:88vh;overflow:auto;padding:22px 24px;border:1px solid var(--fv-border,#45454a);border-radius:var(--fv-r-lg,16px);background:var(--fv-bg,#202126);color:var(--fv-ink,#eee);box-shadow:0 24px 80px #0008}
 .fv-failure-dialog::backdrop{background:#070a0db8;backdrop-filter:blur(6px)}.fv-failure-dialog>.fv-failure{border:0;margin:0 0 16px;padding:0}.fv-failure-dialog>button,.fv-failure-dialog .fv-failure-primary{display:block;margin-left:auto;background:var(--fv-accent,#6db8fa);border-color:var(--fv-accent,#6db8fa);color:var(--fv-bg,#111720);font-weight:var(--fv-semibold,600)}
-.fv-failure .fv-extension-steps{font-size:14px;line-height:1.6}.fv-failure-reload{order:-1}.fv-failure-footer{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.fv-failure-footer>.fv-failure-actions{margin-right:auto}
+.fv-failure .fv-extension-steps{font-size:14px;line-height:1.6}.fv-failure-reload{order:-1}.fv-failure .fv-failure-copy{margin-top:8px}.fv-failure-footer{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.fv-failure-footer>.fv-failure-actions{margin-right:auto}
 .fv-failure-footer button{min-height:var(--fv-h-sm,32px);border:1px solid var(--fv-border,#45454a);border-radius:var(--fv-r-sm,8px);background:var(--fv-raised,#303138);color:var(--fv-ink,#eee);padding:5px 12px;font:inherit;font-weight:var(--fv-medium,500);cursor:pointer}.fv-failure-footer .fv-failure-primary{margin-left:0}`;
         document.head.append(style);
     }
@@ -423,26 +430,31 @@ export function createErrorPanel(t) {
     const title = document.createElement('strong'); title.textContent = t('Generation failed', '生成失败');
     const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = t('Copy error', '复制错误');
     const download = document.createElement('button'); download.type = 'button'; download.textContent = t('Export report', '导出报告');
+    // A generation that stopped offers two buttons: the report file, or the same facts as a GitHub issue.
+    const github = document.createElement('button'); github.type = 'button'; github.className = 'fv-failure-github';
+    github.textContent = t('Submit to GitHub', '提交到 GitHub');
     // Shown only for a browser extension, whose steps end with a reload.
     const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'fv-failure-reload';
     reload.textContent = t('Reload page', '刷新页面'); reload.hidden = true; reload.onclick = () => globalThis.location?.reload();
     const actions = document.createElement('div'); actions.className = 'fv-failure-actions';
     // Last in the DOM, first on screen (CSS order), so copy stays the first child.
-    actions.append(copy, download, reload);
+    actions.append(copy, download, reload, github);
     const explanation = document.createElement('p'), action = document.createElement('p');
     const location = document.createElement('p'), cause = document.createElement('p'); cause.className = 'fv-failure-cause';
     location.className = 'fv-failure-location';
     const privacy = document.createElement('p'); privacy.className = 'fv-failure-privacy';
     privacy.textContent = t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
+    const privacyInside = document.createElement('p'); privacyInside.className = 'fv-failure-privacy'; privacyInside.hidden = true;
+    privacyInside.textContent = t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
     const downloadStatus = document.createElement('p'); downloadStatus.setAttribute('role', 'status');
-    let currentReport = null;
+    let currentReport = null, githubLora = false;
     const disclosure = document.createElement('details'), summary = document.createElement('summary');
     summary.textContent = t('Technical details', '技术详情');
     const detailLocation = document.createElement('p'); detailLocation.className = 'fv-failure-location'; detailLocation.hidden = true;
     const detailCause = document.createElement('p'); detailCause.className = 'fv-failure-cause'; detailCause.hidden = true;
     const details = document.createElement('textarea'); details.readOnly = true;
     details.setAttribute('aria-label', t('Error details', '错误详情')); details.spellcheck = false;
-    copy.onclick = async () => {
+    const copyDetails = async button => {
         let copied = false;
         try { await navigator.clipboard.writeText(details.value); copied = true; } catch {
             // Remote ComfyUI commonly uses plain HTTP, where Clipboard API is
@@ -450,7 +462,23 @@ export function createErrorPanel(t) {
             disclosure.open = true; details.focus(); details.select();
             try { copied = document.execCommand('copy'); } catch { /* manual Ctrl+C */ }
         }
-        copy.textContent = copied ? t('Copied', '已复制') : t('Press Ctrl+C', '请按 Ctrl+C');
+        button.textContent = copied ? t('Copied', '已复制') : t('Press Ctrl+C', '请按 Ctrl+C');
+    };
+    copy.onclick = () => copyDetails(copy);
+    // A generation failure keeps the raw text inside the collapsed technical details, with its own copy button.
+    const copyInside = document.createElement('button'); copyInside.type = 'button'; copyInside.className = 'fv-failure-copy';
+    copyInside.hidden = true; copyInside.onclick = () => copyDetails(copyInside);
+    // The issue address needs two browser-only modules. They load when the card is shown, so the click opens the
+    // page at once (a page opened after waiting can be blocked as a pop-up).
+    let issueModules = null;
+    const loadIssueModules = () => import('./feedback.js').then(feedback => import('./updates.js').then(updates => { issueModules = {feedback, updates}; })).catch(() => {});
+    github.onclick = async () => {
+        if (!currentReport) return;
+        if (!issueModules) await loadIssueModules();
+        if (!issueModules) return;
+        const draft = failureIssue(currentReport, element.freevideoKind, {lora: githubLora, t});
+        const url = issueModules.feedback.feedbackIssueURL(draft.text, issueModules.updates.productVersion(), draft.summary, draft.title);
+        globalThis.open?.(url, '_blank', 'noopener');
     };
     download.onclick = () => {
         if (!currentReport) return;
@@ -473,7 +501,7 @@ export function createErrorPanel(t) {
             if (url) setTimeout(() => URL.revokeObjectURL(url), 30000);
         }
     };
-    disclosure.append(summary, detailLocation, detailCause, details);
+    disclosure.append(summary, detailLocation, detailCause, details, copyInside, privacyInside);
     head.append(title, actions); element.append(head, explanation, location, cause, action, disclosure, privacy, downloadStatus);
     return {element, show(value, popup = true, context = {}) {
         const report = createErrorReport(value, context); currentReport = report;
@@ -490,6 +518,12 @@ export function createErrorPanel(t) {
         }
         if (advice.kind === 'unknown' && ['submission', 'queue'].includes(report.stage))
             advice.action = t('Select "Copy error" to keep the error details.', '可点“复制错误”保留错误详情。');
+        // A generation that stopped without a known cause is named by the stage it stopped in.
+        const generated = report.stage === 'execution' && advice.kind !== 'browser-extension';
+        if (generated && advice.kind === 'unknown') {
+            const stage = failureStage(report);
+            advice.title = stage ? t(`Generation did not finish: ${stage[0]}`, `生成未完成：${stage[1]}`) : t('Generation did not finish', '生成未完成');
+        }
         title.textContent = advice.title; explanation.textContent = advice.summary; explanation.hidden = !advice.summary; action.textContent = advice.action;
         element.querySelector('.fv-extension-steps')?.remove();
         if (advice.kind === 'browser-extension') action.after(extensionSteps(advice));
@@ -521,17 +555,27 @@ export function createErrorPanel(t) {
         downloadStatus.textContent = '';
         download.hidden = diagnosticReports.has(report);
         if (internal && download.hidden)
-            action.textContent = t('Use Download report in the preview and submit it in a GitHub issue; we will look into it.',
-                '请点预览区的“下载报告”，提交到 GitHub issue，我们会专门排查。');
+            action.textContent = t('Use Download report in the preview and submit it in a GitHub issue.',
+                '请点预览区的“下载报告”，提交到 GitHub issue。');
         else if (download.hidden) {
             // Advice that ends with "export the report" points at the report this card does offer.
             for (const [from, to] of EXPORT_TO_DOWNLOAD)
                 if (action.textContent.includes(from)) action.textContent = action.textContent.replace(from, to);
         }
+        action.hidden = !action.textContent;
         privacy.textContent = download.hidden
             ? t('Select "Download report" in the preview to save the full diagnostic information.', '可在预览区点“下载报告”保存完整诊断信息。')
             : t('Paths and typed text are removed.', '已去掉路径和输入的文字。');
         copy.textContent = advice.kind === 'sampling-table' ? t('Copy details', '复制详情') : t('Copy error', '复制错误');
+        // A generation failure shows two buttons; copying moves into the technical details.
+        copy.hidden = generated; copyInside.hidden = !generated; copyInside.textContent = copy.textContent;
+        // For a generation failure the note on removed text sits in the technical details, beside the copy button.
+        privacy.hidden = generated; privacyInside.hidden = !generated;
+        const lora = advice.kind === 'lora-unusable' || advice.kind === 'lora-int8';
+        // An int8 limit is not a judgement, so there is no mistake to report.
+        github.hidden = !generated || advice.kind === 'lora-int8'; githubLora = lora;
+        github.textContent = lora ? t('Report a mistake', '报告误判') : t('Submit to GitHub', '提交到 GitHub');
+        if (generated && typeof window !== 'undefined') loadIssueModules();
         if (popup) showFailureDialog(report, t);
         return report;
     }, clear() { currentReport = null; details.value = ''; element.hidden = true; }};

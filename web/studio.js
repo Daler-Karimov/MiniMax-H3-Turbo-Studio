@@ -5,7 +5,7 @@ import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
-import { feedbackButton } from './feedback.js';
+import { feedbackButton, feedbackIssueURL } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
@@ -26,6 +26,7 @@ import { attachMentionOverlay } from './cast_overlay.js';
 import { openCastLibrary } from './cast_source.js';
 import { uploadMedia } from './media_upload.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
+import { createVerdicts, describeVerdict, feedbackDraft } from './lora_check.js';
 import { createSamplingEffort, effortFor, effortsFrom, stepCacheOf } from './sampling_effort.js';
 import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
@@ -290,6 +291,10 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     const actions = el('div', null, 'fv-lora-add'); panel.append(list, actions, note);
     let names = [], disposed = false, rendering = false, renderAgain = false;
     const drafts = new Map(), errors = new Map(), saves = new Map();
+    let skipped = 0;
+    const idleNote = () => loraWarning() + (skipped ? t(skipped === 1 ? ' 1 other LoRA file in the folder is not in .safetensors format and is not listed.' : ` ${skipped} other LoRA files in the folder are not in .safetensors format and are not listed.`, ` 文件夹中另有 ${skipped} 个 LoRA 文件不是 .safetensors 格式，未列出。`) : '');
+    const verdicts = createVerdicts((path, options) => api.fetchApi(path, options));
+    let focusGrip = null;
     const read = () => { const rows = JSON.parse(value(node, 'adapters') || '[]'); if (!Array.isArray(rows) || rows.length > 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); return rows; };
     function syncPrompt(rows) {
         const targets = new Set([promptNode, ...(node.graph?._nodes || []).filter(target =>
@@ -326,10 +331,57 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
             for (const trigger of list.querySelectorAll('.fv-lora-trigger')) {
                 if (trigger.dataset.name === name && !drafts.has(name)) trigger.value = triggerEntry(name).data?.words ?? '';
             }
-            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || idleNote();
         } catch (error) { note.textContent = error.message; }
     }
     const write = rows => { if (set(node, 'adapters', JSON.stringify(rows))) { syncPrompt(rows); window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: node.id})); } };
+    // A LoRA the model cannot take is switched off here, so it is not sent with the request.
+    function disableUnusable(name) {
+        if (disposed) return;
+        try {
+            const rows = read(); let changed = false;
+            for (const row of rows) if (row.name === name && row.enabled !== false && verdicts.peek(name)?.usable === false) { row.enabled = false; changed = true; }
+            if (changed) write(rows);
+        } catch (error) { note.textContent = error.message; }
+    }
+    const reorder = order => {
+        const rows = read();
+        if (order.length !== rows.length || order.every((from, to) => from === to)) return;
+        write(order.map(from => rows[from]));
+    };
+    // The grip moves the whole row with the pointer; arrow keys do the same one step at a time.
+    function sortGrip(wrap, index) {
+        const grip = el('span', null, 'fv-lora-grip'); grip.tabIndex = 0; grip.setAttribute('role', 'button');
+        grip.setAttribute('aria-label', t('Drag to reorder', '拖动调整顺序')); grip.title = t('Drag to reorder', '拖动调整顺序');
+        grip.onkeydown = event => {
+            const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+            const count = list.children.length;
+            if (!delta || index + delta < 0 || index + delta >= count) return;
+            event.preventDefault(); event.stopPropagation();
+            const order = [...Array(count).keys()];
+            [order[index], order[index + delta]] = [order[index + delta], order[index]];
+            focusGrip = index + delta; reorder(order);
+        };
+        grip.onpointerdown = event => {
+            if (event.button > 0) return;
+            event.preventDefault(); wrap.classList.add('fv-lora-dragging');
+            const move = e => {
+                const next = [...list.children].find(row => row !== wrap && e.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
+                if (next) { if (wrap.nextElementSibling !== next) list.insertBefore(wrap, next); }
+                else if (list.lastElementChild !== wrap) list.append(wrap);
+            };
+            const end = e => {
+                for (const [type, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) window.removeEventListener(type, handler);
+                wrap.classList.remove('fv-lora-dragging');
+                const order = [...list.children].map(row => Number(row.dataset.index));
+                if (e.type === 'pointercancel') { render(); return; }
+                reorder(order);
+            };
+            // Moving the row in the DOM drops pointer capture, so the drag listens on the window.
+            for (const [type, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) window.addEventListener(type, handler);
+        };
+        return grip;
+    }
     function render() {
         if (disposed) return;
         if (rendering) { renderAgain = true; return; }
@@ -345,7 +397,12 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
                 const pinned = recentLoras().filter(n => names.includes(n));
                 for (const name of [...new Set([...pinned, ...names, row.name])].filter(Boolean)) { const option = el('option', name); option.value = name; select.append(option); }
-                select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; rememberLora(row.name); write(rows); };
+                select.value = row.name; select.title = row.name;
+                select.onchange = () => {
+                    // Leaving a LoRA that could not be used turns the row back on for the new choice.
+                    if (verdicts.peek(row.name)?.usable === false) row.enabled = true;
+                    row.name = select.value; rememberLora(row.name); write(rows);
+                };
                 const {input: strength, mark: strengthMark} = loraStrengthBox(row.strength ?? 1, () => { if (strength.value !== '') { row.strength = Number(strength.value); write(rows); } });
                 strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度'));
                 const trigger = el('input', null, 'fv-lora-trigger'); trigger.type = 'text'; trigger.maxLength = 300;
@@ -373,20 +430,39 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 select.disabled = strength.disabled = trigger.disabled = row.enabled === false;
                 const remove = button('×', () => { rows.splice(index, 1); write(rows); }); remove.setAttribute('aria-label', t('Remove LoRA', '移除 LoRA'));
                 wrap.append(enabled, select, strength, remove, trigger, strengthMark);
-                if (rows.length > 1) {
-                    const order = el('div', null, 'fv-lora-order');
-                    for (const [label, delta] of [['↑', -1], ['↓', 1]]) {
-                        const move = button(label, () => { [rows[index], rows[index + delta]] = [rows[index + delta], rows[index]]; write(rows); });
-                        move.disabled = index + delta < 0 || index + delta >= rows.length;
-                        move.setAttribute('aria-label', delta < 0 ? t('Move LoRA earlier', 'LoRA 前移') : t('Move LoRA later', 'LoRA 后移')); order.append(move);
-                    }
-                    wrap.append(order);
-                }
+                wrap.dataset.index = String(index); wrap.dataset.sortable = String(rows.length > 1);
+                if (rows.length > 1) wrap.prepend(sortGrip(wrap, index));
+                const problem = el('div', null, 'fv-lora-problem'); problem.hidden = true; wrap.append(problem);
+                // A switched-off row says so, and a click anywhere on it turns it back on.
+                const off = el('div', t('Off. Click to turn on', '已停用，点击启用'), 'fv-lora-off'); off.hidden = row.enabled !== false; wrap.append(off);
+                wrap.onclick = event => {
+                    if (row.enabled !== false || wrap.dataset.unusable === 'true' || event.target.closest('button,select,input,.fv-lora-grip')) return;
+                    row.enabled = true; write(rows);
+                };
+                const mark = verdict => {
+                    const described = describeVerdict(verdict, t);
+                    wrap.dataset.unusable = String(Boolean(described));
+                    problem.hidden = !described; off.hidden = off.hidden || Boolean(described);
+                    if (!described) return;
+                    enabled.checked = false; enabled.disabled = true; strength.disabled = trigger.disabled = true; select.disabled = false;
+                    const fold = el('details', null, 'fv-lora-why'), why = el('pre', described.lines.join('\n'));
+                    const report = button(t('Report a mistake', '报告误判'), () => {
+                        const draft = feedbackDraft(row.name, verdict, described, t);
+                        window.open(feedbackIssueURL(draft.text, productVersion(), draft.diagnostics, draft.title), '_blank', 'noopener');
+                    });
+                    fold.append(el('summary', t('Details', '详情')), why, report);
+                    problem.replaceChildren(el('p', t('Cannot be used: ', '不能使用：') + described.reason), fold);
+                    if (row.enabled !== false) queueMicrotask(() => disableUnusable(row.name));
+                };
+                const known = verdicts.peek(row.name);
+                if (known) mark(known);
+                else verdicts.get(row.name).then(verdict => { if (verdict && !disposed && wrap.isConnected && select.value === row.name) mark(verdict); });
                 list.append(wrap);
                 loadTriggers(row.name).catch(error => { if (!disposed && trigger.isConnected) note.textContent = error.message; });
             });
             if (rows.length > 1) actions.append(clear);
-            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+            if (focusGrip != null) { list.querySelector(`.fv-lora-row[data-index="${focusGrip}"] .fv-lora-grip`)?.focus(); focusGrip = null; }
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || idleNote();
         } catch (error) {
             if (error instanceof DOMException) throw error;
             note.textContent = error.message;
@@ -401,7 +477,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
         try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); const next = recentLoras().find(n => names.includes(n) && !rows.some(row => row.name === n)) ?? names[0]; rememberLora(next); rows.push({name: next, strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
     });
     async function refresh() {
-        try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
+        try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); verdicts.clear(); skipped = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && /\.(ckpt|pt|pth|bin|sft)$/i.test(n)).length; names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
         catch (error) { if (!disposed) note.textContent = error.message; }
     }
     // Only deselects: the files stay in the folder and the recent names are kept.
