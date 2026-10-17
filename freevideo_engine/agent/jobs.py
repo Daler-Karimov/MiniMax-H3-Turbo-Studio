@@ -1953,13 +1953,10 @@ class Jobs:
         clips = []
         for item in spec['clips']:
             clips.append(dict(path=str(self.source_video(item)), start=item.get('start', 0.), end=item.get('end')))
-        name = spec.get('name') or spec.get('label') or row['id']
-        name = ''.join(c if c.isalnum() or c in '._-' else '-' for c in name)[:64].strip('-.') or row['id']
-        relative = 'FreeVideo-Sequences/%s/%s-%s.mp4' % (time.strftime('%Y-%m-%d', time.gmtime()), name, row['id'])
-        if row.get('parent', {}).get('production'):
-            # Deterministic output identity survives a process restart during assembly.
-            run = hashlib.sha256(row['id'].encode()).hexdigest()[:32]
-            relative = 'FreeVideo/%s/%s/video.mp4' % (iso(row['created_at'])[:10], run)
+        # Every sequence is saved as a library work, so it shows in My works and has a library link.
+        # The identity comes from the job id, so it survives a process restart during assembly.
+        run = hashlib.sha256(row['id'].encode()).hexdigest()[:32]
+        relative = 'FreeVideo/%s/%s/video.mp4' % (iso(row['created_at'])[:10], run)
         out = self.port.output_path(relative, create=True)
         row['_phase'] = 'assembling'
         def progress(value):
@@ -1971,20 +1968,16 @@ class Jobs:
                                       cancelled=lambda: bool(row.get('_cancel')))
         if row.get('_cancel'):
             raise JobError('cancelled', 'Cancelled')
-        manifest = dict(schema='freevideo.sequence', schema_version=1, job=row['id'], label=spec.get('label'),
+        manifest = dict(schema='freevideo.sequence', schema_version=1, job=row['id'], label=spec.get('label'), name=spec.get('name'),
                         project=spec.get('project'), created_at=iso(self.clock()),
                         clips=[dict(source={k: v for k, v in item.items() if k in ('from_job', 'library', 'file')},
                                     start=item.get('start', 0.), end=item.get('end')) for item in spec['clips']],
                         transition=spec['transition'], transition_seconds=spec['transition_seconds'])
         out.with_suffix('.json').write_text(json.dumps(manifest, indent=1), encoding='utf-8')
-        if row.get('parent', {}).get('production'):
-            out.with_suffix('.request.json').write_text(json.dumps(dict(success=True, geometry={
-                k: made.get(k) for k in ('seconds', 'frames', 'width', 'height')}, sequence=manifest)), encoding='utf-8')
-            return dict(library_id=library_id(relative), video=library_view(self.port, relative),
-                        **{k: made.get(k) for k in ('seconds', 'frames', 'width', 'height', 'has_audio', 'clips')})
-        return dict(video=self.port.file_view(relative), seconds=made.get('seconds'), frames=made.get('frames'),
-                    width=made.get('width'), height=made.get('height'), has_audio=made.get('has_audio'),
-                    clips=manifest['clips'])
+        out.with_suffix('.request.json').write_text(json.dumps(dict(success=True, geometry={
+            k: made.get(k) for k in ('seconds', 'frames', 'width', 'height')}, sequence=manifest)), encoding='utf-8')
+        return dict(library_id=library_id(relative), video=library_view(self.port, relative),
+                    **{k: made.get(k) for k in ('seconds', 'frames', 'width', 'height', 'has_audio', 'clips')})
 
 
 VLM_ERRORS = {
