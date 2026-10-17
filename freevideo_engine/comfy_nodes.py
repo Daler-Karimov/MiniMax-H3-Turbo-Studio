@@ -31,12 +31,12 @@ class FreeVideoGenerate(io.ComfyNode):
             inputs=[
                 io.String.Input('text', display_name='Prompt', multiline=True, default=DEFAULT_PROMPT,
                     tooltip='Describe the scene, motion, dialogue, sound and music.'),
-                io.Int.Input('width', default=1344, min=256, max=4096, step=32),
-                io.Int.Input('height', default=768, min=256, max=4096, step=32),
+                io.Int.Input('width', display_name='Width', default=1344, min=256, max=4096, step=32),
+                io.Int.Input('height', display_name='Height', default=768, min=256, max=4096, step=32),
                 io.Float.Input('seconds', display_name='Duration (s)', default=10., min=1.625, max=60., step=.1,
                     tooltip='24 fps. The length is rounded up slightly to a length the model can generate; '
                             'for example, 10 s becomes 10.125 s. Videos longer than 15 s are experimental.'),
-                io.Int.Input('seed', default=2026090903, min=0, max=2**53-1, control_after_generate=True),
+                io.Int.Input('seed', display_name='Seed', default=2026090903, min=0, max=2**53-1, control_after_generate=True),
                 io.Image.Input('first', display_name='First frame', optional=True,
                     tooltip='One image. Center-cropped to the selected canvas; enables I2VA.'),
                 io.Image.Input('last', display_name='Last frame', optional=True,
