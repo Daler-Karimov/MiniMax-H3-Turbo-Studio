@@ -351,8 +351,8 @@ function mediaPanel(node, mount = null) {
     let uploading = false;
     serialized.serializeValue = () => {
         if (node.isUploading) throw new Error(text("Wait for media uploads to finish before running", "请等待素材上传完成后再生成"));
-        // The run takes only what it uses; the editing data of a picture stays in the workflow.
-        try { return JSON.stringify(read().map(({file, role, enabled}) => ({file, role, enabled}))); } catch { return serialized.value; }
+        // The run takes only what it uses (and which character a picture belongs to); the editing data of a picture stays in the workflow.
+        try { return JSON.stringify(read().map(({file, role, enabled, cast}) => ({file, role, enabled, ...(typeof cast?.id === 'string' && cast.id ? {cast: {id: cast.id}} : {})}))); } catch { return serialized.value; }
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;

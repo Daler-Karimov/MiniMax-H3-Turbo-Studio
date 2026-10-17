@@ -3,10 +3,10 @@
 // of the media list that carry `cast: {id, name, description}`. When a request is made the names become <Subject N>
 // and the subject definitions go in front, the same wording the Agent's drama planner writes (agent/drama.py).
 export const MAX_PEOPLE = 3;
-export const MAX_PICTURES_EACH = 6;
+export const MAX_PICTURES_EACH = 2;
 export const MAX_REFERENCES = 32;
-// Which of a card's pictures come first; the others follow in the card's own order.
-export const PICTURE_ORDER = ['sheet', 'front', 'three_quarter', 'face'];
+// Which of a card's pictures stands for the person after the sheet; the others follow in the card's own order.
+export const PICTURE_ORDER = ['face', 'front', 'three_quarter'];
 
 // subjects: [{name, description, pictures: [first, last] | null, audio: number | null}]. This is the one JS place for
 // the wording; its Python twin is subject_definitions() and tests/fixtures/subject_definitions.json holds the cases
@@ -34,15 +34,22 @@ export function subjectDefinitions(subjects) {
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 const enabled = row => row && row.enabled !== false;
 // The number H3 gives each reference picture: images in list order (connected inputs come after the list).
-// A part that continues a video keeps the first CONTINUE_PICTURES of them (continuation.PICTURES_MAX).
+// A part that continues a video keeps CONTINUE_PICTURES of them (continuation.PICTURES_MAX): the first ones, or, with two or
+// more characters, the last picture of each (the face) and then the pictures of no character (continuation.pick_pictures).
 export const CONTINUE_PICTURES = 3;
-function pictureNumbers(rows, limit = Infinity) {
-    const numbers = new Map();
-    let count = 0;
+function pictureNumbers(rows, continued = false) {
+    const picked = [];
     rows.forEach((row, index) => {
-        if (enabled(row) && row.role === 'reference' && IMAGE.test(row.file || '') && count < limit) numbers.set(index, ++count);
+        if (enabled(row) && row.role === 'reference' && IMAGE.test(row.file || '')) picked.push(index);
     });
-    return numbers;
+    let kept = picked;
+    if (continued) {
+        const last = new Map();
+        picked.forEach(index => { if (rows[index].cast?.id) last.set(rows[index].cast.id, index); });
+        kept = last.size < 2 ? picked : [...last.values()].sort((a, b) => a - b).concat(picked.filter(index => !rows[index].cast?.id));
+        kept = kept.slice(0, CONTINUE_PICTURES);
+    }
+    return new Map(kept.map((index, at) => [index, at + 1]));
 }
 
 // The characters present in the media list, in list order, with the rows that carry each one's pictures.
@@ -86,8 +93,8 @@ export function mentionRanges(text, people) {
 // The prompt a request carries. Characters mentioned in the text are numbered in order of first mention; one whose
 // pictures are gone is written as a plain name. `active: false` (first/last frames) leaves every name plain too, since
 // pictures of people cannot go with those. `continued` (the part continues a video) lets the characters stay: the part
-// keeps the first three reference pictures and its frames come after them, so a character whose pictures are not among
-// those three is written as a plain name.
+// keeps three reference pictures (see pictureNumbers) and its frames come after them, so a character whose pictures are
+// not among those three is written as a plain name.
 export function expandCast(text, rows, {active = true, continued = false} = {}) {
     text = String(text ?? '');
     const list = Array.isArray(rows) ? rows : [];
@@ -95,7 +102,7 @@ export function expandCast(text, rows, {active = true, continued = false} = {}) 
     const ranges = mentionRanges(text, people);
     if (!ranges.length) return {text, subjects: []};
     if (!continued && list.some(row => enabled(row) && (row.role === 'first' || row.role === 'last'))) active = false;
-    const numbers = pictureNumbers(list, continued ? CONTINUE_PICTURES : Infinity);
+    const numbers = pictureNumbers(list, continued);
     const order = [];
     let result = '', at = 0;
     for (const range of ranges) {
@@ -123,13 +130,20 @@ export function expandCast(text, rows, {active = true, continued = false} = {}) 
     return {text: subjectDefinitions(subjects) + '\n\n' + result, subjects};
 }
 
-// The pictures of a card to put in the media list: the card's own order after the preferred labels, the first six.
+// The pictures of a card to put in the media list, as the Agent carries them (agent/drama.py person_pictures): the sheet of
+// every view (the card's own, else the one the library made), then the face close-up, else the front view. A card with no
+// sheet (one picture, or none could be made) carries its face alone.
 export function cardPictures(card) {
     const rank = new Map(PICTURE_ORDER.map((label, index) => [label, index]));
-    return (card?.images || []).map((image, index) => ({image, index}))
-        .filter(({image}) => image?.media?.file && IMAGE.test(image.media.file))
+    const usable = (card?.images || []).map((image, index) => ({image, index}))
+        .filter(({image}) => image?.media?.file && IMAGE.test(image.media.file));
+    const views = usable.filter(({image}) => image.label !== 'sheet')
         .sort((a, b) => (rank.get(a.image.label) ?? PICTURE_ORDER.length) - (rank.get(b.image.label) ?? PICTURE_ORDER.length) || a.index - b.index)
-        .slice(0, MAX_PICTURES_EACH).map(({image}) => image.media.file);
+        .map(({image}) => image.media.file);
+    const sheet = usable.find(({image}) => image.label === 'sheet')?.image.media.file
+        || (IMAGE.test(card?.sheet?.file || '') ? card.sheet.file : null);
+    if (!sheet) return views.slice(0, 1);
+    return [sheet, ...views.slice(0, 1).filter(file => file !== sheet)];
 }
 
 // Whether a character can be mentioned now; `reason` is the one thing in the way.

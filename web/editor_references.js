@@ -4,8 +4,17 @@
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const IMAGE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
 const MAX = 32;
-// The engine keeps the first three references of a part that continues.
+// The engine keeps three references of a part that continues: the first three, or, with two or more characters,
+// the last picture of each (the face) and then the others (continuation.pick_pictures).
 const CONTINUE_MAX = 3;
+const personOf = ({row}) => typeof row.cast?.id === 'string' && row.cast.id ? row.cast.id : null;
+function pickContinued(list) {
+    const last = new Map();
+    list.forEach((entry, at) => { const person = personOf(entry); if (person) last.set(person, at); });
+    if (last.size < 2) return list.slice(0, CONTINUE_MAX);
+    const faces = [...last.values()].sort((a, b) => a - b).map(at => list[at]);
+    return [...faces, ...list.filter(entry => !personOf(entry))].slice(0, CONTINUE_MAX);
+}
 export function createEditorReferences({t, source, size = () => null, error = () => {}, notify = () => {}}) {
     const root = el('div', 'fv-ed-refs'), chips = el('div', 'fv-ed-ref-chips');
     const add = el('button', 'fv-ed-ref-add'); add.type = 'button';
@@ -20,7 +29,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     const isImage = file => IMAGE.test(file || '');
     // The pictures this part uses: all of them, or the first reference images of a part that continues
     // (sound or video references do not count there, as the engine skips them).
-    const used = () => continuing ? active().filter(({row}) => (row.role || 'reference') === 'reference' && isImage(row.file)).slice(0, CONTINUE_MAX) : active();
+    const used = () => continuing ? pickContinued(active().filter(({row}) => (row.role || 'reference') === 'reference' && isImage(row.file))) : active();
     const full = () => continuing ? used().length >= CONTINUE_MAX : active().length >= MAX;
     // On hover without a full stop; in the notice line with one.
     const waitText = () => t('Available after generation finishes', '生成完成后可改');
