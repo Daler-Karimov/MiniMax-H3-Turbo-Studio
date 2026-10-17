@@ -11,6 +11,8 @@ const PHASES = [
 
 /** The stage a generation stopped in, as [English, Chinese] words, or null when the report does not say. */
 export function failureStage(report) {
+    if (report?.stage === 'submission') return ['submitting the task', '提交任务'];
+    if (report?.stage === 'queue') return ['queue operation', '队列操作'];
     const named = [report?.progress?.phase, report?.progress?.stage,
         /^Stage: (\S+)/m.exec(String(report?.details || ''))?.[1]].filter(Boolean);
     for (const name of named)

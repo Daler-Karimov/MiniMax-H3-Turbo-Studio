@@ -410,6 +410,30 @@ function showFailureDialog(report, t) {
 // cause drops it: the technical details and the report keep the original text.
 const shownCause = text => text.replace(/\s*Use PYTORCH_MPS_HIGH_WATERMARK_RATIO=[\d.]+ to disable upper limit for memory allocations(?: \(may cause system failure\))?\.?/g, '');
 
+/** The written title and explanation for a report, and whether it gets the packaged layout (not a rejected input). */
+export function adviceFor(report, t) {
+    const advice = report.browser_extension
+        ? browserExtensionAdvice(report.browser_extension, t)
+        : failureAdvice(report.details, t, report.known_error ?? null);
+    if (report.stage === 'submission' && advice.kind === 'unknown') {
+        advice.title = t('The task could not be submitted', '任务提交失败');
+        advice.summary = '';
+    }
+    if (report.stage === 'queue' && advice.kind === 'unknown') {
+        advice.title = t('The queue operation did not complete', '队列操作未完成');
+        advice.summary = t('Check that ComfyUI is still running and connected, then retry.', '请确认 ComfyUI 仍在运行、连接正常后重试。');
+    }
+    // Every failure except a rejected input (which the user fixes in place) has one layout: written title,
+    // Export report / Submit to GitHub, the raw error only inside the technical details.
+    const generated = advice.kind !== 'validation';
+    // A generation that stopped without a known cause is named by the stage it stopped in.
+    if (generated && advice.kind === 'unknown' && report.stage === 'execution') {
+        const stage = failureStage(report);
+        advice.title = stage ? t(`Generation did not finish: ${stage[0]}`, `生成未完成：${stage[1]}`) : t('Generation did not finish', '生成未完成');
+    }
+    return {advice, generated};
+}
+
 export function createErrorPanel(t) {
     if (!document.getElementById('freevideo-error-style')) {
         const style = document.createElement('style'); style.id = 'freevideo-error-style';
@@ -505,25 +529,7 @@ export function createErrorPanel(t) {
     head.append(title, actions); element.append(head, explanation, location, cause, action, disclosure, privacy, downloadStatus);
     return {element, show(value, popup = true, context = {}) {
         const report = createErrorReport(value, context); currentReport = report;
-        const advice = report.browser_extension
-            ? browserExtensionAdvice(report.browser_extension, t)
-            : failureAdvice(report.details, t, report.known_error ?? null);
-        if (report.stage === 'submission' && advice.kind === 'unknown') {
-            advice.title = t('The task could not be submitted', '任务提交失败');
-            advice.summary = t('The task could not be submitted; see the error details below.', '任务未提交成功，可查看下方错误详情。');
-        }
-        if (report.stage === 'queue' && advice.kind === 'unknown') {
-            advice.title = t('The queue operation did not complete', '队列操作未完成');
-            advice.summary = t('Check that ComfyUI is still running and connected, then retry.', '请确认 ComfyUI 仍在运行、连接正常后重试。');
-        }
-        if (advice.kind === 'unknown' && ['submission', 'queue'].includes(report.stage))
-            advice.action = t('Select "Copy error" to keep the error details.', '可点“复制错误”保留错误详情。');
-        // A generation that stopped without a known cause is named by the stage it stopped in.
-        const generated = report.stage === 'execution' && advice.kind !== 'browser-extension';
-        if (generated && advice.kind === 'unknown') {
-            const stage = failureStage(report);
-            advice.title = stage ? t(`Generation did not finish: ${stage[0]}`, `生成未完成：${stage[1]}`) : t('Generation did not finish', '生成未完成');
-        }
+        const {advice, generated} = adviceFor(report, t);
         title.textContent = advice.title; explanation.textContent = advice.summary; explanation.hidden = !advice.summary; action.textContent = advice.action;
         element.querySelector('.fv-extension-steps')?.remove();
         if (advice.kind === 'browser-extension') action.after(extensionSteps(advice));
@@ -543,8 +549,7 @@ export function createErrorPanel(t) {
             `${node.type || t('Node', '节点')} #${node.id}${error.input ? ' · ' + error.input : ''}: ${error.message}${error.details ? ': ' + error.details : ''}`));
         const causeText = shownCause(reasons.length ? reasons.join('\n') : [report.message, report.error_details].filter(Boolean).join('\n'));
         const internal = advice.kind === 'unknown' && !['submission', 'queue'].includes(report.stage);
-        const causeInDetails = advice.kind === 'browser-extension'
-            || advice.kind !== 'validation' && !['submission', 'queue'].includes(report.stage);
+        const causeInDetails = generated;
         location.hidden = causeInDetails; detailLocation.hidden = !causeInDetails;
         detailLocation.textContent = causeInDetails ? location.textContent : '';
         if (causeInDetails) location.textContent = '';

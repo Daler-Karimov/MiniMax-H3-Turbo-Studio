@@ -1,4 +1,4 @@
-import { createErrorPanel, errorText } from './error_panel.js';
+import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';
 import { installNativeErrorGuard } from './native_errors.js';
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
@@ -831,7 +831,10 @@ api.addEventListener('freevideo_prewarm', event => {
     if (value) app.graph?.getNodeById(value.node)?.freevideoShowPrewarm?.(value);
 });
 
-installNativeErrorGuard({api, app});
+installNativeErrorGuard({api, app, describe: detail => {
+    const {advice} = adviceFor(createErrorReport(detail, {stage: 'execution', graph: app.graph}), text);
+    return [advice.title, advice.summary].filter(Boolean).join('\n');
+}});
 api.addEventListener('execution_error', event => {
     // An upstream loader/media node can stop FreeVideo before its own node is
     // entered. Retain that error even while the creative workspace is closed.

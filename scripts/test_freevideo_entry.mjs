@@ -46,6 +46,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         },
         secondPassAction: () => new Element('button'),
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
+        createErrorReport: () => ({}), adviceFor: () => ({advice: {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
         loraPanel: () => () => {}, loraWarning: () => 'LoRA warning', promptGuide: () => new Element('guide'),
@@ -90,7 +91,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         let source = await readFile(new URL('../web/freevideo.js', import.meta.url), 'utf8');
         source = source.replace("import { openEditorView } from './editor_loader.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
         source = source
-            .replace("import { createErrorPanel, errorText } from './error_panel.js';", 'const {createErrorPanel,errorText} = globalThis.__freevideoEntryTest;')
+            .replace("import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';", 'const {createErrorPanel,errorText,createErrorReport,adviceFor} = globalThis.__freevideoEntryTest;')
             .replace('import { app } from "../../scripts/app.js";', 'const {app} = globalThis.__freevideoEntryTest;')
             .replace('import { api } from "../../scripts/api.js";', 'const {api} = globalThis.__freevideoEntryTest;')
             .replace("import { openStudio, loraPanel, loraWarning, promptGuide } from \"./studio.js\";", 'const {openStudio,loraPanel,loraWarning,promptGuide} = globalThis.__freevideoEntryTest;')
