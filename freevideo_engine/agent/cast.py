@@ -79,13 +79,13 @@ def turn_label(progress):
 class CastError(JobError):
     """A card error; conflicts carry the current card so the caller can retry from it."""
 
-    def __init__(self, code, message, next_action, *, card=None, job=None):
+    def __init__(self, code, message, next_action, *, card=None, job=None, details=None):
         super().__init__(code, message)
         self.status = errors.ERRORS[code][0]
-        self.next_action, self.card, self.job = next_action, card, job
+        self.next_action, self.card, self.job, self.details = next_action, card, job, details or []
 
     def view(self):
-        value = errors.build(self.code, validation=True, details=[], message=self.message,
+        value = errors.build(self.code, validation=True, details=deepcopy(self.details), message=self.message,
                              next_action=self.next_action)
         if self.code in errors.IMAGE_REASONS:
             value.update(errors.image_failure(self.code))
@@ -276,6 +276,15 @@ class Cast:
         return iso(self.jobs.clock())
 
     # Media --------------------------------------------------------------------------------------------
+    def _picture_at(self, identity, item, by, index):
+        """`_picture` for the request's images[index]; a refused picture names its place, so the dialog marks it."""
+        try:
+            return self._picture(identity, item, by)
+        except CastError as error:
+            if error.code == 'invalid_media' and not error.details:
+                error.details = [dict(field='/images/%d/media' % index)]
+            raise
+
     def _picture(self, identity, item, by):
         """Resolve one picture to an input file in this card's folder (frames, imports, edits)."""
         from ..comfy_assets import media_kind
@@ -290,6 +299,15 @@ class Cast:
         if kind != 'image':
             raise CastError('invalid_media', 'A card picture must be an image.',
                             'Upload an image, or name a video frame with from_job or library and frame.')
+        # The extension alone lets a renamed or cut-off file in; decode it once so a broken picture is refused here,
+        # not when a video first uses the card.
+        try:
+            from PIL import Image
+            with Image.open(self.jobs.port.input_path(relative)) as image:
+                image.load()
+        except Exception:  # noqa: BLE001 - any decoder failure means the picture cannot be used
+            raise CastError('invalid_media', 'A card picture must be a readable image.',
+                            'Upload another image.') from None
         entry = dict(media=dict(file=relative), by=by)
         if isinstance(source, dict) and source.get('from_job'):
             entry['from_job'] = source['from_job']
@@ -354,8 +372,8 @@ class Cast:
                 return replay
         identity = 'c' + uuid.uuid4().hex[:12]
         images = []
-        for row in value.get('images', []):
-            entry = self._picture(identity, row['media'], by)
+        for index, row in enumerate(value.get('images', [])):
+            entry = self._picture_at(identity, row['media'], by, index)
             images.append(dict(entry, label=row.get('label', 'other')))
         voice = self._voice(identity, value['voice']) if value.get('voice') else None
         with self.changed:
@@ -429,8 +447,8 @@ class Cast:
         resolved = {}
         for key, rows in changes.items():
             if key == 'images':
-                resolved['images'] = [entry if entry is not None else dict(self._picture(identity, row['media'], by),
-                                      label=row.get('label', 'other')) for row, entry in rows]
+                resolved['images'] = [entry if entry is not None else dict(self._picture_at(identity, row['media'], by, index),
+                                      label=row.get('label', 'other')) for index, (row, entry) in enumerate(rows)]
             elif key == 'voice':
                 resolved['voice'] = None if rows is None else self._voice(identity, rows)
             else:

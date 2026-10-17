@@ -41,9 +41,14 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
     async function value(response) {
         const data = await response.json().catch(() => null);
         if (!response.ok) {
-            const error = new Error(data?.error?.message || (typeof data?.error === 'string' && data.error)
+            // The dialog only sends pictures, so unreadable media here is always one of them.
+            const unreadable = data?.error?.code === 'invalid_media' && text('Could not read this picture. Please choose another one.', '无法读取这张图片，请换一张。');
+            const error = new Error(unreadable || data?.error?.message || (typeof data?.error === 'string' && data.error)
                 || data?.message || response.statusText || text('Did not finish. Try again.', '没有完成，请重试。'));
-            error.status = response.status; throw error;
+            error.status = response.status;
+            // Which picture it was, as /images/<n>/media of the request.
+            if (unreadable) error.field = data.error.details?.find(detail => typeof detail?.field === 'string')?.field;
+            throw error;
         }
         return data;
     }
@@ -142,6 +147,21 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                 slotUI[index].choose.disabled = busy; slotUI[index].remove.disabled = busy;
             }
         }
+        // A refused picture is named on its own tile; choosing another picture there, or saving again, clears it.
+        // A tile too narrow for the words keeps only its red border, and the words go on the line under the pictures.
+        let markedBelow = -1;
+        function mark(index, content = '') {
+            const {slot, problem} = slotUI[index];
+            // Clear the line only while it still holds this tile's words, not a later message.
+            if (markedBelow === index) { markedBelow = -1; if (status.textContent === problem.textContent) message(''); }
+            // One line per clause, so "这张图片" is never split across lines.
+            problem.replaceChildren(...content.replace(/([，。]|\. )/g, '$1\n').split('\n').filter(Boolean).map(part => el('span', 'fv-cast-slot-line', part)));
+            problem.hidden = !content; slot.classList.toggle('fv-cast-bad', !!content);
+            const width = slot.clientWidth;
+            if (content && width > 0 && (width < 100 || problem.scrollWidth > problem.clientWidth || problem.offsetHeight > slot.clientHeight / 2)) {
+                problem.hidden = true; markedBelow = index; message(content);
+            }
+        }
         function select(tab) {
             active = tab;
             uploadPane.hidden = tab !== 'upload'; aiPane.hidden = tab !== 'ai';
@@ -174,7 +194,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                 choose.append(el('span', 'fv-cast-slot-plus', '+'));
                 if (!index) choose.append(el('span', '', text('Front image', '正面图片')));
             }
-            remove.hidden = true; if (image?.complete) remove.hidden = false; sync();
+            remove.hidden = true; if (image?.complete) remove.hidden = false; mark(index); sync();
         }
         function chooseFiles(index, files) {
             if (loading || saving || closed) return;
@@ -195,7 +215,9 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             input.onchange = () => { chooseFiles(index, input.files); input.value = ''; };
             slot.ondragover = event => { event.preventDefault(); event.stopPropagation(); };
             slot.ondrop = event => { event.preventDefault(); event.stopPropagation(); chooseFiles(index, event.dataTransfer.files); };
-            slot.append(choose, remove, input); slotUI.push({choose, remove});
+            const problem = el('div', 'fv-cast-slot-error'); problem.setAttribute('role', 'alert'); problem.hidden = true;
+            // The remove button comes after the text so it stays above it on a narrow tile.
+            slot.append(choose, problem, remove, input); slotUI.push({slot, choose, remove, problem});
             (index ? views : uploadPane).append(slot); paint(index);
         }
         uploadPane.append(views);
@@ -230,9 +252,10 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
         async function saveCard() {
             if (closed || save.disabled) return;
             if (missing) { message(missing, true); return; }
-            saving = true; resetDelete(); message(''); sync();
+            saving = true; resetDelete(); message(''); slotUI.forEach((_, index) => mark(index)); sync();
+            let pictures = [];
             try {
-                const pictures = active === 'upload' ? slots.filter(Boolean) : generator.getPictures().map((picture, index) => ({
+                pictures = active === 'upload' ? slots.filter(Boolean) : generator.getPictures().map((picture, index) => ({
                     ...(typeof picture.file === 'string' ? {media: picture.file} : {file: picture.file}),
                     label: picture.label || (index ? 'other' : 'front'),
                 }));
@@ -251,7 +274,11 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
                 await value(await (id ? agentSend(api, 'PATCH', path(id), {revision, ...body})
                     : agentPost(api, '/freevideo/agent/cast', {kind: 'character', ...body})));
                 close(); await saved();
-            } catch (error) { await failure(error); }
+            } catch (error) {
+                const at = /^\/images\/(\d+)\/media$/.exec(error.field || '');
+                const index = at && active === 'upload' ? slots.indexOf(pictures[Number(at[1])]) : -1;
+                if (index >= 0 && !closed) mark(index, error.message); else await failure(error);
+            }
             finally { saving = false; if (!closed) sync(); }
         }
         async function deleteCard() {
