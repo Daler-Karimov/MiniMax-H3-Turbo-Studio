@@ -128,11 +128,18 @@ def conditioning_tokens(task, canvas, conditions):
 
 
 class Engine:
+    # Engines built without __init__ (tests) sample without a cache.
+    step_cache = None
+
     def __init__(self, cache, *, base, checkpoint, steps=8, budget_bytes=4 * 2**30,
                  reserve_bytes=2 * 2**30, query_chunk=128, ff_chunk=256, projection_chunk=256,
                  weight_decoder='cpu', budget_ceiling_bytes=None, attention_chunk=None, task='t2va', canvas=None,
                  head_chunk=4, window_batch=1, attention_impl='torch', fast_kernels=False,
-                 resident_bytes=0, attention_batch_bytes=1 << 29, plan_compute=False, memory_retry=False):
+                 resident_bytes=0, attention_batch_bytes=1 << 29, plan_compute=False, memory_retry=False,
+                 step_cache=None):
+        if step_cache not in (None, 'easycache-av'):
+            raise ValueError('MPS supports the easycache-av step cache only')
+        self.step_cache = step_cache
         attention_chunk = projection_chunk if attention_chunk is None else attention_chunk
         if type(attention_chunk) is not int or attention_chunk < 1:
             raise ValueError('MPS attention row chunk must be a positive integer')
@@ -561,11 +568,18 @@ class Engine:
                                                 frame_w=width // 32, step_offset=progress_offset,
                                                 total=progress_total if progress_total is not None else active_steps):
                     self.residency = residency
-                    video, audio = sampler(self.model, prompt, tags, canvas['frames'], self.steps,
-                                          seed, 'mps', step_seconds=durations,
-                                          **(dict(conditions=conditions) if conditions else {}),
-                                          **(dict(initial_latents=initial_latents, refine_steps=refine_steps, refine_schedule=refine_schedule)
-                                             if refining else {}))
+                    from .step_cache import begin_pass, end_pass
+                    step_cache = None
+                    if not refining and self.step_cache:
+                        begin_pass(self.model, active_steps, self.step_cache)
+                    try:
+                        video, audio = sampler(self.model, prompt, tags, canvas['frames'], self.steps,
+                                              seed, 'mps', step_seconds=durations,
+                                              **(dict(conditions=conditions) if conditions else {}),
+                                              **(dict(initial_latents=initial_latents, refine_steps=refine_steps, refine_schedule=refine_schedule)
+                                                 if refining else {}))
+                    finally:
+                        step_cache = end_pass(self.model)
                     self.backend.synchronize()
                     if not bool(video.isfinite().all()) or not bool(audio.isfinite().all()):
                         raise ValueError('MPS sampling produced nonfinite video or audio latents')
@@ -588,7 +602,7 @@ class Engine:
                                               max_bytes=max(self.allocator_limits)),
                         attention_calls={name: value - previous_calls[name]
                                          for name, value in self.attention.backend_calls.items()},
-                        step_seconds=list(durations),
+                        step_seconds=list(durations), step_cache=step_cache,
                         block_seconds=progress.block_seconds, block_seconds_scope=BLOCK_SECONDS_SCOPE,
                         conditions=progress.conditions,
                         load_seconds=self.load_seconds, residency=self._residency_metrics(residency, previous_residency),

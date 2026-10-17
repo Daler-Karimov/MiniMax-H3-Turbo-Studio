@@ -1233,10 +1233,10 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         from .two_pass import sampling_canvas
         check(continue_from, sampling_canvas(canvas)[0])
 
-    if step_cache is not None and machine.get('device_backend') == 'mps':
-        # The step caches are not ported to Mac yet: the request samples every step,
+    if step_cache == 'fbcache' and machine.get('device_backend') == 'mps':
+        # Only the audio-video EasyCache is ported to Mac: the request samples every step,
         # and its identity is that of the same request without a cache.
-        logging.warning('[FreeVideo] Step caches are not available on Mac yet; sampling every step.')
+        logging.warning('[FreeVideo] The first-block cache is not available on Mac yet; sampling every step.')
         step_cache = None
     if continue_from is not None:
         validate_route(backend=machine.get('device_backend', 'cuda'))

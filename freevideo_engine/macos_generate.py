@@ -295,6 +295,8 @@ def run(args):
                 base=base, task=task,
                 checkpoint=str(Path(args.checkpoint or checkpoint_path()).resolve()),
                 seed=args.seed, canvas=canvas, sampling=sampling, resources=resource)
+            if getattr(args, 'step_cache', None) == 'easycache-av':
+                engine['step_cache'] = args.step_cache
             if output_size:
                 engine['output_size'] = [output_size['width'], output_size['height']]
             if preview:

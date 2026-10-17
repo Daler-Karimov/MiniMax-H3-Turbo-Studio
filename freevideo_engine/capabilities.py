@@ -245,7 +245,7 @@ def _admit(machine, width, height, frames, steps, two_pass, task='t2va', refine=
            references=None, reference_rows=None, step_cache=None):
     """Admission of one request; `step_cache` asks the planner for a first-pass cache.
 
-    The request carries the cache the planner keeps (never one on Mac), so its
+    The request carries the cache the planner keeps (on Mac only the audio-video EasyCache), so its
     estimate and history follow what the engine will actually run.
     """
     canvas, sampling, request = _request(width, height, frames, steps, two_pass, task, refine,
@@ -266,6 +266,8 @@ def _admit(machine, width, height, frames, steps, two_pass, task='t2va', refine=
                      for g in (sampling['first'], sampling['second'] or sampling['first'])]
             request.update(pass1_resident_blocks=plans[0]['retained_layers'],
                            pass2_resident_blocks=plans[1]['retained_layers'])
+            if step_cache == 'easycache-av':
+                request['step_cache'] = step_cache
             code = 0 if all(p['retained_layers'] == 50 for p in plans) else 1
             if admission['state'] == 'tight':
                 code = 2
