@@ -242,7 +242,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
     form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
     const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status'); main.insertBefore(notice, form);
-    function say(text) { notice.textContent = text; notice.hidden = !text; }
+    // A quoted button name stays on one line, so “新对话” never wraps in the middle.
+    function quoted(node, text) {
+        const parts = String(text).split(/(“[^”]{1,12}”|"[^"]{1,24}")/);
+        node.textContent = text;
+        if (parts.length > 1) node.replaceChildren(...parts.flatMap((part, index) => part ? [el('span', index % 2 ? 'fv-chat-keep' : '', part)] : []));
+    }
+    function say(text) { quoted(notice, text); notice.hidden = !text; }
 
     let dismissImage = null;
     let state = emptyChat(), pending = [], known = false, stopped = false, timer = null, busy = false, failures = 0;
@@ -607,7 +613,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                     });
                     status.append(error, retry); item.append(status);
                 }
-                error.textContent = entry.error || ''; error.hidden = !entry.error;
+                quoted(error, entry.error || ''); error.hidden = !entry.error;
                 const full = entry.errorCode === 'session_full';
                 retry.textContent = full ? t('New chat', '新对话') : t('Retry', '重试');
                 retry.disabled = entry.sending || (full ? creating : !sendingAllowed());

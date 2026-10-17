@@ -143,3 +143,4 @@
 .fv-chat-new-error{padding:0 var(--fv-chats-pad) 6px}
 .fv-chat-me>.fv-chat-actions{margin-top:6px;flex-wrap:wrap;justify-content:flex-end}
 .fv-chat-me .fv-chat-error{flex:1;min-width:0}
+.fv-chat-keep{white-space:nowrap}
