@@ -22,6 +22,25 @@ def optional_text(value, default=''):
     return value
 
 
+def node_frames(value):
+    """The node's Total frames, or 0 (follow Duration) for anything that is not a count the model makes.
+
+    Workflows saved by earlier versions and restored tabs can leave '', None, a word or another
+    widget's number in this optional input. Such a value is not a request for that length, so it
+    is read as "not given" instead of refusing the whole request.
+    """
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError:
+            return 0
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if type(value) is not int or value < 39 or (value - 5) % 17:
+        return 0
+    return value
+
+
 def request_frames(value):
     """Translate the node's duration sentinel into the bridge's optional count."""
     if type(value) is not int or value != 0 and (value < 39 or (value - 5) % 17):

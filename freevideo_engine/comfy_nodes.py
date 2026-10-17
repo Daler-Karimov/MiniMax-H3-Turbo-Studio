@@ -5,7 +5,7 @@ from pathlib import Path
 from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
 from . import comfy_bridge
-from .comfy_continuation import optional_text, request_options
+from .comfy_continuation import node_frames, optional_text, request_options
 from .default_prompt import DEFAULT_PROMPT
 
 References = io.Custom('FREEVIDEO_REFERENCES')
@@ -13,6 +13,34 @@ LoRAs = io.Custom('FREEVIDEO_LORAS')
 Media = io.Custom('FREEVIDEO_MEDIA')
 NO_LORA = 'None'
 STEP_CACHE_OPTIONS = ('none', 'easycache-av', 'fbcache')
+
+
+def clean_prompt(json_data):
+    """POST /prompt hook: read Total frames before ComfyUI converts it.
+
+    ComfyUI rejects '' or None for an integer input before validate_inputs runs, so the value is
+    read here the same way the node reads it (node_frames): anything that is not a count the model
+    makes follows Duration. Links and other nodes are left as they are.
+    """
+    prompt = json_data.get('prompt') if isinstance(json_data, dict) else None
+    for node in prompt.values() if isinstance(prompt, dict) else ():
+        inputs = node.get('inputs') if isinstance(node, dict) and node.get('class_type') == 'FreeVideoGenerate' else None
+        if isinstance(inputs, dict) and 'frames' in inputs and not isinstance(inputs['frames'], list):
+            frames = node_frames(inputs['frames'])
+            if frames != inputs['frames'] or type(frames) is not type(inputs['frames']):
+                logging.info('[FreeVideo] Total frames %r is not a frame count; the length follows Duration.',
+                             str(inputs['frames'])[:40])
+                inputs['frames'] = frames
+    return json_data
+
+
+def register_prompt_cleanup():
+    from server import PromptServer
+    server = PromptServer.instance
+    if server is None or getattr(server, '_freevideo_prompt_cleanup', False):
+        return
+    server._freevideo_prompt_cleanup = True
+    server.add_on_prompt_handler(clean_prompt)
 
 
 def step_cache_option(value):
@@ -97,7 +125,7 @@ class FreeVideoGenerate(io.ComfyNode):
         # and execute samples in full for any value that is not an option.
         refine_from = optional_text(refine_from)
         try:
-            options = request_options(continue_from, frames)
+            options = request_options(continue_from, node_frames(frames))
             if options.get('continue_from'):
                 # A continued part turns on two passes, skips the preview and takes keyframes as pictures (execute).
                 two_pass, preview = True, False
@@ -136,7 +164,7 @@ class FreeVideoGenerate(io.ComfyNode):
         refine_from, continue_from = optional_text(refine_from), optional_text(continue_from)
         node_id = cls.hidden.unique_id
         chain = block_context(PromptServer.instance, node_id)
-        options = request_options(continue_from, frames)
+        options = request_options(continue_from, node_frames(frames))
         notes = []
         if options.get('continue_from') and not two_pass:
             two_pass = True
