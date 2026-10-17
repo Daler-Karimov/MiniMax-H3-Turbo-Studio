@@ -87,7 +87,10 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
         # Rows without the key are plain runs, as every run before the caches was.
         record['step_cache'] = cache
     if not stage_details:
-        return record
+        # The slider history carries no flow marker, and a preview (one pass)
+        # is never a whole-request sample: estimate() would read its missing
+        # second pass. Leave it out here; the detailed records mark it.
+        return None if preview else record
     upscale = video.get('latent_upscale') or {}
     upscale_seconds = (sum(upscale[k] for k in ('load_seconds', 'compute_seconds'))
                        if all(type(upscale.get(k)) in (int, float) and math.isfinite(upscale[k])
