@@ -1,4 +1,5 @@
 import { api } from '../../scripts/api.js';
+import { setLauncherPresent } from './repair_hint.js';
 
 // Every platform downloads from one release: the latest vX.Y.Z.
 const releasePage = 'https://github.com/FlashML-org/FreeVideo/releases/latest';
@@ -51,6 +52,7 @@ export async function checkUpdates() {
             return;
         }
         value = next; offline = false;
+        setLauncherPresent(next.launcher);
         const phase = next.launcher?.phase || '';
         // Switching to a faster model also restarts ComfyUI once.
         if (working.has(phase) || next.launcher?.model) updating = true;

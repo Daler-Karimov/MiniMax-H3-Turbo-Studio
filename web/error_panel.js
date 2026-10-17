@@ -1,4 +1,5 @@
 // Shared by the Studio and graph view. Text only; never render exception HTML.
+import {repairAction} from './repair_hint.js';
 import {detectBrowserExtension, browserExtensionAdvice, extensionSteps, isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {SAMPLING_EFFORTS, STEP_CACHES, UPSCALE_FACTORS, tableLevel} from './sampling_effort.js';
 import {failureIssue, failureStage} from './failure_issue.js';
@@ -104,6 +105,13 @@ const EXPORT_TO_DOWNLOAD = [
     ['If it still fails, export the report.', DOWNLOAD_ADVICE[0]],
     ['仍然失败时，请导出报告。', DOWNLOAD_ADVICE[1]],
 ];
+
+// A permission error counts as the output folder's only when the path it names is not a model or cache file.
+export function outputNotWritable(text) {
+    const value = String(text).slice(0, 65536);
+    return /PermissionError|Permission denied|Read-only file system|\[Errno (?:13|30)\]/i.test(value)
+        && !/models?[\\/]|cache|\.(?:safetensors|gguf|bin|pt)\b|manifest\.json/i.test(value);
+}
 
 export function errorText(detail) {
     if (typeof detail === 'string') return detail;
@@ -362,6 +370,14 @@ export function failureAdvice(value, t, known = knownError(value)) {
         return row('ram', ['Memory is low or its limit was reached', '内存不足或已达到上限'],
             ['Generation stopped because memory was low or its configured limit was reached.', '内存不足或已达到设置的上限，生成已停止。'],
             ['Close memory-heavy applications and retry. If you set a memory limit, remove or raise it. Copy the details below if it still fails.', '关闭占用内存较多的程序后重试；设置过内存上限的，请取消或调高。仍然失败时，可复制下方详情。']);
+    if (outputNotWritable(text))
+        return row('output-folder', ['The output folder cannot be written to', '输出目录不可写'],
+            ['The video could not be saved.', '视频没能保存。'],
+            ['Check that the output folder can be written to, then retry.', '请检查输出文件夹的写入权限后重试。']);
+    if (/manifest\.json/i.test(text) && /No such file|FileNotFoundError|\[Errno 2\]/i.test(text))
+        return row('model-files', ['The model is not fully installed', '模型没有装全'],
+            ['Some of the model files FreeVideo needs are missing.', 'FreeVideo 需要的部分模型文件缺失。'],
+            repairAction());
     if (/No space left on device|WinError 112|disk (?:is )?full/i.test(text))
         return row('disk', ['Disk space is insufficient', '磁盘空间不足'],
             ['FreeVideo could not write a required file.', 'FreeVideo 无法写入所需文件。'],

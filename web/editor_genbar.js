@@ -94,8 +94,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         failure.hidden = !selectedFailure;
         failureReason.textContent = selectedFailure?.text || '';
-        // Only a press that never became a part has no part to carry the report button.
-        report.hidden = selectedFailure?.id !== 'submission';
+        report.hidden = !selectedFailure;
         const running = ['queued', 'running', 'cancelling'].includes(status?.state);
         const selected = !!selection && (!!previewSelection || (actions.supportedSelection?.() ?? true));
         // While a part generates, choosing another place offers Generate again; it is queued behind.

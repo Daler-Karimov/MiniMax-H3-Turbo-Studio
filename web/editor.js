@@ -31,6 +31,8 @@ import {SHOWCASE_SCENE} from './entry_showcase.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
 import {optionalText} from './optional_inputs.js';
+import {outputNotWritable} from './error_panel.js';
+import {repairAction} from './repair_hint.js';
 import {expandCast} from './cast_mention.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_expand.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
@@ -42,10 +44,12 @@ const language = () => new URLSearchParams(location.search).get('freevideo_lang'
 // Shared by error() and actions.reasonText: one sentence naming the failed step.
 export function editorErrorText(value, t = en => en) {
     if (isNetworkTypeError(value) || isNetworkTypeError(value?.detail)) return connectionLostText(t);
-    const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim())?.trim() || '' : '';
+    // The worker's own "FreeVideo generation failed (exit 1)" header names nothing the user can act on.
+    const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim() && !/^\s*FreeVideo generation failed(?: \(exit -?\d+\))?\s*$/.test(line))?.trim() || '' : '';
     const detail = value?.detail || (value?.error && typeof value.error === 'object' ? value.error : value);
     const raw = [detail?.response?.error?.message, detail?.response?.error, detail?.response?.message,
         detail?.exception_message, detail?.message, value?.error?.message, value?.error, value].map(oneLine).find(Boolean) || '';
+    const whole = (() => { try { return JSON.stringify(value?.detail ?? value?.error ?? value ?? '').slice(0, 65536); } catch { return ''; } })();
     const code = value?.code || detail?.code || value?.reason || detail?.reason || raw;
     const node = oneLine(detail?.node_type), step = `${value?.phase || ''} ${value?.stage || ''} ${node}`;
     const part = Number.isInteger(value?.index) ? value.index + 1 : null;
@@ -64,6 +68,10 @@ export function editorErrorText(value, t = en => en) {
         no_material: t('The media this part uses is missing. Import it again from the library.', '找不到这一段用到的素材，请在素材库重新导入。'),
     };
     if (known[code]) return known[code];
+    if (outputNotWritable(whole))
+        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', '输出目录不可写，视频没能保存。请检查这个文件夹的写入权限后重试。');
+    if (/manifest\.json/i.test(whole) && /No such file|not found|Errno 2\b|FileNotFoundError/i.test(whole))
+        return t('The model is not fully installed. ', '模型没有装全。') + t(...repairAction());
     if (['model_missing', 'missing_model', 'model_not_found'].includes(code) || /(?:model|checkpoint|模型).*(?:not found|missing|不存在|缺失)/i.test(raw))
         return t(`Loading the model failed: ${raw || code}`, `加载模型时出错：${raw || code}`);
     if (['timeout', 'timed_out', 'generation_timeout'].includes(code) || /timed?\s*out|timeout|超时/i.test(raw))
@@ -1068,7 +1076,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!running) {
             if (value.state === 'failed') {
                 if (['source_missing', 'missing_glyphs', 'MissingGlyphs'].includes(value.reason || value.code)) error(value);
-                else notify(value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
+                else notify(value.reason === 'not_writable' ? t('Export failed: the output folder cannot be written to. Check that the folder can be written to, then retry.', '导出时出错：输出目录不可写。请检查这个文件夹的写入权限后重试。')
+                    : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
                     : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
                     : t('Export failed. Try again.', '导出时出错，请再试一次。'));
             }
