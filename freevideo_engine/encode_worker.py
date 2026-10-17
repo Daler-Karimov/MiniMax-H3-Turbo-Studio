@@ -645,7 +645,8 @@ def _encode(args, request, resident, trace):
         add_vdn()
         from .media_encoding import encode_latents
         tick = time.perf_counter()
-        info = encode_latents(normalized, value, request['base'], request['geometry'], resident=resident)
+        info = encode_latents(normalized, value, request['base'], request['geometry'], resident=resident,
+                              cache_root=request.get('reference_latent_cache'))
         keyframe_metrics.update(media_vae_encode_seconds=time.perf_counter() - tick, conditioning_info=info)
         task = info['task']
     elif early_reference is not None:

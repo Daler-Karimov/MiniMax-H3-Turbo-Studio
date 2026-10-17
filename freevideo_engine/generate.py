@@ -752,7 +752,8 @@ def _run(args):
                             'metrics': str(destination.with_suffix('.encoding.json')),
                             'diagnostic_output': str(destination)}
                 if media:
-                    encoding.update(media=media, geometry=canvas, base=profile['engine'].get('base'))
+                    encoding.update(media=media, geometry=canvas, base=profile['engine'].get('base'),
+                                    reference_latent_cache=str(input_cache.root.parent.parent) if input_cache else None)
                 # Lets the encoder child read the video model while it computes, on a slow drive.
                 from .model_read_ahead import request_fields
                 if getattr(args, 'cache', None):
