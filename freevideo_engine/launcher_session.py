@@ -21,7 +21,7 @@ from .launcher_terminal import Tail
 from .model_status import FAMILIES, NAMES
 from .model_guidance import (package_instructions, video_instructions, runtime_packages_supported, download_view,
                              export_download_list, DownloadListError, DOWNLOAD_COPY)
-from .setup_progress import progress_text
+from .setup_progress import ModelLine, progress_text
 from .terminal_ui import clean, duration
 from .model_upgrade import TARGET
 from .runtime_alias import checked_real_path
@@ -2060,6 +2060,11 @@ class Session:
                            done=min(group['download_bytes'], group.get('downloaded_bytes') or 0),
                            rate=group.get('bytes_per_second') or progress.get('rate'))
         file_text = progress_text(current, zh, decimal_sizes=sys.platform == 'darwin')
+        if not hasattr(self, 'model_line'):
+            self.model_line = ModelLine()
+        steady = self.model_line.line(progress, groups, display('Connecting to download server', zh), zh,
+                                      sys.platform == 'darwin')
+        file_text = steady if steady is not None else file_text
         if self.importer.busy and self.importer.state.get('activity'):
             imported = self.importer.state
             file_text = progress_text(dict(activity=imported['activity'], unit='bytes',

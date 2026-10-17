@@ -39,7 +39,7 @@ def fetch(row, root, family, networking, env, ui, check):
         names = list(row['sources'])
     candidates = [(name, row['sources'][name]) for name in names if name in row['sources']]
     key = 'download-' + row['filename']
-    name = 'PyTorch' if row['package'] == 'torch' else row['package']
+    name = 'Runtime components'
     source = ''
     ui.begin(key, 'Download PyTorch + CUDA', detail=row['filename'])
     success = False

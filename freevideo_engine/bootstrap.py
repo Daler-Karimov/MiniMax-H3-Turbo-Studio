@@ -2093,7 +2093,9 @@ INSTALL_PHASE_OTHER_BYTES = 6 * 2**30
 
 # The GPU acceleration build is one task of the phase but takes minutes, so it
 # weighs in the same way: as a share of the phase that advances with its counter.
-INSTALL_PHASE_BUILD_BYTES = 3 * 2**30
+# Measured on a fresh Linux install: the compile ran about twice as long as the
+# 21 GiB model download, so it takes a share of the bar on that order.
+INSTALL_PHASE_BUILD_BYTES = 12 * 2**30
 
 
 def install_phase_units(tasks, finished, download_bytes, fetched_bytes, build_bytes=0, built=0.):
