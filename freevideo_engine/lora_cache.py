@@ -32,6 +32,10 @@ from . import disk_space
 MODULATION = re.compile(r'transformer_blocks\.\d+\.adaln_proj\.')
 
 
+INT8_UNMERGEABLE = ('This LoRA changes parts of the model that the int8 version cannot merge yet, '
+                    'so it cannot be used for now. LoRAs that change only linear layers work.')
+
+
 def index_adapter(row, targets, skipped=None):
     pairs = {}
     full = []
@@ -76,8 +80,8 @@ def index_adapter(row, targets, skipped=None):
             for target, split, swap in _targets(name):
                 if target not in targets and '.attn.' in target:
                     target = target.replace('.attn.', '.attn.orig.', 1)
-                if skipped is not None and target not in targets and MODULATION.match(target):
-                    skipped.append(target)
+                if skipped is not None and target not in targets:
+                    skipped.append(('modulation' if MODULATION.match(target) else 'other_layer', target))
                     continue
                 expected = targets.get(target)
                 rows = bshape[0] if split is None else bshape[0] // 3
@@ -92,6 +96,15 @@ def index_adapter(row, targets, skipped=None):
                 target += '#bias' if bias else ''
                 if target not in targets and '.attn.' in target:
                     target = target.replace('.attn.', '.attn.orig.', 1)
+                if skipped is not None:
+                    # Quantized weights cannot take a full difference, and the int8 package
+                    # keeps no bias or non-linear patch path yet: count each one, apply the rest.
+                    if target.endswith('#bias'):
+                        skipped.append(('bias', target))
+                    else:
+                        skipped.append(('quantized_diff' if target in targets or
+                                        target.replace('.attn.', '.attn.orig.', 1) in targets else 'other_layer', target))
+                    continue
                 expected = targets.get(target)
                 actual = list(shape)
                 if split is not None:
@@ -163,8 +176,7 @@ def prepare(cache, adapters, output_root=None):
     manifest_path = cache / 'manifest.json'
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     if manifest.get('precision') == 'int8':
-        raise ValueError('This LoRA changes parts of the model that the int8 version cannot merge yet, '
-                         'so it cannot be used for now. LoRAs that change only linear layers work.')
+        raise ValueError(INT8_UNMERGEABLE)
     if manifest.get('precision') != 'fp8':
         raise ValueError('LoRA variants require the prepared FP8 model')
     from .adaln_assets import SLIM_FORMATS, restore_projections
