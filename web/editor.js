@@ -219,10 +219,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     let submissionFailure = null;
     let blockStates = null, progressObserver = null, progressConnection = null;
     function barJob(job) {
+        if (!job) return job;
         const latest = [...runProgress.values()].filter(message => message.chain.id === job.id)
+            .filter(message => job.blocks?.some(block => block.id === message.chain.block && ['running', 'queued'].includes(block.state)))
             .sort((a, b) => (a.received_at || 0) - (b.received_at || 0)).at(-1);
         const words = panel.progressWords?.() || null;
-        return latest ? {...job, chainProgress: latest.chain, words} : words ? {...job, words} : job;
+        const loadingClip = !job.blocks?.some(block => ['pending', 'queued', 'running'].includes(block.state))
+            && job.blocks?.some(block => block.state === 'done' && block.output && ['queued', 'running'].includes(model.attemptClip(state.record, block.id)?.pending));
+        return {...job, ...(loadingClip ? {state: 'running', loadingClip: true} : {}),
+            ...(latest ? {chainProgress: latest.chain, progressMessage: latest} : {}), words};
     }
     function paintJob(job) {
         const messages = blockMessages([...runProgress.values()].filter(message => message.chain.id === job.id),
@@ -230,7 +235,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const values = editorBlockStates(job, messages, blockStates);
         for (const block of job.blocks || []) {
             const clip = model.attemptClip(state.record, block.id); if (!clip || clip.job !== job.id) continue;
-            const value = {...values[block.id], run: `${job.id}:${block.prompt_id || block.attempts || 0}`};
+            const loading = block.state === 'done' && block.output && ['queued', 'running'].includes(clip.pending);
+            const value = {...values[block.id], ...(loading ? {state: 'generating', fraction: .99} : {}), run: `${job.id}:${block.prompt_id || block.attempts || 0}`};
+            if (value.state === 'generating') value.fraction = Math.min(.99, value.fraction || 0);
             for (const pair of model.pair(state.record, block.id)) { progress.set(pair.id, value); tracks?.setProgress(pair.id, value); }
         }
     }
@@ -492,6 +499,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return ['queued', 'running', 'cancelling'].includes(previous.state);
         failures.reconcile(job, previous);
         mostRecentJob = job.id; jobStatuses.set(job.id, job); paintJob(job);
+        genbar?.update(barJob(job));
         const completed = new Set();
         for (const block of job.blocks || []) {
             const clip = model.attemptClip(state.record, block.id); if (!clip || clip.job !== job.id) continue;
@@ -551,6 +559,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             value.held = waiting;
             localStorage.setItem(viewPrefix + key, JSON.stringify({selection: value.selection, text: value.text, ...(waiting.length ? {held: waiting} : {})}));
             if (state.record.id) localStorage.setItem('fv-editor-last', key);
+            localStorage.setItem('fv-editor-opening', JSON.stringify({id: key, name: state.record.name}));
         } catch {}
         // An untouched edit belongs to this tab until it has a saved identity.
         lastDraft = !state.record.id && state.record.tracks.every(track => !track.clips.length) ? key : null;
@@ -570,6 +579,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); failures.clear(); progressConnection?.reset();
         mostRecentJob = null; submissionFailure = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
         suppressSave = true; try { state.replace(record); savedContent = content(record); } finally { suppressSave = false; }
+        panel.onProjectLoaded?.(record);
         const width = tracksHost.clientWidth - 148; if (width > 0) state.setZoom(model.openingZoom(width, record));
         tracks?.setScrollLeft(0);
         // An empty edit opens with one part's length selected at the start, ready to generate.
