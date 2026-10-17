@@ -16,8 +16,9 @@ STEP_CACHE_OPTIONS = ('none', 'easycache-av', 'fbcache')
 
 
 def step_cache_option(value):
-    """Bridge keyword for the Step cache widget; a workflow without it, or with 'none', adds nothing."""
-    return {} if value in (None, 'none') else {'step_cache': value}
+    """Bridge keyword for the Step cache widget; a workflow without it, with 'none' or with a value that is
+    not an option adds nothing. Workflows saved before the widget existed hold '' in its position."""
+    return {'step_cache': value} if value in STEP_CACHE_OPTIONS and value != 'none' else {}
 
 
 class FreeVideoGenerate(io.ComfyNode):
@@ -89,9 +90,11 @@ class FreeVideoGenerate(io.ComfyNode):
 
     @classmethod
     def validate_inputs(cls, text, width, height, seconds, seed, continue_from='', frames=0, two_pass=True,
-                        preview=False, refine_from='', base_steps=8, refine_steps=3):
+                        preview=False, refine_from='', base_steps=8, refine_steps=3, step_cache='none'):
         # ComfyUI marks every input named here when a check fails, so only the checked widgets are
         # listed. Linked pictures, media and conditioning have no value before the run anyway.
+        # step_cache is named so ComfyUI skips its option list: an older saved workflow puts '' there,
+        # and execute samples in full for any value that is not an option.
         refine_from = optional_text(refine_from)
         try:
             options = request_options(continue_from, frames)
