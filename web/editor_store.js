@@ -180,12 +180,19 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
     let disposed = false; const uploads = new Set();
     const session = holdSession();
     let activeProject = null, sessionTimer = null, sessionWrites = Promise.resolve();
+    // A stalled lease request is cut off so opening, switching and closing never wait on it.
+    async function lease(body, extra = {}) {
+        const controller = new AbortController(), timer = clock.setTimeout(() => controller.abort(), 8000);
+        try { await json('/freevideo/editor/project/session', {...post(body), ...extra, signal: controller.signal}); }
+        finally { clock.clearTimeout(timer); }
+    }
     function activateProject(id) {
         clock.clearTimeout(sessionTimer); sessionTimer = null;
         const previous = activeProject; activeProject = id;
         sessionWrites = sessionWrites.catch(() => {}).then(async () => {
-            if (previous && previous !== id) await json('/freevideo/editor/project/session', {...post({id: previous, session: session.session, release: true}), keepalive: true});
-            if (id) await json('/freevideo/editor/project/session', post({id, session: session.session}));
+            // A failed release must not skip registering the edit that is already open.
+            if (previous && previous !== id) await lease({id: previous, session: session.session, release: true}, {keepalive: true}).catch(() => {});
+            if (id) await lease({id, session: session.session});
         });
         if (id && !disposed) sessionTimer = clock.setTimeout(() => { activateProject(activeProject).catch(() => {}); }, 20000);
         return sessionWrites;

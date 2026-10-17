@@ -125,7 +125,7 @@ function basicBlockProgress(clipId, clipElement, t = en => en) {
     }, dispose() { element.remove(); }};
 }
 let opened, lastDraft = null;
-const editorViews = new Map(), viewPrefix = 'fv-editor-view:';
+const editorViews = new Map(), viewPrefix = 'fv-editor-view:', usedPrefix = 'fv-editor-used:';
 
 // A pending ComfyUI node listens on document, including above sibling dialogs
 // and during native library drags. Suspend the canvas, preserving its placement
@@ -638,7 +638,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             held.push({ids: [...entry.ids], text: entry.text}); markHeld(entry.ids, true);
         }
         viewReady = true;
-        if (record.id) try { localStorage.setItem('fv-editor-last', record.id); } catch {}
+        if (record.id) try { localStorage.setItem('fv-editor-last', record.id); localStorage.setItem(usedPrefix + record.id, String(Date.now())); } catch {}
         updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
     }
     async function switchProject(id) {
@@ -662,7 +662,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         for (const key of keys) editorViews.delete(key);
         if (keys.has(lastDraft)) lastDraft = null;
         try {
-            for (const key of keys) localStorage.removeItem(viewPrefix + key);
+            for (const key of keys) { localStorage.removeItem(viewPrefix + key); localStorage.removeItem(usedPrefix + key); }
             if (keys.has(localStorage.getItem('fv-editor-last'))) localStorage.removeItem('fv-editor-last');
             if (keys.has(globalThis.sessionStorage?.getItem('fv-editor-draft'))) globalThis.sessionStorage?.removeItem('fv-editor-draft');
         } catch {}
@@ -686,8 +686,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await queue.flush(); releaseStamp();
             if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return; }
             // Load the replacement before deleting, so a read failure keeps the edit open.
-            const rows = (await store.projects()).filter(row => row.id !== state.record.id)
-                .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+            const rows = (await store.projects()).filter(row => row.id !== state.record.id);
+            // Most recently used: the order the edits were opened, then the last save.
+            const order = id => { try { return Number(localStorage.getItem(usedPrefix + id)) || 0; } catch { return 0; } };
+            rows.sort((a, b) => order(b.id) - order(a.id) || String(b.updated_at).localeCompare(String(a.updated_at)));
             const record = rows.length ? await store.load(rows[0].id) : initial();
             if (!record) throw new Error(words.delete_failed);
             await discardProject();
