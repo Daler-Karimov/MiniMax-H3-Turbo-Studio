@@ -383,7 +383,8 @@ def prepare(root, machine, sampling, task, *, progress, interrupted=None, enviro
                        refine_steps=sampling.get('refine_steps', 0), missing_bytes=total,
                        available=available_levels(cache, shared, manifest, kind, catalog),
                        decimal_sizes=sys.platform == 'darwin',
-                       **({'step_cache': sampling['step_cache']} if sampling.get('step_cache') else {}))
+                       **({'step_cache': sampling['step_cache']} if sampling.get('step_cache') else {}),
+                       **({'scale': sampling['scale']} if sampling.get('scale', 2) != 2 else {}))
         raise SamplingTableUnavailable(details, failure.cause) from failure.cause
     if failure is not None:
         raise failure

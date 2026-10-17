@@ -73,10 +73,10 @@ GUIDE = {
         'the draft and looks plainer than a direct generation, so keep the direct one when the user prefers its look.',
     ],
     'quality': [
-        'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass (default); "medium" = 8 steps, '
-        '"high" = 20 steps with a step cache, "max" = 20 steps with a step cache that skips less work, each in one pass. '
-        '"max" runs plain 20 steps when the GPU has no room for its cache. On a Mac, "high" is the same and '
-        '"max" is 20 plain steps.',
+        'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass, the first pass at half size '
+        '(default); "medium" = the same 8 + 3 two-pass with a larger first pass, for more detail; "high" = 20 steps '
+        'with a step cache and "max" = 20 plain steps, each in one pass. The same on a Mac. sampling.two_pass=false '
+        'without base_steps runs 20 steps.',
         'Two-pass generation runs only with 8 first-pass steps. Any other base_steps (for example 20 with '
         'two_pass=true) runs in one pass of that many steps; the job notice says so. A preview is always two-pass '
         'with 8 steps.',
@@ -85,7 +85,7 @@ GUIDE = {
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
         'Otherwise it uses as few parts as possible, each at least 10 s; how many depends on how long this computer can generate in one run, and the parts continue and join automatically. '
-        'Multiple blocks or continue_from need two-pass text generation: quality "light" '
+        'Multiple blocks or continue_from need two-pass text generation: quality "light" or "medium" '
         'or sampling.two_pass=true and no preview. Their only media is media.references with at most 3 pictures, '
         'which every continuing part also sees (keeps the same people); first_frame_reference then gives way to them. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '

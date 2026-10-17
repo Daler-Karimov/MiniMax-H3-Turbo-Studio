@@ -196,7 +196,8 @@ test('main browser entry registers both views and preserves node hooks', async t
                         ['frames', 'Total frames', '帧数', 141],
                         ['first_frame_reference', 'First-frame reference', '首帧参考', true, '减小漂移'],
                         ['step_cache', 'Step cache', '步间缓存', 'none',
-                            '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
+                            '复用相近采样步之间的计算，更快完成，结果会有细微变化。'],
+                        ['upscale_factor', 'Upscale factor', '放大倍数', '2', '二次采样时成片相对首遍的放大倍数。'],
                         ['voice_reference', 'Voice reference', 'Voice reference', true],
                         ['hide_tail', 'Hide dialogue tail', 'Hide dialogue tail', true],
                     ];

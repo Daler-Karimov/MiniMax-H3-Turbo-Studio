@@ -381,7 +381,7 @@ def worker(value):
                         frames=value['canvas']['frames'], two_pass=True, refine_steps=sampling['refine_steps'],
                         reuse_weights=True, refinement_resident_bytes=admission['refinement_resident_bytes'],
                         first_pass_saved=first_saved, phase_changed=changed,
-                        staged=sampling.get('staged', False))
+                        staged=sampling.get('staged', False), scale=sampling.get('scale', 2))
                     result.update(sampling_passes=measured['sampling_passes'],
                         shared_sampling_residency=measured['shared_sampling_residency'],
                         latent_upscale=measured['latent_upscale'], sampling_phase='latent-save')

@@ -225,7 +225,8 @@ def capabilities(port, jobs):
                     fps=24, base_steps=[1, 32], refine_steps=[1, 31], references=32, loras=32, lora_strength=[-4, 4],
                     upload_bytes=2 * 1024 ** 3, vlm_images=24, takes=8, batch_jobs=64),
         quality={name: dict(two_pass=plan[0], base_steps=plan[1], refine_steps=plan[2],
-                            step_cache=quality_tiers.step_cache(name, quality_tiers.on_mac()))
+                            step_cache=quality_tiers.step_cache(name, quality_tiers.on_mac()),
+                            upscale_factor=quality_tiers.upscale_factor(name, quality_tiers.on_mac()))
                  for name, plan in specs.QUALITY.items()},
         aspects=sorted(specs.ASPECTS), native_megapixels=.98,
         tasks=GUIDE['tasks'], media_extensions={k: sorted(v) for k, v in EXTENSIONS.items()},

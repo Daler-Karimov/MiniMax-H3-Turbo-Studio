@@ -1077,7 +1077,7 @@ def register():
         try:
             canvas = geometry(int(request.query['width']), int(request.query['height']),
                               seconds=float(request.query['seconds']))
-            from .two_pass import plan, sampling_canvas
+            from .two_pass import SCALES, plan, sampling_canvas
             canvas = sampling_canvas(canvas)[0]
             task = request.query.get('task', 't2va')
             _, machine = installation()
@@ -1085,17 +1085,22 @@ def register():
             rows = await asyncio.to_thread(local_records, folder_paths.get_output_directory(), device)
             adapters = request.query.get('adapters') == '1'
             # A small canvas runs in one pass whatever the switch says. A cached
-            # level is keyed "<steps>:<cache>". Without a run of it, plain runs
-            # stand in: the first-block cache is counted at full time, since the
+            # level is keyed "<steps>:<cache>", a two-pass upscale factor other
+            # than 2 "<steps>x<factor>". Without a run of it, plain runs stand
+            # in: the first-block cache is counted at full time, since the
             # planner may not keep it on this card.
             share = {'fbcache': 1.}
-            result = {name: {(str(steps) + (':' + cache if cache else '')):
-                             estimate(rows, canvas, base_steps=steps,
-                                      two_pass=plan(canvas, enabled, task, base_steps=steps)['enabled'],
-                                      task=task, adapters=adapters, step_cache=cache, cache_share=share.get(cache))
-                             for steps, cache in (((8, None),) if enabled else
-                                                  ((8, None), (12, None), (16, None), (20, None),
-                                                   (20, 'easycache-av'), (20, 'fbcache')))}
+
+            def one(steps, cache, enabled, factor):
+                sampled = plan(canvas, enabled, task, base_steps=steps, scale=factor)
+                return estimate(rows, canvas, base_steps=steps, two_pass=sampled['enabled'], task=task,
+                                adapters=adapters, step_cache=cache, cache_share=share.get(cache),
+                                upscale_factor=sampled.get('scale', 2))
+            result = {name: {(str(steps) + (':' + cache if cache else '') + ('x%g' % factor if factor != 2 else '')):
+                             one(steps, cache, enabled, factor)
+                             for steps, cache, factor in ([(8, None, factor) for factor in SCALES] if enabled else
+                                                          ((8, None, 2), (12, None, 2), (16, None, 2), (20, None, 2),
+                                                           (20, 'easycache-av', 2), (20, 'fbcache', 2)))}
                       for name, enabled in (('single', False), ('two_pass', True))}
             return web.json_response(result, headers={'Cache-Control': 'no-store'})
         except (OSError, ValueError, TypeError, KeyError):

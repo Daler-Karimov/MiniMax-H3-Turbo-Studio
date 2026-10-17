@@ -14,7 +14,8 @@ from .. import tiers
 S = 'https://json-schema.org/draft/2020-12/schema'
 PREFIX = '/freevideo/agent/v1'
 # (two_pass, base_steps, refine_steps) of each level on this platform; the step
-# cache a level adds is tiers.step_cache(name, mac) (on Mac only high has one, easycache-av).
+# cache a level adds is tiers.step_cache(name, mac) (only high has one, easycache-av),
+# its two-pass upscale factor tiers.upscale_factor(name, mac) (medium samples a larger first pass).
 QUALITY = {name: tiers.plan(name, mac=tiers.on_mac()) for name in tiers.TIERS}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),
            '21:9': (21, 9), '2:3': (2, 3), '3:2': (3, 2)}
@@ -182,7 +183,8 @@ def generate(*, local=False):
                 'then': {'not': {'anyOf': [{'required': [k]} for k in ('width', 'height')]}}},
                {'if': {'if': {'required': ['sampling'], 'properties': {'sampling': {'required': ['two_pass']}}},
                        'then': {'properties': {'sampling': {'properties': {'two_pass': {'const': False}}}}},
-                       'else': {'required': ['quality'], 'properties': {'quality': {'not': {'const': 'light'}}}}},
+                       'else': {'required': ['quality'], 'properties': {'quality': {'not': {'enum': [
+                           name for name, plan in QUALITY.items() if plan[0]]}}}}},
                 'then': {'properties': {'preview': {'const': False}}}},
                # A preview is two-pass, which runs only with 8 first-pass steps: refused when the effective
                # first-pass count is another number, given in sampling or inherited from the quality.
@@ -194,7 +196,7 @@ def generate(*, local=False):
                     {'required': ['sampling'], 'properties': {
                         'sampling': {'required': ['base_steps'], 'not': {'required': ['two_pass']},
                                      'properties': {'base_steps': {'not': {'const': 8}}}},
-                        'quality': {'const': 'light'}}},
+                        'quality': {'enum': [name for name, plan in QUALITY.items() if plan[0]]}}},
                     {'required': ['sampling', 'quality'], 'properties': {
                         'sampling': {'required': ['two_pass'], 'not': {'required': ['base_steps']},
                                      'properties': {'two_pass': {'const': True}}},

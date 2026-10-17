@@ -1,3 +1,4 @@
+import {continuationUpscale} from './sampling_effort.js';
 export const EXTEND_PROPERTY = 'freevideo_extend';
 export const EXTEND_TEXT = Object.freeze({
     action: ['Extend', '接着生成'],
@@ -56,7 +57,7 @@ export async function readExtendRecord(api, record) {
 }
 
 export function createExtendState(node, read, write) {
-    const keys = ['width', 'height', 'seconds', 'two_pass', 'preview', 'base_steps', 'refine_steps', 'step_cache'];
+    const keys = ['width', 'height', 'seconds', 'two_pass', 'preview', 'base_steps', 'refine_steps', 'step_cache', 'upscale_factor'];
     return {
         get source() { return node.properties?.[EXTEND_PROPERTY]?.source || null; },
         enter(record) {
@@ -74,10 +75,13 @@ export function createExtendState(node, read, write) {
             seconds = Math.floor(seconds * 1000 + 1e-6) / 1000;
             const source = structuredClone(record); source.geometry = {...g, seconds};
             node.properties[EXTEND_PROPERTY] = {source, previous};
+            const v = previous.values;
             for (const [key, value] of Object.entries({width: g.width, height: g.height,
                 seconds: Math.min(60, seconds), text: '', preview: false,
-                // A continuation always runs the Light plan: two passes, 8 + 3 steps, no step cache.
-                two_pass: true, base_steps: 8, refine_steps: 3, step_cache: 'none'})) write(key, value);
+                // A continuation always runs two passes, 8 + 3 steps, no step cache: Light, or Medium when that is the level.
+                two_pass: true, base_steps: 8, refine_steps: 3, step_cache: 'none',
+                ...(v.upscale_factor !== undefined
+                    ? {upscale_factor: continuationUpscale(v.base_steps, v.two_pass, v.refine_steps, v.step_cache, v.upscale_factor)} : {})})) write(key, value);
             node.properties.freevideo_seconds = seconds;
             node.properties.freevideo_aspect = 'custom';
             node.properties.freevideo_pixels = g.width * g.height / 1024 ** 2;
@@ -100,8 +104,9 @@ export function extendSnapshot(snapshot, node, source, {multiple = false} = {}) 
     if (!source) return snapshot;
     const copy = structuredClone(snapshot), inputs = copy.output[String(node)].inputs;
     inputs.width = source.geometry.width; inputs.height = source.geometry.height;
+    const factor = continuationUpscale(inputs.base_steps ?? 8, inputs.two_pass, inputs.refine_steps ?? 3, inputs.step_cache, inputs.upscale_factor);
     inputs.preview = false; inputs.refine_from = ''; inputs.two_pass = true;
-    for (const [key, value] of [['base_steps', 8], ['refine_steps', 3], ['step_cache', 'none']]) if (key in inputs) inputs[key] = value;
+    for (const [key, value] of [['base_steps', 8], ['refine_steps', 3], ['step_cache', 'none'], ['upscale_factor', factor]]) if (key in inputs) inputs[key] = value;
     // A continuation takes no first or last frame and no pre-encoded conditioning.
     for (const key of ['first', 'last', 'conditioning']) delete inputs[key];
     if (multiple) delete inputs.continue_from; else inputs.continue_from = source.video;

@@ -27,7 +27,7 @@ import { openCastLibrary } from './cast_source.js';
 import { uploadMedia } from './media_upload.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
 import { createVerdicts, describeVerdict, feedbackDraft } from './lora_check.js';
-import { createSamplingEffort, effortFor, effortsFrom, stepCacheOf } from './sampling_effort.js';
+import { continuationUpscale, createSamplingEffort, effortFor, effortsFrom, passSwitch, stepCacheOf, upscaleOf } from './sampling_effort.js';
 import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { createRequestAssets, enabledLoras, referenceFiles } from './request_assets.js';
@@ -775,6 +775,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A level's step cache; custom steps and workflows without the input sample every step.
     const stepCacheNow = () => stepCacheOf(value(node, 'step_cache'));
     const clearStepCache = () => { if (stepCacheNow()) set(node, 'step_cache', 'none'); };
+    // The two-pass learned upscale factor; a single pass has none (2).
+    const upscaleNow = () => upscaleOf(value(node, 'upscale_factor'));
+    const setUpscale = factor => { if (widget(node, 'upscale_factor') && value(node, 'upscale_factor') !== String(factor)) set(node, 'upscale_factor', String(factor)); };
     const effort = createSamplingEffort(t, {onChange: tier => {
         baseSteps.value = tier.steps;
         refineSteps.value = 3;
@@ -783,14 +786,23 @@ export function openStudio(node, {extendFrom = null} = {}) {
         set(node, 'two_pass', twoPass.checked);
         set(node, 'refine_steps', 3);
         set(node, 'step_cache', tier.stepCache || 'none');
+        set(node, 'upscale_factor', String(tier.upscale));
         syncSamplingSteps();
-    }, onPreview: tier => tier ? showEffortEstimate(tier.steps, tier.twoPass, tier.stepCache) : showEffortEstimate()});
+    }, onPreview: tier => tier ? showEffortEstimate(tier.steps, tier.twoPass, tier.stepCache, tier.upscale) : showEffortEstimate()});
     const samplingSettings = el('div', null, 'fv-sampling-settings');
     const previewFirst = el('input'); previewFirst.type = 'checkbox'; previewFirst.checked = value(node, 'preview') === true;
     function choosePassMode(mode) {
         if (extension.source) return;
         const wantsTwoPass = mode !== 'off', wantsPreview = mode === 'preview';
-        if (twoPass.checked !== wantsTwoPass) { twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); clearStepCache(); }
+        if (twoPass.checked !== wantsTwoPass) {
+            // A level in one pass samples 20 steps; two-pass from one is Light. Typed steps stay.
+            const next = passSwitch(wantsTwoPass, Number(baseSteps.value), Number(refineSteps.value), stepCacheNow(), effort.levels());
+            twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); clearStepCache(); setUpscale(next.upscale);
+            if (next.steps !== Number(baseSteps.value) && !linked(node, 'base_steps') && widget(node, 'base_steps')) {
+                baseSteps.value = String(next.steps); set(node, 'base_steps', next.steps);
+                if (next.refine !== Number(refineSteps.value) && set(node, 'refine_steps', next.refine)) refineSteps.value = String(next.refine);
+            }
+        }
         if (previewFirst.checked !== wantsPreview) { previewFirst.checked = wantsPreview; set(node, 'preview', wantsPreview); }
         syncSamplingSteps(); updateRunButton();
     }
@@ -911,13 +923,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // The run button exists only further down; until then its label is set there.
     let runButtonReady = false;
     function syncSamplingSteps() {
-        if (extension.source) { baseSteps.value = '8'; refineSteps.value = '3'; twoPass.checked = true; set(node, 'two_pass', true); clearStepCache(); autoSinglePass = false; }
+        if (extension.source) {
+            const factor = continuationUpscale(baseSteps.value, twoPass.checked, refineSteps.value, stepCacheNow(), value(node, 'upscale_factor'), effort.levels());
+            baseSteps.value = '8'; refineSteps.value = '3'; twoPass.checked = true; set(node, 'two_pass', true); clearStepCache(); setUpscale(factor); autoSinglePass = false;
+        }
         const baseLinked = linked(node, 'base_steps');
-        // Two-pass is offered at 8 first-pass steps. A saved workflow that already
-        // uses it with other steps is shown as custom and left unchanged.
-        const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked;
+        // Two-pass is offered at 8 first-pass steps, and from a single-pass level (it then gives Light).
+        // A saved workflow that already uses it with other steps is shown as custom and left unchanged.
+        const onePassLevel = !twoPass.checked && !baseLinked && Boolean(effortFor(Number(baseSteps.value), false, Number(refineSteps.value), stepCacheNow(), effort.levels()));
+        const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked && !onePassLevel;
         twoPass.disabled = Boolean(extension.source) || unavailable || linked(node, 'two_pass') || !widget(node, 'two_pass');
-        twoPassStatus.textContent = Number(baseSteps.value) !== 8 ? t('Needs an 8-step first pass', '一采需 8 步') : '';
+        twoPassStatus.textContent = Number(baseSteps.value) !== 8 && !onePassLevel ? t('Needs an 8-step first pass', '一采需 8 步') : '';
         twoPassLabel.classList.toggle('fv-two-pass-unavailable', unavailable);
         // A preview stops after the first pass, so it needs two-pass sampling.
         if (!twoPass.checked && previewFirst.checked) {
@@ -940,14 +956,19 @@ export function openStudio(node, {extendFrom = null} = {}) {
             }
         }
         effort.update({baseSteps: Number(baseSteps.value), refineSteps: Number(refineSteps.value),
-            twoPass: twoPass.checked, stepCache: stepCacheNow(),
-            disabled: baseSteps.disabled || linked(node, 'two_pass') || linked(node, 'refine_steps') || linked(node, 'step_cache'),
-            reason: extension.source ? t('A continuation uses the Light level.', '接着生成使用轻量档。') : ''});
+            twoPass: twoPass.checked, stepCache: stepCacheNow(), upscale: upscaleNow(),
+            disabled: baseSteps.disabled || linked(node, 'two_pass') || linked(node, 'refine_steps') || linked(node, 'step_cache') || linked(node, 'upscale_factor'),
+            reason: extension.source ? continuationReason() : ''});
         refreshEffortEstimate();
     }
     syncSamplingSteps();
     advanced.append(samplingFields, samplingWarning);
-    function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow()) {
+    // A continuation keeps a two-pass level (Light or Medium).
+    function continuationReason() {
+        const level = effortFor(8, true, 3, null, effort.levels(), upscaleNow());
+        return level?.name === 'Medium' ? t('A continuation uses the Medium level.', '接着生成使用标准档。') : t('A continuation uses the Light level.', '接着生成使用轻量档。');
+    }
+    function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow(), factor = upscaleNow()) {
         const parts = lengthControl.plan?.count > 1 ? t(`${lengthControl.plan.count} parts`, `分 ${lengthControl.plan.count} 段`) : '';
         // A request that fits one run keeps its own estimate while the longest run is unknown.
         if ((lengthControl.capabilityState === 'pending' || lengthControl.capabilityState === 'unavailable')
@@ -960,16 +981,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (lengthControl.needsPlan && !lengthControl.plan) { effort.setEstimate(''); return; }
         if (lengthControl.plan?.count > 1) {
             const plan = lengthControl.plan;
-            const seconds = steps === Number(baseSteps.value) && twoPassPlan === twoPass.checked && cache === stepCacheNow()
+            const seconds = steps === Number(baseSteps.value) && twoPassPlan === twoPass.checked && cache === stepCacheNow() && factor === upscaleNow()
                 ? sumPartEstimates(plan, lengthControl.estimate) : null;
             effort.setEstimate(seconds > 0 ? t(`${plan.count} parts · about ${Math.ceil(seconds / 60)} min`, `分 ${plan.count} 段 · 约 ${Math.ceil(seconds / 60)} 分钟`)
                 : t(`${plan.count} parts`, `分 ${plan.count} 段`));
             return;
         }
-        const rangeEstimate = capabilityView?.estimate(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache);
+        const rangeEstimate = capabilityView?.estimate(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache, factor);
         if (rangeEstimate) { effort.setEstimate(rangeEstimate); return; }
         const mode = twoPassPlan ? 'two_pass' : 'single';
-        const estimate = effortEstimate[mode]?.[cache ? `${steps}:${cache}` : String(steps)];
+        // Keys: "<steps>[:<cache>][x<factor> when two-pass and not 2]".
+        const estimate = effortEstimate[mode]?.[`${steps}${cache ? ':' + cache : ''}${twoPassPlan && factor !== 2 ? 'x' + factor : ''}`];
         // A previewed level always refines three steps; the current plan may not.
         if (estimate?.status !== 'estimated' || (mode === 'two_pass' && !arguments.length && Number(refineSteps.value) !== 3)) {
             effort.setEstimate('', t('No estimate is available for these settings.', '当前设置暂无预计用时。'));
@@ -1002,9 +1024,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const requestWidth = extension.source?.geometry.width ?? value(node, 'width');
         const requestHeight = extension.source?.geometry.height ?? value(node, 'height');
         lengthControl?.refresh({width: requestWidth, height: requestHeight, task, adapters,
-            settings: {tier: effortFor(Number(baseSteps.value), twoPass.checked, Number(refineSteps.value), stepCacheNow(), effort.levels())?.name.toLowerCase() || 'custom',
+            settings: {tier: effortFor(Number(baseSteps.value), twoPass.checked, Number(refineSteps.value), stepCacheNow(), effort.levels(), upscaleNow())?.name.toLowerCase() || 'custom',
                 base_steps: Number(baseSteps.value), refine_steps: Number(refineSteps.value), two_pass: twoPass.checked,
-                step_cache: stepCacheNow()}}, force);
+                step_cache: stepCacheNow(), upscale_factor: upscaleNow()}}, force);
         requestAssetsQuery = () => {
             const query = new URLSearchParams({width: requestWidth, height: requestHeight, seconds: value(node, 'seconds'), task,
                 base_steps: baseSteps.value, refine_steps: refineSteps.value, two_pass: twoPass.checked ? '1' : '0',
@@ -1704,7 +1726,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     dialog.onclose = () => { disposed = true; for (const f of cleanup) f(); stage.querySelector('video')?.pause(); dialog.remove(); if (current?.dialog === dialog) { current = null; viewChanged('nodes', node); } };
     capabilityView = createCapabilityView({node, api, t, getState: () => ({ratio,
         custom: selected === 'custom', steps: Number(baseSteps.value), twoPass: twoPass.checked,
-        refine: Number(refineSteps.value), stepCache: stepCacheNow(), disabled: Boolean(extension.source) || dimensionsLinked || seconds.disabled}),
+        refine: Number(refineSteps.value), stepCache: stepCacheNow(), upscale: upscaleNow(), disabled: Boolean(extension.source) || dimensionsLinked || seconds.disabled}),
         onEstimate: () => showEffortEstimate(), onGrid: grid => effort.setLevels(effortsFrom(grid)), onPick: point => {
         pixels = point.pixels; mp.value = String(pixels);
         set(node, 'width', point.width); set(node, 'height', point.height);

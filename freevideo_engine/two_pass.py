@@ -37,7 +37,8 @@ def one_pass_note(base_steps):
 
 # A first pass below this many pixels is too small for the learned lift: about
 # a third of the clips at 768x512 and every clip at 512x512 had coloured
-# bursts, and none did from 480x288 (960x544) upward. Those sizes run in one pass.
+# bursts, and none did from 480x288 (960x544) upward. Those sizes sample both
+# passes at the target size, without the lift.
 SMALL_FIRST_PASS_PIXELS = 138240
 
 
@@ -98,18 +99,42 @@ def sampling_canvas(canvas, *, staged=False, media=None, conditioned=False):
     return render_canvas(canvas)
 
 
-def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, staged=False):
+# Learned-upscale factors a level may ask for. 2 is the original half-size
+# first pass; 1.5 and 1.2 sample a larger first pass (44% and 69% of the final
+# pixels: 896x512 and 1120x640 for 1344x768) and lift it by that factor.
+SCALES = (2, 1.5, 1.2)
+
+
+def first_canvas(target, scale):
+    """The first-pass canvas and its lift for a factor below 2: multiples of 32 whose
+    lift by `scale` is also a multiple of 32 and covers the target (center-cropped)."""
+    from fractions import Fraction
+    factor = Fraction(scale).limit_denominator(10)  # exactly 3/2 or 6/5, not the binary float
+
+    def side(length):
+        units = -(-Fraction(length, 32) // factor)  # ceil(length / 32 / factor)
+        units = -(-units // factor.denominator) * factor.denominator  # the lift stays a multiple of 32
+        return 32 * int(units), int(32 * units * factor)
+    (w, lift_w), (h, lift_h) = side(target['width']), side(target['height'])
+    return dict(width=w, height=h, frames=target['frames']), dict(width=lift_w, height=lift_h, frames=target['frames'])
+
+
+def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, staged=False, scale=2):
     """Align the smaller canvas, lift, center-crop, then refine at the target.
 
     Odd multiples of 32 need up to 32 extra pixels before the latent crop.
     Small canvases use a smaller factor or same-size refinement. A first pass
-    below SMALL_FIRST_PASS_PIXELS is replaced by one pass at the target size,
-    unless the first pass itself is wanted (a preview or its upscale: staged).
-    Memory pressure never changes this math.
+    below SMALL_FIRST_PASS_PIXELS is sampled at the target size instead (same-size
+    refinement), unless the first pass itself is wanted (a preview or its upscale: staged).
+    Memory pressure never changes this math. `scale` below 2 samples a larger
+    first pass (SCALES) on canvases of at least 512 on the short side; 2 is the
+    original plan, byte for byte.
     """
     from .geometry import geometry
     from .media_request import TASKS
     validate_steps(base_steps, refine_steps, enabled)
+    if scale not in SCALES:
+        raise ValueError('Two-pass upscale factor must be one of ' + ', '.join('%g' % value for value in SCALES))
     if task not in TASKS:
         raise ValueError('Unsupported two-pass conditioning task: ' + str(task))
     target = geometry(canvas['width'], canvas['height'], frames=canvas['frames'])
@@ -127,6 +152,8 @@ def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, sta
         # A preview and its upscale keep the first pass they were made with; the
         # receipt says so, because a replay without the flag would take the one-pass rule.
         result['staged'] = True
+    if min(target['width'], target['height']) < 512:
+        scale = 2  # a small canvas keeps its own factor below
     if min(target['width'], target['height']) >= 512:
         first = dict(width=((target['width'] + 63) // 64) * 32,
                      height=((target['height'] + 63) // 64) * 32, frames=target['frames'])
@@ -139,16 +166,22 @@ def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, sta
         multiple = max((divisor + 1) // 2, (8 + unit_w - 1) // unit_w, (8 + unit_h - 1) // unit_h)
         first = dict(width=32 * unit_w * multiple, height=32 * unit_h * multiple, frames=target['frames'])
         lift = dict(shape)
-    crop = dict(left=(lift['width'] - target['width']) // 2,
-                top=(lift['height'] - target['height']) // 2,
-                width=target['width'], height=target['height'])
     upscaling = first != lift
     if upscaling and first['width'] * first['height'] < SMALL_FIRST_PASS_PIXELS:
-        if not staged:
-            single = plan(canvas, False, task, base_steps=base_steps)
-            return dict(single, requested=True,
-                        reason='Small canvas: one pass at the target size.')
-        result['staged'] = True
+        # Judged on the 2x first pass, so a smaller factor never samples less than 2x does.
+        if staged:
+            result['staged'] = True
+        else:
+            first = lift = dict(shape)
+            upscaling, scale = False, 2
+    if upscaling and scale != 2:
+        first, lift = first_canvas(target, scale)
+    if not upscaling:
+        crop = dict(left=0, top=0, width=target['width'], height=target['height'])
+    else:
+        crop = dict(left=(lift['width'] - target['width']) // 2,
+                    top=(lift['height'] - target['height']) // 2,
+                    width=target['width'], height=target['height'])
     result.update(enabled=True, mode='vdn%d-lbh-tail%d' % (base_steps, refine_steps),
                   refine_steps=refine_steps, total_steps=base_steps + refine_steps,
                   first=first, second=shape, upscale_target=lift, crop=crop,
@@ -163,6 +196,10 @@ def plan(canvas, enabled=True, task='t2va', *, base_steps=8, refine_steps=3, sta
         result.update(version=3, mode='vdn%d-lbh-community3' % base_steps,
             refine_schedule=COMMUNITY, video_sigmas=list(VIDEO_SIGMAS),
             reason='%d steps on a smaller canvas, learned latent upscale, then three independent refinement steps.' % base_steps)
+    if scale != 2 and upscaling:
+        # Recorded only off the original factor, so 2x plans (and their cache keys) are unchanged.
+        result.update(scale=scale, mode=result['mode'] + '-x%g' % scale,
+                      reason=result['reason'].replace('learned latent upscale', 'learned %gx latent upscale' % scale))
     if not upscaling:
         result['reason'] = 'Small canvas: %d steps and %d refinement steps at the same target size, without upscaling.' % (base_steps, refine_steps)
     return result

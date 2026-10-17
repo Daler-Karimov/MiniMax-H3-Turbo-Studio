@@ -134,10 +134,10 @@ def continuation_problems(spec, prefix='', *, editor=None):
         if spec.get('sampling_note'):
             # Two-pass was asked for with a first-pass count other than 8: it runs one pass.
             problem = schema.diagnostic(prefix + '/quality',
-                                        '"light" (two-pass), or sampling.two_pass=true with base_steps=8,' + why, None)
+                                        '"light" or "medium" (two-pass), or sampling.two_pass=true with base_steps=8,' + why, None)
             got = '%d first-pass steps (one pass)' % spec['base_steps']
         else:
-            problem = schema.diagnostic(prefix + '/quality', '"light" (two-pass), or sampling.two_pass=true,' + why, None)
+            problem = schema.diagnostic(prefix + '/quality', '"light" or "medium" (two-pass), or sampling.two_pass=true,' + why, None)
             got = '"%s" (one pass)' % spec['quality']
         problems.append(dict(problem, got=got, message=problem['message'].replace('received None', 'received ' + got)))
     if spec['preview']:

@@ -1,6 +1,6 @@
 // Shared by the Studio and graph view. Text only; never render exception HTML.
 import {detectBrowserExtension, browserExtensionAdvice, extensionSteps} from './browser_extension.js';
-import {SAMPLING_EFFORTS, STEP_CACHES, tableLevel} from './sampling_effort.js';
+import {SAMPLING_EFFORTS, STEP_CACHES, UPSCALE_FACTORS, tableLevel} from './sampling_effort.js';
 import {failureIssue, failureStage} from './failure_issue.js';
 const reports = new WeakSet();
 const captured = new WeakMap();
@@ -81,10 +81,11 @@ function knownError(text) {
                 && typeof d.two_pass === 'boolean' && Number.isInteger(d.refine_steps) && d.refine_steps >= 0 && d.refine_steps <= 31
                 && Number.isSafeInteger(d.missing_bytes) && d.missing_bytes > 0 && typeof d.decimal_sizes === 'boolean'
                 && Array.isArray(d.available) && d.available.every(i => Number.isInteger(i) && i >= 0 && i <= 3)
-                && (d.step_cache === undefined || STEP_CACHES.includes(d.step_cache)))
+                && (d.step_cache === undefined || STEP_CACHES.includes(d.step_cache))
+                && (d.scale === undefined || UPSCALE_FACTORS.includes(d.scale)))
                 return {kind: 'sampling-table', base_steps: d.base_steps, two_pass: d.two_pass, refine_steps: d.refine_steps,
                     missing_bytes: d.missing_bytes, decimal_sizes: d.decimal_sizes, available: [...new Set(d.available)].sort(),
-                    ...(d.step_cache ? {step_cache: d.step_cache} : {})};
+                    ...(d.step_cache ? {step_cache: d.step_cache} : {}), ...(d.scale && d.scale !== 2 ? {scale: d.scale} : {})};
         } catch { /* Malformed metadata stays in technical details. */ }
     }
     return PLAIN_ERRORS.find(error => line === error.message || error.aliases?.includes(line)
@@ -227,6 +228,8 @@ export function createErrorReport(detail, context = {}) {
     }
     const cache = Array.isArray(inputs?.step_cache) && inputs.step_cache.length === 1 ? inputs.step_cache[0] : inputs?.step_cache;
     if (typeof cache === 'string' && (cache === 'none' || STEP_CACHES.includes(cache))) settings.step_cache = cache;
+    const factor = Array.isArray(inputs?.upscale_factor) && inputs.upscale_factor.length === 1 ? inputs.upscale_factor[0] : inputs?.upscale_factor;
+    if (typeof factor === 'string' && UPSCALE_FACTORS.map(String).includes(factor)) settings.upscale_factor = factor;
     const progress = {};
     for (const key of ['phase', 'stage']) if (typeof context.progress?.[key] === 'string') progress[key] = clean(context.progress[key]);
     for (const key of ['done', 'total']) if (Number.isFinite(context.progress?.[key])) progress[key] = context.progress[key];
@@ -272,14 +275,16 @@ export function failureAdvice(value, t, known = knownError(value)) {
     if (known?.kind === 'sampling-table') {
         // Names and plan matching follow sampling_effort.js; metadata carries no user text.
         const levels = SAMPLING_EFFORTS.map(tier => [tier.name, tier.zh]);
-        const level = tableLevel(known.base_steps, known.two_pass, known.refine_steps, known.step_cache ?? null);
+        const level = tableLevel(known.base_steps, known.two_pass, known.refine_steps, known.step_cache ?? null, known.scale ?? 2);
         const index = SAMPLING_EFFORTS.findIndex(tier => tier.name === level?.name);
         const custom = index < 0;
+        // Tables follow the step count: a level with the same steps and passes (Light and Medium) needs the same download.
+        const available = known.available.filter(i => SAMPLING_EFFORTS[i]?.steps !== known.base_steps || SAMPLING_EFFORTS[i].twoPass !== known.two_pass);
         // Iris: a level name and its 档 never break apart. The summary is set as text,
         // so word joiners (U+2060) keep each group on one line instead of markup.
         const keep = value => [...value].join('\u2060');
         const join = language => {
-            const names = known.available.map(i => language ? `“${levels[i][1]}”` : levels[i][0]);
+            const names = available.map(i => language ? `“${levels[i][1]}”` : levels[i][0]);
             if (language) names[names.length - 1] += '档';
             const kept = language ? names.map(keep) : names;
             return kept.length < 2 ? kept[0] || '' : kept.slice(0, -1).join(language ? '、' : ', ') + (language ? '或' : ' or ') + kept.at(-1);
@@ -297,8 +302,8 @@ export function failureAdvice(value, t, known = knownError(value)) {
             : [`The ${levels[index][0]} quality level is not downloaded yet`, `${keep(`“${levels[index][1]}”档`)}还没下载`];
         const what = custom ? ['This step count', '这个步数'] : ['This level', '这一档'];
         return {...row('sampling-table', title,
-            [`${what[0]} needs a download (about ${size}) that did not finish this time. Generate again when online and it downloads automatically.${known.available.length ? ` You can also use ${join(0)} for now.` : ''}`,
-             `${what[1]}要先下载（约 ${size}），这次没能下载。联网后再生成一次，会自动下载。${known.available.length ? `也可以先用${join(1)}。` : ''}`], ['', '']), plain: true};
+            [`${what[0]} needs a download (about ${size}) that did not finish this time. Generate again when online and it downloads automatically.${available.length ? ` You can also use ${join(0)} for now.` : ''}`,
+             `${what[1]}要先下载（约 ${size}），这次没能下载。联网后再生成一次，会自动下载。${available.length ? `也可以先用${join(1)}。` : ''}`], ['', '']), plain: true};
     }
     // ComfyUI and worker tracebacks carry English exceptions. Translate these
     // actionable failures through the existing signature/advice path.

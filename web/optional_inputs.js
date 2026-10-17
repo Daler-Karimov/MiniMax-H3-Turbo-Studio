@@ -2,9 +2,11 @@
 // shape. A workflow restored from an older version, or a widget list that moved,
 // can leave an empty or missing value in them, and Comfy then rejects the whole
 // request. Keep each of them to a value the server accepts.
-const DEFAULTS = {refine_from: '', continue_from: '', frames: 0, first_frame_reference: false, step_cache: 'none'};
+const DEFAULTS = {refine_from: '', continue_from: '', frames: 0, first_frame_reference: false, step_cache: 'none', upscale_factor: '2'};
 // A workflow saved before Step cache existed holds '' where it now sits.
 const STEP_CACHE_OPTIONS = ['none', 'easycache-av', 'fbcache'];
+// Likewise for Upscale factor, appended after Step cache.
+const UPSCALE_OPTIONS = ['2', '1.5', '1.2'];
 
 // The words a script, an older workflow or String(null) leaves behind for "not given".
 const EMPTY_WORDS = new Set(['none', 'null', 'undefined', 'nan']);
@@ -27,6 +29,7 @@ export function optionalInputValue(name, value) {
     if (name === 'refine_from' || name === 'continue_from') return optionalText(value);
     if (name === 'first_frame_reference') return value === true;
     if (name === 'step_cache') return STEP_CACHE_OPTIONS.includes(value) ? value : 'none';
+    if (name === 'upscale_factor') return UPSCALE_OPTIONS.includes(value) ? value : '2';
     return value;
 }
 

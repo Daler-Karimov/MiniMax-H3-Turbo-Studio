@@ -159,7 +159,7 @@ def check(play):
         long = isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 15
         if ((shot.get('continue') or long) and play.get('quality') in specs.QUALITY
                 and not specs.QUALITY[play['quality']][0] and all(p['path'] != '/quality' for p in problems)):
-            problem('/quality', '"light" (two-pass) when a shot continues another or is longer than 15 s')
+            problem('/quality', '"light" or "medium" (two-pass) when a shot continues another or is longer than 15 s')
         if long and (shot.get('first') is not None or shot.get('references') and not shot.get('continue')):
             problem(path + '/seconds', 'at most 15 with a first frame or references')
         elif long and not shot.get('continue') and _carded(play, shot):

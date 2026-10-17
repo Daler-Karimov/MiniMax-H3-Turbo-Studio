@@ -1,6 +1,6 @@
 // Pure helpers the creative panel's long-video planning shares with the editor store; kept out of
 // editor_store.js so the panel does not load the editing implementation.
-import { stepCacheOf } from './sampling_effort.js';
+import { stepCacheOf, upscaleOf } from './sampling_effort.js';
 const clockDefault = {now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id)};
 export const chainRoute = (id, action) => '/freevideo/chain' + (id ? '/' + encodeURIComponent(id) : '') + (action ? '/' + action : '');
 
@@ -39,8 +39,10 @@ function capabilityTier(reply, settings) {
     if (!tiers || typeof tiers !== 'object') return reply;
     if (tiers[settings?.tier]) return tiers[settings.tier];
     const steps = Number(settings?.base_steps), twoPass = !!settings?.two_pass, cache = stepCacheOf(settings?.step_cache);
+    const factor = twoPass ? upscaleOf(settings?.upscale_factor) : 2;
     return Object.values(tiers).find(tier => tier.steps === steps && tier.two_pass === twoPass
-        && (!twoPass || Number(settings?.refine_steps) === 3) && stepCacheOf(tier.step_cache) === cache) || {};
+        && (!twoPass || Number(settings?.refine_steps) === 3) && stepCacheOf(tier.step_cache) === cache
+        && (tier.two_pass ? upscaleOf(tier.upscale) : 2) === factor) || {};
 }
 export function capabilityPoints(reply, {width, height, settings = {}}) {
     const tier = capabilityTier(reply, settings);

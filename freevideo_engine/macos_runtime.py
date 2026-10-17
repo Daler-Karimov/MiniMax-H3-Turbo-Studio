@@ -619,7 +619,7 @@ class Engine:
 
     def generate(self, conditioning, seed, *, width, height, frames, two_pass=True, refine_steps=3,
                  upscaler_checkpoint=None, first_pass_saved=None, reuse_weights=False,
-                 refinement_resident_bytes=None, phase_changed=None, staged=False):
+                 refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2):
         """Optional cross-pass weight lifetime, isolated to this one request.
 
         Product admission remains separate. Retention obeys each sample's live
@@ -636,7 +636,7 @@ class Engine:
         options = dict(width=width, height=height, frames=frames, two_pass=two_pass,
                        refine_steps=refine_steps, upscaler_checkpoint=upscaler_checkpoint,
                        first_pass_saved=first_pass_saved, phase_changed=phase_changed,
-                       refinement_resident_bytes=refinement_resident_bytes, staged=staged)
+                       refinement_resident_bytes=refinement_resident_bytes, staged=staged, scale=scale)
         if getattr(self, '_reuse_sampling_weights', False) or getattr(self, '_shared_residency', None) is not None:
             raise RuntimeError('Native sampling weight lifetimes cannot overlap')
         if not reuse_weights:
@@ -654,7 +654,7 @@ class Engine:
 
     def _generate(self, conditioning, seed, *, width, height, frames, two_pass=True, refine_steps=3,
                   upscaler_checkpoint=None, first_pass_saved=None,
-                  refinement_resident_bytes=None, phase_changed=None, staged=False):
+                  refinement_resident_bytes=None, phase_changed=None, staged=False, scale=2):
         """Use the shared canvas/schedule, including the original audio clock.
 
         Single-pass behavior remains explicit; memory pressure never disables
@@ -668,7 +668,7 @@ class Engine:
         if self.canvas is not None and any(canvas[k] != self.canvas[k] for k in ('width', 'height', 'frames')):
             raise ValueError('Native generation differs from its loaded target canvas')
         sampling = plan(canvas, enabled=two_pass, task=self.task,
-                        base_steps=self.steps, refine_steps=refine_steps, staged=staged)
+                        base_steps=self.steps, refine_steps=refine_steps, staged=staged, scale=scale)
         if phase_changed is not None:
             phase_changed('first-pass')
         video, audio, first = self.sample(conditioning, seed, **sampling['first'],

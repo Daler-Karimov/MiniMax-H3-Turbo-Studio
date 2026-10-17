@@ -159,11 +159,15 @@ def canvases(r):
         first = dict(full, width=32*uw*m, height=32*uh*m)
     else:
         first = dict(full)
-    # two_pass.plan() runs a first pass under SMALL_FIRST_PASS_PIXELS (138,240) as one pass at the
-    # target size, except when the first pass itself is wanted (a preview or the upscale of one).
+    # two_pass.plan() samples a first pass under SMALL_FIRST_PASS_PIXELS (138,240) at the target
+    # size, except when the first pass itself is wanted (a preview or the upscale of one).
     if (not sg.get('first') and two and r.get('flow') not in ('preview', 'upscale')
             and first != full and first['width']*first['height'] < 138240):
         return full, full, full
+    if not sg.get('first') and two and min(w, h) >= 512 and r.get('upscale_factor', 2) != 2:
+        # A smaller factor starts larger; the size check above is on the 2x first pass, as in plan().
+        from .two_pass import first_canvas
+        first = first_canvas(full, r['upscale_factor'])[0]
     second = dict(full, **(sg.get('second') or {}))
     decode = first if r.get('flow') == 'preview' else full
     return first, second, decode

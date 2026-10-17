@@ -119,6 +119,9 @@ def main():
                           help='First-pass steps (default: 8, or explicit profile). Changes may reduce quality.')
     generate.add_argument('--refine-steps', type=int, choices=range(1, 32), default=3, metavar='1..31',
                           help='Second-pass steps (default: 3, independent schedule). Other counts use the original tail.')
+    generate.add_argument('--upscale-factor', type=float, choices=(2., 1.5, 1.2), default=2., metavar='{2,1.5,1.2}',
+                          help='Two-pass learned upscale factor (default 2: half-size first pass). 1.5 and 1.2 sample '
+                               'a larger first pass (44%% / 69%% of the pixels) for the same output size.')
     upscale = generate.add_mutually_exclusive_group()
     upscale.add_argument('--preview', action='store_true',
                          help='Two-pass only: stop after the half-resolution first pass, save it as a quick preview, '

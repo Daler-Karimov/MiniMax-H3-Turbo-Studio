@@ -3,11 +3,11 @@
 const FILE = '/userdata/' + encodeURIComponent('freevideo/prompt-draft.json');
 const WIDGETS = ['text', 'width', 'height', 'seconds', 'seed', 'control_after_generate', 'two_pass',
     'base_steps', 'refine_steps', 'force_regenerate', 'preview', 'refine_from', 'continue_from', 'frames', 'first_frame_reference',
-    'voice_reference', 'hide_tail', 'step_cache'];
-const DEFAULTS = ['', 1344, 768, 10, 2026090903, 'randomize', true, 8, 3, false, false, '', '', 0, false, false, false, 'none'];
+    'voice_reference', 'hide_tail', 'step_cache', 'upscale_factor'];
+const DEFAULTS = ['', 1344, 768, 10, 2026090903, 'randomize', true, 8, 3, false, false, '', '', 0, false, false, false, 'none', '2'];
 const SAVED_WIDGETS = WIDGETS.filter(name => !['text', 'force_regenerate', 'refine_from', 'continue_from', 'frames',
     'voice_reference', 'hide_tail'].includes(name));
-const STEP_CACHE_OPTIONS = ['none', 'easycache-av', 'fbcache'];
+const STEP_CACHE_OPTIONS = ['none', 'easycache-av', 'fbcache'], UPSCALE_OPTIONS = ['2', '1.5', '1.2'];
 const PROPERTIES = ['freevideo_aspect', 'freevideo_pixels', 'freevideo_seconds', 'freevideo_single',
     'freevideo_block_seconds', 'freevideo_run_mode', 'freevideo_batch_count'];
 const OUTBOX = 'freevideo.prompt-pending';
@@ -50,7 +50,8 @@ export function applyPromptDraft(workflow, draft) {
         const value = draft.widgets?.[name], index = WIDGETS.indexOf(name);
         if (value === undefined || typeof value !== typeof DEFAULTS[index]
             || (typeof value === 'number' && !Number.isFinite(value))
-            || (name === 'step_cache' && !STEP_CACHE_OPTIONS.includes(value))) continue;
+            || (name === 'step_cache' && !STEP_CACHE_OPTIONS.includes(value))
+            || (name === 'upscale_factor' && !UPSCALE_OPTIONS.includes(value))) continue;
         while (node.widgets_values.length <= index) node.widgets_values.push(DEFAULTS[node.widgets_values.length]);
         node.widgets_values[index] = value;
     }

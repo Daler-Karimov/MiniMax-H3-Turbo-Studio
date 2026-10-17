@@ -1,5 +1,5 @@
 import { referenceItems } from './prompt_references.js';
-import { stepCacheOf } from './sampling_effort.js';
+import { stepCacheOf, upscaleOf } from './sampling_effort.js';
 
 const PRESETS = [.5, .75, .98, 1.5, 2];
 const COLUMN_SPACING = 'equal'; // 'equal' or 'width'
@@ -45,7 +45,7 @@ export function aboutTime(seconds, t) {
 // documented task fallback, rather than pretending the known subset is all of it.
 export function capabilityContext(node, state) {
     if (linked(node, 'conditioning') || linked(node, 'width') || linked(node, 'height')
-            || ['base_steps', 'refine_steps', 'two_pass', 'step_cache'].some(name => linked(node, name))) return null;
+            || ['base_steps', 'refine_steps', 'two_pass', 'step_cache', 'upscale_factor'].some(name => linked(node, name))) return null;
     let items, assets;
     try { items = referenceItems(node); assets = JSON.parse(value(upstream(node, 'media'), 'assets') || '[]'); }
     catch { return null; }
@@ -77,15 +77,17 @@ export function capabilityContext(node, state) {
     return query.toString();
 }
 
-// The grid's level with exactly this plan; a step cache tells High from Max at 20 steps.
-const gridTier = (grid, steps, twoPass, refine, stepCache) => Object.values(grid.tiers || {}).find(v => v.steps === steps
-    && v.two_pass === twoPass && (!v.two_pass || refine === 3) && stepCacheOf(v.step_cache) === stepCacheOf(stepCache));
+// The grid's level with exactly this plan; a step cache tells High from Max at 20 steps, the
+// upscale factor Light from Medium (a row without one is 2x).
+const gridTier = (grid, steps, twoPass, refine, stepCache, upscale = 2) => Object.values(grid.tiers || {}).find(v => v.steps === steps
+    && v.two_pass === twoPass && (!v.two_pass || refine === 3) && stepCacheOf(v.step_cache) === stepCacheOf(stepCache)
+    && (!v.two_pass || upscaleOf(v.upscale) === upscaleOf(upscale)));
 
 export function capabilitySurface(grid, state) {
     if (grid?.version !== 1 || grid.status !== 'ready' || typeof grid.revision !== 'string' || !grid.machine?.system
             || /darwin|mac|apple/i.test(grid.machine.system)
             || !Array.isArray(grid.sizes) || !grid.sizes.length || !Array.isArray(grid.lengths)) return null;
-    const tier = gridTier(grid, state.steps, state.twoPass, state.refine, state.stepCache);
+    const tier = gridTier(grid, state.steps, state.twoPass, state.refine, state.stepCache, state.upscale);
     if (!tier || !Array.isArray(tier.estimate_seconds) || !Array.isArray(tier.max_seconds)) return null;
     const lengths = grid.lengths.map(l => l.seconds);
     if (!lengths.length || lengths.some((s, i) => !Number.isInteger(s) || s < 2 || (i && s <= lengths[i - 1]))) return null;
@@ -245,7 +247,7 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     function paint(animate = false) {
         if (!surface || !opened || element.hidden || !plot.clientWidth) return;
         const dpr = Math.max(1, window.devicePixelRatio || 1), width = Math.round(plot.clientWidth * dpr), height = Math.round(plot.clientHeight * dpr);
-        const key = `${grid.revision}:${getState().steps}:${getState().twoPass}:${stepCacheOf(getState().stepCache)}:${width}:${height}:${query}`;
+        const key = `${grid.revision}:${getState().steps}:${getState().twoPass}:${stepCacheOf(getState().stepCache)}:${upscaleOf(getState().upscale)}:${width}:${height}:${query}`;
         if (key === drawn) { current(); return; }
         drawn = key;
         if (animate && canvas.width && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -375,9 +377,9 @@ export function createCapabilityView({node, api, t, getState, onPick, onEstimate
     api.addEventListener('freevideo_capabilities', changed);
     const outside = event => { if (!plot.contains(event.target)) hideHover(); };
     node && window.addEventListener('pointerdown', outside);
-    return {element, update, estimate(steps, twoPass, refine, stepCache = null) {
+    return {element, update, estimate(steps, twoPass, refine, stepCache = null, upscale = 2) {
         if (!grid || !surface) return '';
-        const tier = gridTier(grid, steps, twoPass, refine, stepCache);
+        const tier = gridTier(grid, steps, twoPass, refine, stepCache, upscale);
         const i = grid.sizes.findIndex(s => s.width === Number(value(node, 'width')) && s.height === Number(value(node, 'height')));
         const j = grid.lengths.findIndex(l => l.seconds === Number(value(node, 'seconds')));
         const seconds = tier?.estimate_seconds?.[i]?.[j];

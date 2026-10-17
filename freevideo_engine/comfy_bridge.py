@@ -209,7 +209,7 @@ class WholeVideoProgress:
     @classmethod
     def for_request(cls, machine, canvas, output_directory, *, base_steps=8,
                     refine_steps=3, two_pass=True, preview=False, upscale=False,
-                    encoder_prewarm=None, options=None, step_cache=None):
+                    encoder_prewarm=None, options=None, step_cache=None, upscale_factor=2):
         import platform
         from .effort_forecast import start_context
         started, opened = time.perf_counter(), time.monotonic()
@@ -224,7 +224,7 @@ class WholeVideoProgress:
         tracker = cls(hardware=hardware, records=records, cold_flags=flags, started=started,
                       request=dict(canvas, base_steps=base_steps, refine_steps=refine_steps,
                                    two_pass=two_pass, flow='upscale' if upscale else 'preview' if preview else 'full',
-                                   step_cache=step_cache),
+                                   step_cache=step_cache, upscale_factor=upscale_factor),
                       **(options or {}))
         tracker.history = (output_directory, machine, opened)
         return tracker
@@ -1180,8 +1180,11 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
              continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False,
-             step_cache=None):
+             step_cache=None, upscale_factor=2):
     from .tiers import STEP_CACHES
+    from .two_pass import SCALES
+    if upscale_factor not in SCALES:
+        raise ValueError('Upscale factor must be one of ' + ', '.join('%g' % value for value in SCALES))
     if step_cache == 'none':
         step_cache = None
     if step_cache not in STEP_CACHES:
@@ -1219,6 +1222,9 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         refine_steps = int(argument(arguments, '--refine-steps', 3))
         # The second pass never uses a step cache; the preview's own command keeps its flag.
         step_cache = argument(arguments, '--step-cache')
+    if preview or upscale:
+        # A preview stays the quick half-size first pass, and its upscale continues that same pass.
+        upscale_factor = 2
     from .preview import validate_flags
     validate_flags(preview, upscale, two_pass, base_steps)
     from .two_pass import validate_steps
@@ -1287,6 +1293,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                '--base-steps', str(base_steps), '--refine-steps', str(refine_steps)]
     if step_cache is not None:
         command += ['--step-cache', step_cache]
+    if two_pass and upscale_factor != 2:
+        command += ['--upscale-factor', '%g' % upscale_factor]
     if frames is not None:
         position = command.index('--seconds')
         command[position:position + 2] = ['--frames', str(frames)]
@@ -1325,7 +1333,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         whole_progress = WholeVideoProgress.for_request(machine, canvas, output_directory,
             base_steps=base_steps, refine_steps=refine_steps, two_pass=two_pass,
             preview=preview, upscale=bool(upscale), encoder_prewarm=state['encoder_prewarm'],
-            step_cache=None if upscale else step_cache)
+            step_cache=None if upscale else step_cache, upscale_factor=upscale_factor)
     except Exception:
         # A progress estimate cannot prevent generation, even without its parameters.
         try:
@@ -1412,7 +1420,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         sampled, output_size = sampling_canvas(generated_canvas, staged=bool(preview or upscale), media=extra.get('media'),
                                                conditioned=bool(extra.get('conditioning')))
         planned = plan(sampled, two_pass, 'ref2va' if anchored or pictured else task_for(extra.get('media', {})),
-                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale),
+                       scale=upscale_factor)
         if continue_from is not None:
             from .continuation import ADALN_TASK, ANCHOR_ADALN_TASK, MISSING, validate_snapshot, summary
             validate_route(task='ref2va' if anchored or pictured else task_for(extra.get('media', {})),
@@ -1432,7 +1441,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
                         # An encoded ending carries no first frame of the film, so nothing anchors this run.
                         anchored = False
                         planned = plan(sampled, two_pass, task_for(extra.get('media', {})),
-                                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+                                       base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale),
+                                       scale=upscale_factor)
             if continuation is None:
                 from .continuation import OVERLAP_FRAMES
                 state['continuation'] = dict(overlap_frames=OVERLAP_FRAMES,
@@ -1541,7 +1551,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
         from .two_pass import steps, plan
         completed_steps = steps(report.get('sampling_plan'))
         expected_plan = plan(sampled, two_pass, report.get('profile', {}).get('engine', {}).get('task', 't2va'),
-                             base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale))
+                             base_steps=base_steps, refine_steps=refine_steps, staged=bool(preview or upscale),
+                             scale=upscale_factor)
         shown = sampled
         if preview:
             # A preview decodes its first pass at the planned smaller canvas.
