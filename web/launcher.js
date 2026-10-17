@@ -28,6 +28,45 @@ function cachedStudioProject() {
     return false;
 }
 
+const finite = (value, low, high) => typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high;
+// A tab restored from another FreeVideo version is replaced by the current default workflow.
+// Only the creation choices come across, by name; a value that is not valid now is dropped.
+// Positions 0-4 of the generate node and 0 of the media node have never moved between versions.
+function currentStudioWorkflow(saved, bundled) {
+    const stamp = bundled.nodes?.find(node => node.type === 'FreeVideoGenerate')?.properties?.freevideo_version;
+    const old = saved.nodes?.find(node => node.type === 'FreeVideoGenerate');
+    if (!stamp || !old || old.properties?.freevideo_version === stamp) return null;
+    const graph = structuredClone(bundled), node = graph.nodes.find(row => row.type === 'FreeVideoGenerate');
+    const [text, width, height, seconds, seed] = Array.isArray(old.widgets_values) ? old.widgets_values : [];
+    if (typeof text === 'string' && text.trim()) node.widgets_values[0] = text;
+    if (finite(width, 256, 4096) && Number.isInteger(width)) node.widgets_values[1] = width;
+    if (finite(height, 256, 4096) && Number.isInteger(height)) node.widgets_values[2] = height;
+    if (finite(seconds, 1.625, 60)) node.widgets_values[3] = seconds;
+    if (finite(seed, 0, 2 ** 53 - 1) && Number.isInteger(seed)) node.widgets_values[4] = seed;
+    const media = graph.nodes.find(row => row.type === 'FreeVideoMedia');
+    const assets = (saved.nodes.find(row => row.type === 'FreeVideoMedia')?.widgets_values || [])[0];
+    try {
+        const rows = JSON.parse(assets);
+        if (media && Array.isArray(rows) && rows.length && rows.every(row => row && typeof row === 'object' && !Array.isArray(row))) media.widgets_values[0] = assets;
+    } catch { /* Not a media list: keep the empty one. */ }
+    let rows = [];
+    try { rows = JSON.parse(saved.nodes.find(row => row.type === 'FreeVideoLoRAStack')?.widgets_values?.[0]); } catch { /* No LoRA. */ }
+    rows = Array.isArray(rows) ? rows.filter(row => row && typeof row.name === 'string' && row.name && finite(row.strength ?? 1, -10, 10)
+        && (row.enabled === undefined || typeof row.enabled === 'boolean')).slice(0, 32) : [];
+    const input = node.inputs?.findIndex(row => row.name === 'loras') ?? -1;
+    if (rows.length && input >= 0) {
+        const id = Math.max(graph.last_node_id || 0, ...graph.nodes.map(row => Number(row.id) || 0)) + 1, link = Math.max(graph.last_link_id || 0, ...graph.links.map(row => row[0])) + 1;
+        graph.nodes.push({id, type: 'FreeVideoLoRAStack', pos: [60, 660], size: [460, 200], flags: {}, order: 2, mode: 0,
+            inputs: [{name: 'adapters', type: 'STRING', widget: {name: 'adapters'}, link: null}, {name: 'previous', type: 'FREEVIDEO_LORAS', link: null}],
+            outputs: [{name: 'loras', type: 'FREEVIDEO_LORAS', links: [link], slot_index: 0}],
+            properties: {'Node name for S&R': 'FreeVideoLoRAStack'}, widgets_values: [JSON.stringify(rows)]});
+        graph.links.push([link, id, 0, node.id, input, 'FREEVIDEO_LORAS']);
+        node.inputs[input].link = link;
+        graph.last_node_id = id; graph.last_link_id = link;
+    }
+    return graph;
+}
+
 async function existingStudioWorkflow(target, bundled) {
     // Restored background tabs are lazy: load() reads the host's saved draft,
     // whereas the workflow store's openWorkflow() only selects the tab record.
@@ -36,6 +75,9 @@ async function existingStudioWorkflow(target, bundled) {
     // Leave the current graph intact; the existing startup check reports an
     // unopened workflow without replacing the user's project.
     if (!saved) return null;
+    // Only the shared tab is ours to replace; a workflow the user saved under another name stays.
+    const current = target.path === 'workflows/FreeVideo.json' ? currentStudioWorkflow(saved, bundled) : null;
+    if (current) return restorePromptDraft(api, current, target.path);
     const graph = structuredClone(saved);
     if (!graph.nodes?.some(node => node.type === 'FreeVideoGenerate')) {
         const node = structuredClone(bundled.nodes.find(node => node.type === 'FreeVideoGenerate'));
@@ -96,7 +138,8 @@ async function keepInFront(workflow, opened) {
         // FreeVideo tab, including its media and connections. Reuse that project.
         if (studioWorkflow(app.graph)) {
             const current = app.graph.serialize(), target = store?.activeWorkflow;
-            const restored = await restorePromptDraft(api, structuredClone(current), target?.path || '__existing__');
+            const replaced = target?.path === 'workflows/FreeVideo.json' ? currentStudioWorkflow(current, workflow) : null;
+            const restored = await restorePromptDraft(api, replaced || structuredClone(current), target?.path || '__existing__');
             if (JSON.stringify(restored) !== JSON.stringify(current))
                 await app.loadGraphData(restored, true, true, target || 'FreeVideo');
             return;
