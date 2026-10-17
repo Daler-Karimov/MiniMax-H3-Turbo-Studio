@@ -2,6 +2,7 @@ import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { restorePromptDraft } from './prompt_draft.js';
 import { takePortMarker } from './port_notice.js';
+import { launcherRestoreFinished } from './workspace_restore.js';
 
 // health.js names what failed; files loaded before it queue their reports.
 const health = item => (window.__freevideoHealth ||= []).push(item);
@@ -142,12 +143,14 @@ app.registerExtension({
         } catch (error) {
             console.error('FreeVideo launcher:', error);
             health({type: 'launch', error});
+            launcherRestoreFinished();
             return;
         }
         const opened = cached ? undefined : app.extensionManager?.workflow?.activeWorkflow;
-        keepInFront(workflow, opened).then(() => health({type: 'launch'}), error => {
+        keepInFront(workflow, opened).then(() => { health({type: 'launch'}); launcherRestoreFinished(); }, error => {
             console.error('FreeVideo launcher:', error);
             health({type: 'launch', error});
+            launcherRestoreFinished();
         });
     },
 });

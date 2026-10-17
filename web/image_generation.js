@@ -3,6 +3,7 @@
 import * as commands from './image_commands.js';
 import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.js';
 import {saveReport, reportIssue, showReportTip} from './report_issue.js';
+import {about} from './request_assets.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
@@ -14,6 +15,7 @@ export const IMAGE_GEN_PROTOCOL = Object.freeze({
 });
 export const IMAGE_GEN_POLL_MS = 500;
 export const IMAGE_GEN_INFO_POLL_MS = 10000;
+export const IMAGE_PACK_POLL_MS = 2000;
 export const BLANK_CANVAS_RATIOS = Object.freeze(['16:9', '9:16', '1:1', '4:3', '3:4']);
 export function imageGenerationSupported(platform = globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '') {
     return !/Mac|iPhone|iPad/i.test(platform);
@@ -82,6 +84,9 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
                 ...(phase === 'cancelled' ? {error: 'cancelled'} : {})};
         },
         cancel: job => post('cancel', {[p.job]: job}),
+        // The image models are fetched by this page's own engine; the reply is the new info.
+        async packInstall() { const value = await post('pack-install', {}); return {...value, installed: value.installed ?? value[p.installed] ?? false}; },
+        async packCancel() { const value = await post('pack-cancel', {}); return {...value, installed: value.installed ?? value[p.installed] ?? false}; },
         // The prompts and sizes of a new character's five pictures (the Agent's cards use the same ones).
         castViews: async description => (await post('cast-views', {description})).views,
         async upload(file) {
@@ -105,6 +110,28 @@ export function imagePackMessage(info, t) {
     const size = (info?.pack_size || (bytes > 0 ? (bytes / 2 ** 30).toFixed(1) + ' GiB' : '17.3 GB'))
         .replace(/ (?=[KMGT]i?B$)/, '\u00a0');
     return t(`Download "${name}" in the launcher first, ${size}.`, `先在启动器里下载“${name}”，${size}。`);
+}
+// What the page offers while the image models are missing: one button, one muted line, and the bar once loading.
+export function packView(info, t) {
+    const install = info?.install || {}, own = install.state === 'running' || install.state === 'paused_for_generation';
+    // Another process (the launcher) is fetching or re-checking them: nothing to press here.
+    if (!own && (info?.[IMAGE_GEN_PROTOCOL.downloading] || info?.[IMAGE_GEN_PROTOCOL.checking])) return null;
+    const total = install.total || info?.[IMAGE_GEN_PROTOCOL.bytes] || 0;
+    const gb = bytes => (bytes / 1e9).toFixed(1);
+    const size = total > 0 ? gb(total) + '\u00a0GB' : '17.3\u00a0GB';
+    const rate = install.bytes_per_second || info?.bytes_per_second || 0;
+    const left = Math.max(0, total - (install.done || 0));
+    const time = rate > 0 && left > 0 ? ' · ' + about(left / rate, t).replace(/^About/, 'about').replaceAll(' ', '\u00a0') : '';
+    if (own) {
+        const waiting = install.state === 'paused_for_generation';
+        return {loading: true, button: t('Pause', '暂停'), fraction: total > 0 ? Math.min(1, (install.done || 0) / total) : 0,
+            note: waiting ? t('Paused while a video generates', '视频生成中，已暂停')
+                : t(`Downloading · ${gb(install.done || 0)}\u00a0GB / ${size}${time}`, `正在下载 · ${gb(install.done || 0)}\u00a0GB / ${size}${time}`)};
+    }
+    const resume = install.state === 'failed' || install.state === 'cancelled' || install.done > 0;
+    const reason = install.state === 'failed' ? t(install.message_en, install.message_zh) : '';
+    return {loading: false, fraction: null, reason: !!reason, button: resume ? t('Resume download', '继续下载') : t('Download image generation models', '下载图像生成模型'),
+        note: reason || (resume ? t(`${gb(install.done || 0)}\u00a0GB / ${size}${time}`, `${gb(install.done || 0)}\u00a0GB / ${size}${time}`) : size + time)};
 }
 export function imageGenError(code, info, t) {
     const reasons = {
@@ -319,10 +346,11 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
     function scheduleInfo() {
         unschedule(infoTimer); infoTimer = null;
         if (disposed || state.info?.installed) return;
+        const loading = ['running', 'paused_for_generation'].includes(state.info?.install?.state);
         infoTimer = schedule(() => {
             infoTimer = null;
             if (visible()) void check(); else scheduleInfo();
-        }, IMAGE_GEN_INFO_POLL_MS);
+        }, loading ? IMAGE_PACK_POLL_MS : IMAGE_GEN_INFO_POLL_MS);
     }
     async function check() {
         if (checking || disposed) return checking;
@@ -401,7 +429,13 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
         emit({running: false, job: null, stage: '', fraction: 0, error: '', report_id: null, waiting: '', fitted: null});
         return job ? cancelJob(job) : Promise.resolve();
     }
-    return {check, start, resume, cancel, clearError: () => emit({error: '', report_id: null}), state: () => state,
+    // Start or pause the download of the image models; the reply is the new state, then polling follows it.
+    async function pack(action) {
+        try { const info = await (action === 'cancel' ? client.packCancel() : client.packInstall()); if (!disposed) emit({info, error: '', report_id: null}); }
+        catch (error) { if (!disposed) emit(failed(error)); }
+        finally { if (!disposed) scheduleInfo(); }
+    }
+    return {check, start, resume, cancel, pack, clearError: () => emit({error: '', report_id: null}), state: () => state,
         dispose() { disposed = true; unschedule(infoTimer); infoTimer = null; return cancel(); }};
 }
 
@@ -555,11 +589,12 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         renderReferences(refs, disabled);
         input.placeholder = mode === 'edit' ? t('What to change', '要改什么') : t('Describe the picture', '描述画面');
         input.setAttribute('aria-label', input.placeholder);
-        action.textContent = state.running ? t('Stop', '停止') : t('Generate', '生成');
+        const pack = missing ? packView(state.info, t) : null;
+        action.textContent = pack ? pack.button : state.running ? t('Stop', '停止') : t('Generate', '生成');
         action.classList.toggle('fv-ie-primary', !state.running);
-        action.setAttribute('aria-disabled', String(!state.running && (disabled || !prompt.trim())));
-        action.title = !state.running && !prompt.trim() ? t('Write a prompt first', '请先写提示词') : '';
-        action.hidden = !!missing;
+        action.setAttribute('aria-disabled', String(!pack && !state.running && (disabled || !prompt.trim())));
+        action.title = !pack && !state.running && !prompt.trim() ? t('Enter a prompt first', '请先填写提示词') : '';
+        action.hidden = !!missing && !pack;
         const percent = Math.floor(state.fraction * 100) + '%';
         if (state.error && !promptRequired) {
             const failureKey = `${state.error}:${state.report_id || ''}:${state.stage || ''}`;
@@ -569,8 +604,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             }
         } else {
             mounted.failureKey = null;
-            note.textContent = missing ? imagePackUnavailableMessage(state.info, t)
-                : promptRequired ? t('Write a prompt first.', '请先写提示词。')
+            note.textContent = pack ? pack.note
+                : missing ? imagePackUnavailableMessage(state.info, t)
+                : promptRequired ? t('Enter a prompt first.', '请先填写提示词。')
                 : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
                 : state.running && state.fitted ? t(`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
                     `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`) + ' · ' + percent
@@ -581,8 +617,11 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         bar.dataset.running = String(state.running);
         bar.dataset.message = String(!!missing || promptRequired || !!state.error || !!note.textContent);
         bar.dataset.failed = String(!!state.error && !promptRequired);
-        meter.hidden = !state.running || !!state.waiting; meter.setAttribute('aria-valuenow', String(Math.floor(state.fraction * 100)));
-        fill.style.width = state.fraction * 100 + '%';
+        bar.dataset.pack = String(!!pack && !pack.reason && !state.error);
+        const shown = pack ? pack.fraction : state.fraction;
+        meter.hidden = pack ? pack.fraction == null : !state.running || !!state.waiting;
+        meter.setAttribute('aria-valuenow', String(Math.floor(shown * 100)));
+        fill.style.width = shown * 100 + '%';
     }
     function mount(bar) {
         bar.classList.add('fv-ie-generation');
@@ -608,7 +647,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         box.append(input); field.append(refs, box);
         const note = el('div', '', 'fv-ie-opt-note fv-ie-gen-note'); note.setAttribute('role', 'status');
         const action = button(t('Generate', '生成'), null, () => {
-            if (session.state().running) void session.cancel(); else void start();
+            const now = session.state(), pack = !now.running && now.info && !now.info.installed ? packView(now.info, t) : null;
+            if (pack) void session.pack(pack.loading ? 'cancel' : 'install');
+            else if (now.running) void session.cancel(); else void start();
         }, 'fv-ie-button fv-ie-primary');
         const meter = el('div', null, 'fv-ie-gen-meter'), fill = el('i'); meter.append(fill);
         meter.setAttribute('role', 'progressbar'); meter.setAttribute('aria-label', t('Generate with AI', 'AI 生成'));

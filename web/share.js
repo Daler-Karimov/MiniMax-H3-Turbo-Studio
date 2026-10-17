@@ -1,6 +1,6 @@
 import {api} from '../../scripts/api.js';
 import {closeDialog} from './motion.js';
-import {SAMPLING_EFFORTS_MAC, effortFor, effortName, legacyMacEffort} from './sampling_effort.js';
+import {effortName, resultEffort} from './sampling_effort.js';
 import {fontCSS as bundledFontCSS, fontLoaded, loadFont} from './fonts.js';
 import {shareLayout} from './share_layout.js';
 import {videoUnavailableText} from './studio_extend.js';
@@ -36,11 +36,7 @@ export function drawShareCard(canvas,frame,logo,record,t) {
     const g=record.geometry||{}, shape=shareLayout(g.width||frame?.naturalWidth||1344,g.height||frame?.naturalHeight||768);
     canvas.width=shape.width;canvas.height=shape.height;
     const ctx=canvas.getContext('2d'),w=shape.width,y=shape.rect[3],H=shape.footer,pad=44,wide=w>=1000;
-    const p=record.sampling_plan||{},steps=p.base_steps,refine=p.enabled?p.refine_steps:0;
-    // Results made with the earlier 8 + 2 default count as Light.
-    // A Mac result names its level from the Mac table (Max 20 without a cache; earlier High 16 steps).
-    const plan=[steps,!!p.enabled,p.enabled&&steps===8&&refine===2?3:refine,p.step_cache??null];
-    const tier=effortFor(...plan)||effortFor(...plan,SAMPLING_EFFORTS_MAC)||legacyMacEffort(steps,!!p.enabled,p.step_cache??null), accent=tier?.color||'#8fa3bb';
+    const steps=record.sampling_plan?.base_steps, tier=resultEffort(record.sampling_plan), accent=tier?.color||'#8fa3bb';
     ctx.fillStyle='#0b1016';ctx.fillRect(0,0,w,shape.height);ctx.clearRect(...shape.rect);
     const bg=ctx.createLinearGradient(0,y,0,y+H);bg.addColorStop(0,'#131b26');bg.addColorStop(1,'#0b1016');
     ctx.fillStyle=bg;ctx.fillRect(0,y,w,H);

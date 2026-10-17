@@ -40,6 +40,24 @@ UNSUPPORTED_REFINE = UNSUPPORTED + ' Clear either "Second pass of preview" or "C
 UNSUPPORTED_MEDIA = UNSUPPORTED + ' Connect up to 3 pictures as references, and remove video, audio and pre-encoded inputs.'
 # A continued part keeps the cast's pictures, one per person and at most three people in a frame.
 PICTURES_MAX = 3
+
+
+def pick_pictures(rows, person):
+    """The pictures a continued part keeps from image rows in panel order: at most PICTURES_MAX.
+
+    person(row) is the id of the character a row belongs to, or None. With two or more characters each keeps
+    only the last of its rows (the face close-up, or the one picture its card has) so that everyone is seen; the
+    other pictures follow. With none or one character the first rows are kept."""
+    rows = list(rows)
+    last = {}
+    for index, row in enumerate(rows):
+        if person(row) is not None:
+            last[person(row)] = index
+    if len(last) < 2:
+        return rows[:PICTURES_MAX]
+    faces = [rows[index] for index in sorted(last.values())]
+    others = [row for row in rows if person(row) is None]
+    return (faces + others)[:PICTURES_MAX]
 INVALID_FRAMES = 'Frame count must be 5 + 17n and at least 39 (39, 56, 73, 90, ...).'
 INVALID_FILE = 'Choose an existing MP4 video using its absolute path.'
 

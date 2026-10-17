@@ -70,11 +70,6 @@ def pictures_each(resolved):
     return resolved['pictures_each'] if resolved['people'] else None
 
 
-def pictures_cut(resolved):
-    """True when the length check took pictures away from what this device starts with."""
-    return bool(resolved['people'] and resolved.get('pictures_cut'))
-
-
 class MaterialRejected(JobError):
     """External callers named material the content-only boundary does not admit: the job validation error."""
     status = 422
@@ -171,7 +166,6 @@ def failure(view):
 class Productions:
     def __init__(self, jobs):
         self.jobs = jobs
-        self._machine = None  # the capability table's machine row, once known
         self.directory = jobs.directory / 'productions'
         self.records = {}
         self.changed = threading.Condition(jobs.lock)
@@ -375,7 +369,6 @@ class Productions:
             row.update(cast_reference=resolved['cast_reference'], cast=resolved['people'],
                        cast_omitted=resolved['omitted'], cast_voice_omitted=resolved['voice_omitted'],
                        cast_missing=resolved['missing'], cast_pictures_each=pictures_each(resolved),
-                       cast_note=drama.pictures_note(pictures_each(resolved), pictures_cut(resolved)),
                        references=len(resolved['references']))
             try:
                 spec._text(row['prompt'], '/screenplay/shots/%d/prompt' % i, 20000)
@@ -921,8 +914,7 @@ class Productions:
                                  cast_omitted=list(resolved['omitted']),
                                  cast_voice_omitted=list(resolved['voice_omitted']),
                                  cast_missing=list(resolved['missing']),
-                                 cast_pictures_each=pictures_each(resolved),
-                                 cast_pictures_cut=pictures_cut(resolved))
+                                 cast_pictures_each=pictures_each(resolved))
                 self._save(marker)  # Durable before Jobs may accept it.
                 self.jobs.submit(item, client='production:' + identity, parent=dict(production=identity, ref=ref))
             except spec.SpecError as error:
@@ -957,80 +949,9 @@ class Productions:
         return resolved
 
     def _carry(self, play, shot, cards, item, *, continues):
-        """The cast a shot carries: this device's starting number of pictures a person (six for a measured
-        class of card, people and precision, else three), fewer where it cannot hold them, down to three. Plan
-        previews and submissions both come here, so they agree."""
-        if continues:
-            # A continuing shot carries one picture a person whatever the device holds.
-            resolved = drama.cast_references(play, shot, cards, continues=True, each=drama.PICTURES_LEAST)
-            resolved.update(pictures_each=None, pictures_cut=False)
-            return resolved
-        people = len(drama.cast_references(play, shot, cards, continues=continues, each=drama.PICTURES_LEAST)['people'])
-        start = each = self._pictures_start(item, people)
-        while True:
-            resolved = drama.cast_references(play, shot, cards, continues=continues, each=each)
-            if each <= drama.PICTURES_LEAST or item is None or not self._too_long(item, resolved):
-                resolved['pictures_cut'] = each < start
-                return resolved
-            each -= 1
-
-    def _pictures_start(self, item, people):
-        """Where the picture count starts for this many people on this machine, from the capability table's
-        graphics card, system and precision. Any canvas names the same machine, so a shot without a take asks
-        about the default canvas."""
-        if self._machine is None:
-            from .length import capability_table
-            width, height = spec.canvas_size(item or {})
-            table = capability_table(self.jobs.port, dict(width=width, height=height, task='ref2va', loras=False), wait=3.)
-            if table.get('status') != 'ready':
-                return drama.pictures_start(None)  # Not worked out yet: three, and the next ask looks again.
-            precision = getattr(self.jobs.port, 'prepared_precision', lambda: None)()
-            # The machine does not change while this server runs.
-            self._machine = dict(table.get('machine') or {}, precision=precision if isinstance(precision, str) else None)
-        return drama.pictures_start(self._machine, people)
-
-    def _too_long(self, item, resolved):
-        """True when this device cannot generate the shot with these references. A table that is not ready
-        (still computing, unavailable) or lacks this canvas says False and keeps the pictures; a ready table
-        that admits no length at this canvas, or a limit this shot's length cannot be planned under, says True."""
-        pictures = sum(p['pictures'] for p in resolved['people'])
-        if not pictures:
-            return False
-        try:
-            from ..chain_plan import PlanError, plan as chain_plan
-            from .length import capability_table
-            media = dict(references=deepcopy(resolved['references']))
-            normalized = spec.normalize(dict(deepcopy(item), media=media))
-            rows = ([dict(kind='image', width=normalized['width'], height=normalized['height'])] * pictures
-                    + [dict(kind='audio', seconds=seconds) for seconds in resolved['clip_seconds']])
-            table = capability_table(self.jobs.port, normalized, wait=3., references=rows,
-                                     task='ref2va_av' if resolved['clip_seconds'] else 'ref2va')
-            if table.get('status') != 'ready':
-                return False
-            index = next((i for i, row in enumerate(table.get('sizes', []))
-                          if (row['width'], row['height']) == (normalized['width'], normalized['height'])), None)
-            tiers = table.get('tiers', {})
-            tier = tiers.get(normalized['quality'])
-            if tier is None:
-                # Same plan and step cache first, then the same plan (see length.single_frame_limit).
-                same = [row for row in tiers.values()
-                        if row.get('steps') == normalized['base_steps'] and row.get('two_pass') == normalized['two_pass']
-                        and (not normalized['two_pass'] or normalized['refine_steps'] == 3)]
-                tier = next((row for row in same if row.get('step_cache') == normalized.get('step_cache')),
-                            same[0] if same else None)
-            maxima = tier.get('max_frames') if tier else None
-            if index is None or not isinstance(maxima, list) or index >= len(maxima):
-                return False
-            limit = maxima[index]
-            if limit is None:
-                return True  # no length at all fits at this canvas with these pictures
-            try:
-                chain_plan(normalized['seconds'], max_frames=limit, continued=bool(normalized.get('continue_from')))
-            except PlanError:
-                return True
-            return False
-        except Exception:  # The limit is advisory: a failure here keeps the pictures and lets the job decide.
-            return False
+        """The cast a shot carries: each person's sheet and face close-up on every device (one picture a person when
+        a continuing shot has several people). Plan previews and submissions both come here, so they agree."""
+        return drama.cast_references(play, shot, cards, continues=continues)
 
     def _current(self, play):
         """Cards as they are now; a card deleted since the film started is None (the shot uses text)."""

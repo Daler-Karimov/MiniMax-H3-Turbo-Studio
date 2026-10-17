@@ -23,14 +23,14 @@ for (const name of ['setup.css', 'feedback.css']) {
 
 // The GitHub page for a suggestion, with the text (and, when asked for, the
 // summary) already in it.
-export function feedbackIssueURL(text, version = null, diagnostics = '') {
-    return feedbackIssueParts(text, version, diagnostics).url;
+export function feedbackIssueURL(text, version = null, diagnostics = '', title = '[Feedback]') {
+    return feedbackIssueParts(text, version, diagnostics, title).url;
 }
 
 // Same, and whether the end of the text had to be left off to fit the address.
-export function feedbackIssueParts(text, version = null, diagnostics = '') {
+export function feedbackIssueParts(text, version = null, diagnostics = '', title = '[Feedback]') {
     const build = (body, extra) => {
-        const params = new URLSearchParams({ template: 'feedback.yml', title: '[Feedback]', feedback: body });
+        const params = new URLSearchParams({ template: 'feedback.yml', title, feedback: body });
         if (version) params.set('version', `v${version}`);
         if (extra) params.set('diagnostics', extra);
         return `${ISSUE_FORM}?${params}`;

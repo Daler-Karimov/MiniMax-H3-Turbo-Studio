@@ -347,6 +347,12 @@ def run(args):
         raise
 
 
+def upscale_factor(args):
+    """The two-pass upscale factor a command asked for: 2 (the original half-size first pass) unless given."""
+    factor = getattr(args, 'upscale_factor', None)
+    return 2 if factor in (None, 2) else factor
+
+
 def dialogue_reason(prompt):
     """Shared eligibility for opening-voice references and hidden dialogue tails."""
     from .prompt_vlm.rules import split_source
@@ -575,7 +581,8 @@ def _run(args):
     if continuation is not None:
         from .two_pass import plan as continuation_plan
         validate_route(task=profile['engine'].get('task', 't2va'), anchor=anchored)
-        planned = continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps)
+        planned = continuation_plan(canvas, two_pass, base_steps=base_steps, refine_steps=refine_steps,
+                                    scale=upscale_factor(args))
         if two_pass and not planned['enabled'] and base_steps != 8:
             raise ValueError(planned['reason'] + ' A continuation needs two-pass generation.')
         continuation_first = planned['first']
@@ -752,7 +759,8 @@ def _run(args):
                             'metrics': str(destination.with_suffix('.encoding.json')),
                             'diagnostic_output': str(destination)}
                 if media:
-                    encoding.update(media=media, geometry=canvas, base=profile['engine'].get('base'))
+                    encoding.update(media=media, geometry=canvas, base=profile['engine'].get('base'),
+                                    reference_latent_cache=str(input_cache.root.parent.parent) if input_cache else None)
                 # Lets the encoder child read the video model while it computes, on a slow drive.
                 from .model_read_ahead import request_fields
                 if getattr(args, 'cache', None):
@@ -846,7 +854,7 @@ def _run(args):
             from .two_pass import plan as plan_sampling, ensure_checkpoint
             sampling_plan = plan_sampling(canvas, two_pass, profile['engine'].get('task', 't2va'),
                                           base_steps=base_steps, refine_steps=refine_steps,
-                                          staged=bool(preview or refine_source))
+                                          staged=bool(preview or refine_source), scale=upscale_factor(args))
             report['sampling_plan'] = sampling_plan
             if continuation is not None:
                 validate_route(task=profile['engine'].get('task', 't2va'), anchor=anchored,

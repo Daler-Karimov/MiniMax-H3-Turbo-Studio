@@ -30,7 +30,7 @@ SPLIT_REASONS = {
 MAX_PARTS = 5
 
 
-def reference(value):
+def reference(value, queue=False):
     if value is None or isinstance(value, str) and value:
         return value
     if isinstance(value, dict) and set(value) == {'work'}:
@@ -41,6 +41,12 @@ def reference(value):
                     and '..' not in posix.parts and '..' not in windows.parts
                     and posix.suffix.lower() == '.mp4'):
                 return deepcopy(value)
+    if queue and isinstance(value, dict) and set(value) == {'chain', 'block'}:
+        if (isinstance(value['chain'], str) and re.fullmatch(r'c-[0-9a-f]{12}', value['chain'])
+                and isinstance(value['block'], str) and value['block']):
+            return deepcopy(value)
+    if queue:
+        raise ValueError('References must be block IDs, relative MP4 work paths, or queued chain outputs')
     raise ValueError('References must be block IDs or relative MP4 work paths without ..')
 
 
@@ -73,6 +79,9 @@ def validate(payload):
         raise ValueError('Invalid extra data or client ID')
     if ('blocks' in payload) == ('seconds' in payload):
         raise ValueError('Specify blocks or seconds, not both')
+    queue = payload.get('queue', False)
+    if type(queue) is not bool:
+        raise ValueError('Queue must be a bool')
     planned = split = None
     join = payload.get('join', 'seconds' in payload)
     if type(join) is not bool:
@@ -118,7 +127,7 @@ def validate(payload):
         part = row.get('part', identity)
         if not isinstance(part, str):
             raise ValueError('Block part must be a string')
-        after, before = reference(row.get('after')), reference(row.get('before'))
+        after, before = reference(row.get('after'), queue), reference(row.get('before'), queue)
         text, frames = row.get('text'), row.get('frames')
         if not isinstance(text, str) or len(text) > 20000:
             raise ValueError('Block text must be a string of at most 20000 characters')
@@ -164,6 +173,8 @@ def validate(payload):
                   snapshot=dict(prompt=deepcopy(prompt), extra_data=deepcopy(extra)), blocks=blocks,
                   plan=planned, join=join, output=None, output_state='pending' if join else 'none',
                   output_error=None, output_blocks=0, split=split)
+    if queue:
+        record['queue'] = True
     try:
         json.dumps(record, allow_nan=False)
     except (ValueError, TypeError, OverflowError) as error:
@@ -194,7 +205,9 @@ def summary(record):
 
 
 def detail(record):
-    return dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']))
+    return dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']),
+                generation_size={key: record['snapshot']['prompt'][record['node']]['inputs'].get(key)
+                                 for key in ('width', 'height')})
 
 
 def save(directory, record):
@@ -277,7 +290,7 @@ def load_all(directory, limit=200, *, identity=None):
                                continuation=None, skip_frames=0, skip_audio_samples=0)
             snapshot = record['snapshot']
             normalized = validate(dict(node=record['node'], client_id=record['client_id'], **snapshot,
-                blocks=[{key: row[key] for key in ('id', 'part', 'after', 'before', 'fill', 'context')}
+                queue=record.get('queue', False), blocks=[{key: row[key] for key in ('id', 'part', 'after', 'before', 'fill', 'context')}
                         | row['inputs']
                         for row in record['blocks']], join=record['join']))
             if record['state'] not in CHAIN_STATES:

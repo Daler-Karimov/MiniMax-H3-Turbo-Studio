@@ -83,6 +83,9 @@ def recent_shapes(history, limit=SHAPES):
                      frames=geometry.get('frames'), two_pass=bool(plan.get('enabled')),
                      base_steps=plan.get('base_steps', geometry.get('steps', 8)),
                      refine_steps=plan.get('refine_steps') or 3)
+        if plan.get('enabled') and plan.get('scale', 2) != 2:
+            # Only another factor adds the key, so the shapes of 2x requests stay as they were.
+            shape['upscale_factor'] = plan['scale']
         if not all(type(shape[name]) is int and shape[name] > 0 for name in ('width', 'height', 'frames', 'base_steps')):
             continue
         key = json.dumps(shape, sort_keys=True)
@@ -122,7 +125,8 @@ def plan_request(machine, shape, history, identity):
     profile['engine'].update(steps=shape['base_steps'], task=shape['task'],
                              base=machine['base'], checkpoint=machine['checkpoint'])
     sampling_plan = plan(canvas, shape['two_pass'], shape['task'],
-                         base_steps=shape['base_steps'], refine_steps=shape['refine_steps'])
+                         base_steps=shape['base_steps'], refine_steps=shape['refine_steps'],
+                         scale=shape.get('upscale_factor', 2))
     if sampling_plan['enabled'] or sampling_plan['version'] == 2:
         canvas['sampling_plan'] = sampling_plan
     profile = tuned(profile, machine, hardware, canvas, sampling_plan, shape['text_tokens'][0])

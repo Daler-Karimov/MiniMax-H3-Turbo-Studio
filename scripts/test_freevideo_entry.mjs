@@ -29,6 +29,10 @@ class Element {
 test('main browser entry registers both views and preserves node hooks', async t => {
     const extensions = [], opened = [], installed = [], events = new EventTarget();
     let refreshed = 0, compatibilityChecks = 0, updateChecks = 0, doneNotifyStarts = 0, rememberedView = null;
+    const openingEvents = [];
+    let restoreReleases = 0;
+    let launchReady = null;
+    const opening = {setName: name => openingEvents.push(['name', name]), cover: () => openingEvents.push(['cover']), finish: () => openingEvents.push(['finish'])};
     const casts = [];
     let progressView, progressOptions, realProgressFactory;
     const app = {
@@ -46,6 +50,7 @@ test('main browser entry registers both views and preserves node hooks', async t
         },
         secondPassAction: () => new Element('button'),
         createErrorPanel: () => ({element: new Element('error'), show() {}, clear() {}}),
+        createErrorReport: () => ({}), adviceFor: () => ({advice: {}}),
         errorText: value => String(value),
         openStudio: node => opened.push(node),
         loraPanel: () => () => {}, loraWarning: () => 'LoRA warning', promptGuide: () => new Element('guide'),
@@ -69,9 +74,11 @@ test('main browser entry registers both views and preserves node hooks', async t
         createProgressConnection: () => ({start() {}, refresh() {}, reset() {}}),
         notifyCompatibility: async () => { compatibilityChecks++; },
         startUpdateChecks: () => { updateChecks++; },
+        startWhiteboxWorker: () => ({stop() {}}),
         startDoneNotify: () => { doneNotifyStarts++; }, askDesktopPermission: () => {},
         installNavigation: callback => installed.push(callback),
         refreshNavigation: () => refreshed++, preferredView: () => rememberedView,
+        beginWorkspaceRestore: () => { openingEvents.push(['begin']); return opening; }, finishWorkspaceRestore: () => { restoreReleases++; }, waitForLauncherRestore: () => launchReady,
         attachReferencePicker() {}, referenceItems: () => [], syncReferencePrompt() {},
         shareButton: () => new Element('button'), reportFileName: () => 'FreeVideo-report-20261008-101530.json',
         rememberPromptDraft() {}, savePromptDraft: async () => false, openImageEditor: async () => null, icon: () => '',
@@ -88,15 +95,17 @@ test('main browser entry registers both views and preserves node hooks', async t
     }
     try {
         let source = await readFile(new URL('../web/freevideo.js', import.meta.url), 'utf8');
+        source = source.replace("import { beginWorkspaceRestore, finishWorkspaceRestore, waitForLauncherRestore } from './workspace_restore.js';", 'const {beginWorkspaceRestore,finishWorkspaceRestore,waitForLauncherRestore} = globalThis.__freevideoEntryTest;');
         source = source.replace("import { openEditorView } from './editor_loader.js';", 'const openEditorView = (...args) => globalThis.__freevideoEntryTest.openEditorView?.(...args);');
         source = source
-            .replace("import { createErrorPanel, errorText } from './error_panel.js';", 'const {createErrorPanel,errorText} = globalThis.__freevideoEntryTest;')
+            .replace("import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';", 'const {createErrorPanel,errorText,createErrorReport,adviceFor} = globalThis.__freevideoEntryTest;')
             .replace('import { app } from "../../scripts/app.js";', 'const {app} = globalThis.__freevideoEntryTest;')
             .replace('import { api } from "../../scripts/api.js";', 'const {api} = globalThis.__freevideoEntryTest;')
             .replace("import { openStudio, loraPanel, loraWarning, promptGuide } from \"./studio.js\";", 'const {openStudio,loraPanel,loraWarning,promptGuide} = globalThis.__freevideoEntryTest;')
             .replace("import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';", 'const {createGenerationProgress,referenceTrimText,thermalText,sharedGpuText,encoderFileText,encoderFilePath} = globalThis.__freevideoEntryTest;')
             .replace("import { createProgressConnection } from './progress_connection.js';", 'const {createProgressConnection} = globalThis.__freevideoEntryTest;')
             .replace("import { notifyCompatibility } from './compatibility.js';", 'const {notifyCompatibility} = globalThis.__freevideoEntryTest;')
+            .replace("import { startWhiteboxWorker } from './whitebox_worker.js';", 'const {startWhiteboxWorker} = globalThis.__freevideoEntryTest;')
             .replace("import { startUpdateChecks } from './updates.js';", 'const {startUpdateChecks} = globalThis.__freevideoEntryTest;')
             .replace("import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';", 'const {startDoneNotify,askDesktopPermission} = globalThis.__freevideoEntryTest; const DESKTOP_SETTING = "FreeVideo.DoneNotify.Desktop";')
             .replace("import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mediaRows } from './prompt_references.js';", 'const {attachReferencePicker,referenceItems,syncReferencePrompt,referenceInputs,mediaRows} = globalThis.__freevideoEntryTest;')
@@ -116,7 +125,8 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { imageGenerationSupported } from './image_generation.js';", 'const imageGenerationSupported = () => true;')
             .replace("import { uploadMedia } from './media_upload.js';", 'const {uploadMedia} = globalThis.__freevideoEntryTest;')
             .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
-            .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;');
+            .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;')
+            .replace("import { installNativeErrorGuard } from './native_errors.js';", 'const installNativeErrorGuard = () => {};');
         await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const extension = extensions.find(row => row.name === 'FreeVideo.UnifiedMedia');
         assert.ok(extension, 'the main extension must register');
@@ -186,7 +196,8 @@ test('main browser entry registers both views and preserves node hooks', async t
                         ['frames', 'Total frames', '帧数', 141],
                         ['first_frame_reference', 'First-frame reference', '首帧参考', true, '减小漂移'],
                         ['step_cache', 'Step cache', '步间缓存', 'none',
-                            '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
+                            '复用相近采样步之间的计算，更快完成，结果会有细微变化。'],
+                        ['upscale_factor', 'Upscale factor', '放大倍数', '2', '二次采样时成片相对首遍的放大倍数。'],
                         ['voice_reference', 'Voice reference', 'Voice reference', true],
                         ['hide_tail', 'Hide dialogue tail', 'Hide dialogue tail', true],
                     ];
@@ -223,8 +234,10 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(node.widgets[0].value, 8, 'Migrate the previous private force-checkbox slot');
         node.buttons[0].callback();
         const quiet = opened.length;
+        const releasesBefore = restoreReleases;
         extension.afterConfigureGraph();
         assert.equal(opened.length, quiet, 'a tab restored with the page does not open the workspace on its own');
+        assert.equal(restoreReleases, releasesBefore + 1, 'the page-load cover is released when nothing opens');
         events.dispatchEvent(new Event('pointerdown'));
         extension.afterConfigureGraph();
         assert.deepEqual(opened, [node, node]);
@@ -246,10 +259,49 @@ test('main browser entry registers both views and preserves node hooks', async t
         assert.equal(workflows, 1); assert.equal(opened.length, before + 2);
         rememberedView = 'editor';
         const restored = [];
-        dependencies.openEditorView = (value, options) => restored.push({node:value, studio:options.studio});
+        let finishLaunch, finishEditor;
+        launchReady = new Promise(resolve => { finishLaunch = resolve; });
+        const ready = new Promise(resolve => { finishEditor = resolve; });
+        dependencies.openEditorView = (value, options) => { restored.push({node:value, studio:options.studio}); options.onProjectLoaded({name: 'saved project'}); return {ready}; };
+        const beforeRestore = opened.length;
         extension.afterConfigureGraph();
+        assert.equal(restored.length, 0, 'wait for launcher/session restoration before choosing the workspace');
+        finishLaunch(); await Promise.resolve(); await Promise.resolve();
         assert.equal(restored[0].node, node);
-        assert.ok(restored[0].studio, 'restore opens the studio before the editor');
+        assert.equal(restored[0].studio, undefined, 'restore enters the editor directly');
+        assert.equal(opened.length, beforeRestore, 'the creation panel never flashes during a successful recovery');
+        assert.deepEqual(openingEvents, [['begin'], ['name', 'saved project'], ['cover']]);
+        finishEditor(); await Promise.resolve(); await Promise.resolve();
+        assert.deepEqual(openingEvents.at(-1), ['finish'], 'keep the opening status and update suppression until editor.ready');
+        launchReady = null;
+        await t.test('a graph replaced while launcher restoration waits cannot reopen its editor', async () => {
+            let release, calls = 0;
+            launchReady = new Promise(resolve => { release = resolve; });
+            dependencies.openEditorView = () => { calls++; return {ready: Promise.resolve()}; };
+            extension.beforeConfigureGraph(); extension.afterConfigureGraph();
+            extension.beforeConfigureGraph(); app.graph._nodes = [];
+            const releases = restoreReleases; extension.afterConfigureGraph();
+            assert.equal(restoreReleases, releases + 1);
+            release(); await Promise.resolve(); await Promise.resolve();
+            assert.equal(calls, 0, 'a stale launcher callback must not import or open an editor');
+            launchReady = null; app.graph._nodes = nodes;
+        });
+        await t.test('a graph replaced while the editor import waits cannot cover the new workflow', async () => {
+            let release, options;
+            dependencies.openEditorView = async (_node, value) => {
+                options = value;
+                await new Promise(resolve => { release = resolve; });
+                return value.isCurrent() ? {ready: Promise.resolve()} : null;
+            };
+            extension.beforeConfigureGraph(); extension.afterConfigureGraph();
+            assert.equal(options.isCurrent(), true);
+            extension.beforeConfigureGraph(); app.graph._nodes = []; extension.afterConfigureGraph();
+            const covered = openingEvents.filter(row => row[0] === 'cover').length;
+            assert.equal(options.isCurrent(), false);
+            release(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+            assert.equal(openingEvents.filter(row => row[0] === 'cover').length, covered);
+            app.graph._nodes = nodes;
+        });
         // The lazy loader owns failed imports: it notifies, reports through onFailure and resolves null.
         dependencies.openEditorView = async (node, options) => { options.onFailure(new Error('editor unavailable')); return null; };
         extension.afterConfigureGraph(); await Promise.resolve();

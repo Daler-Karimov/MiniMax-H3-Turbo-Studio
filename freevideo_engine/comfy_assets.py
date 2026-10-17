@@ -75,7 +75,11 @@ def resolve_assets(serialized, input_directory):
     root = Path(input_directory).resolve()
     result = {}
     for row in rows:
-        if not isinstance(row, dict) or set(row) - {'file', 'role', 'enabled'}:
+        if not isinstance(row, dict) or set(row) - {'file', 'role', 'enabled', 'cast', 'early_steps'}:
+            raise ValueError('Invalid media item')
+        # The character an @ mention added the row for; a continued part keeps one picture per character.
+        if 'cast' in row and (set(row['cast'] if isinstance(row['cast'], dict) else ('?',)) != {'id'}
+                              or not isinstance(row['cast']['id'], str) or not 0 < len(row['cast']['id']) <= 128):
             raise ValueError('Invalid media item')
         if type(row.get('enabled', True)) is not bool:
             raise ValueError('Media enabled must be a boolean')
@@ -101,7 +105,14 @@ def resolve_assets(serialized, input_directory):
                 raise ValueError('Select only one ' + role + ' frame')
             result[role] = str(path)
         elif role == 'reference':
-            result.setdefault('references', []).append({'kind': kind, 'path': str(path)})
+            reference = {'kind': kind, 'path': str(path)}
+            if cast_id(row) is not None:
+                reference['cast'] = cast_id(row)   # only a continued part reads it (comfy_media.continued)
+            if 'early_steps' in row:
+                from .media_request import validate_early_steps
+                validate_early_steps(dict(row, kind=kind))
+                reference['early_steps'] = row['early_steps']
+            result.setdefault('references', []).append(reference)
         else:
             raise ValueError('Media role must be first, last or reference')
     # Mixing keyframes and references is checked when the video is made (comfy_media.export):
@@ -110,15 +121,16 @@ def resolve_assets(serialized, input_directory):
 
 
 def continued_assets(serialized):
-    """The panel rows a continued part uses: enabled image references in panel order, at most three.
+    """The panel rows a continued part uses: enabled image references in panel order, at most three
+    (continuation.pick_pictures: with two or more characters, one picture each).
 
     Its frames and sounds stay in the panel for parts that start fresh, but never reach a continued part's checks."""
-    from .continuation import PICTURES_MAX
+    from .continuation import pick_pictures
     try:
         rows = json.loads(serialized)
     except (TypeError, ValueError):
         return '[]'
-    kept = []
+    pictures = []
     for row in rows if isinstance(rows, list) else ():
         if (isinstance(row, dict) and row.get('enabled', True) is True and row.get('role') == 'reference'
                 and isinstance(row.get('file'), str)):
@@ -126,9 +138,23 @@ def continued_assets(serialized):
                 image = media_kind(row['file']) == 'image'
             except ValueError:
                 image = False
-            if image and len(kept) < PICTURES_MAX:
-                kept.append(dict(file=row['file'], role='reference'))
-    return json.dumps(kept)
+            if image:
+                pictures.append(row)
+    return json.dumps([_kept_row(row) for row in pick_pictures(pictures, cast_id)])
+
+
+def cast_id(row):
+    """The character a panel row belongs to (the media list marks rows added by an @ mention), else None."""
+    cast = row.get('cast') if isinstance(row, dict) else None
+    value = cast.get('id') if isinstance(cast, dict) else None
+    return value if isinstance(value, (str, int)) and not isinstance(value, bool) else None
+
+
+def _kept_row(row):
+    kept = dict(file=row['file'], role='reference')
+    if cast_id(row) is not None:
+        kept['cast'] = dict(id=cast_id(row))
+    return kept
 
 
 def connect_assets(assets, *, first=None, last=None, reference=None, reference_audio=None, **images):

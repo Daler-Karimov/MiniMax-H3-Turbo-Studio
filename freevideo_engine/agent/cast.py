@@ -40,6 +40,18 @@ TURN = dict(aspect='9:16', seconds=6)
 CLOSE_UP = dict(aspect='1:1', seconds=4)
 SCENE = dict(aspect='16:9', seconds=6)
 
+# The sheet of every view a shot carries for each person, put together here from the card's own pictures: up to six
+# equal cells (three to a row) on a light grey ground, each picture scaled whole and centred, no text.
+SHEET_VERSION = 1
+SHEET_ORDER = ('front', 'three_quarter', 'side', 'back', 'face')  # then any other label, in card order
+SHEET_CELL = (736, 828)
+SHEET_GAP = 48
+SHEET_GROUND = (238, 238, 238)
+SHEET_COLUMNS = 3
+SHEET_MAX = 6
+SHEET_SIZE = (SHEET_COLUMNS * SHEET_CELL[0] + (SHEET_COLUMNS + 1) * SHEET_GAP, 2 * SHEET_CELL[1] + 3 * SHEET_GAP)  # 2400 x 1800
+_SHEETS_SEEN = set()
+
 
 def reference_prompt(card, *, face=False):
     """The one place the reference clip prompts are written."""
@@ -67,13 +79,13 @@ def turn_label(progress):
 class CastError(JobError):
     """A card error; conflicts carry the current card so the caller can retry from it."""
 
-    def __init__(self, code, message, next_action, *, card=None, job=None):
+    def __init__(self, code, message, next_action, *, card=None, job=None, details=None):
         super().__init__(code, message)
         self.status = errors.ERRORS[code][0]
-        self.next_action, self.card, self.job = next_action, card, job
+        self.next_action, self.card, self.job, self.details = next_action, card, job, details or []
 
     def view(self):
-        value = errors.build(self.code, validation=True, details=[], message=self.message,
+        value = errors.build(self.code, validation=True, details=deepcopy(self.details), message=self.message,
                              next_action=self.next_action)
         if self.code in errors.IMAGE_REASONS:
             value.update(errors.image_failure(self.code))
@@ -99,6 +111,8 @@ def view(card):
         value['voice'] = dict(deepcopy(card['voice']), media=media_view(card['voice']['media']),
                               clip=assets.view(card['voice']['clip']['file']))
     value['generate_error'] = errors.with_reason(value.get('generate_error'))
+    if card.get('_sheet'):
+        value['sheet'] = media_view(card['_sheet'])  # the sheet made from the pictures, when the card has none of its own
     return value
 
 
@@ -262,6 +276,15 @@ class Cast:
         return iso(self.jobs.clock())
 
     # Media --------------------------------------------------------------------------------------------
+    def _picture_at(self, identity, item, by, index):
+        """`_picture` for the request's images[index]; a refused picture names its place, so the dialog marks it."""
+        try:
+            return self._picture(identity, item, by)
+        except CastError as error:
+            if error.code == 'invalid_media' and not error.details:
+                error.details = [dict(field='/images/%d/media' % index)]
+            raise
+
     def _picture(self, identity, item, by):
         """Resolve one picture to an input file in this card's folder (frames, imports, edits)."""
         from ..comfy_assets import media_kind
@@ -276,6 +299,15 @@ class Cast:
         if kind != 'image':
             raise CastError('invalid_media', 'A card picture must be an image.',
                             'Upload an image, or name a video frame with from_job or library and frame.')
+        # The extension alone lets a renamed or cut-off file in; decode it once so a broken picture is refused here,
+        # not when a video first uses the card.
+        try:
+            from PIL import Image
+            with Image.open(self.jobs.port.input_path(relative)) as image:
+                image.load()
+        except Exception:  # noqa: BLE001 - any decoder failure means the picture cannot be used
+            raise CastError('invalid_media', 'A card picture must be a readable image.',
+                            'Upload another image.') from None
         entry = dict(media=dict(file=relative), by=by)
         if isinstance(source, dict) and source.get('from_job'):
             entry['from_job'] = source['from_job']
@@ -340,8 +372,8 @@ class Cast:
                 return replay
         identity = 'c' + uuid.uuid4().hex[:12]
         images = []
-        for row in value.get('images', []):
-            entry = self._picture(identity, row['media'], by)
+        for index, row in enumerate(value.get('images', [])):
+            entry = self._picture_at(identity, row['media'], by, index)
             images.append(dict(entry, label=row.get('label', 'other')))
         voice = self._voice(identity, value['voice']) if value.get('voice') else None
         with self.changed:
@@ -364,7 +396,12 @@ class Cast:
 
     def get(self, identity):
         with self.changed:
-            return view(self._record(identity)['card'])
+            card = deepcopy(self._record(identity)['card'])
+        if card.get('kind') == 'character':
+            sheet = self.sheet(card)
+            if sheet is not None:
+                card['_sheet'] = sheet
+        return view(card)
 
     def list(self, *, q=None, kind=None, origin=None, production=None, limit=50):
         with self.changed:
@@ -410,8 +447,8 @@ class Cast:
         resolved = {}
         for key, rows in changes.items():
             if key == 'images':
-                resolved['images'] = [entry if entry is not None else dict(self._picture(identity, row['media'], by),
-                                      label=row.get('label', 'other')) for row, entry in rows]
+                resolved['images'] = [entry if entry is not None else dict(self._picture_at(identity, row['media'], by, index),
+                                      label=row.get('label', 'other')) for index, (row, entry) in enumerate(rows)]
             elif key == 'voice':
                 resolved['voice'] = None if rows is None else self._voice(identity, rows)
             else:
@@ -544,10 +581,49 @@ class Cast:
 
     # Filming ------------------------------------------------------------------------------------------
     def snapshot(self, identity):
-        """The current card for a submission, or None once it is deleted or unknown."""
+        """The current card for a submission, or None once it is deleted or unknown. A card with several pictures
+        and no sheet of its own carries the one made from them as `_sheet` (never part of the public card)."""
         with self.changed:
             record = self.records.get(identity)
-            return deepcopy(record['card']) if record else None
+            card = deepcopy(record['card']) if record else None
+        if card is not None and card.get('kind') == 'character':
+            sheet = self.sheet(card)
+            if sheet is not None:
+                card['_sheet'] = sheet
+        return card
+
+    def sheet(self, card):
+        """The sheet of every view made from this card's pictures, as a media item, or None when it has no sheet to
+        make (fewer than two pictures, or one cannot be read). The file is named by what it is made from, so a
+        picture changed gives a new one and the same pictures reuse the old."""
+        if any(row['label'] == 'sheet' for row in card.get('images') or []):
+            return None
+        try:
+            port = self.jobs.port
+            rank = {label: i for i, label in enumerate(SHEET_ORDER)}
+            rows = sorted(enumerate(card.get('images') or []), key=lambda r: (rank.get(r[1]['label'], len(rank)), r[0]))
+            files = [port.input_path(row['media']['file']) for _, row in rows[:SHEET_MAX]
+                     if isinstance(row['media'].get('file'), str)]
+            if len(files) < 2:
+                return None
+            pictures = [path.read_bytes() for path in files]  # the same bytes are named and drawn, so a picture
+            digest = hashlib.sha256(str(SHEET_VERSION).encode())  # changed meanwhile cannot sit under the old name
+            for data in pictures:
+                digest.update(hashlib.sha256(data).digest())
+            relative = 'freevideo/agent/%s/sheet-%s.png' % (card['id'], digest.hexdigest()[:16])
+            target = port.input_path(relative, create=True)
+            if not _sheet_intact(target):
+                temporary = target.with_name(target.name + '.' + uuid.uuid4().hex[:8] + '.tmp')
+                try:
+                    compose_sheet(pictures, temporary)
+                    os.replace(temporary, target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                # A sheet is never deleted here: a queued shot or an earlier answer may still name it.
+            return dict(file=relative)
+        except Exception:  # A sheet is a help: without one the person carries the face alone.
+            logging.getLogger(__name__).warning('no sheet for card %s', card.get('id'), exc_info=True)
+            return None
 
     def used(self, identities, film):
         """Record that a film uses these cards; a film never leaves used_by once it is there."""
@@ -879,6 +955,61 @@ class Cast:
             card.pop('_generating', None)
             self.records[identity] = record
             self.changed.notify_all()
+
+
+def _sheet_intact(path):
+    """Whether this is a whole sheet: a file left half written or cut short is made again. A file already checked
+    and unchanged is not decoded twice."""
+    try:
+        status = path.stat()
+        key = (str(path), status.st_size, status.st_mtime_ns)
+        if key in _SHEETS_SEEN:
+            return True
+        from PIL import Image
+        with Image.open(path) as opened:
+            if opened.size != SHEET_SIZE:
+                return False
+            opened.load()
+    except Exception:
+        return False
+    if len(_SHEETS_SEEN) > 256:
+        _SHEETS_SEEN.clear()
+    _SHEETS_SEEN.add(key)
+    return True
+
+
+def compose_sheet(pictures, out):
+    """Write one PNG of these pictures (two to six, as file bytes or paths): always three columns by two rows of
+    equal cells, a light grey ground (cells with no picture stay empty), each picture scaled whole to fit its cell
+    and centred, nothing cropped, no text."""
+    import io
+    from PIL import Image, ImageOps
+    (width, height), gap = SHEET_CELL, SHEET_GAP
+    sheet = Image.new('RGB', SHEET_SIZE, SHEET_GROUND)
+    for index, source in enumerate(pictures[:SHEET_MAX]):
+        with Image.open(io.BytesIO(source) if isinstance(source, bytes) else source) as opened:
+            picture = ImageOps.exif_transpose(opened)
+            if picture.mode in ('RGBA', 'LA', 'P'):
+                flat = Image.new('RGB', picture.size, SHEET_GROUND)
+                picture = picture.convert('RGBA')
+                flat.paste(picture, mask=picture.getchannel('A'))
+                picture = flat
+            picture = ImageOps.contain(picture.convert('RGB'), (width, height), Image.LANCZOS)
+        row, column = divmod(index, SHEET_COLUMNS)
+        sheet.paste(picture, (gap + column * (width + gap) + (width - picture.width) // 2,
+                              gap + row * (height + gap) + (height - picture.height) // 2))
+    sheet.save(out, format='PNG')
+
+
+def continued_pictures(cards):
+    """The pictures a shot that continues the previous one carries for these cards (the current cards, from
+    `Cast.snapshot`), at most three: a single person carries the sheet then the face close-up; two or three people
+    carry one each, the face (else the front view, the three-quarter view, the first other picture), no sheet.
+    Each is a media item."""
+    from . import drama
+    cards = list(cards)[:spec.CONTINUED_PICTURES]
+    return [media for card in cards
+            for media in drama.person_pictures(card, alone=len(cards) == 1, continues=True)][:spec.CONTINUED_PICTURES]
 
 
 def _unreadable(error):

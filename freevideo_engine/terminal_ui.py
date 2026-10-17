@@ -612,7 +612,7 @@ class LogProgress:
                 speed = event.get('network_bytes_per_second')
                 shown_speed = speed if speed is not None else event['bytes_per_second']
                 update(done=done, total=total, scope=description + self.model_source, rate=event['bytes_per_second'], unit='bytes',
-                    activity='download', name=event.get('name') or ('Python' if description.startswith('cpython-') else 'PyTorch' if description == 'torch'
+                    activity='download', name=event.get('name') or ('Python' if description.startswith('cpython-') else 'Runtime components' if description == 'torch'
                         else model_download_name(description).split(' · ')[0]),
                     detail='%s%s%.1f MiB/s · %.1f / %.1f MiB · %s' %
                     (source + ' · ' if source else '',

@@ -28,7 +28,7 @@ def _sampling(root, machine, request):
     canvas = sampling_canvas(geometry(request['width'], request['height'], seconds=request['seconds']))[0]
     two_pass = bool(request.get('two_pass', True))
     sampled = plan(canvas, two_pass, task, base_steps=request.get('base_steps', 8),
-                   refine_steps=request.get('refine_steps', 3))
+                   refine_steps=request.get('refine_steps', 3), scale=request.get('upscale_factor', 2))
     rows = sampling_assets.pending(root, machine, sampled, task)
     items = []
     if rows:
@@ -87,4 +87,6 @@ def inspect(root, machine, request, *, lora_names=None):
         if absent:
             items.append(dict(id='lora', kind='lora', files=len(absent), bytes=0, source='',
                               action='manual', names=absent[:8]))
-    return dict(items=items, bytes=sum(item['bytes'] for item in items), ready=not items)
+    from .download_settings import observed_speed
+    return dict(items=items, bytes=sum(item['bytes'] for item in items), ready=not items,
+                bytes_per_second=observed_speed(root))

@@ -101,6 +101,7 @@ export function setFlag(record, key, value) {
     const next = serialize(record), settings = {...(next.settings || {})};
     if (value) settings[key] = true; else delete settings[key];
     next.settings = Object.keys(settings).length ? settings : null;
+    if (JSON.stringify(next.settings) !== JSON.stringify(record.settings)) next.keep_empty = true;
     return parse(next);
 }
 export function addAudioTrack(record) {
@@ -194,6 +195,8 @@ export function parse(value) {
         width: value.width, height: value.height, settings, serial: value.serial, tracks};
     check(value.size_mode === undefined || value.size_mode === 'first' || value.size_mode === 'fixed', 'size_mode');
     result.size_mode = value.size_mode ?? 'first';
+    check(value.keep_empty === undefined || typeof value.keep_empty === 'boolean', 'invalid');
+    if (value.keep_empty) result.keep_empty = true;
     Object.assign(result, markerFields(value));
     if (value.replacements !== undefined) {
         check(Array.isArray(value.replacements) && value.replacements.length > 0 && value.replacements.length <= RULES.maxClips, 'invalid');
@@ -613,8 +616,9 @@ export function setVolume(record, id, volume) {
     }
     return finish(next);
 }
-export const rename = (record, name) => finish({...copy(record), name});
-export const setPictureSize = (record, width, height, size_mode = 'fixed') => finish({...copy(record), width, height, size_mode});
+export const rename = (record, name) => finish({...copy(record), name, ...(name !== record.name ? {keep_empty: true} : {})});
+export const setPictureSize = (record, width, height, size_mode = 'fixed') => finish({...copy(record), width, height, size_mode,
+    ...(width !== record.width || height !== record.height || size_mode !== record.size_mode ? {keep_empty: true} : {})});
 export const setPicture = pictureEditor({copy, trackBy, check, pictureFit, finish});
 export const setPictureFit = (record, id, fit) => setPicture(record, id, {fit: pictureFit(fit)});
 
@@ -690,6 +694,8 @@ function remember(clip, source = null) {
 // A range drawn on its own starts a new video, even when it touches the part before it.
 const continuing = (clip, before) => !!clip && !!before && before.id !== clip.id && end(before) === clip.start
     && (clip.follows === before.id || (clip.part !== null && clip.part === before.part));
+const chainSource = clip => !!clip.job && !!clip.pending;
+const continuationKey = clip => chainSource(clip) ? `chain:${clip.job}:${clip.id}` : clip.source ? key(clip.source) : null;
 const wholeEnd = clip => !!clip.source && clip.extend && clip.in + clip.frames === clip.length;
 const partBefore = (record, clip) => trackBy(record, 'v1').clips.find(before => continuing(clip, before)) ?? null;
 // Whether the part is drawn attached to the one before it on its track.
@@ -943,7 +949,7 @@ function generationPlan(record, clips) {
     return videos.flatMap(video => videoPlan(record, video, replacing));
 }
 function videoPlan(record, clips, replacing) {
-    const first = clips[0], before = trackBy(record, 'v1').clips.find(clip => continuing(first, clip) && wholeEnd(clip));
+    const first = clips[0], before = trackBy(record, 'v1').clips.find(clip => continuing(first, clip) && (chainSource(clip) || wholeEnd(clip)));
     // Revealing a predecessor's hidden tail reduces the new visible range.
     const credit = clips.every(clip => clip.target_frames !== undefined && !clip.source)
         ? clips.reduce((sum, clip) => sum + clip.target_frames - clip.frames, 0) : 0;
@@ -998,7 +1004,7 @@ export function prepare(record, ids) {
 export function generationBefore(record, ids) {
     const clips = generationClips(record, ids);
     return generationPlan(record, clips).filter(row => !row.before || !clips.some(clip => clip.id === row.before.id))
-        .map(row => row.before ? key(row.before.source) : null);
+        .map(row => row.before ? continuationKey(row.before) : null);
 }
 // An imported video is continued from the copy the editor plays, which is upright and at 24 fps.
 function continuedPath(source, path) {
@@ -1006,7 +1012,7 @@ function continuedPath(source, path) {
     check(path === `FreeVideo/.editor/imports/${source.id}/preview.mp4`, 'source');
     return path;
 }
-export function generationRequest(record, ids, {text, paths = {}} = {}) {
+export function generationRequest(record, ids, {text, paths = {}, queue = false} = {}) {
     check(object(paths), 'source');
     if (text !== undefined) check(validText(text), 'text');
     const clips = generationClips(record, ids), rows = generationPlan(record, clips), plan = {}, blocks = [];
@@ -1014,7 +1020,8 @@ export function generationRequest(record, ids, {text, paths = {}} = {}) {
         let after = null;
         if (row.before) {
             if (clips.some(clip => clip.id === row.before.id)) after = row.before.id;
-            else { const path = paths[key(row.before.source)]; check(typeof path === 'string' && path.length > 0, 'source', 'missing source path'); after = {work: continuedPath(row.before.source, path)}; }
+            else if (queue && chainSource(row.before)) after = {chain: row.before.job, block: row.before.id};
+            else { const path = paths[continuationKey(row.before)]; check(typeof path === 'string' && path.length > 0, 'source', 'missing source path'); after = {work: continuedPath(row.before.source, path)}; }
         }
         blocks.push({id: row.clip.id, part: row.clip.part ?? row.clip.id, after, before: null, text: text ?? row.clip.text, frames: row.request_frames});
         plan[row.clip.id] = {target_frames: row.target_frames, net_frames: row.net_frames, request_frames: row.request_frames, audio: row.clip.link};

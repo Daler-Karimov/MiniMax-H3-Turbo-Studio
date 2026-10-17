@@ -121,6 +121,15 @@ def build_parser():
         if name == 'operations':
             sub.add_argument('--operations-file', help='JSON array of operations (- = stdin)')
         schema.cli_arguments(sub, schema.image_schema(name))
+    command = commands.add_parser('whitebox', help='Render a rough 3D white-model reference video in the user\'s open page')
+    whitebox = command.add_subparsers(dest='operation', required=True)
+    for name, (method, path, summary) in schema.WHITEBOX_OPERATIONS.items():
+        sub = whitebox.add_parser(name, help=summary)
+        if '{id}' in path:
+            sub.add_argument('id')
+        if name == 'submit':
+            sub.add_argument('file', nargs='?', help='JSON {code, summary?} request (- = stdin); options override it')
+        schema.cli_arguments(sub, schema.whitebox_schema(name))
     command = commands.add_parser('sessions', help='Share messages and plans with the user in a work conversation')
     sessions = command.add_subparsers(dest='operation', required=True)
     for name in ('list', 'create', 'events', 'post'):
@@ -236,9 +245,10 @@ def main(argv=None):
                 schema.validate(schema.CAST, values['id'])
                 path = path.replace('{id}', values['id'])
             result = client.get(path, **value) if method == 'GET' else client.send(method, path, value)
-        elif args.command in ('projects', 'images'):
-            table, shape_of, ident = ((schema.PROJECT_OPERATIONS, schema.project_schema, schema.PROJECT)
-                                      if args.command == 'projects' else (schema.IMAGE_OPERATIONS, schema.image_schema, schema.IMAGE))
+        elif args.command in ('projects', 'images', 'whitebox'):
+            table, shape_of, ident = {'projects': (schema.PROJECT_OPERATIONS, schema.project_schema, schema.PROJECT),
+                                      'images': (schema.IMAGE_OPERATIONS, schema.image_schema, schema.IMAGE),
+                                      'whitebox': (schema.WHITEBOX_OPERATIONS, schema.whitebox_schema, schema.WHITEBOX)}[args.command]
             method, path, _ = table[args.operation]
             shape = shape_of(args.operation)
             value = read(args.file) if getattr(args, 'file', None) else {}

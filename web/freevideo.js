@@ -1,12 +1,15 @@
-import { createErrorPanel, errorText } from './error_panel.js';
+import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';
+import { installNativeErrorGuard } from './native_errors.js';
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { openEditorView } from './editor_loader.js';
+import { beginWorkspaceRestore, finishWorkspaceRestore, waitForLauncherRestore } from './workspace_restore.js';
 import { openStudio, loraPanel, loraWarning, promptGuide } from "./studio.js";
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { createProgressConnection } from './progress_connection.js';
 import { notifyCompatibility } from './compatibility.js';
 import { startUpdateChecks } from './updates.js';
+import { startWhiteboxWorker } from './whitebox_worker.js';
 import { startDoneNotify, askDesktopPermission, DESKTOP_SETTING } from './done_notify.js';
 import { installNavigation, refreshNavigation, preferredView, collapseWorkspaces } from './view_navigation.js';
 import { isLaunchVisit } from './launch_visit.js';
@@ -350,8 +353,8 @@ function mediaPanel(node, mount = null) {
     let uploading = false;
     serialized.serializeValue = () => {
         if (node.isUploading) throw new Error(text("Wait for media uploads to finish before running", "请等待素材上传完成后再生成"));
-        // The run takes only what it uses; the editing data of a picture stays in the workflow.
-        try { return JSON.stringify(read().map(({file, role, enabled}) => ({file, role, enabled}))); } catch { return serialized.value; }
+        // The run takes only what it uses (and which character a picture belongs to); the editing data of a picture stays in the workflow.
+        try { return JSON.stringify(read().map(({file, role, enabled, cast}) => ({file, role, enabled, ...(typeof cast?.id === 'string' && cast.id ? {cast: {id: cast.id}} : {})}))); } catch { return serialized.value; }
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;
@@ -677,7 +680,8 @@ app.registerExtension({
     async setup() {
         // One failing part must not take the others down; health.js shows what failed.
         for (const [where, start] of [['progress', () => progressConnection.start()], ['navigation', () => installNavigation(showStudio, agentInterfaceEnabled(api), {openWorkflow: openFreeVideoWorkflow})],
-            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled, isFreeVideoNode})]]) {
+            ['updates', startUpdateChecks], ['done-notify', () => startDoneNotify({api, text, desktop: desktopNoticeEnabled, isFreeVideoNode})],
+            ['whitebox', () => startWhiteboxWorker({api})]]) {
             try { start(); } catch (error) { health({type: 'error', where, error}); }
         }
         window.addEventListener('pagehide', () => savePromptDraft(api, true));
@@ -751,7 +755,8 @@ app.registerExtension({
                         ['continue_from', '接着生成'],
                         ['frames', '帧数'],
                         ['first_frame_reference', '首帧参考', '减小漂移'],
-                        ['step_cache', '步间缓存', '复用相近采样步之间的计算，更快完成，结果会有细微变化。精细档用 easycache-av，极致档用 fbcache。'],
+                        ['step_cache', '步间缓存', '复用相近采样步之间的计算，更快完成，结果会有细微变化。'],
+                        ['upscale_factor', '放大倍数', '二次采样时成片相对首遍的放大倍数。'],
                     ]) {
                         const widget = this.widgets?.find(w => w.name === name);
                         if (widget) {
@@ -796,16 +801,27 @@ app.registerExtension({
         const rememberedView = preferredView();
         const node = (app.graph?._nodes || []).find(isGenerate);
         // The user's own workflow is shown as it is. A FreeVideo workflow opens its workspace once the
-        // launcher or the user asked for it, never on its own for a tab restored with the page.
-        if (!node) { collapseWorkspaces(); return; }
-        if (app.graph?.extra?.freevideo_studio && rememberedView !== 'nodes' && (launchVisit || userActed)) {
-            requestAnimationFrame(() => {
-                const studio = showStudio(node);
-                if (studio && rememberedView === 'editor') {
-                    void openEditorView(node, {studio, onFailure: error => health({type: 'error', where: 'editor', error})});
+        // launcher or the user asked for it, never on its own for a tab restored with the page. The startup
+        // cover follows this same decision and is always released here when the workspace will not open.
+        const opens = !!node && app.graph?.extra?.freevideo_studio && rememberedView !== 'nodes' && (launchVisit || userActed);
+        if (!opens) { finishWorkspaceRestore(); if (!node) collapseWorkspaces(); return; }
+        const opening = rememberedView === 'editor' ? beginWorkspaceRestore() : null, epoch = configuration;
+        requestAnimationFrame(async () => {
+            const launch = waitForLauncherRestore(); if (launch) await launch;
+            if (epoch !== configuration) return;
+            if (!opening) { showStudio(node); return; }
+            try {
+                const handle = await openEditorView(node, {isCurrent: () => epoch === configuration,
+                    onProjectLoaded: record => opening.setName(record.name),
+                    onFailure: error => health({type: 'error', where: 'editor', error})});
+                if (epoch !== configuration) return;
+                if (handle) { opening.cover(); await handle.ready; }
+                else {
+                    const studio = showStudio(node), status = studio?.querySelector?.('.fv-status');
+                    if (status) { status.dataset.error = 'true'; status.textContent = text('Could not complete. Try again.', '没有完成，请重试'); }
                 }
-            });
-        }
+            } finally { if (epoch === configuration) opening.finish(); }
+        });
     },
     onNodeOutputsUpdated(outputs) {
         for (const [id, output] of Object.entries(outputs)) {
@@ -830,6 +846,10 @@ api.addEventListener('freevideo_prewarm', event => {
     if (value) app.graph?.getNodeById(value.node)?.freevideoShowPrewarm?.(value);
 });
 
+installNativeErrorGuard({api, app, describe: detail => {
+    const {advice} = adviceFor(createErrorReport(detail, {stage: 'execution', graph: app.graph}), text);
+    return [advice.title, advice.summary].filter(Boolean).join('\n');
+}});
 api.addEventListener('execution_error', event => {
     // An upstream loader/media node can stop FreeVideo before its own node is
     // entered. Retain that error even while the creative workspace is closed.

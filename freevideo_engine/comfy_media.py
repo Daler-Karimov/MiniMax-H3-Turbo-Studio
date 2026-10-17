@@ -50,13 +50,15 @@ def continued(exported, notes=None):
     It starts from the footage, so a first or last frame image becomes one more picture after the
     reference pictures; pre-encoded conditioning, clips and sound are left out. When keyframes are
     used or pictures are left out, notes gets one line saying so."""
-    from .continuation import PICTURES_MAX
+    from .continuation import PICTURES_MAX, pick_pictures
     media = (exported or {}).get('media') or {}
     kept = {key: value for key, value in media.items()
             if key not in ('first', 'last', 'references', 'conditioning_info')}
     pictures = [row for row in media.get('references', []) if row.get('kind') == 'image']
     keyframes = [name for name in ('first', 'last') if media.get(name)]
-    candidates = pictures + [{'kind': 'image', 'path': media[name]} for name in keyframes]
+    # Characters added by an @ mention keep one picture each when there are several (pick_pictures).
+    chosen = pick_pictures(pictures, lambda row: row.get('cast'))
+    candidates = [_plain(row) for row in chosen] + [{'kind': 'image', 'path': media[name]} for name in keyframes]
     if candidates:
         kept['references'] = candidates[:PICTURES_MAX]
     lines = [continued_note(len(pictures), keyframes, len(candidates[:PICTURES_MAX]))]
@@ -68,6 +70,11 @@ def continued(exported, notes=None):
         if notes is not None:
             notes.append(line)
     return {'media': kept} if len(kept) > 1 else {}
+
+
+def _plain(row):
+    """A reference row without the panel's character mark, which the engine's request does not carry."""
+    return {key: value for key, value in row.items() if key != 'cast'}
 
 
 def continued_note(pictures, keyframes, used):
@@ -146,6 +153,8 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
         torch.save(value, path)
         media['conditioning_info'] = info
         result['conditioning'] = str(path)
+    if not continuing and media.get('references'):
+        media['references'] = [_plain(row) for row in media['references']]
     if len(media) > 1:
         result['media'] = media
     return result

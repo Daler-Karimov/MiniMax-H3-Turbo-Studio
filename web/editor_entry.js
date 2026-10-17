@@ -11,7 +11,7 @@ function editorPanel(node) {
     const values = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
     return {node: node.id, width: values.width, height: values.height, text: values.text || '', settings: Object.fromEntries(Object.entries({
         two_pass: values.two_pass, base_steps: values.base_steps, refine_steps: values.refine_steps,
-        step_cache: values.step_cache, seed: values.seed, sampling_effort: values.sampling_effort}).filter(([, value]) => value !== undefined)),
+        step_cache: values.step_cache, upscale_factor: values.upscale_factor, seed: values.seed, sampling_effort: values.sampling_effort}).filter(([, value]) => value !== undefined)),
         references: mediaReferences(node),
         async snapshot() {
             if (node.freevideoEditorLooping?.()) throw new Error('loop_active');
@@ -23,9 +23,10 @@ function editorPanel(node) {
             return {node: String(node.id), prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};
         }};
 }
-export function openEditorView(node, {studio, work = null, extend = false} = {}) {
+export function openEditorView(node, {studio, work = null, extend = false, onProjectLoaded} = {}) {
     studio?.querySelectorAll('video,audio').forEach(media => media.pause());
     const panel = editorPanel(node);
+    if (onProjectLoaded) panel.onProjectLoaded = onProjectLoaded;
     const progressElement = studio?.querySelector('.fv-generation-progress');
     if (progressElement) {
         panel.progressElement = progressElement;
@@ -49,9 +50,9 @@ export function openEditorView(node, {studio, work = null, extend = false} = {})
                 left: Number.isFinite(left) ? left : null, over: words('.fv-generation-late') !== ''};
         };
     }
-    const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view) {
+    const handle = openEditor({api, app, panel, from: work ? {work, ...(extend ? {extend: true} : {})} : null, onView(view, options = {}) {
         if (view === 'nodes') showNodes(node, studio);
-        else if (view === 'autopilot') openAutopilot(node, {studio});
+        else if (view === 'autopilot') openAutopilot(node, {studio, ...options});
         else if (studio?.open) viewChanged('studio', node);
         else openStudio(node);
     }});

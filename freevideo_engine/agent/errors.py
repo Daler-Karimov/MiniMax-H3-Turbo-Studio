@@ -33,6 +33,7 @@ ERRORS = {
     'not_found': (404, False, 'The requested job, film or asset does not exist.', 'List /freevideo/agent/v1/jobs, /drama or /library and select an existing ID.'),
     'no_video': (409, False, 'The source job has no finished video.', 'GET /freevideo/agent/v1/jobs/{id} and wait for a succeeded job containing result.video.'),
     'not_ready': (503, True, 'The FreeVideo installation is not ready.', 'Open Settings → Install / repair and finish setup. If the installation token is unsafe or incomplete, restore a regular non-symlink agent/token owned by your account, or remove that token and restart FreeVideo.'),
+    'page_required': (409, True, 'This needs the FreeVideo page open in a browser.', 'Ask the user to open FreeVideo in their browser, then retry.'),
     'busy': (409, True, 'The requested resource is currently in use.', 'Wait retry_after_seconds, read GET /freevideo/agent/v1/queue, then retry the request.'),
     'conflict': (409, False, 'The requested operation conflicts with the current state.', 'Read the current job with GET /freevideo/agent/v1/jobs/{id} before retrying.'),
     'dependency_failed': (409, False, 'A required job did not succeed.', 'Read the dependency jobs, resume failed generation, then submit the dependent job with a new ref.'),

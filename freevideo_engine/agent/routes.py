@@ -30,6 +30,8 @@ from . import schema as contract, errors, access
 from .jobs import ACTIVE, DONE, JobError, Jobs, chain_error, library_view
 
 PREFIX = '/freevideo/agent/v1'
+from .whitebox import MAX_VIDEO_BYTES as MAX_WHITEBOX_VIDEO
+from .whitebox_presets import PRESETS, preset as whitebox_preset
 # What an empty wait tells the agent: the conversation is open for as long as the user keeps the page.
 KEEP_WAITING = ('Nothing new yet. The user is still in FreeVideo and may speak at any moment: call this wait '
                 'again now. An empty wait never ends the conversation; do not end your turn or write a summary.')
@@ -171,6 +173,13 @@ def features(continuation, vlm):
             **{'projects.' + name: rules for name in ('insert', 'split', 'move', 'trim', 'remove', 'export', 'generate', 'listen')}}
 
 
+def whitebox_support(jobs):
+    """White-model guidance needs the user's open page to render, and the Mac engine cannot use it yet."""
+    if quality_tiers.on_mac():
+        return dict(available=False, needs_page=True, note='Mac 暂不支持白模。')
+    return dict(available=True, needs_page=True, page_open=jobs.whitebox.page_open(), note='白模预览在 FreeVideo 页面中显示，需保持页面打开。')
+
+
 def capabilities(port, jobs):
     from ..lora_triggers import list_triggers
     from .. import __version__
@@ -200,6 +209,7 @@ def capabilities(port, jobs):
         api_version=API_VERSION, freevideo_version=release or __version__, build=__version__, ready=ready, problem=problem,
         continuation=continuation,
         features=features(continuation, vlm),
+        whitebox=whitebox_support(jobs),
         device=dict(backend=machine.get('device_backend', 'cuda') if machine else None,
                     vram_limit_gib=machine.get('vram_gib'), ram_limit_gib=machine.get('ram_gib')),
         kinds={'generate': 'Video from a prompt and optional keyframes or references',
@@ -215,7 +225,8 @@ def capabilities(port, jobs):
                     fps=24, base_steps=[1, 32], refine_steps=[1, 31], references=32, loras=32, lora_strength=[-4, 4],
                     upload_bytes=2 * 1024 ** 3, vlm_images=24, takes=8, batch_jobs=64),
         quality={name: dict(two_pass=plan[0], base_steps=plan[1], refine_steps=plan[2],
-                            step_cache=quality_tiers.step_cache(name, quality_tiers.on_mac()))
+                            step_cache=quality_tiers.step_cache(name, quality_tiers.on_mac()),
+                            upscale_factor=quality_tiers.upscale_factor(name, quality_tiers.on_mac()))
                  for name, plan in specs.QUALITY.items()},
         aspects=sorted(specs.ASPECTS), native_megapixels=.98,
         tasks=GUIDE['tasks'], media_extensions={k: sorted(v) for k, v in EXTENSIONS.items()},
@@ -960,7 +971,10 @@ def register():
             if store.stopped(sid):
                 # Speaking again continues a conversation the user stopped earlier.
                 store.append(sid, dict(type='control', action='resumed'), by='user')
-            row = store.append(sid, dict(type='message', text=value['text'], mid=value['id']), by='user')
+            message = dict(type='message', text=value['text'], mid=value['id'])
+            if value.get('whitebox'):
+                message['whitebox'] = True
+            row = store.append(sid, message, by='user')
             fold['sent'][value['id']] = row['seq']
             fold['ids'][row['seq']] = value['id']
             while len(fold['sent']) > 500:
@@ -1899,6 +1913,97 @@ def register():
 
     for operation, (method, suffix, _) in contract.IMAGE_OPERATIONS.items():
         getattr(routes, method.lower())(PREFIX + suffix)(image_handler(operation))
+
+    def whitebox_handler(operation):
+        async def handler(request):
+            scenes = jobs.whitebox
+            if operation == 'get':
+                deadline = time.monotonic() + request[query_key].get('wait', 0)
+                while True:
+                    view = await asyncio.to_thread(scenes.read, request.match_info['id'])
+                    if view['status'] in ('ready', 'failed') or time.monotonic() >= deadline:
+                        return reply(view)
+                    await asyncio.sleep(.5)
+            value = await body(request)
+            if not scenes.page_open():
+                raise JobError('page_required', 'No FreeVideo page is open to render the scene')
+            return reply(await asyncio.to_thread(scenes.create, value['code'], value.get('summary'),
+                                                 request.get('agent_session')), 201)
+        return guarded(handler)
+
+    for operation, (method, suffix, _) in contract.WHITEBOX_OPERATIONS.items():
+        getattr(routes, method.lower())(PREFIX + suffix)(whitebox_handler(operation))
+
+    # The page renders scenes: it asks for work, then sends back the video or the reason it failed.
+    def whitebox_confirm(notice):
+        store = work_sessions()
+        if not notice or store is None:
+            return
+        try:
+            store.append(notice['session'], dict(type='confirm', id='cf' + secrets.token_hex(5), state='asked',
+                         question=notice['question'], whitebox=dict(work=notice['work'], seconds=notice['seconds'],
+                                                                      summary=notice['summary'])), by='builtin')
+        except Exception:
+            logging.getLogger(__name__).warning('White-model confirmation failed', exc_info=True)
+
+    @routes.get('/freevideo/agent/whitebox/next')
+    @guarded
+    async def whitebox_next(request):
+        return reply(dict(scene=await asyncio.to_thread(jobs.whitebox.claim)))
+
+    @routes.get('/freevideo/agent/whitebox/presets')
+    @guarded
+    async def whitebox_presets(request):
+        return reply(dict(presets=[{k: row[k] for k in ('id', 'name', 'shot', 'prompt')} for row in PRESETS]))
+
+    @routes.post('/freevideo/agent/whitebox/try')
+    @guarded
+    async def whitebox_try(request):
+        if request.content_type != 'application/json':
+            return problem('unsupported_media_type', 'Send JSON', 415)
+        value = await body(request)
+        row = whitebox_preset(value.get('preset') if isinstance(value, dict) else None)
+        if row is None:
+            raise JobError('not_found', 'No such ready-made scene')
+        sid = value.get('session')
+        notice = None
+        if sid is not None:
+            store = work_sessions()
+            if store is None or not isinstance(sid, str) or not store.has(chat['client'], sid):
+                raise JobError('not_found', 'No such conversation')
+            # The conversation gets the confirmation card once the page has rendered the scene.
+            notice = dict(question=row['prompt'], summary=row['name'])
+        scene = await asyncio.to_thread(jobs.whitebox.create, row['code'], row['shot'], sid, notice)
+        return reply(dict(scene, preset=row['id'], name=row['name'], prompt=row['prompt']), 201)
+
+    @routes.post('/freevideo/agent/whitebox/{id}/video')
+    @guarded
+    async def whitebox_video(request):
+        scenes = jobs.whitebox
+        with tempfile.TemporaryDirectory(prefix='.whitebox-', dir=port.input_root) as temporary:
+            target = Path(temporary) / 'scene.mp4'
+            size = 0
+            with target.open('xb') as output:
+                async for chunk in request.content.iter_chunked(256 * 1024):
+                    size += len(chunk)
+                    if size > MAX_WHITEBOX_VIDEO:
+                        raise JobError('too_large', 'Upload exceeds limit', limit_bytes=MAX_WHITEBOX_VIDEO)
+                    output.write(chunk)
+            if not size:
+                raise JobError('invalid_media', 'Supply the rendered video')
+            async with upload_decoders:
+                scene = await asyncio.to_thread(scenes.finish, request.match_info['id'], target)
+            await asyncio.to_thread(whitebox_confirm, scenes.take_notice(scene['id']))
+            return reply(scene)
+
+    @routes.post('/freevideo/agent/whitebox/{id}/failed')
+    @guarded
+    async def whitebox_failed(request):
+        if request.content_type != 'application/json':
+            return problem('unsupported_media_type', 'Send JSON', 415)
+        value = await body(request)
+        message = value.get('message') if isinstance(value, dict) else None
+        return reply(await asyncio.to_thread(jobs.whitebox.fail, request.match_info['id'], message))
 
     @routes.get(PREFIX + '/editor/sources/content')
     @guarded

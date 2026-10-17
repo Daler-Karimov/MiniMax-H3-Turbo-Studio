@@ -219,7 +219,7 @@ def _machine(machine, in_use=None):
 
 
 def _request(width, height, frames, steps, two_pass, task='t2va', refine=3,
-             references=None, reference_rows=None):
+             references=None, reference_rows=None, upscale=2):
     """Scalar request shared by admission and offline, recorded-row reviews."""
     from .two_pass import render_canvas
     canvas = dict(render_canvas(geometry(width, height, frames=frames))[0], task=task, steps=steps)
@@ -233,23 +233,25 @@ def _request(width, height, frames, steps, two_pass, task='t2va', refine=3,
         canvas.update(reference_video_tokens=rows['video'], reference_audio_tokens=rows['audio'])
         if duration is not None:
             canvas['reference_seconds'] = duration
-    sampling = sampling_plan(canvas, two_pass, task, base_steps=steps, refine_steps=refine)
+    sampling = sampling_plan(canvas, two_pass, task, base_steps=steps, refine_steps=refine, scale=upscale)
     # A small canvas runs in one pass even with two-pass on; follow the plan.
     request = dict(canvas, base_steps=steps, refine_steps=sampling['refine_steps'],
                    two_pass=sampling['enabled'], flow='full',
                    sampling_geometry={k: sampling[k] for k in ('first', 'second') if sampling[k]})
+    if sampling.get('scale', 2) != 2:
+        request['upscale_factor'] = sampling['scale']
     return canvas, sampling, request
 
 
 def _admit(machine, width, height, frames, steps, two_pass, task='t2va', refine=3,
-           references=None, reference_rows=None, step_cache=None):
+           references=None, reference_rows=None, step_cache=None, upscale=2):
     """Admission of one request; `step_cache` asks the planner for a first-pass cache.
 
     The request carries the cache the planner keeps (on Mac only the audio-video EasyCache), so its
     estimate and history follow what the engine will actually run.
     """
     canvas, sampling, request = _request(width, height, frames, steps, two_pass, task, refine,
-                                         references, reference_rows)
+                                         references, reference_rows, upscale)
     rows = dict(video=canvas.get('reference_video_tokens', 0), audio=canvas.get('reference_audio_tokens', 0))
     try:
         if machine['mac']:
@@ -336,7 +338,8 @@ def _calibration(machine, hardware, records, params, version):
                 request, _, _ = _admit(machine, shape['width'], shape['height'], shape['frames'],
                                        row['base_steps'], row['two_pass'], row['task'],
                                        row['refine_steps'] if row['two_pass'] else 3,
-                                       reference_rows=refs, step_cache=row.get('step_cache'))
+                                       reference_rows=refs, step_cache=row.get('step_cache'),
+                                       upscale=row.get('upscale_factor', 2))
                 if request is None:
                     continue
                 request['lora_count'] = int(bool(row.get('adapters')))
@@ -365,6 +368,7 @@ def _whole_records(records, request, adapters):
             and r.get('adapters', False) == adapters and r.get('two_pass') == request['two_pass']
             and r.get('base_steps') == request['base_steps'] and r.get('refine_steps') == request['refine_steps']
             and r.get('step_cache') == request.get('step_cache')
+            and r.get('upscale_factor', 2) == request.get('upscale_factor', 2)
             and ((request['task'] == 't2va' and r.get('reference_rows') is None)
                  or (valid_reference_rows(r.get('reference_rows')) and r['reference_rows'] == rows))]
 
@@ -418,11 +422,11 @@ def build(machine, records, *, aspect='16:9', size=None, task='t2va', adapters=F
 
     tiers = {}
     for name, tier in quality_tiers.table(machine['mac']).items():
-        steps, two_pass, step_cache = tier['steps'], tier['two_pass'], tier['step_cache']
+        steps, two_pass, step_cache, upscale = tier['steps'], tier['two_pass'], tier['step_cache'], tier['upscale']
         times, codes, maxima, frame_maxima, limits = [], [], [], [], []
         for size_row in sizes:
             admitted = {f: _admit(machine, size_row['width'], size_row['height'], f, steps, two_pass, task,
-                                  references=references, step_cache=step_cache)
+                                  references=references, step_cache=step_cache, upscale=upscale)
                         for f in range(39, lengths[-1]['frames'] + 1, 17)}
             estimates = {}
             for f, (request, _, _) in admitted.items():
@@ -448,7 +452,7 @@ def build(machine, records, *, aspect='16:9', size=None, task='t2va', adapters=F
                 row_codes.append(code)
             times.append(row_times)
             codes.append(row_codes)
-        tiers[name] = dict(steps=steps, two_pass=two_pass, step_cache=step_cache, estimate_seconds=times,
+        tiers[name] = dict(steps=steps, two_pass=two_pass, step_cache=step_cache, upscale=upscale, estimate_seconds=times,
                            max_seconds=maxima, max_frames=frame_maxima, limit=limits, plan=codes)
     default = next((i for i, s in enumerate(sizes) if s['pixels'] == .98), 0)
     result = dict(version=1, status='ready',

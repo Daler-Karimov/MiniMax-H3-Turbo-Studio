@@ -4,6 +4,7 @@ FreeVideo code uses [Apache-2.0](LICENSE). Its dependencies and models retain th
 
 | Component | License |
 | --- | --- |
+| [Three.js](https://threejs.org/) r160, © 2010–2023 three.js authors (bundled whitebox renderer) | [MIT](web/vendor/three/LICENSE) |
 | Qt, PySide6 and Shiboken6 | LGPL-3.0; [component notices](freevideo_engine/launcher/licenses/NOTICE.txt) |
 | PyInstaller bootloader | GPL-2.0 with the bootloader exception |
 | CPython / psutil | PSF / BSD-3-Clause |

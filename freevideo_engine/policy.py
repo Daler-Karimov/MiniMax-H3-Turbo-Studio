@@ -607,7 +607,8 @@ def feasible_alternatives(hardware, canvas, **options):
                 from .two_pass import plan
                 sampling = canvas['sampling_plan']
                 candidate['sampling_plan'] = plan(candidate, sampling['enabled'], canvas.get('task', 't2va'),
-                    base_steps=sampling['base_steps'], refine_steps=sampling['refine_steps'] or 3)
+                    base_steps=sampling['base_steps'], refine_steps=sampling['refine_steps'] or 3,
+                    scale=sampling.get('scale', 2))
             choose(hardware, **dict(options, canvas=candidate))
             return True
         except (ResourceBudgetError, ValueError):

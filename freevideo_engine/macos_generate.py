@@ -167,8 +167,9 @@ def run(args):
         from .two_pass import sampling_canvas
         canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
                                               conditioned=bool(args.conditioning))
+        from .generate import upscale_factor
         sampling = plan(canvas, args.two_pass, task, base_steps=args.base_steps or 8, refine_steps=args.refine_steps,
-                        staged=bool(preview or refine_source))
+                        staged=bool(preview or refine_source), scale=upscale_factor(args))
         from .paths import base_path, checkpoint_path
         base = str(Path(args.base or base_path()).resolve())
         adapters = [row for row in media.get('loras', []) if row['strength'] != 0]

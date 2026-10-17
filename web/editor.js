@@ -1,4 +1,5 @@
 import {createEditorText} from './editor_text.js';
+import {isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {createToolbarMore} from './editor_toolbar_more.js';
 import {isText} from './editor_text_model.js';
 import {viewSwitch, viewChanged} from './view_navigation.js';
@@ -6,6 +7,7 @@ import {wordmark} from './wordmark.js';
 import {openSetup} from './setup.js';
 import {feedbackButton} from './feedback.js';
 import * as model from './editor_model.js';
+import {discardEmptyEdit, hiddenEmptyEdit, deleteEditText} from './editor_lifecycle.js';
 import {createEditorState} from './editor_state.js';
 import {createEditorStore, sourceKey, mediaURL} from './editor_store.js';
 import {generationSize, continuedSize} from './editor_generation.js';
@@ -25,9 +27,12 @@ import {createSelectionActions, deletionStatus, isMultiple, isTyping, playheadId
 import {isolateDialogKeys, topDialog} from './dialog_keys.js';
 import {createBlockNotes, describedTrack} from './editor_notes.js';
 import {createFirstRunGuide} from './first_run_guide.js';
+import {SHOWCASE_SCENE} from './entry_showcase.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
 import {optionalText} from './optional_inputs.js';
+import {outputNotWritable} from './error_panel.js';
+import {repairAction} from './repair_hint.js';
 import {expandCast} from './cast_mention.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_expand.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
@@ -38,10 +43,13 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const language = () => new URLSearchParams(location.search).get('freevideo_lang') || navigator.language;
 // Shared by error() and actions.reasonText: one sentence naming the failed step.
 export function editorErrorText(value, t = en => en) {
-    const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim())?.trim() || '' : '';
+    if (isNetworkTypeError(value) || isNetworkTypeError(value?.detail)) return connectionLostText(t);
+    // The worker's own "FreeVideo generation failed (exit 1)" header names nothing the user can act on.
+    const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim() && !/^\s*FreeVideo generation failed(?: \(exit -?\d+\))?\s*$/.test(line))?.trim() || '' : '';
     const detail = value?.detail || (value?.error && typeof value.error === 'object' ? value.error : value);
     const raw = [detail?.response?.error?.message, detail?.response?.error, detail?.response?.message,
         detail?.exception_message, detail?.message, value?.error?.message, value?.error, value].map(oneLine).find(Boolean) || '';
+    const whole = (() => { try { return JSON.stringify(value?.detail ?? value?.error ?? value ?? '').slice(0, 65536); } catch { return ''; } })();
     const code = value?.code || detail?.code || value?.reason || detail?.reason || raw;
     const node = oneLine(detail?.node_type), step = `${value?.phase || ''} ${value?.stage || ''} ${node}`;
     const part = Number.isInteger(value?.index) ? value.index + 1 : null;
@@ -60,6 +68,10 @@ export function editorErrorText(value, t = en => en) {
         no_material: t('The media this part uses is missing. Import it again from the library.', '找不到这一段用到的素材，请在素材库重新导入。'),
     };
     if (known[code]) return known[code];
+    if (outputNotWritable(whole))
+        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', '输出目录不可写，视频没能保存。请检查这个文件夹的写入权限后重试。');
+    if (/manifest\.json/i.test(whole) && /No such file|not found|Errno 2\b|FileNotFoundError/i.test(whole))
+        return t('The model is not fully installed. ', '模型没有装全。') + t(...repairAction());
     if (['model_missing', 'missing_model', 'model_not_found'].includes(code) || /(?:model|checkpoint|模型).*(?:not found|missing|不存在|缺失)/i.test(raw))
         return t(`Loading the model failed: ${raw || code}`, `加载模型时出错：${raw || code}`);
     if (['timeout', 'timed_out', 'generation_timeout'].includes(code) || /timed?\s*out|timeout|超时/i.test(raw))
@@ -69,6 +81,7 @@ export function editorErrorText(value, t = en => en) {
         : t(`${generating} failed. Try again.`, `${generating}时出错，请再试一次。`);
 }
 function exportErrorText(value, t) {
+    if (isNetworkTypeError(value)) return connectionLostText(t);
     const message = [value?.response?.error?.message, value?.response?.error, value?.response?.message, value?.message]
         .find(text => typeof text === 'string' && text.trim() && text !== 'editor_request')?.trim().split(/[\r\n]+/)[0];
     // A bare status code means nothing to the user; the server's own words do.
@@ -112,7 +125,7 @@ function basicBlockProgress(clipId, clipElement, t = en => en) {
     }, dispose() { element.remove(); }};
 }
 let opened, lastDraft = null;
-const editorViews = new Map(), viewPrefix = 'fv-editor-view:';
+const editorViews = new Map(), viewPrefix = 'fv-editor-view:', usedPrefix = 'fv-editor-used:';
 
 // A pending ComfyUI node listens on document, including above sibling dialogs
 // and during native library drags. Suspend the canvas, preserving its placement
@@ -218,10 +231,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     let submissionFailure = null;
     let blockStates = null, progressObserver = null, progressConnection = null;
     function barJob(job) {
+        if (!job) return job;
         const latest = [...runProgress.values()].filter(message => message.chain.id === job.id)
+            .filter(message => job.blocks?.some(block => block.id === message.chain.block && ['running', 'queued'].includes(block.state)))
             .sort((a, b) => (a.received_at || 0) - (b.received_at || 0)).at(-1);
         const words = panel.progressWords?.() || null;
-        return latest ? {...job, chainProgress: latest.chain, words} : words ? {...job, words} : job;
+        const loadingClip = !job.blocks?.some(block => ['pending', 'queued', 'running'].includes(block.state))
+            && job.blocks?.some(block => block.state === 'done' && block.output && ['queued', 'running'].includes(model.attemptClip(state.record, block.id)?.pending));
+        return {...job, ...(loadingClip ? {state: 'running', loadingClip: true} : {}),
+            ...(latest ? {chainProgress: latest.chain, progressMessage: latest} : {}), words};
     }
     function paintJob(job) {
         const messages = blockMessages([...runProgress.values()].filter(message => message.chain.id === job.id),
@@ -229,7 +247,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const values = editorBlockStates(job, messages, blockStates);
         for (const block of job.blocks || []) {
             const clip = model.attemptClip(state.record, block.id); if (!clip || clip.job !== job.id) continue;
-            const value = {...values[block.id], run: `${job.id}:${block.prompt_id || block.attempts || 0}`};
+            const loading = block.state === 'done' && block.output && ['queued', 'running'].includes(clip.pending);
+            const value = {...values[block.id], ...(loading ? {state: 'generating', fraction: .99} : {}), run: `${job.id}:${block.prompt_id || block.attempts || 0}`};
+            if (value.state === 'generating') value.fraction = Math.min(.99, value.fraction || 0);
             for (const pair of model.pair(state.record, block.id)) { progress.set(pair.id, value); tracks?.setProgress(pair.id, value); }
         }
     }
@@ -337,8 +357,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         } catch (value) { if (value instanceof model.EditError) return null; throw value; }
     }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
-    // Parts pressed while they cannot be sent yet: the engine is still starting, or they continue a part
-    // that is not finished. They are planned at once, shown queued, and sent in order when they can be.
+    // Only an engine that has not answered yet leaves parts held locally.
+    // Once ready, the server owns waiting parts and their dependencies.
     // Parts, and ranges not yet planned into parts, whose request is being sent.
     const held = [], sending = new Set(), sendingRanges = new Set();
     const overlaps = (a, b) => a.start < b.start + b.frames && a.start + a.frames > b.start;
@@ -352,10 +372,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return state.record.tracks[0].clips.some(clip => (generating(clip) || isHeld(clip.id) || sending.has(clip.id))
             && clip.start < range.start + range.frames && clip.start + clip.frames > range.start);
     }
-    function waitingFor(selection) {
+    function waitingFor() {
         if (!store.generationAvailable) return 'ready';
-        const before = partBefore(selectionRange(selection).start);
-        return generationBusy || generating(before) || before && isHeld(before.id) ? 'before' : null;
+        return null;
     }
     // The nearest spot at or after the chosen one where a part of the same length fits.
     function emptySpot(selection) {
@@ -424,9 +443,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const entry = held[0], clips = entry.ids.map(id => model.find(state.record, id)).filter(clip => clip && clip.pending && !generating(clip));
                 if (!clips.length) { held.shift(); markHeld(entry.ids, false); rememberView(); continue; }
                 const selection = {kind: 'clip', ids: clips.map(clip => clip.id)}, before = partBefore(Math.min(...clips.map(clip => clip.start)));
-                if (generating(before)) break;
                 held.shift(); markHeld(entry.ids, false); rememberView();
-                if (before && !before.source && before.pending) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
+                if (before && !before.source && before.pending && !before.job) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
                 try { await actions.generate({text: entry.text, selection}); }
                 catch (value) { const reason = error(value, 'generate'); if (reason && !['chain_too_long', 'chain_part_too_short'].includes(reason.reason)) genbar?.say(reason.say); }
             }
@@ -493,6 +511,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return ['queued', 'running', 'cancelling'].includes(previous.state);
         failures.reconcile(job, previous);
         mostRecentJob = job.id; jobStatuses.set(job.id, job); paintJob(job);
+        genbar?.update(barJob(job));
         const completed = new Set();
         for (const block of job.blocks || []) {
             const clip = model.attemptClip(state.record, block.id); if (!clip || clip.job !== job.id) continue;
@@ -552,6 +571,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             value.held = waiting;
             localStorage.setItem(viewPrefix + key, JSON.stringify({selection: value.selection, text: value.text, ...(waiting.length ? {held: waiting} : {})}));
             if (state.record.id) localStorage.setItem('fv-editor-last', key);
+            localStorage.setItem('fv-editor-opening', JSON.stringify({id: key, name: state.record.name}));
         } catch {}
         // An untouched edit belongs to this tab until it has a saved identity.
         lastDraft = !state.record.id && state.record.tracks.every(track => !track.clips.length) ? key : null;
@@ -562,6 +582,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }
     async function replaceProject(record, key = null) {
         rememberView(); viewReady = false;
+        await store.activateProject(record.id).catch(() => {});
         viewKey = record.id || key || 'draft:' + (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
         let remembered = editorViews.get(viewKey);
         if (!remembered) try { remembered = JSON.parse(localStorage.getItem(viewPrefix + viewKey)); } catch {}
@@ -570,6 +591,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         player.pause(); for (const stop of jobWatchers.values()) stop(); jobWatchers.clear(); jobStatuses.clear(); progress.clear(); runProgress.clear(); failures.clear(); progressConnection?.reset();
         mostRecentJob = null; submissionFailure = null; genbar?.update(null); queue.reset(record); stopExport?.(); stopExport = null; exportStatus = exportSnapshot = null; exportButton.textContent = t('Export', '导出');
         suppressSave = true; try { state.replace(record); savedContent = content(record); } finally { suppressSave = false; }
+        panel.onProjectLoaded?.(record);
         const width = tracksHost.clientWidth - 148; if (width > 0) state.setZoom(model.openingZoom(width, record));
         tracks?.setScrollLeft(0);
         // An empty edit opens with one part's length selected at the start, ready to generate.
@@ -615,17 +637,74 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (!clips.length || clips.some(clip => !clip || clip.source || clip.pending !== 'draft' || clip.job) || entry.ids.some(isHeld)) continue;
             held.push({ids: [...entry.ids], text: entry.text}); markHeld(entry.ids, true);
         }
-        viewReady = true; updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
+        viewReady = true;
+        if (record.id) try { localStorage.setItem('fv-editor-last', record.id); localStorage.setItem(usedPrefix + record.id, String(Date.now())); } catch {}
+        updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
     }
     async function switchProject(id) {
-        if (switching) return; switching = true; updateTop();
+        if (switching || closing || id && id === state.record.id) return; switching = true; element.inert = true; updateTop();
         try {
             await queue.flush();
             if (queue.dirty) { return; }
             const record = id ? await store.load(id) : initial();
-            if (!disposed && record) { await replaceProject(record); if (!id) { queue.enqueue(state.record); } menu.hidden = true; }
-        } catch (value) { error(value); }
-        finally { switching = false; updateTop(); }
+            if (!disposed && record) {
+                if (emptyEdit()) await discardProject({automatic: true});
+                await replaceProject(record); if (!id) { queue.enqueue(state.record); } menu.hidden = true;
+            }
+        } catch (value) {
+            const reason = deleteEditText(t)[value?.reason];
+            if (reason) notify(reason); else error(value);
+        } finally { switching = false; element.inert = false; updateTop(); }
+    }
+    const emptyEdit = () => discardEmptyEdit(state.record, initial(), {busy: jobActive(), hasMedia: store.uploading});
+    function forgetProject() {
+        const keys = new Set([state.record.id, viewKey].filter(Boolean));
+        for (const key of keys) editorViews.delete(key);
+        if (keys.has(lastDraft)) lastDraft = null;
+        try {
+            for (const key of keys) { localStorage.removeItem(viewPrefix + key); localStorage.removeItem(usedPrefix + key); }
+            if (keys.has(localStorage.getItem('fv-editor-last'))) localStorage.removeItem('fv-editor-last');
+            if (keys.has(globalThis.sessionStorage?.getItem('fv-editor-draft'))) globalThis.sessionStorage?.removeItem('fv-editor-draft');
+        } catch {}
+        viewReady = false; // replaceProject/close must not remember the deleted edit again.
+    }
+    async function discardProject({automatic = false} = {}) {
+        if (state.record.id) try { await store.deleteProject(state.record.id); }
+        catch (value) {
+            // The last window to leave will remove a shared empty edit. Earlier
+            // windows must still be able to leave, quietly releasing their lease.
+            if (!automatic || value?.reason !== 'project_in_use') throw value;
+        }
+        queue.reset(); forgetProject();
+    }
+    async function deleteCurrentProject() {
+        if (switching || closing) return;
+        switching = true; element.inert = true; updateTop();
+        try {
+            const words = deleteEditText(t);
+            if (jobActive()) throw {reason: 'generation_active'};
+            await queue.flush(); releaseStamp();
+            if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return; }
+            // Load the replacement before deleting, so a read failure keeps the edit open.
+            const rows = (await store.projects()).filter(row => row.id !== state.record.id);
+            // Most recently used: the order the edits were opened, then the last save.
+            const order = id => { try { return Number(localStorage.getItem(usedPrefix + id)) || 0; } catch { return 0; } };
+            rows.sort((a, b) => order(b.id) - order(a.id) || String(b.updated_at).localeCompare(String(a.updated_at)));
+            const record = rows.length ? await store.load(rows[0].id) : initial();
+            if (!record) throw new Error(words.delete_failed);
+            await discardProject();
+            await replaceProject(record); menu.hidden = true; title.setAttribute('aria-expanded', 'false'); title.focus();
+        } catch (value) {
+            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed);
+        } finally { switching = false; element.inert = false; updateTop(); }
+    }
+    function confirmDelete() {
+        const words = deleteEditText(t, state.record.name);
+        menu.replaceChildren();
+        menu.append(el('p', 'fv-ed-delete-question', words.confirm));
+        const remove = button(words.remove, deleteCurrentProject, 'fv-ed-delete-confirm');
+        const cancel = button(words.cancel, showMenu);
+        menu.append(remove, cancel); cancel.focus();
     }
     async function showMenu() {
         menu.replaceChildren(); menu.hidden = false; title.setAttribute('aria-expanded', 'true');
@@ -637,9 +716,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const fresh = button(t('New', '新建'), () => switchProject(null)); fresh.setAttribute('role', 'menuitem');
         menu.append(name, fresh);
         pictureTools.appendMenu(menu);
+        const remove = button(deleteEditText(t).item, confirmDelete, 'fv-ed-delete'); remove.setAttribute('role', 'menuitem'); menu.append(remove);
         try {
             // The current edit is already named in the box at the top.
-            const rows = (await store.projects()).filter(row => row.id !== state.record.id); if (disposed || menu.hidden) return;
+            const rows = (await store.projects()).filter(row => row.id !== state.record.id && !hiddenEmptyEdit(row, initial())); if (disposed || menu.hidden || !menu.contains(name)) return;
             if (rows.length) { const line = el('div'); line.setAttribute('role', 'separator'); menu.append(line); }
             for (const row of rows) { const item = button(row.name || new Date(row.updated_at).toLocaleDateString(), () => switchProject(row.id), 'fv-ed-project'); item.setAttribute('role', 'menuitem'); item.title = item.textContent; menu.append(item); }
         } catch (value) { error(value); }
@@ -738,6 +818,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         references: panel.references ? {source: panel.references, notify, size: () => capability.generationSize || generationSize(state.record),
             visible: () => store.generationAvailable && actions.supportedSelection() ? partStart() : null} : null,
         setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
+        // The sampling data and models the next generated part would still download first.
+        assets: {api, query: () => {
+            const size = capability.generationSize || generationSize(state.record), set = state.record.settings || {};
+            return new URLSearchParams({width: size.width, height: size.height, seconds: 5, task: 't2va', enhance: '0',
+                base_steps: set.base_steps ?? 8, refine_steps: set.refine_steps ?? 3, two_pass: set.two_pass === false ? '0' : '1'});
+        }},
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
             const range = selectionRange(selection); if (!range) return null;
@@ -771,8 +857,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 // leaves whatever the user has moved on to, and what they typed there.
                 submittedSelection = shown && state.selection === selection ? state.select({kind: 'clip', ids}) : state.selection; await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
-                const request = model.generationRequest(prepared, ids, {text, paths});
-                const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
+                const request = model.generationRequest(prepared, ids, {text, paths, queue: true});
+                const beforeKeys = model.generationBefore(prepared, ids), sizes = new Map(store.sources);
+                for (const key of beforeKeys.filter(key => key?.startsWith('chain:'))) {
+                    const job = await store.chain(key.split(':')[1]);
+                    sizes.set(key, job?.generation_size);
+                }
+                const follow = continuedSize(beforeKeys, sizes), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
                 // Parts made at another size than the edit's have that size's limit.
                 const limit = (follow && (follow.width !== edit.width || follow.height !== edit.height)
@@ -790,7 +881,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const castRows = panel.references?.available() ? panel.references.rows?.() ?? [] : [];
                 const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i,
                     text: expandCast(block.text, castRows, {continued: Boolean(block.after)}).text}));
-                const job = await store.startChain({...frozen, blocks});
+                const job = await store.startChain({...frozen, blocks, queue: true});
                 if (!job && !store.generationAvailable) {
                     if (epoch === projectEpoch) {
                         const restoreSelection = submittedSelection !== priorSelection && state.selection === submittedSelection;
@@ -823,6 +914,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         async press(text) {
             if (disposed || closing || initializing) return {say: t('Opening the edit…', '正在打开…')};
             let selection = state.selection, said = null;
+            if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
+            if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
+            // A preceding POST must supply its durable ID before a dependant can reference it.
+            const epoch = projectEpoch, awaiting = selectionRange(selection);
+            if (generationBusy) {
+                if (awaiting) sendingRanges.add(awaiting);
+                updateTransport();
+                try { while (generationBusy) await generationDone; }
+                finally { sendingRanges.delete(awaiting); }
+            }
+            if (disposed || closing || epoch !== projectEpoch) return;
             if (!selectionRange(selection)) return {say: t('Drag on the timeline to choose a part first.', '先在时间线上拖出一段。')};
             if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
             if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
@@ -947,7 +1049,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 }
                 if (!exportStatus) return;
                 updateExport(exportStatus); stopExport?.();
-                stopExport = store.watchExport(exportStatus.id, updateExport);
+                stopExport = store.watchExport(exportStatus.id, updateExport, exportLost);
             } finally { exportPreparing = false; updateTop(); }
         },
     };
@@ -961,6 +1063,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return (await import('./studio.js')).openExtendEditor(record, undefined, options);
         }});
     }
+    // The engine stopped answering mid-export: leave the percentage and say so.
+    function exportLost() {
+        if (disposed) return;
+        exportStatus = null; exportCancel.hidden = true; updateTop();
+        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'));
+    }
     function updateExport(value) {
         if (!value) return false;
         if (exportSnapshot) exportSnapshot = {...exportSnapshot, id: value.project_id, revision: value.revision};
@@ -970,10 +1078,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!running) {
             if (value.state === 'failed') {
                 if (['source_missing', 'missing_glyphs', 'MissingGlyphs'].includes(value.reason || value.code)) error(value);
-                else notify(value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
+                else notify(value.reason === 'not_writable' ? t('Export failed: the output folder cannot be written to. Check that the folder can be written to, then retry.', '导出时出错：输出目录不可写。请检查这个文件夹的写入权限后重试。')
+                    : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
                     : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
                     : t('Export failed. Try again.', '导出时出错，请再试一次。'));
             }
+            if (value.state === 'cancelled') notify(t('Export cancelled. No unfinished file is kept.', '已取消导出，没有留下不完整的文件。'));
             window.FreeVideoNotifyTaskDone?.({kind: 'export', id: value.id, ok: value.state === 'done'});
         }
         return running;
@@ -1197,6 +1307,14 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
+                if (!queue.dirty && emptyEdit()) {
+                    try { await discardProject({automatic: true}); }
+                    catch (value) {
+                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed);
+                        closing = false; element.inert = false; closePromise = null; return false;
+                    }
+                }
+                await store.activateProject(null).catch(() => {});
                 rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); toolbarMore.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
                 audio.dispose(); headerFit.dispose();
@@ -1328,6 +1446,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     });
     if (typeof MutationObserver !== 'undefined') guide = createFirstRunGuide({dialog: element, api,
         cn: String(language()).toLowerCase().startsWith('zh'), group: 'editor',
+        onShowcaseTry: async () => { if (await handle.close() !== false) await onView('autopilot', {initialScene: SHOWCASE_SCENE}); },
         isBusy: () => initializing || !tracks || genHost.inert || pointerEditing || jobActive() || ['running', 'queued'].includes(exportStatus?.state),
         targets: {'editor-trim': () => tracks?.guideTarget('trim'), 'editor-empty': () => tracks?.guideTarget('empty')}});
     updateTop(); return handle;

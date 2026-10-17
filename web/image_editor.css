@@ -270,6 +270,7 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
   .fv-ie-generation[data-running=true]>.fv-ie-button{grid-column:3}
   .fv-ie-generation[data-running=true]>.fv-ie-gen-note{grid-column:2;grid-row:2}
   .fv-ie-generation[data-message=true]>.fv-ie-gen-note{max-width:none}
+  .fv-ie-generation[data-pack=true]>.fv-ie-gen-note{text-align:right}
   .fv-ie-options.fv-ie-generation[data-empty=true]{grid-template-columns:minmax(0,1fr) auto}
   .fv-ie-generation[data-empty=true]>.fv-ie-seg{grid-column:1;grid-row:1}
   .fv-ie-generation[data-empty=true]>#fv-ie-gen-ratio{grid-column:2;grid-row:1}

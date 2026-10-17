@@ -4,22 +4,23 @@ Every entry (editor, Agent API, ComfyUI capabilities, estimates, docs) reads
 its level -> plan mapping from here; tests/test_tiers.py checks the entries
 that cannot import it (web JS, prose docs) against this table.
 
-- light: two-pass, 8 + 3 steps.
-- medium: one pass of 8 steps.
+- light: two-pass, 8 + 3 steps, first pass at half size (2x learned upscale).
+- medium: two-pass, 8 + 3 steps, a larger first pass (`upscale`, below 2).
 - high: one pass of 20 steps with the audio-video EasyCache.
-- max: one pass of 20 steps with the first-block cache. The planner keeps that
-  cache only where the card has room for it; otherwise the request samples all
-  20 steps in full (engine.json/debug record the cache actually used).
+- max: one pass of 20 steps, every step sampled.
 
-Only a two-pass level samples a second time. Single-pass levels carry
-REFINE_STEPS only as the neutral value the `refine_steps` field needs; it is
-never run for them. `step_cache` is the engine's cache key: None,
-'easycache-av' (audio-video EasyCache) or 'fbcache' (first-block cache).
+A level in one pass always samples 20 steps; fewer steps come only from a
+user's own setting. Only a two-pass level samples a second time. Single-pass
+levels carry REFINE_STEPS only as the neutral value the `refine_steps` field
+needs; it is never run for them, and their `upscale` is 2 (no factor).
+`step_cache` is the engine's cache key: None, 'easycache-av' (audio-video
+EasyCache) or 'fbcache' (first-block cache, no level uses it; a request may
+still ask for it). `upscale` is the two-pass learned upscale factor
+(two_pass.SCALES): change medium's number here, and everything follows.
 
-On Mac (MPS) only the audio-video EasyCache is ported: high is the same plan
-as everywhere else and max is one pass of 20 steps without a cache (TIERS_MAC).
-Results made before that, one pass of 16 steps without a cache, still count as
-high (LEGACY_MAC_HIGH).
+Mac (MPS) runs the same levels (TIERS_MAC). Results made before the
+audio-video EasyCache was ported there, one pass of 16 steps without a cache,
+still count as high (LEGACY_MAC_HIGH).
 """
 import sys
 
@@ -27,13 +28,13 @@ REFINE_STEPS = 3
 STEP_CACHES = (None, 'easycache-av', 'fbcache')
 
 TIERS = {
-    'light': dict(steps=8, two_pass=True, step_cache=None),
-    'medium': dict(steps=8, two_pass=False, step_cache=None),
-    'high': dict(steps=20, two_pass=False, step_cache='easycache-av'),
-    'max': dict(steps=20, two_pass=False, step_cache='fbcache'),
+    'light': dict(steps=8, two_pass=True, step_cache=None, upscale=2),
+    'medium': dict(steps=8, two_pass=True, step_cache=None, upscale=1.5),
+    'high': dict(steps=20, two_pass=False, step_cache='easycache-av', upscale=2),
+    'max': dict(steps=20, two_pass=False, step_cache=None, upscale=2),
 }
-TIERS_MAC = dict(TIERS, max=dict(steps=20, two_pass=False, step_cache=None))
-LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None)
+TIERS_MAC = TIERS
+LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None, upscale=2)
 
 # Sampling time of a cached pass as a share of the same pass without a cache,
 # for estimates that have no run with that cache yet. B200, 20 s clips
@@ -48,6 +49,14 @@ LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None)
 # cache near the 8-24 GiB median. A first-block cache the planner did not keep
 # is plain 20 steps.
 SAMPLING_SHARE = {None: 1., 'easycache-av': .64, 'fbcache': .9}
+
+# Sampling time (both passes) of a two-pass request with this upscale factor,
+# as a share of the same request at 2x, for estimates without a run of that
+# factor. 1.5: H200, 1344x768 20 s, 221.5 s against 177.8 s
+# (/mnt/fvbench/eng5/tiers/REPORT.md section 2); the stage model gives 1.25-1.30
+# from 10 to 20 s on 8-141 GiB cards. 1.2: the stage model only (1.62-1.78),
+# not yet measured.
+UPSCALE_SHARE = {2: 1., 1.5: 1.27, 1.2: 1.72}
 
 
 def on_mac():
@@ -69,26 +78,35 @@ def step_cache(name, mac=False):
     return table(mac)[name]['step_cache']
 
 
-def name_for(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False):
-    """The level with exactly this plan, or None for custom sampling."""
+def upscale_factor(name, mac=False):
+    """The learned upscale factor of a two-pass level; 2 for every other level."""
+    return table(mac)[name]['upscale']
+
+
+def name_for(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False, upscale=2):
+    """The level with exactly this plan, or None for custom sampling.
+
+    `upscale` tells the two-pass levels apart; a single pass has no factor."""
+    upscale = upscale if two_pass else 2
     found = next((name for name, tier in table(mac).items()
                   if tier['steps'] == steps and tier['two_pass'] == two_pass
-                  and (not two_pass or refine_steps == REFINE_STEPS) and tier['step_cache'] == step_cache), None)
-    if found is None and mac and (steps, two_pass, step_cache) == tuple(LEGACY_MAC_HIGH.values()):
+                  and (not two_pass or refine_steps == REFINE_STEPS) and tier['step_cache'] == step_cache
+                  and tier['upscale'] == upscale), None)
+    if found is None and mac and (steps, two_pass, step_cache, upscale) == tuple(LEGACY_MAC_HIGH.values()):
         return 'high'
     return found
 
 
-def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False):
+def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False, upscale=2):
     """The level whose sampling table a plan needs, for naming a missing download.
 
     Tables follow the step count only. Prefer the exact level (the cache tells
-    high from max at 20 steps), then the other platform's table (20 steps
-    without a cache is "max", as on Mac; 16 steps is the earlier Mac "high"), then the first
-    level with that step count.
+    high from max at 20 steps), then the other platform's table (16 steps is
+    the earlier Mac "high"), then the first level with that step count (light
+    for 8 + 3, whatever the upscale factor).
     """
-    found = name_for(steps, two_pass, refine_steps, step_cache, mac) or name_for(
-        steps, two_pass, refine_steps, step_cache, not mac)
+    found = name_for(steps, two_pass, refine_steps, step_cache, mac, upscale) or name_for(
+        steps, two_pass, refine_steps, step_cache, not mac, upscale)
     return found or next((name for name, tier in TIERS.items()
                           if tier['steps'] == steps and tier['two_pass'] == two_pass
                           and (not two_pass or refine_steps == REFINE_STEPS)), None)
@@ -97,3 +115,8 @@ def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac
 def sampling_share(cache):
     """Estimated sampling time with this effective cache, as a share of the plain pass."""
     return SAMPLING_SHARE.get(cache, 1.)
+
+
+def upscale_share(factor):
+    """Estimated two-pass sampling time with this upscale factor, as a share of 2x."""
+    return UPSCALE_SHARE.get(factor, 1.)

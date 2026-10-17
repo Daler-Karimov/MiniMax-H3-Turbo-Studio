@@ -95,7 +95,8 @@ def generate(request, resident=None):
                             request['engine_options'].get('task', 't2va'),
                             base_steps=request['engine_options'].get('steps', 8),
                             refine_steps=request['sampling_plan']['refine_steps'] if request['sampling_plan']['enabled'] else 3,
-                            staged=request['sampling_plan'].get('staged', False))
+                            staged=request['sampling_plan'].get('staged', False),
+                            scale=request['sampling_plan'].get('scale', 2))
             if request['sampling_plan'] != expected:
                 raise ValueError('Sampling plan does not match the requested canvas and task')
             metrics['sampling_plan'] = expected

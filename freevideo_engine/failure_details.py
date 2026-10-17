@@ -8,6 +8,7 @@ import sys
 from .long_paths import io_path, plain_text
 from .diagnostics import Redactor
 from .tiers import STEP_CACHES, TIERS, on_mac, table_level
+from .two_pass import SCALES
 
 
 STEP_OUTPUT = '\n\nFull step output:\n'
@@ -71,9 +72,10 @@ def sampling_table_details(value):
                     and type(details['missing_bytes']) is int and details['missing_bytes'] > 0
                     and type(details['decimal_sizes']) is bool and isinstance(details['available'], list)
                     and all(type(i) is int and 0 <= i <= 3 for i in details['available'])
-                    and details.get('step_cache') in STEP_CACHES):
+                    and details.get('step_cache') in STEP_CACHES and details.get('scale', 2) in SCALES):
                 return {key: details[key] for key in
-                        ('base_steps', 'two_pass', 'refine_steps', 'missing_bytes', 'available', 'decimal_sizes', 'step_cache')
+                        ('base_steps', 'two_pass', 'refine_steps', 'missing_bytes', 'available', 'decimal_sizes', 'step_cache',
+                         'scale')
                         if key in details}
         except (ValueError, KeyError, TypeError):
             pass
@@ -88,7 +90,7 @@ def sampling_table_failure(value, *, zh=False):
     language = 1 if zh else 0
     # Tables follow the step count; the cache tells high from max at 20 steps.
     level = table_level(details['base_steps'], details['two_pass'], details['refine_steps'],
-                        details.get('step_cache'), on_mac())
+                        details.get('step_cache'), on_mac(), details.get('scale', 2))
     index = list(TIERS).index(level) if level else None
     names = [('“%s”' if zh else '%s') % QUALITY_LEVELS[i][language] for i in sorted(set(details['available']))]
     available = ''

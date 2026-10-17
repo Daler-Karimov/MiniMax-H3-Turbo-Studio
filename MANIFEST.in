@@ -4,7 +4,8 @@ include __init__.py README.zh-CN.md
 include NOTICE THIRD_PARTY_NOTICES.md CONTRIBUTING.md SECURITY.md CITATION.cff
 recursive-include example_workflows *.json
 recursive-include web *.js *.css
-recursive-include web/assets *.svg *.png
+include web/vendor/three/LICENSE
+recursive-include web/assets *.svg *.png *.webp
 recursive-include web/fonts *.woff2
 recursive-include freevideo_engine/assets *.png *.ico
 recursive-include freevideo_engine/launcher *.qml

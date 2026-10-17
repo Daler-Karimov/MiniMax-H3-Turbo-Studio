@@ -86,6 +86,9 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     if cache is not None:
         # Rows without the key are plain runs, as every run before the caches was.
         record['step_cache'] = cache
+    if plan.get('enabled') and plan.get('scale', 2) != 2:
+        # Rows without the key upscaled 2x, as every two-pass run before the factor was.
+        record['upscale_factor'] = plan['scale']
     if not stage_details:
         # The slider history carries no flow marker, and a preview (one pass)
         # is never a whole-request sample: estimate() would read its missing
@@ -155,17 +158,25 @@ def report_step_cache(report):
 
 
 def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, task='t2va', adapters=False,
-             step_cache=None, cache_share=None):
+             step_cache=None, cache_share=None, upscale_factor=2):
     """Whole-request seconds from local runs of this shape.
 
     Runs with the requested step cache come first. Without one, plain runs stand
     in with their first pass scaled by `cache_share` (tiers.sampling_share by
     default) and a wider range; a cached run never stands in for a plain request.
+    A two-pass run with another upscale factor stands in the same way, its
+    sampling scaled by tiers.upscale_share.
     """
     from .two_pass import validate_steps
-    from .tiers import sampling_share
+    from .tiers import sampling_share, upscale_share
     validate_steps(base_steps, refine_steps, two_pass)
     share = sampling_share(step_cache) if cache_share is None else cache_share
+    if two_pass and upscale_factor != 2:
+        # The factor this canvas really runs: a small canvas samples both passes at its own size.
+        from .two_pass import plan
+        upscale_factor = plan(dict(width=canvas['width'], height=canvas['height'], frames=canvas['frames']), True,
+                              base_steps=base_steps, refine_steps=refine_steps, scale=upscale_factor).get('scale', 2)
+    upscale_factor = upscale_factor if two_pass else 2
     candidates = []
     for row in records:
         if (row.get('flow', 'full') != 'full' or row['task'] != task or row['adapters'] != adapters
@@ -194,6 +205,11 @@ def estimate(records, canvas, *, base_steps=8, refine_steps=3, two_pass=True, ta
                 switched = True
         if two_pass and row['two_pass'] == two_pass:
             seconds += (refine_steps - row['refine_steps']) * row['passes'][1]['incremental']
+            factor = row.get('upscale_factor', 2)
+            if factor != upscale_factor:
+                sampled = sum(part['seconds'] for part in row['passes'])
+                seconds += (upscale_share(upscale_factor) / upscale_share(factor) - 1) * sampled
+                switched = True
         if positive(seconds):
             candidates.append((seconds, row, switched))
     if not candidates:

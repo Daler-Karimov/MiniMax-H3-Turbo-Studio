@@ -5,7 +5,7 @@ import {cleanOptionalPrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
-import { feedbackButton } from './feedback.js';
+import { feedbackButton, feedbackIssueURL } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
@@ -19,6 +19,7 @@ import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
+import { isNetworkTypeError, connectionLostText } from './browser_extension.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, handleNames, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
@@ -26,7 +27,8 @@ import { attachMentionOverlay } from './cast_overlay.js';
 import { openCastLibrary } from './cast_source.js';
 import { uploadMedia } from './media_upload.js';
 import { reconcileLoraTriggers } from './lora_triggers.js';
-import { createSamplingEffort, effortFor, effortsFrom, stepCacheOf } from './sampling_effort.js';
+import { createVerdicts, describeVerdict, feedbackDraft } from './lora_check.js';
+import { continuationUpscale, createSamplingEffort, effortFor, effortsFrom, passSwitch, stepCacheOf, upscaleOf } from './sampling_effort.js';
 import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { createRequestAssets, enabledLoras, referenceFiles } from './request_assets.js';
@@ -36,6 +38,7 @@ import { createCapabilityView } from './capability_view.js';
 import { openEditorView } from './editor_loader.js';
 import { frameShapes, frameSize } from './frame_sizes.js';
 import { createFirstRunGuide } from './first_run_guide.js';
+import { SHOWCASE_SCENE } from './entry_showcase.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261014-parts';
@@ -46,6 +49,8 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
+// A dropped connection gets one plain sentence, not the browser's "Failed to fetch".
+const shownMessage = error => isNetworkTypeError(error) ? connectionLostText(t) : error.message;
 // The usual LoRA strength range is -4 to 4; a value the user types by hand may go further, up to 100.
 const LORA_USUAL = 4, LORA_LIMIT = 100;
 let loraRangeCount = 0;
@@ -290,6 +295,10 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     const actions = el('div', null, 'fv-lora-add'); panel.append(list, actions, note);
     let names = [], disposed = false, rendering = false, renderAgain = false;
     const drafts = new Map(), errors = new Map(), saves = new Map();
+    let skipped = 0;
+    const idleNote = () => loraWarning() + (skipped ? t(skipped === 1 ? ' 1 other LoRA file in the folder is not in .safetensors format and is not listed.' : ` ${skipped} other LoRA files in the folder are not in .safetensors format and are not listed.`, ` 文件夹中另有 ${skipped} 个 LoRA 文件不是 .safetensors 格式，未列出。`) : '');
+    const verdicts = createVerdicts((path, options) => api.fetchApi(path, options));
+    let focusGrip = null;
     const read = () => { const rows = JSON.parse(value(node, 'adapters') || '[]'); if (!Array.isArray(rows) || rows.length > 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); return rows; };
     function syncPrompt(rows) {
         const targets = new Set([promptNode, ...(node.graph?._nodes || []).filter(target =>
@@ -326,10 +335,57 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
             for (const trigger of list.querySelectorAll('.fv-lora-trigger')) {
                 if (trigger.dataset.name === name && !drafts.has(name)) trigger.value = triggerEntry(name).data?.words ?? '';
             }
-            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || idleNote();
         } catch (error) { note.textContent = error.message; }
     }
     const write = rows => { if (set(node, 'adapters', JSON.stringify(rows))) { syncPrompt(rows); window.dispatchEvent(new CustomEvent('freevideo-loras', {detail: node.id})); } };
+    // A LoRA the model cannot take is switched off here, so it is not sent with the request.
+    function disableUnusable(name) {
+        if (disposed) return;
+        try {
+            const rows = read(); let changed = false;
+            for (const row of rows) if (row.name === name && row.enabled !== false && verdicts.peek(name)?.usable === false) { row.enabled = false; changed = true; }
+            if (changed) write(rows);
+        } catch (error) { note.textContent = error.message; }
+    }
+    const reorder = order => {
+        const rows = read();
+        if (order.length !== rows.length || order.every((from, to) => from === to)) return;
+        write(order.map(from => rows[from]));
+    };
+    // The grip moves the whole row with the pointer; arrow keys do the same one step at a time.
+    function sortGrip(wrap, index) {
+        const grip = el('span', null, 'fv-lora-grip'); grip.tabIndex = 0; grip.setAttribute('role', 'button');
+        grip.setAttribute('aria-label', t('Drag to reorder', '拖动调整顺序')); grip.title = t('Drag to reorder', '拖动调整顺序');
+        grip.onkeydown = event => {
+            const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0;
+            const count = list.children.length;
+            if (!delta || index + delta < 0 || index + delta >= count) return;
+            event.preventDefault(); event.stopPropagation();
+            const order = [...Array(count).keys()];
+            [order[index], order[index + delta]] = [order[index + delta], order[index]];
+            focusGrip = index + delta; reorder(order);
+        };
+        grip.onpointerdown = event => {
+            if (event.button > 0) return;
+            event.preventDefault(); wrap.classList.add('fv-lora-dragging');
+            const move = e => {
+                const next = [...list.children].find(row => row !== wrap && e.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
+                if (next) { if (wrap.nextElementSibling !== next) list.insertBefore(wrap, next); }
+                else if (list.lastElementChild !== wrap) list.append(wrap);
+            };
+            const end = e => {
+                for (const [type, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) window.removeEventListener(type, handler);
+                wrap.classList.remove('fv-lora-dragging');
+                const order = [...list.children].map(row => Number(row.dataset.index));
+                if (e.type === 'pointercancel') { render(); return; }
+                reorder(order);
+            };
+            // Moving the row in the DOM drops pointer capture, so the drag listens on the window.
+            for (const [type, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end]]) window.addEventListener(type, handler);
+        };
+        return grip;
+    }
     function render() {
         if (disposed) return;
         if (rendering) { renderAgain = true; return; }
@@ -345,7 +401,12 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 const select = el('select'); select.setAttribute('aria-label', t('LoRA model', 'LoRA 模型'));
                 const pinned = recentLoras().filter(n => names.includes(n));
                 for (const name of [...new Set([...pinned, ...names, row.name])].filter(Boolean)) { const option = el('option', name); option.value = name; select.append(option); }
-                select.value = row.name; select.title = row.name; select.onchange = () => { row.name = select.value; rememberLora(row.name); write(rows); };
+                select.value = row.name; select.title = row.name;
+                select.onchange = () => {
+                    // Leaving a LoRA that could not be used turns the row back on for the new choice.
+                    if (verdicts.peek(row.name)?.usable === false) row.enabled = true;
+                    row.name = select.value; rememberLora(row.name); write(rows);
+                };
                 const {input: strength, mark: strengthMark} = loraStrengthBox(row.strength ?? 1, () => { if (strength.value !== '') { row.strength = Number(strength.value); write(rows); } });
                 strength.setAttribute('aria-label', t('LoRA strength', 'LoRA 强度'));
                 const trigger = el('input', null, 'fv-lora-trigger'); trigger.type = 'text'; trigger.maxLength = 300;
@@ -373,20 +434,39 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                 select.disabled = strength.disabled = trigger.disabled = row.enabled === false;
                 const remove = button('×', () => { rows.splice(index, 1); write(rows); }); remove.setAttribute('aria-label', t('Remove LoRA', '移除 LoRA'));
                 wrap.append(enabled, select, strength, remove, trigger, strengthMark);
-                if (rows.length > 1) {
-                    const order = el('div', null, 'fv-lora-order');
-                    for (const [label, delta] of [['↑', -1], ['↓', 1]]) {
-                        const move = button(label, () => { [rows[index], rows[index + delta]] = [rows[index + delta], rows[index]]; write(rows); });
-                        move.disabled = index + delta < 0 || index + delta >= rows.length;
-                        move.setAttribute('aria-label', delta < 0 ? t('Move LoRA earlier', 'LoRA 前移') : t('Move LoRA later', 'LoRA 后移')); order.append(move);
-                    }
-                    wrap.append(order);
-                }
+                wrap.dataset.index = String(index); wrap.dataset.sortable = String(rows.length > 1);
+                if (rows.length > 1) wrap.prepend(sortGrip(wrap, index));
+                const problem = el('div', null, 'fv-lora-problem'); problem.hidden = true; wrap.append(problem);
+                // A switched-off row says so, and a click anywhere on it turns it back on.
+                const off = el('div', t('Off. Click to turn on', '已停用，点击启用'), 'fv-lora-off'); off.hidden = row.enabled !== false; wrap.append(off);
+                wrap.onclick = event => {
+                    if (row.enabled !== false || wrap.dataset.unusable === 'true' || event.target.closest('button,select,input,.fv-lora-grip')) return;
+                    row.enabled = true; write(rows);
+                };
+                const mark = verdict => {
+                    const described = describeVerdict(verdict, t);
+                    wrap.dataset.unusable = String(Boolean(described));
+                    problem.hidden = !described; off.hidden = off.hidden || Boolean(described);
+                    if (!described) return;
+                    enabled.checked = false; enabled.disabled = true; strength.disabled = trigger.disabled = true; select.disabled = false;
+                    const fold = el('details', null, 'fv-lora-why'), why = el('pre', described.lines.join('\n'));
+                    const report = button(t('Report a mistake', '报告误判'), () => {
+                        const draft = feedbackDraft(row.name, verdict, described, t);
+                        window.open(feedbackIssueURL(draft.text, productVersion(), draft.diagnostics, draft.title), '_blank', 'noopener');
+                    });
+                    fold.append(el('summary', t('Details', '详情')), why, report);
+                    problem.replaceChildren(el('p', t('Cannot be used: ', '不能使用：') + described.reason), fold);
+                    if (row.enabled !== false) queueMicrotask(() => disableUnusable(row.name));
+                };
+                const known = verdicts.peek(row.name);
+                if (known) mark(known);
+                else verdicts.get(row.name).then(verdict => { if (verdict && !disposed && wrap.isConnected && select.value === row.name) mark(verdict); });
                 list.append(wrap);
                 loadTriggers(row.name).catch(error => { if (!disposed && trigger.isConnected) note.textContent = error.message; });
             });
             if (rows.length > 1) actions.append(clear);
-            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || loraWarning();
+            if (focusGrip != null) { list.querySelector(`.fv-lora-row[data-index="${focusGrip}"] .fv-lora-grip`)?.focus(); focusGrip = null; }
+            note.textContent = rows.map(row => errors.get(row.name)).find(Boolean) || idleNote();
         } catch (error) {
             if (error instanceof DOMException) throw error;
             note.textContent = error.message;
@@ -401,8 +481,8 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
         try { const rows = read(); if (rows.length >= 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); if (!names.length) throw new Error(t('Put LoRA files (.safetensors) in the models/loras folder, then choose "Add".', '把 LoRA 文件（.safetensors）放进 models/loras 文件夹，再点“添加”。')); const next = recentLoras().find(n => names.includes(n) && !rows.some(row => row.name === n)) ?? names[0]; rememberLora(next); rows.push({name: next, strength: 1, enabled: true}); write(rows); } catch (error) { note.textContent = error.message; }
     });
     async function refresh() {
-        try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
-        catch (error) { if (!disposed) note.textContent = error.message; }
+        try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); verdicts.clear(); skipped = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && /\.(ckpt|pt|pth|bin|sft)$/i.test(n)).length; names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
+        catch (error) { if (!disposed) note.textContent = shownMessage(error); }
     }
     // Only deselects: the files stay in the folder and the recent names are kept.
     const clear = button(t('Clear', '清空'), () => { write([]); });
@@ -698,6 +778,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A level's step cache; custom steps and workflows without the input sample every step.
     const stepCacheNow = () => stepCacheOf(value(node, 'step_cache'));
     const clearStepCache = () => { if (stepCacheNow()) set(node, 'step_cache', 'none'); };
+    // The two-pass learned upscale factor; a single pass has none (2).
+    const upscaleNow = () => upscaleOf(value(node, 'upscale_factor'));
+    const setUpscale = factor => { if (widget(node, 'upscale_factor') && value(node, 'upscale_factor') !== String(factor)) set(node, 'upscale_factor', String(factor)); };
     const effort = createSamplingEffort(t, {onChange: tier => {
         baseSteps.value = tier.steps;
         refineSteps.value = 3;
@@ -706,14 +789,23 @@ export function openStudio(node, {extendFrom = null} = {}) {
         set(node, 'two_pass', twoPass.checked);
         set(node, 'refine_steps', 3);
         set(node, 'step_cache', tier.stepCache || 'none');
+        set(node, 'upscale_factor', String(tier.upscale));
         syncSamplingSteps();
-    }, onPreview: tier => tier ? showEffortEstimate(tier.steps, tier.twoPass, tier.stepCache) : showEffortEstimate()});
+    }, onPreview: tier => tier ? showEffortEstimate(tier.steps, tier.twoPass, tier.stepCache, tier.upscale) : showEffortEstimate()});
     const samplingSettings = el('div', null, 'fv-sampling-settings');
     const previewFirst = el('input'); previewFirst.type = 'checkbox'; previewFirst.checked = value(node, 'preview') === true;
     function choosePassMode(mode) {
         if (extension.source) return;
         const wantsTwoPass = mode !== 'off', wantsPreview = mode === 'preview';
-        if (twoPass.checked !== wantsTwoPass) { twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); clearStepCache(); }
+        if (twoPass.checked !== wantsTwoPass) {
+            // A level in one pass samples 20 steps; two-pass from one is Light. Typed steps stay.
+            const next = passSwitch(wantsTwoPass, Number(baseSteps.value), Number(refineSteps.value), stepCacheNow(), effort.levels());
+            twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); clearStepCache(); setUpscale(next.upscale);
+            if (next.steps !== Number(baseSteps.value) && !linked(node, 'base_steps') && widget(node, 'base_steps')) {
+                baseSteps.value = String(next.steps); set(node, 'base_steps', next.steps);
+                if (next.refine !== Number(refineSteps.value) && set(node, 'refine_steps', next.refine)) refineSteps.value = String(next.refine);
+            }
+        }
         if (previewFirst.checked !== wantsPreview) { previewFirst.checked = wantsPreview; set(node, 'preview', wantsPreview); }
         syncSamplingSteps(); updateRunButton();
     }
@@ -734,12 +826,27 @@ export function openStudio(node, {extendFrom = null} = {}) {
     canvas.append(samplingSettings); cleanup.push(() => effort.dispose());
     cleanup.push(() => { clearTimeout(effortEstimateTimer); effortEstimateRequest?.abort(); });
     const mediaNode = upstream(node, 'media');
+    const mediaFilled = () => JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false)
+        || Boolean(mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null));
+    // The line beside the closed title says what the section is for, until something is added.
+    // The guide opens the section it points at; the ring stays on the title row.
+    const mediaGuideTarget = () => {
+        if (!mediaNode?.freevideoCreateMediaEditor) return null;
+        const r = mediaTitle.getBoundingClientRect();
+        return {node: mediaTitle, rect: {left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height},
+            reveal: () => { mediaDetails.open = true; }};
+    };
+    const paintMediaHint = () => { try { mediaHint.hidden = mediaDetails.open || !mediaNode?.freevideoCreateMediaEditor || mediaFilled(); } catch { mediaHint.hidden = true; } };
     const [mediaDetails, mediaMount] = expand(t('Media', '素材'));
+    const mediaTitle = mediaDetails.querySelector('summary'), mediaHint = el('span', t('Reference images, first and last frames', '参考图、首帧、尾帧'), 'fv-section-hint');
+    mediaTitle.dataset.fvGuide = 'media'; mediaTitle.append(mediaHint);
     const extendMount = el('div', null, 'fv-extend-source'); extendMount.hidden = true; mediaMount.prepend(extendMount);
     let releaseExtendThumbnail = () => {};
     cleanup.push(() => releaseExtendThumbnail());
-    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false) || mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null); }
+    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = mediaFilled(); }
     else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板，即可在这里上传。'), 'fv-legacy'));
+    paintMediaHint(); mediaDetails.addEventListener('toggle', paintMediaHint);
+    controls.addEventListener('change', paintMediaHint, true); controls.addEventListener('input', paintMediaHint, true);
     const connectedLora = upstream(node, 'loras');
     const loraNode = connectedLora?.properties?.[CREATED_BY_PANEL] ? pendingLoras(node, connectedLora) : connectedLora || pendingLoras(node);
     const [loraDetails, loraMount] = expand(t('LoRA', 'LoRA'));
@@ -819,13 +926,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // The run button exists only further down; until then its label is set there.
     let runButtonReady = false;
     function syncSamplingSteps() {
-        if (extension.source) { baseSteps.value = '8'; refineSteps.value = '3'; twoPass.checked = true; set(node, 'two_pass', true); clearStepCache(); autoSinglePass = false; }
+        if (extension.source) {
+            const factor = continuationUpscale(baseSteps.value, twoPass.checked, refineSteps.value, stepCacheNow(), value(node, 'upscale_factor'), effort.levels());
+            baseSteps.value = '8'; refineSteps.value = '3'; twoPass.checked = true; set(node, 'two_pass', true); clearStepCache(); setUpscale(factor); autoSinglePass = false;
+        }
         const baseLinked = linked(node, 'base_steps');
-        // Two-pass is offered at 8 first-pass steps. A saved workflow that already
-        // uses it with other steps is shown as custom and left unchanged.
-        const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked;
+        // Two-pass is offered at 8 first-pass steps, and from a single-pass level (it then gives Light).
+        // A saved workflow that already uses it with other steps is shown as custom and left unchanged.
+        const onePassLevel = !twoPass.checked && !baseLinked && Boolean(effortFor(Number(baseSteps.value), false, Number(refineSteps.value), stepCacheNow(), effort.levels()));
+        const unavailable = Number(baseSteps.value) !== 8 && !twoPass.checked && !onePassLevel;
         twoPass.disabled = Boolean(extension.source) || unavailable || linked(node, 'two_pass') || !widget(node, 'two_pass');
-        twoPassStatus.textContent = Number(baseSteps.value) !== 8 ? t('Needs an 8-step first pass', '一采需 8 步') : '';
+        twoPassStatus.textContent = Number(baseSteps.value) !== 8 && !onePassLevel ? t('Needs an 8-step first pass', '一采需 8 步') : '';
         twoPassLabel.classList.toggle('fv-two-pass-unavailable', unavailable);
         // A preview stops after the first pass, so it needs two-pass sampling.
         if (!twoPass.checked && previewFirst.checked) {
@@ -848,14 +959,19 @@ export function openStudio(node, {extendFrom = null} = {}) {
             }
         }
         effort.update({baseSteps: Number(baseSteps.value), refineSteps: Number(refineSteps.value),
-            twoPass: twoPass.checked, stepCache: stepCacheNow(),
-            disabled: baseSteps.disabled || linked(node, 'two_pass') || linked(node, 'refine_steps') || linked(node, 'step_cache'),
-            reason: extension.source ? t('A continuation uses the Light level.', '接着生成使用轻量档。') : ''});
+            twoPass: twoPass.checked, stepCache: stepCacheNow(), upscale: upscaleNow(),
+            disabled: baseSteps.disabled || linked(node, 'two_pass') || linked(node, 'refine_steps') || linked(node, 'step_cache') || linked(node, 'upscale_factor'),
+            reason: extension.source ? continuationReason() : ''});
         refreshEffortEstimate();
     }
     syncSamplingSteps();
     advanced.append(samplingFields, samplingWarning);
-    function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow()) {
+    // A continuation keeps a two-pass level (Light or Medium).
+    function continuationReason() {
+        const level = effortFor(8, true, 3, null, effort.levels(), upscaleNow());
+        return level?.name === 'Medium' ? t('A continuation uses the Medium level.', '接着生成使用标准档。') : t('A continuation uses the Light level.', '接着生成使用轻量档。');
+    }
+    function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow(), factor = upscaleNow()) {
         const parts = lengthControl.plan?.count > 1 ? t(`${lengthControl.plan.count} parts`, `分 ${lengthControl.plan.count} 段`) : '';
         // A request that fits one run keeps its own estimate while the longest run is unknown.
         if ((lengthControl.capabilityState === 'pending' || lengthControl.capabilityState === 'unavailable')
@@ -868,16 +984,17 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (lengthControl.needsPlan && !lengthControl.plan) { effort.setEstimate(''); return; }
         if (lengthControl.plan?.count > 1) {
             const plan = lengthControl.plan;
-            const seconds = steps === Number(baseSteps.value) && twoPassPlan === twoPass.checked && cache === stepCacheNow()
+            const seconds = steps === Number(baseSteps.value) && twoPassPlan === twoPass.checked && cache === stepCacheNow() && factor === upscaleNow()
                 ? sumPartEstimates(plan, lengthControl.estimate) : null;
             effort.setEstimate(seconds > 0 ? t(`${plan.count} parts · about ${Math.ceil(seconds / 60)} min`, `分 ${plan.count} 段 · 约 ${Math.ceil(seconds / 60)} 分钟`)
                 : t(`${plan.count} parts`, `分 ${plan.count} 段`));
             return;
         }
-        const rangeEstimate = capabilityView?.estimate(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache);
+        const rangeEstimate = capabilityView?.estimate(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache, factor);
         if (rangeEstimate) { effort.setEstimate(rangeEstimate); return; }
         const mode = twoPassPlan ? 'two_pass' : 'single';
-        const estimate = effortEstimate[mode]?.[cache ? `${steps}:${cache}` : String(steps)];
+        // Keys: "<steps>[:<cache>][x<factor> when two-pass and not 2]".
+        const estimate = effortEstimate[mode]?.[`${steps}${cache ? ':' + cache : ''}${twoPassPlan && factor !== 2 ? 'x' + factor : ''}`];
         // A previewed level always refines three steps; the current plan may not.
         if (estimate?.status !== 'estimated' || (mode === 'two_pass' && !arguments.length && Number(refineSteps.value) !== 3)) {
             effort.setEstimate('', t('No estimate is available for these settings.', '当前设置暂无预计用时。'));
@@ -910,9 +1027,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const requestWidth = extension.source?.geometry.width ?? value(node, 'width');
         const requestHeight = extension.source?.geometry.height ?? value(node, 'height');
         lengthControl?.refresh({width: requestWidth, height: requestHeight, task, adapters,
-            settings: {tier: effortFor(Number(baseSteps.value), twoPass.checked, Number(refineSteps.value), stepCacheNow(), effort.levels())?.name.toLowerCase() || 'custom',
+            settings: {tier: effortFor(Number(baseSteps.value), twoPass.checked, Number(refineSteps.value), stepCacheNow(), effort.levels(), upscaleNow())?.name.toLowerCase() || 'custom',
                 base_steps: Number(baseSteps.value), refine_steps: Number(refineSteps.value), two_pass: twoPass.checked,
-                step_cache: stepCacheNow()}}, force);
+                step_cache: stepCacheNow(), upscale_factor: upscaleNow()}}, force);
         requestAssetsQuery = () => {
             const query = new URLSearchParams({width: requestWidth, height: requestHeight, seconds: value(node, 'seconds'), task,
                 base_steps: baseSteps.value, refine_steps: refineSteps.value, two_pass: twoPass.checked ? '1' : '0',
@@ -1048,7 +1165,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A browser extension gets the shared card; other failures stay in the status line.
     function resultActionFailed(error) {
         if (extensionCause(error)) { showQueueError(error); return; }
-        status.dataset.error = 'true'; status.textContent = error.message;
+        status.dataset.error = 'true'; status.textContent = shownMessage(error);
     }
     const trimNote = el('div', '', 'fv-note fv-trim-note'); trimNote.hidden = true; trimNote.setAttribute('role', 'status');
     // Run second pass is the preview's primary action in the result bar.
@@ -1272,7 +1389,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
         chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
         chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
-    }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || error?.message || String(error));
+    }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || (isNetworkTypeError(error) ? connectionLostText(t) : error?.message) || String(error));
     let lastQueueError = null;
     function showQueueError(error) {
         if (disposed) return;
@@ -1357,7 +1474,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const wasBusy = busy;
         busy = Boolean(active) || progressLive(); queued = !state.running && Boolean(state.pending.length);
         // A finished, failed or cancelled video may have downloaded what the line above Generate still lists.
-        if (wasBusy && !busy) requestAssets?.refresh(true);
+        if (wasBusy && !busy) { requestAssets?.refresh(true); paintMediaHint(); }
         const g = active?.inputs;
         // The right-hand frame belongs to the submitted video. Draft edits on
         // the left must never reshape a video currently being generated.
@@ -1612,7 +1729,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     dialog.onclose = () => { disposed = true; for (const f of cleanup) f(); stage.querySelector('video')?.pause(); dialog.remove(); if (current?.dialog === dialog) { current = null; viewChanged('nodes', node); } };
     capabilityView = createCapabilityView({node, api, t, getState: () => ({ratio,
         custom: selected === 'custom', steps: Number(baseSteps.value), twoPass: twoPass.checked,
-        refine: Number(refineSteps.value), stepCache: stepCacheNow(), disabled: Boolean(extension.source) || dimensionsLinked || seconds.disabled}),
+        refine: Number(refineSteps.value), stepCache: stepCacheNow(), upscale: upscaleNow(), disabled: Boolean(extension.source) || dimensionsLinked || seconds.disabled}),
         onEstimate: () => showEffortEstimate(), onGrid: grid => effort.setLevels(effortsFrom(grid)), onPick: point => {
         pixels = point.pixels; mp.value = String(pixels);
         set(node, 'width', point.width); set(node, 'height', point.height);
@@ -1669,7 +1786,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let guide = null, closed = false;
     cleanup.push(() => { closed = true; guide?.dispose(); });
     agentDiscovery.then(() => {
-        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing});
+        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing, targets: {media: mediaGuideTarget},
+            onShowcaseTry: () => openAutopilot(node, {studio: dialog, initialScene: SHOWCASE_SCENE})});
     });
     const recentLoad = recent.refresh();
     if (node.freevideoProgress && !node.freevideoProgress.chain) showProgress(node.freevideoProgress);

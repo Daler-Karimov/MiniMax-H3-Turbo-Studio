@@ -2,10 +2,40 @@
 import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
 import {createExpandButton} from './editor_expand.js';
+import {createRequestAssets} from './request_assets.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
     : t(`about ${Math.ceil(seconds / 60)} minutes`, `约 ${Math.ceil(seconds / 60)} 分钟`);
+// Provisional copy keys for Iris; decode/save sentences follow Studio's stage vocabulary.
+export const CLIP_FINALIZATION_COPY = {
+    prepareDecode: ['Preparing video output', '正在准备输出视频'],
+    loadDecoder: ['Loading the video decoder', '正在载入视频解码器'],
+    decodeVideo: ['Rendering the video', '正在输出视频'],
+    decodeAudio: ['Rendering the audio', '正在输出音频'],
+    saveVideo: ['Saving the video', '正在保存视频'],
+    openClip: ['Adding it to the timeline', '正在放到时间线上'],
+    joinClips: ['Joining the parts', '正在拼接各段'],
+};
+export function clipFinalization(job) {
+    if (!job || !['running', 'queued'].includes(job.state)) return null;
+    const message = job.progressMessage || job.progress || {}, blocks = job.blocks || [];
+    const phase = message.phase || message.timing_phase, label = message.label || '';
+    let key;
+    if (job.joining) key = 'joinClips';
+    else if (job.loadingClip || phase === 'complete' || message.overall?.status === 'complete'
+        || blocks.some(block => block.state === 'running' && block.fraction >= 1)) key = 'openClip';
+    else if (phase === 'save' || /^Saving (MP4 and audio|decoded video|decoded audio)$/.test(label)) key = 'saveVideo';
+    else if (phase === 'sample_finalize') key = 'prepareDecode';
+    else if (phase === 'decode' || message.timing_phase === 'decode') key = /audio/i.test(label) && !/video and audio/i.test(label) ? 'decodeAudio'
+        : label === 'Loading video VAE' ? 'loadDecoder' : 'decodeVideo';
+    if (!key) return null;
+    // Decode/save and joining retain engine cancellation. A saved final part waiting
+    // for its receipt/media cannot be cancelled; later queued parts still can.
+    const current = message.chain?.block || blocks.find(block => block.state === 'running')?.id;
+    const later = blocks.some(block => block.id !== current && ['pending', 'queued', 'running'].includes(block.state));
+    return {key, cancelable: key !== 'openClip' || !job.loadingClip && later};
+}
 // After the next frame is on screen; a page nobody sees has no frame to wait for.
 const painted = () => typeof document === 'undefined' || document.visibilityState !== 'visible' || typeof requestAnimationFrame !== 'function' ? Promise.resolve()
     : new Promise(resolve => requestAnimationFrame(() => { const {port1, port2} = new MessageChannel(); port1.onmessage = () => { port1.close(); resolve(); }; port2.postMessage(null); }));
@@ -18,6 +48,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     input.dataset.fvGuide = 'editor-describe'; generate.dataset.fvGuide = 'editor-generate';
     for (const button of [generate, cancel, resume]) button.type = 'button';
     host.append(hint, note, description, generate, cancel, resume);
+    // What this part will download first, above the bar like the studio's line above Generate.
+    const assets = actions.assets ? createRequestAssets({t, api: actions.assets.api, request: () => actions.assets.query()}) : null;
+    if (assets) host.prepend(assets.element);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
     description.after(firstFrame.element);
     const failure = el('div', 'fv-ed-gen-failure fv-result-links'), failureBar = el('div', 'fv-ed-failure-actions fv-actions');
@@ -61,8 +94,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         failure.hidden = !selectedFailure;
         failureReason.textContent = selectedFailure?.text || '';
-        // Only a press that never became a part has no part to carry the report button.
-        report.hidden = selectedFailure?.id !== 'submission';
+        report.hidden = !selectedFailure;
         const running = ['queued', 'running', 'cancelling'].includes(status?.state);
         const selected = !!selection && (!!previewSelection || (actions.supportedSelection?.() ?? true));
         // While a part generates, choosing another place offers Generate again; it is queued behind.
@@ -88,7 +120,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         generate.classList.toggle('fv-primary', selected && !busy);
         // A cancel already accepted is not offered again; the bar says it is stopping until the run ends.
         const cancelling = status?.state === 'cancelling' && !held;
-        cancel.hidden = !busy || opening || cancelling; resume.hidden = !stopped;
+        const finalization = clipFinalization(status);
+        cancel.hidden = !busy || opening || cancelling || !held && finalization?.cancelable === false; resume.hidden = !stopped;
         const waiting = status?.state === 'queued' && !(status.blocks || []).some(block => ['queued', 'running'].includes(block.state) && block.prompt_id);
         if (opening) hint.textContent = t('Starting…', '正在开始…');
         else if (held || waiting) hint.textContent = t('Queued', '排队中');
@@ -103,8 +136,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             // A single part needs no number; with nothing else to say it reads "Preparing".
             // The creation panel's own time when it has one, so the bar and the panel never differ; the job's sum until the panel has one.
             const left = words?.over ? null : words?.left ?? remaining;
-            const time = words?.stall || (words?.over ? t('Taking longer than expected', '比预计久，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
-            const stage = words?.stage || (count === 1 && !time ? t('Preparing', '正在准备') : '');
+            const time = finalization ? '' : words?.stall || (words?.over ? t('Taking longer than expected', '比预计久，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
+            const stage = finalization ? t(...CLIP_FINALIZATION_COPY[finalization.key]) : words?.stage || (count === 1 && !time ? t('Preparing', '正在准备') : '');
             const spans = [['fv-ed-gen-part', count > 1 ? t(`Part ${number}/${count}`, `第 ${number}/${count} 段`) : ''],
                 ['fv-ed-gen-stage', stage], ['fv-ed-gen-time', time]];
             const shown = spans.filter(([, text]) => text).map(([cls, text], index) => [cls, index ? ` · ${text}` : text]);
@@ -119,6 +152,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         resizeDescription();
         input.dispatchEvent(new Event('change'));
         generate.title = '';
+        if (assets) { if (selected && !busy) assets.refresh(); else assets.element.hidden = true; }
         if (selected && !busy) {
             const key = JSON.stringify(selection);
             if (estimateCache?.key === key) generate.textContent += estimateCache.label;
@@ -189,7 +223,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); }};
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.
@@ -223,7 +257,7 @@ export function editorBlockStates(job, messages = [], resolve = null) {
             : block.fraction;
         return [block.id, {state: running && live ? 'generating' : states[block.state] || 'waiting',
             ...(['pending', 'queued'].includes(block.state) && !live ? {queued: true} : {}),
-            fraction: Math.max(0, Math.min(1, fraction || 0)),
+            fraction: Math.max(0, Math.min(block.state === 'done' ? 1 : .99, fraction || 0)),
             remainingSeconds: running && live ? live.remaining_seconds ?? live.overall?.remaining_seconds ?? block.remaining_seconds ?? null
                 : block.remaining_seconds ?? null}];
     }));

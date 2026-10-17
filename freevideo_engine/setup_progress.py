@@ -158,3 +158,61 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
         return ' · '.join([t('Downloading ', '正在下载' + gap) + name] +
                           transfer_parts(event.get('done'), total or 0, event.get('rate'), decimal_sizes))
     return ''
+
+
+class ModelLine:
+    """One steady line while a model group downloads: its shards, connections and
+    checks must not take turns on the screen."""
+    STALL_SECONDS, HOLD_SECONDS = 10., 3.
+
+    def __init__(self):
+        self.group = None
+        self.done = self.rate = self.bytes_at = None
+        self.shown = self.shown_at = None
+        self.style = None
+        self.finished = set()
+        self.adopted_at = None
+
+    def line(self, current, groups, connecting, zh=False, decimal_sizes=False, now=None):
+        """The stabilised text, or None when this is not a model download."""
+        now = time.monotonic() if now is None else now
+        name = current.get('name')
+        if (zh, decimal_sizes) != self.style:
+            self.style, self.shown, self.shown_at = (zh, decimal_sizes), None, None
+        if self.group in groups and self.done is not None and self.done >= groups[self.group]['download_bytes']:
+            self.finished.add(self.group)
+        # Groups that download side by side must not take turns: the line stays on one
+        # group until it is complete or has gone quiet, and a finished group is not shown again.
+        since = self.bytes_at if self.bytes_at is not None else self.adopted_at
+        stalled = since is not None and now - since > self.STALL_SECONDS
+        if (current.get('activity') == 'download' and name in groups and name != self.group
+                and name not in self.finished
+                and (self.group is None or self.group in self.finished or stalled)):
+            self.group, self.done, self.rate, self.bytes_at = name, None, None, None
+            self.adopted_at = now
+            self.shown = self.shown_at = None
+        modelish = current.get('activity') in MODEL_ACTIVITIES or current.get('unit') == 'bytes'
+        # A build running beside the download does not take the line while the group is unfinished.
+        if self.group not in groups or not (modelish or self.group not in self.finished):
+            self.group = self.shown = self.shown_at = None
+            return None
+        group = groups[self.group]
+        total = group['download_bytes']
+        done = min(total, group.get('downloaded_bytes') or 0)
+        if self.done is None or done > self.done:
+            self.bytes_at = now if done else self.bytes_at
+        self.done = done
+        if group.get('bytes_per_second'):
+            self.rate = group['bytes_per_second']
+        shown = dict(name=self.group, total=total, done=done, rate=self.rate)
+        if done >= total:
+            text = progress_text(dict(shown, activity='verify'), zh)
+        elif self.bytes_at is None or now - self.bytes_at > self.STALL_SECONDS:
+            text = connecting
+        else:
+            text = progress_text(dict(shown, activity='download', unit='bytes'), zh, decimal_sizes=decimal_sizes)
+        if self.shown is not None and text != self.shown and now - self.shown_at < self.HOLD_SECONDS:
+            return self.shown
+        if text != self.shown:
+            self.shown, self.shown_at = text, now
+        return text

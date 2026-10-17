@@ -68,13 +68,13 @@ def new_id():
     return 'j' + secrets.token_hex(6)
 
 
-def media_item(value, path, *, image=False, frame_default=None):
+def media_item(value, path, *, image=False, frame_default=None, early=False):
     if isinstance(value, str):
         value = {'file': value}
     value = dict(value) if isinstance(value, dict) else value
     if isinstance(value, dict) and frame_default is not None and any(k in value for k in ('from_job', 'library')):
         value.setdefault('frame', frame_default)
-    errors = contract.issues(contract.media(image, local=True), value, path)
+    errors = contract.issues(contract.media(image, local=True, early=early), value, path)
     if errors:
         raise SpecError(errors)
     return value
@@ -131,6 +131,9 @@ def sampling(value):
     quality = value.get('quality', contract.generate()['properties']['quality']['default'])
     two, base, refine = QUALITY[quality]
     custom = value.get('sampling', {})
+    if two and custom.get('two_pass') is False and 'base_steps' not in custom:
+        # One pass always samples 20 steps unless the caller gives its own count.
+        base = 20
     two, base, refine = custom.get('two_pass', two), custom.get('base_steps', base), custom.get('refine_steps', refine)
     note = None
     if two:
@@ -138,13 +141,18 @@ def sampling(value):
         # Only the 8-step first pass goes two-pass; any other count is one pass, said once in the answer.
         note = one_pass_note(base)
         two = two and note is None
-    # A level's step cache stays only with that level's own plan; custom sampling runs every step.
-    cache = tiers.step_cache(quality, mac) if QUALITY[quality] == (two, base, refine) else None
+    # A level's step cache and upscale factor stay only with that level's own plan; custom sampling
+    # runs every step and upscales 2x.
+    own = QUALITY[quality] == (two, base, refine)
+    cache = tiers.step_cache(quality, mac) if own else None
+    factor = tiers.upscale_factor(quality, mac) if own and two else 2
     if custom:
         quality = next((k for k, v in QUALITY.items() if v == (two, base, refine)
-                        and tiers.step_cache(k, mac) == cache), 'custom')
+                        and tiers.step_cache(k, mac) == cache
+                        and (not two or tiers.upscale_factor(k, mac) == factor)), 'custom')
     return dict(quality=quality, two_pass=two, base_steps=base, refine_steps=refine,
-                **({'step_cache': cache} if cache else {}), **({'sampling_note': note} if note else {}))
+                **({'step_cache': cache} if cache else {}), **({'upscale_factor': factor} if factor != 2 else {}),
+                **({'sampling_note': note} if note else {}))
 
 
 def generation_media(value):
@@ -152,7 +160,7 @@ def generation_media(value):
         return {}
     result = {role: media_item(value[role], '/media/' + role, image=True) for role in FRAMES if value.get(role) is not None}
     if value.get('references'):
-        result['references'] = [media_item(v, '/media/references/%d' % i) for i, v in enumerate(value['references'])]
+        result['references'] = [media_item(v, '/media/references/%d' % i, early=True) for i, v in enumerate(value['references'])]
     return result
 
 
@@ -283,6 +291,8 @@ def comfy_prompt(spec, node, *, prompt, assets, refine_from=''):
         inputs['first_frame_reference'] = True
     if spec.get('step_cache'):
         inputs['step_cache'] = spec['step_cache']
+    if spec.get('upscale_factor', 2) != 2 and spec['two_pass'] and not spec['preview']:
+        inputs['upscale_factor'] = '%g' % spec['upscale_factor']
     graph = {node: {'class_type': 'FreeVideoGenerate', 'inputs': inputs,
                     '_meta': {'title': 'FreeVideo · ' + (spec.get('label') or 'Agent job')}}}
     if assets:

@@ -4,7 +4,9 @@ Summarised from MiniMax's h3-prompt-writing skill (linked below) and FreeVideo's
 own prompt rules; the enhancement job applies the same contract.
 """
 from ..default_prompt import DEFAULT_PROMPT
-from .schema import CAST_OPERATIONS, DRAMA_OPERATIONS, IMAGE_OPERATIONS, PROJECT_OPERATIONS, SESSION_OPERATIONS
+from .schema import CAST_OPERATIONS, DRAMA_OPERATIONS, IMAGE_OPERATIONS, PROJECT_OPERATIONS, SESSION_OPERATIONS, WHITEBOX_OPERATIONS
+
+from .whitebox import SCENE_PROMPT
 
 SOURCE = 'https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing'
 
@@ -71,10 +73,10 @@ GUIDE = {
         'the draft and looks plainer than a direct generation, so keep the direct one when the user prefers its look.',
     ],
     'quality': [
-        'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass (default); "medium" = 8 steps, '
-        '"high" = 20 steps with a step cache, "max" = 20 steps with a step cache that skips less work, each in one pass. '
-        '"max" runs plain 20 steps when the GPU has no room for its cache. On a Mac, "high" is the same and '
-        '"max" is 20 plain steps.',
+        'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass, the first pass at half size '
+        '(default); "medium" = the same 8 + 3 two-pass with a larger first pass, for more detail; "high" = 20 steps '
+        'with a step cache and "max" = 20 plain steps, each in one pass. The same on a Mac. sampling.two_pass=false '
+        'without base_steps runs 20 steps.',
         'Two-pass generation runs only with 8 first-pass steps. Any other base_steps (for example 20 with '
         'two_pass=true) runs in one pass of that many steps; the job notice says so. A preview is always two-pass '
         'with 8 steps.',
@@ -83,7 +85,7 @@ GUIDE = {
         'Single-block frames are 24 fps on a 17n+5 grid (6 s -> 6.583 s, 10 s -> 10.125 s). '
         'Under 30 s defaults to one generation when the device supports this size and quality; unknown limits use 15 s. '
         'Otherwise it uses as few parts as possible, each at least 10 s; how many depends on how long this computer can generate in one run, and the parts continue and join automatically. '
-        'Multiple blocks or continue_from need two-pass text generation: quality "light" '
+        'Multiple blocks or continue_from need two-pass text generation: quality "light" or "medium" '
         'or sampling.two_pass=true and no preview. Their only media is media.references with at most 3 pictures, '
         'which every continuing part also sees (keeps the same people); first_frame_reference then gives way to them. '
         'Multi-block output is cut to the planned duration. POST /plan shows the chain plan. '
@@ -133,6 +135,17 @@ GUIDE = {
         'A new paint layer is empty, so heal and clone there have nothing to work from; paint and gradients go on a paint layer above a locked picture.',
         'On 409 image_changed, recompute from error.image and its current_revision. POST /images/{id}/render makes a PNG input file from the revision you read; use the job result file as a picture source.',
     ],
+    'whitebox': [
+        'A white model is a rough 3D stand-in for the shot (boxes, camera, motion) rendered in the user\'s FreeVideo page. Used as a reference video that guides only the first steps, the final video keeps its layout and motion.',
+        'Use it only when the user asked for it: the user message carries whitebox=true, or the user says so. Never choose it yourself, and never suggest it as a default.',
+        'Write the scene with the prompt in whitebox_scene_prompt (replace {SHOT} with the user\'s one-sentence shot). POST /whitebox with the code and a one-sentence summary; it needs the page open and answers page_required otherwise: tell the user to open FreeVideo.',
+        'Read GET /whitebox/{id} every few seconds. On failed, fix the code from error and send it again, at most 3 retries; if they all fail, tell the user and stop, with no silent fallback.',
+        'On ready, ask the user to approve it first: write a confirm event with whitebox={work, seconds, summary}. After approval, generate with media.references=[{"library": work, "early_steps": K}] where K is about 3/8 of the first-pass steps rounded (8 steps -> 3, 20 steps -> 8; early_ratio in the ready answer), so the white model keeps the same share of the schedule on every quality level. The prompt describes the real look of the final video, not white boxes. Use no other kind of reference with it unless the user gave one.',
+        'When the user wants a change, write a new scene from the edited description and repeat; the earlier white model stays in the library.',
+    ],
+    'whitebox_scene_prompt': SCENE_PROMPT,
+    'whitebox_routes': [dict(operation=name, method=method, path=path, description=summary)
+                        for name, (method, path, summary) in WHITEBOX_OPERATIONS.items()],
     'image_routes': [dict(operation=name, method=method, path=path, description=summary)
                      for name, (method, path, summary) in IMAGE_OPERATIONS.items()],
     'sessions': [
@@ -272,6 +285,8 @@ CAPABILITIES_ZH = {
     ('GET', '/library/{day}/{run}/file'): '下载已保存的视频',
     ('GET', '/library/{day}/{run}/thumbnail'): '查看已保存的视频缩略图',
     ('GET', '/queue'): '查看队列顺序及任务属于 Agent 还是用户',
+    ('POST', '/whitebox'): '发送你写好的白模场景代码，由用户打开的 FreeVideo 页面渲染成短视频并存入作品库；页面没打开返回 page_required',
+    ('GET', '/whitebox/{id}'): '查看白模场景进度：waiting、rendering、ready（work 是作品库编号，放进 media.references 并加 early_steps）或 failed（error）',
     ('GET', '/editor/sources/content'): '下载剪辑项目的源素材或缩略图；使用 GET /projects/{id} 返回的素材标识',
     ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 50 秒；again=true 表示暂时没有，再调一次',
     ('POST', '/drama/plan'): '预览多镜头影片的剧本和各镜头拍摄条数，不保存、不提交。'
@@ -543,8 +558,8 @@ GUIDE['cast'] = [
     'Changes need the revision you read (body revision or If-Match); stale_revision returns the current card in '
     'error.card. Fields the user changed return changed_by_user: keep the user\'s version.',
     'Film with a card by setting characters.<key>.card. Cards are read when each take is submitted. Shots that '
-    'continue the previous one carry one card picture per person (a person alone: the sheet and a face close-up) for '
-    'at most 3 people, and keep the voices of the previous shot; POST /drama/plan shows each shot\'s cast. '
+    'continue the previous one carry the sheet and the face for a single person, else one picture each (the face, '
+    'else the front) for at most 3 people, and keep the voices of the previous shot; POST /drama/plan shows each shot\'s cast. '
     'A shot\'s own references replace the card pictures; references=[] sends none. '
     'A shot with a carded character is at most 15 s; continue it in the next shot to go longer.',
     'POST /cast/{id}/generate makes reference pictures from the description as a normal job (face=true adds a close-up). '
