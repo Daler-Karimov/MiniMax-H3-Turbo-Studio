@@ -66,6 +66,27 @@ ApplicationWindow {
     function sourceName(value) { return ({"auto": t("Automatic", "自动选择"), "official": "Hugging Face", "hf-mirror": t("HF Mirror", "HF 镜像"), "modelscope": t("ModelScope", "魔搭")})[value] || value }
     function number(n) { return typeof n === "number" && isFinite(n) }
     function fraction(row) { return row && number(row.total) && row.total > 0 && number(row.done) && row.done <= row.total ? row.done / row.total : -1 }
+    function gb(n) { return n >= 1e9 ? (n / 1e9).toFixed(1) + "\u00a0GB" : Math.max(1, Math.round(n / 1e6)) + "\u00a0MB" }
+    // "6.0 GB · about 12 min"; the time only when a real download speed has been measured.
+    function sizeAndTime(n, rate) {
+        var size = gb(n), speed = rate > 0 ? rate : s.bytes_per_second
+        if (!(speed > 0) || !(n > 0)) return size
+        var seconds = n / speed, minutes = Math.ceil(seconds / 60)
+        return size + " · " + (seconds >= 60 ? t("about " + minutes + " min", "约 " + minutes + " 分钟") : t("under 1 min", "不到 1 分钟"))
+    }
+    // The home-page line for the prompt model: the suggestion, then progress, a pause or the reason it stopped.
+    function promptModelLine() {
+        var m = s.prompt_model, total = gb(m.total_bytes), done = gb(m.downloaded_bytes)
+        if (m.busy) {
+            var rate = m.install.bytes_per_second, left = m.total_bytes - m.install.done
+            var more = rate > 0 || s.bytes_per_second > 0 ? sizeAndTime(left, rate).split(" · ")[1] : ""
+            return t("Downloading the prompt model · ", "正在下载提示词模型 · ") + gb(m.install.done) + " / " + total + (more ? " · " + more : "")
+        }
+        if (m.failure) return m.failure
+        if (m.install.state === "cancelled") return t("Prompt model download paused · ", "提示词模型下载已暂停 · ") + done + " / " + total
+        return t("You can also download the prompt model (", "可以再下载提示词模型（") + sizeAndTime(m.total_bytes).replace(" · ", t(", ", "，"))
+               + t(") to refine prompts before generating.", "），生成前会自动完善提示词。")
+    }
     function bytes(n) {
         // macOS counts in decimal units like Finder: 1.26 TB, 64.4 GB.
         if (s.decimal_sizes) {
@@ -634,20 +655,37 @@ ApplicationWindow {
                         FText { visible: !!s.offline.detail; text: s.offline.detail + (number(s.offline.total) ? " · " + bytes(s.offline.done) + " / " + bytes(s.offline.total) : ""); color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
                     }
                     FCard {
-                        visible: !manualEnvironment && !offlineSelected; Layout.fillWidth: true; padding: 16
-                        FSwitch {
-                            objectName: "samplingCaches"; Layout.fillWidth: true
-                            text: t("Prepare all quality levels", "提前下载全部质量档位")
-                            detail: t("Optional sampling caches · ", "可选采样缓存 · ") + bytes(s.sampling_cache_bytes)
-                            checked: !!s.form.sampling_caches; enabled: !s.busy
-                            onToggled: backend.edit("sampling_caches", checked)
-                        }
-                    }
-                    FCard {
-                        objectName: "imageModelCard"
-                        visible: Qt.platform.os !== "osx" && !!s.image_pack && s.image_pack.total_bytes > 0 && s.image_pack.state !== "ready"
-                        Layout.fillWidth: true; padding: 16
+                        objectName: "aheadCard"
+                        visible: !manualEnvironment && !offlineSelected; Layout.fillWidth: true; padding: 16; spacing: 12
+                        FText { text: t("Download ahead", "提前下载"); font.weight: Font.DemiBold; Layout.fillWidth: true }
                         RowLayout {
+                            Layout.fillWidth: true; spacing: 14
+                            FCheck {
+                                objectName: "samplingCaches"; Layout.fillWidth: true
+                                text: t("Sampling data for all quality levels", "全部质量档位的采样数据")
+                                checked: !!s.form.sampling_caches; enabled: !s.busy
+                                onToggled: backend.edit("sampling_caches", checked)
+                            }
+                            FText { objectName: "samplingCachesSize"; color: theme.muted; text: win.sizeAndTime(s.sampling_cache_bytes) }
+                        }
+                        RowLayout {
+                            objectName: "promptModelRow"
+                            visible: !!s.prompt_model && !s.prompt_model.ready
+                            Layout.fillWidth: true; spacing: 14
+                            FCheck {
+                                objectName: "promptModelSwitch"; Layout.fillWidth: true
+                                text: t("Prompt model", "提示词模型")
+                                checked: !!s.form.prompt_model && s.prompt_model.enough_disk; enabled: !s.busy && s.prompt_model.enough_disk
+                                onToggled: backend.edit("prompt_model", checked)
+                            }
+                            FText {
+                                objectName: "promptModelSize"; color: theme.muted
+                                text: s.prompt_model.enough_disk ? win.sizeAndTime(s.prompt_model.total_bytes) : win.gb(s.prompt_model.total_bytes) + " · " + t("Not enough disk space", "磁盘空间不足")
+                            }
+                        }
+                        RowLayout {
+                            objectName: "imageModelCard"
+                            visible: Qt.platform.os !== "osx" && !!s.image_pack && s.image_pack.total_bytes > 0 && s.image_pack.state !== "ready"
                             Layout.fillWidth: true; spacing: 14
                             FCheck {
                                 objectName: "imageModelSwitch"; Layout.fillWidth: true
@@ -657,7 +695,7 @@ ApplicationWindow {
                             }
                             FText {
                                 objectName: "imageModelSize"; color: theme.muted
-                                text: s.image_pack.enough_disk ? bytes(s.image_pack.total_bytes).replace(" ", "\u00a0") : t("Not enough disk space", "磁盘空间不足")
+                                text: s.image_pack.enough_disk ? win.sizeAndTime(s.image_pack.total_bytes) : win.gb(s.image_pack.total_bytes) + " · " + t("Not enough disk space", "磁盘空间不足")
                             }
                         }
                     }
@@ -920,6 +958,27 @@ ApplicationWindow {
                         FMeter {
                             objectName: "imagePackProgress"; visible: s.image_pack.busy; Layout.fillWidth: true; active: visible
                             fraction: s.image_pack.install.total > 0 ? s.image_pack.install.done / s.image_pack.install.total : -1
+                        }
+                    }
+                    FCard {
+                        objectName: "promptModelCard"
+                        visible: !!s.prompt_model && !s.prompt_model.ready && (s.prompt_model.suggest || s.prompt_model.busy
+                                 || ["failed", "cancelled"].indexOf(s.prompt_model.install.state) >= 0)
+                        Layout.fillWidth: true; padding: 16; spacing: 10
+                        FText {
+                            objectName: "promptModelText"; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                            text: win.promptModelLine()
+                        }
+                        FMeter {
+                            objectName: "promptModelProgress"; visible: s.prompt_model.busy; Layout.fillWidth: true; active: visible
+                            fraction: s.prompt_model.install.total > 0 ? s.prompt_model.install.done / s.prompt_model.install.total : -1
+                        }
+                        Flow {
+                            Layout.fillWidth: true; spacing: 8
+                            FButton { objectName: "promptModelDownload"; visible: !s.prompt_model.busy
+                                text: s.prompt_model.suggest ? t("Download", "下载") : t("Resume", "继续"); enabled: !s.busy; onClicked: backend.promptModelAction("install") }
+                            FButton { objectName: "promptModelPause"; visible: s.prompt_model.busy; text: t("Pause", "暂停"); onClicked: backend.promptModelAction("cancel") }
+                            FButton { objectName: "promptModelDismiss"; visible: s.prompt_model.suggest; text: t("Don't ask again", "不再提示"); flat: true; onClicked: backend.dismissPromptHint() }
                         }
                     }
                 }

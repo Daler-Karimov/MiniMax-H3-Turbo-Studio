@@ -2,6 +2,7 @@
 import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
 import {createExpandButton} from './editor_expand.js';
+import {createRequestAssets} from './request_assets.js';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 export const timeEstimate = (seconds, t) => seconds == null ? '' : seconds < 60
     ? t(`about ${Math.max(1, Math.ceil(seconds))} s`, `约 ${Math.max(1, Math.ceil(seconds))} 秒`)
@@ -47,6 +48,9 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     input.dataset.fvGuide = 'editor-describe'; generate.dataset.fvGuide = 'editor-generate';
     for (const button of [generate, cancel, resume]) button.type = 'button';
     host.append(hint, note, description, generate, cancel, resume);
+    // What this part will download first, above the bar like the studio's line above Generate.
+    const assets = actions.assets ? createRequestAssets({t, api: actions.assets.api, request: () => actions.assets.query()}) : null;
+    if (assets) host.prepend(assets.element);
     const firstFrame = createFirstFrameSwitch(host, {state, t, actions});
     description.after(firstFrame.element);
     const failure = el('div', 'fv-ed-gen-failure fv-result-links'), failureBar = el('div', 'fv-ed-failure-actions fv-actions');
@@ -149,6 +153,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         resizeDescription();
         input.dispatchEvent(new Event('change'));
         generate.title = '';
+        if (assets) { if (selected && !busy) assets.refresh(); else assets.element.hidden = true; }
         if (selected && !busy) {
             const key = JSON.stringify(selection);
             if (estimateCache?.key === key) generate.textContent += estimateCache.label;
@@ -219,7 +224,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); }};
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.

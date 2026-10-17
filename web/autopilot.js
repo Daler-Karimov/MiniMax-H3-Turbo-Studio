@@ -2,6 +2,7 @@
 import { api } from '../../scripts/api.js';
 import { agentConnectCard, connectionLabel } from './agent_connect.js';
 import { about, agentChat, jobName } from './autopilot_chat.js';
+import { createRequestAssets } from './request_assets.js';
 import { openEditorView } from './editor_loader.js';
 import { closeDialog } from './motion.js';
 import { productVersion } from './updates.js';
@@ -46,7 +47,15 @@ export function openAutopilotView(node, {studio = null} = {}) {
     const card = agentConnectCard(t, api, () => inSight() && !card.element.hidden);
     // Leaving for another view waits until this page has closed, so the view underneath is never covered twice.
     const closed = () => dialog.open ? new Promise(done => { dialog.addEventListener('close', done, {once: true}); closeDialog(dialog); }) : null;
-    const chat = agentChat(t, api, {shown: inSight, productVersion,
+    // The next video at the studio's current settings; the agent may choose others, so this is only what is missing now.
+    const assets = createRequestAssets({t, api, request: () => {
+        const value = Object.fromEntries((node.widgets || []).filter(widget => widget.name).map(widget => [widget.name, widget.value]));
+        if (!(value.width > 0 && value.height > 0 && value.seconds > 0)) return null;
+        return new URLSearchParams({width: value.width, height: value.height, seconds: value.seconds, task: 't2va',
+            base_steps: value.base_steps ?? 8, refine_steps: value.refine_steps ?? 3, two_pass: value.two_pass === false ? '0' : '1',
+            enhance: node.properties?.freevideo_prompt_versions?.enabled ? '1' : '0'});
+    }});
+    const chat = agentChat(t, api, {shown: inSight, productVersion, hint: assets,
         // Creations continues the work on the editor timeline; this page gives way first.
         open: async job => (await import('./library.js')).openLibrary(t, {selectedWork: job.work, back: t('Back to chat', '返回对话'),
             extend: async (record, options) => { await closed(); return openExtendEditor(record, node, {studio, ...options}); }}),
@@ -90,11 +99,11 @@ export function openAutopilotView(node, {studio = null} = {}) {
     dialog.append(header, body);
     dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(dialog); });
     dialog.onclose = () => {
-        card.stop(); chat.stop(); dialog.remove();
+        card.stop(); chat.stop(); assets.dispose(); dialog.remove();
         if (current === dialog) current = null;
         next();
     };
-    current = dialog; document.body.append(dialog); dialog.showModal(); viewChanged('autopilot', node); show();
+    current = dialog; document.body.append(dialog); dialog.showModal(); viewChanged('autopilot', node); show(); assets.refresh(true);
     navigation.querySelector('[data-view=autopilot]').focus();
     return dialog;
 }

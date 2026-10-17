@@ -384,7 +384,9 @@ class Service:
             with runtime_lock(Path(root) / 'engine.lock', inherit=False) as descriptor:
                 self.check()
                 if action == 'install':
-                    assets.install(root, self.progress, self.check)
+                    # The launcher's background download writes the same partial files under this lock.
+                    with runtime_lock(Path(root) / 'prompt-vlm-install.lock', inherit=False):
+                        assets.install(root, self.progress, self.check)
                     self.check()
                     self.progress(dict(phase='complete'))
                 else:

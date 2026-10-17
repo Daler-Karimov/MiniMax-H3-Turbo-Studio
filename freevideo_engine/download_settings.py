@@ -39,6 +39,42 @@ def read(path):
     return value
 
 
+SPEED_FILE = 'download-speed.json'
+SPEED_MIN_BYTES = 32 * 2**20
+
+
+def record_speed(root, size, seconds):
+    """Remember how fast the last large download ran, to say how long the next one takes."""
+    if not (size >= SPEED_MIN_BYTES and seconds >= 1.5):
+        return
+    path = Path(root) / SPEED_FILE
+    rate = size / seconds
+    try:
+        old = observed_speed(root)
+        save(path, dict(bytes_per_second=rate if old is None else (old + rate) / 2, updated_at=time.time()))
+    except OSError:
+        pass  # A missing estimate only hides the time, never stops a download.
+
+
+def observed_speed(root):
+    """Bytes per second of recent real downloads, else the best connected source of the last speed test."""
+    try:
+        rate = json.loads(io_path(Path(root) / SPEED_FILE).read_text(encoding='utf-8')).get('bytes_per_second')
+        if isinstance(rate, (int, float)) and math.isfinite(rate) and rate > 0:
+            return float(rate)
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        rows = [r for family in read(Path(root) / 'download-settings.json').get('probe', {}).get('sources', {}).values()
+                for r in family if r.get('ok') and r.get('speed_measured') is not False]
+        rates = [r['bytes_per_second'] for r in rows
+                 if isinstance(r.get('bytes_per_second'), (int, float)) and math.isfinite(r['bytes_per_second'])
+                 and r['bytes_per_second'] > 0]
+        return float(max(rates)) if rates else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
 def preference(root, source=None, *, proxy_mode=None):
     if source is not None and source not in CHOICES:
         raise ValueError('Choose Auto, Hugging Face, HF Mirror or ModelScope')

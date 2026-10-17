@@ -804,6 +804,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         references: panel.references ? {source: panel.references, notify, size: () => capability.generationSize || generationSize(state.record),
             visible: () => store.generationAvailable && actions.supportedSelection() ? partStart() : null} : null,
         setFirstFrame: value => { state.apply(t('First-frame reference', '首帧参考'), record => model.setFlag(record, 'first_frame_reference', value)); },
+        // The sampling data and models the next generated part would still download first.
+        assets: {api, query: () => {
+            const size = capability.generationSize || generationSize(state.record), set = state.record.settings || {};
+            return new URLSearchParams({width: size.width, height: size.height, seconds: 5, task: 't2va', enhance: '0',
+                base_steps: set.base_steps ?? 8, refine_steps: set.refine_steps ?? 3, two_pass: set.two_pass === false ? '0' : '1'});
+        }},
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
             const range = selectionRange(selection); if (!range) return null;

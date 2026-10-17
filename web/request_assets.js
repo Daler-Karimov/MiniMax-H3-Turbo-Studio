@@ -1,4 +1,11 @@
 // One muted line above Generate: what this request will download first.
+export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
+// ", about 5 min" after a size, only when a real download speed is known.
+export function timeAfter(bytes, rate, t) {
+    if (!(bytes > 0) || !(rate > 0)) return '';
+    const text = about(bytes / rate, t).replaceAll(' ', '\u00a0'); // "about 2 min" never breaks across lines
+    return t(', ' + text.charAt(0).toLowerCase() + text.slice(1), '，' + text);
+}
 // LoRA file names this request would load, through the whole `previous` chain.
 export function enabledLoras(start, {upstream, widget, value}) {
     const names = [];
@@ -33,8 +40,8 @@ export function createRequestAssets({t, api, request, onError = () => {}}) {
     element.hidden = true;
     element.setAttribute('aria-live', 'polite');
     let timer = 0, controller = null, key = '', disposed = false;
-    const size = bytes => bytes >= 2 ** 30 ? (bytes / 2 ** 30).toFixed(1) + ' GB' : Math.max(1, Math.round(bytes / 2 ** 20)) + ' MB';
-    function lines(items) {
+    const size = bytes => bytes >= 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(bytes / 1e6)) + ' MB';
+    function lines(items, rate) {
         const rows = [];
         // One line names what Generate will fetch first: the two-pass model, then the sampling data.
         const names = {upscaler: t('two-pass model', '二次采样模型'), sampling: t('sampling data', '采样数据')};
@@ -46,10 +53,12 @@ export function createRequestAssets({t, api, request, onError = () => {}}) {
         }
         const parts = [['upscaler', names.upscaler], ['sampling', names.sampling], ['other', t('other model files', '其他模型文件')]]
             .filter(([kind]) => bytes[kind]).map(([kind, name]) => `${name} ${size(bytes[kind])}`);
-        if (parts.length) rows.push(t(`Downloads before generating: ${parts.join(', ')}`, `生成前会先下载：${parts.join('、')}`));
+        const wait = timeAfter(Object.values(bytes).reduce((sum, n) => sum + n, 0), rate, t);
+        if (parts.length) rows.push(t(`Downloads before generating: ${parts.join(', ')}${wait}`, `生成前会先下载：${parts.join('、')}${wait}`));
         for (const item of items) {
             if (item.kind === 'prompt-vlm') {
-                rows.push(t(`First prompt rewrite downloads ${size(item.bytes)}`, `首次改写提示词会先下载 ${size(item.bytes)}`));
+                const wait = timeAfter(item.bytes, rate, t);
+                rows.push(t(`First prompt rewrite downloads ${size(item.bytes)}${wait}`, `首次改写提示词会先下载 ${size(item.bytes)}${wait}`));
             } else if (item.kind === 'lora') {
                 const names = (item.names || []).map(short);
                 rows.push(t(`LoRA not found: ${names.join(', ')}`, `找不到 LoRA：${names.join('、')}`));
@@ -57,8 +66,8 @@ export function createRequestAssets({t, api, request, onError = () => {}}) {
         }
         return rows;
     }
-    function show(items) {
-        const rows = lines(items);
+    function show(items, rate = 0) {
+        const rows = lines(items, rate);
         element.replaceChildren(...rows.map(text => Object.assign(document.createElement('div'), {textContent: text})));
         element.hidden = rows.length === 0;
     }
@@ -76,7 +85,7 @@ export function createRequestAssets({t, api, request, onError = () => {}}) {
                 if (!reply.ok) return;
                 const result = await reply.json();
                 if (disposed || current.signal.aborted || key !== next) return;
-                show(Array.isArray(result.items) ? result.items : []);
+                show(Array.isArray(result.items) ? result.items : [], Number(result.bytes_per_second) || 0);
             } catch (error) { if (error?.name !== 'AbortError') onError(error); } // Advisory; never blocks Generate.
         }, 300);
     }

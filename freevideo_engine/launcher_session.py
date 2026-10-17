@@ -80,7 +80,7 @@ class Session:
     action_notice = ''
     pending_update = None
     pending_check = None
-    upgrade = image_installer = None
+    upgrade = image_installer = prompt_installer = None
     model_switch = None
     language = 'en'
 
@@ -103,7 +103,7 @@ class Session:
                          url='http://127.0.0.1:8188', models='', model_dirs=[], model_method='auto', environment_method='auto',
                          separate=False, repair=False, new_comfy=True, offline_runtime='', offline_models=[],
                          imported_archives=[], kept_archives=[], sampling_caches=not saved.get('installation'),
-                         image_model=False)
+                         image_model=False, prompt_model=False, prompt_hint_dismissed=False)
         self.form['lan_access'] = False
         self.form.update({k: v for k, v in saved.items() if k in self.form})
         if 'environment_method' not in saved and self.form['offline_runtime']:
@@ -134,7 +134,7 @@ class Session:
         self.tail = Tail()
         self.log_source = None
         self.model_groups = []
-        self.image_installer = None
+        self.image_installer = self.prompt_installer = None
         self.download_export = self.download_error = self.download_error_key = ''
         self._download_view = None
         self.browser_attempted = False
@@ -203,7 +203,7 @@ class Session:
         return bool(self.controller.busy or self.importer.busy or self.cleaner.busy
                     or self.archives_busy or self.closing or self.upgrade and self.upgrade.active
                     or self.model_switch or self.engine_updating
-                    or self.image_installer and self.image_installer.busy)
+                    or self.background_download_busy())
 
     def can_manage(self):
         return not (self.task_busy() or self.update_intent)
@@ -263,7 +263,7 @@ class Session:
         if self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy:
             self.explain_busy()
             return
-        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model'):
+        if key in ('separate', 'repair', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model', 'prompt_model', 'prompt_hint_dismissed'):
             value = bool(value)
         if key == 'url':
             value = local_url(str(value))
@@ -480,7 +480,7 @@ class Session:
             return
         if self.cleaner.busy or self.archives_busy:
             return
-        if self.image_installer and self.image_installer.busy and (
+        if self.background_download_busy() and (
                 name == 'setup' or name == 'update-engine'
                 or name == 'retry' and self.retry_kind() != 'launch'
                 or name == 'primary' and self.page != 'launcher'):
@@ -625,7 +625,7 @@ class Session:
         return (bool(self.selected) and getattr(self.controller, 'fixed_environment', False) is not True
                 and not (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy or self.closing
                          or self.engine_updating or self.upgrade.active or self.model_switch
-                         or self.image_installer and self.image_installer.busy))
+                         or self.background_download_busy()))
 
     def repair_unavailable(self):
         """Why Repair is missing: it appears once a task ends, never in an offline
@@ -781,6 +781,14 @@ class Session:
 
     def start_image_model_after_install(self):
         """The installer's "also install the image model": once ComfyUI opens, the download runs in the background."""
+        if self.form['prompt_model'] and self.installation_engine() and self.controller.state.get('status') == 'open' \
+                and not self.controller.busy and not (self.prompt_installer and self.prompt_installer.busy):
+            from .prompt_vlm import assets
+            if not assets.ready(self._image_location()[1]):
+                self.prompt_model_action('install')
+            if self.prompt_installer and self.prompt_installer.busy or assets.ready(self._image_location()[1]):
+                self.form['prompt_model'] = False
+                self.persist()
         if (not self.form['image_model'] or sys.platform == 'darwin' or not self.installation_engine()
                 or self.controller.state.get('status') != 'open' or self.controller.busy):
             return
@@ -790,6 +798,57 @@ class Session:
         if self.image_installer and self.image_installer.busy:
             self.form['image_model'] = False
             self.persist()
+
+    def background_download_busy(self):
+        return bool(self.image_installer and self.image_installer.busy or self.prompt_installer and self.prompt_installer.busy)
+
+    def prompt_model_action(self, action):
+        from .prompt_vlm import installer as prompt_installer
+        if action == 'cancel':
+            if self.prompt_installer:
+                self.prompt_installer.cancel()
+            return
+        if (self.controller.busy or self.importer.busy or self.cleaner.busy or self.archives_busy
+                or self.closing or self.engine_updating or self.update_intent or self.upgrade.active or self.model_switch
+                or self.updater and self.updater.busy or not self.installation_engine()):
+            return
+        engine = self._image_location()[1]
+        if self.prompt_installer and self.prompt_installer.busy:
+            return
+        if not (self.prompt_installer and self.prompt_installer.root == engine):
+            self.prompt_installer = prompt_installer.Installer(engine, busy=self.generating)
+        self.prompt_installer.start()
+
+    def prompt_model_view(self):
+        """The prompt model as a row of the download card and as the suggestion on the home page."""
+        from .prompt_vlm import assets
+        spec = assets.catalog()
+        total = sum(row['bytes'] for row in spec['files'])
+        engine = self._image_location()[1] if self.installation_engine() else None
+        ready = bool(engine) and assets.ready(engine)
+        installer = self.prompt_installer
+        active = installer.state() if installer and engine and installer.root == engine else {}
+        busy = bool(active and installer.busy)
+        try:
+            folder = Path(self.form['destination'] if self.form['new_comfy'] else self.form['comfy'])
+            if engine:
+                folder = engine
+            enough = disk_space.free_bytes(folder.expanduser()) >= total + 2 * 2**30
+        except Exception:  # A page reading the disk must never fail to draw.
+            enough = True
+        failure = ''
+        if active.get('state') == 'failed':
+            failure = {'disk_space': self.t('Not enough disk space.', '磁盘空间不足。'),
+                       'busy': self.t('Another download of this model is running.', '这个模型正在被另一处下载。')}.get(
+                active.get('reason'), self.t('The download stopped. Resume to continue.', '下载中断了，点继续可接着下载。'))
+        return dict(ready=ready, total_bytes=total, enough_disk=enough, busy=busy, install=active, failure=failure,
+                    downloaded_bytes=active.get('done', 0), title=self.t(*NAMES['text']),
+                    suggest=bool(engine) and not ready and not busy and enough and not self.form['prompt_hint_dismissed']
+                    and active.get('state') not in ('failed', 'cancelled'))
+
+    def dismiss_prompt_hint(self):
+        self.form['prompt_hint_dismissed'] = True
+        self.persist()
 
     def upgrade_model(self):
         """The user's one consent: download int8 beside the current model, switch, then release the old one.
@@ -1142,12 +1201,15 @@ class Session:
             return
         if self._open_release_page():
             return
-        if (self.image_installer and self.image_installer.busy and not self.controller.busy
+        if (self.background_download_busy() and not self.controller.busy
                 and not self.importer.busy and not self.cleaner.busy and not self.archives_busy
                 and not self.closing and not self.upgrade.active and not self.model_switch):
             # An explicit update goes first. The image model download is the long, quiet kind and
             # keeps what it has; it carries on from there when the user continues it.
-            self.image_installer.cancel()
+            if self.image_installer:
+                self.image_installer.cancel()
+            if self.prompt_installer:
+                self.prompt_installer.cancel()
         if self.task_busy() or self.updater and self.updater.busy:
             self.pending_update = (token, source)
             self.action_notice = 'update_queued'
@@ -1495,6 +1557,10 @@ class Session:
                 self.image_installer.cancel()
                 if self.image_installer.thread:
                     self.image_installer.thread.join(5)
+            if self.prompt_installer:
+                self.prompt_installer.cancel()
+                if self.prompt_installer.thread:
+                    self.prompt_installer.thread.join(5)
             self.controller.close()
             from .launcher_bridge import remove
             remove(self.bridge)
@@ -2045,6 +2111,12 @@ class Session:
                 rate='%.1f MiB/s' % (item['bytes_per_second']/2**20) if item.get('bytes_per_second') else ''))
         image_pack = self.image_pack_view()
         image_pack['enough_disk'] = self.image_disk_fits(image_pack['total_bytes'])
+        prompt_model = self.prompt_model_view()
+        try:
+            from .download_settings import observed_speed
+            speed = observed_speed(self.engine_root()) or 0
+        except Exception:
+            speed = 0
         if image_pack['visible'] and 'image' not in by_id:
             models.append(dict(id='image', title=image_pack['title'], state=image_pack['state'],
                                detail=image_pack['detail'], done=image_pack['downloaded_bytes'],
@@ -2156,6 +2228,7 @@ class Session:
         if inspection_read_error:
             download_state.update(error=self.t(*DOWNLOAD_COPY['error_read']), needs_check=True)
         return plain_data(dict(download_list=download_state, sampling_cache_bytes=total_bytes(), version=__version__, image_pack=image_pack,
+            prompt_model=prompt_model, bytes_per_second=speed,
             disk=disk, decimal_sizes=sys.platform == 'darwin', zh=self.language.startswith('zh'), form=dict(self.form),
             page=self.page, status=row.get('status', 'idle'), busy=busy, working=working,
             action_notice=self.t(*ACTION_COPY[self.action_notice]) if self.action_notice else '',

@@ -38,7 +38,7 @@ def sanitize(value):
     extra = value.get('extra_model_dirs', []) if isinstance(value, dict) else []
     value = plain_data(value) if isinstance(value, dict) else {}
     result = {k: value[k] for k in TEXT if isinstance(value.get(k), str)}
-    for key in ('separate', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model'):
+    for key in ('separate', 'new_comfy', 'sampling_caches', 'lan_access', 'image_model', 'prompt_model', 'prompt_hint_dismissed'):
         if type(value.get(key)) is bool:
             result[key] = value[key]
     if value.get('model_method') in ('auto', 'manual', 'reuse'):

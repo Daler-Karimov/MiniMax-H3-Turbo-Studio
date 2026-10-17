@@ -1018,6 +1018,10 @@ def download(candidates, path, expected, progress=None, *, network=None, env=Non
                     if matches(partial, name):
                         from .file_ops import publish
                         publish(partial, path)
+                        if network.get('download_settings_path'):
+                            from .download_settings import record_speed
+                            record_speed(Path(network['download_settings_path']).parent,
+                                         max(0, current_size - offset), time.monotonic() - started)
                         source_health(network, category, name, True)
                         route_health(network, category, name, route)
                         event(network, category=category, source=name, route=route, file=path.name, action='verified', method='curl', bytes=path.stat().st_size)

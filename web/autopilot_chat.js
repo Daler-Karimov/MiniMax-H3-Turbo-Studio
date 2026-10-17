@@ -7,6 +7,7 @@ import { estimatedFraction, remainingAbove, remainingShown, createDiagnosticRepo
 import {createErrorReport} from './error_panel.js';
 import {canDeleteConversation, conversationMenu, emptyConversations, hasConversations, mergeConversations, removeConversation, runningElsewhere, selectConversation} from './autopilot_conversations.js';
 import {renderImageFailure} from './image_generation.js';
+import {about} from './request_assets.js';
 
 const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./autopilot_chat.css', import.meta.url).href; document.head.append(css);
 
@@ -41,7 +42,7 @@ function failureReason(value, t) {
     return t(error?.message || 'Did not finish', reason || GENERIC_FAILURE_ZH);
 }
 
-export const about = (seconds, t) => seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min`, `约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
+export {about};
 export function clock(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 export const jobName = (job, t) => job.label || (job.kind === 'image' ? t('Picture', '图片') : t('Video', '视频'));
 export const jobFraction = job => Math.max(0, Math.min(1, Number(job.progress?.fraction) || 0));
@@ -232,7 +233,7 @@ function imageViewer(t, src, name, opener, failed) {
 // open(job) shows a finished video in Creations, edit(job) takes it to the editing view. shown() says whether the
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
-export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null} = {}) {
+export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null, hint = null} = {}) {
     const element = el('section', 'fv-chat'), main = el('div', 'fv-chat-main'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
     log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Conversation', '对话'));
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
@@ -242,6 +243,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
     form.append(input, sendButton); scroller.append(log); main.append(scroller, down, form); element.append(main);
     const notice = el('p', 'fv-chat-notice'); notice.hidden = true; notice.setAttribute('role', 'status'); main.insertBefore(notice, form);
+    // What the next video would download first, the studio's line, above the box the request is typed in.
+    if (hint) main.insertBefore(hint.element, form);
     // A quoted button name stays on one line, so “新对话” never wraps in the middle.
     function quoted(node, text) {
         const parts = String(text).split(/(“[^”]{1,12}”|"[^"]{1,24}")/);

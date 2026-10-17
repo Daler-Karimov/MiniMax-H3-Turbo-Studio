@@ -165,6 +165,14 @@ def create_ui(session, *, show=True):
         def imagePackAction(self, action):
             self.invoke(session.image_pack_action, action)
 
+        @Slot(str)
+        def promptModelAction(self, action):
+            self.invoke(session.prompt_model_action, action)
+
+        @Slot()
+        def dismissPromptHint(self):
+            self.invoke(session.dismiss_prompt_hint)
+
         @Slot()
         def cancelModelUpgrade(self):
             self.invoke(session.cancel_model_upgrade)

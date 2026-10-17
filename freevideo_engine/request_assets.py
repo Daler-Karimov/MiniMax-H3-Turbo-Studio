@@ -87,4 +87,6 @@ def inspect(root, machine, request, *, lora_names=None):
         if absent:
             items.append(dict(id='lora', kind='lora', files=len(absent), bytes=0, source='',
                               action='manual', names=absent[:8]))
-    return dict(items=items, bytes=sum(item['bytes'] for item in items), ready=not items)
+    from .download_settings import observed_speed
+    return dict(items=items, bytes=sum(item['bytes'] for item in items), ready=not items,
+                bytes_per_second=observed_speed(root))

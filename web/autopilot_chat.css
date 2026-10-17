@@ -144,3 +144,5 @@
 .fv-chat-me>.fv-chat-actions{margin-top:6px;flex-wrap:wrap;justify-content:flex-end}
 .fv-chat-me .fv-chat-error{flex:1;min-width:0}
 .fv-chat-keep{white-space:nowrap}
+.fv-chat-main > .fv-request-assets{font-size:12px;line-height:1.5;margin:0 0 6px;padding:0 4px}
+.fv-chat-main > .fv-request-assets[hidden]{display:none}

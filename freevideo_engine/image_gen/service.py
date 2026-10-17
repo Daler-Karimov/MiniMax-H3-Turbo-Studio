@@ -14,6 +14,7 @@ import time
 import uuid
 
 from . import image_pack
+from ..download_settings import observed_speed
 from .failure import Context, ERRORS, FailureError, MESSAGE_ZH, NO_REPORT, STAGES, classify_exception
 
 BODY_LIMIT = 64 * 1024
@@ -113,6 +114,7 @@ class Service:
         self.queue_thread = None
         self.queue_wake = threading.Event()
         self.finished = OrderedDict()
+        self.pack_installer = None
         atexit.register(self.close)
 
     @staticmethod
@@ -131,7 +133,37 @@ class Service:
                     checking=not ready and image_pack.checking(machine['model_root']),
                     downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
-                    max_images=MAX_IMAGES)
+                    max_images=MAX_IMAGES, install=self.pack_state(ready),
+                    bytes_per_second=None if ready else observed_speed(engine_root))
+
+    def pack_state(self, ready):
+        """Progress of the download this page started, in both languages for a failure."""
+        installer = self.pack_installer
+        if ready or installer is None:
+            return None
+        from ..failure_details import image_pack_failure
+        value = installer.state()
+        row = dict(state=value['state'], done=value.get('done', 0), total=value.get('total', 0),
+                   bytes_per_second=round(value.get('bytes_per_second', 0)))
+        if value['state'] == 'failed':
+            row.update(reason=value.get('reason'), message_en=image_pack_failure(value.get('reason'))['detail'],
+                       message_zh=image_pack_failure(value.get('reason'), zh=True)['detail'])
+        return row
+
+    def pack_action(self, action):
+        """Start or pause the image model download from the page; it yields to a running video."""
+        engine_root, machine = self.installation()
+        root = machine['model_root']
+        with self.mutex:
+            installer = self.pack_installer
+            if action == 'cancel':
+                if installer is not None:
+                    installer.cancel()
+            elif not image_pack.ready(root) and not image_pack.downloading(root, engine_root):
+                if installer is None or installer.root != root or installer.engine_root != engine_root:
+                    installer = self.pack_installer = image_pack.Installer(root, engine_root=engine_root, busy=self.video_busy)
+                installer.start('install', background=True)
+        return self.info()
 
     def request(self, value):
         if not isinstance(value, dict):
@@ -859,6 +891,8 @@ def register():
                 result = service.status(value.get('job'))
             elif name == 'cancel':
                 result = service.cancel(value.get('job'))
+            elif name in ('pack-install', 'pack-cancel'):
+                result = service.pack_action(name.split('-')[1])
             else:
                 result = service.start(name, value)
             return web.json_response(result)

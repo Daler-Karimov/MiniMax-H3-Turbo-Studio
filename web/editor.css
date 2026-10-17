@@ -75,6 +75,8 @@
 .fv-ed-genbar[data-mode=running]>button:not(.fv-ed-generate){order:2}
 .fv-ed-gen-note{font-size:13px;color:var(--fv-ink);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fv-ed-gen-note[hidden]{display:none}
+.fv-ed-genbar .fv-request-assets{order:-2;flex:1 1 100%;min-width:0;font-size:12px;line-height:1.5}
+.fv-ed-genbar .fv-request-assets[hidden]{display:none}
 .fv-editor:has(.fv-ed-gen-failure:not([hidden])){--fv-ed-generation-row:max-content}
 .fv-ed-genbar:has(.fv-ed-gen-failure:not([hidden])){flex-wrap:wrap;padding-top:10px;padding-bottom:10px}
 .fv-editor .fv-ed-gen-failure{display:block;flex:1 0 100%;min-width:0}
