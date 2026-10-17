@@ -21,14 +21,14 @@ export const CHAPTERS = [
         zh: '在这里输入提示词。可以让 Agent 参⁠考 Skill，或开启 FreeToken 提示词增强。'},
     {id: 'media', anchor: '[data-fv-guide="media"]', added: true,
         en: 'Add reference images or a first or last frame here. Type @ in the prompt to use them.',
-        zh: '在这里添加参\u2060考\u2060图、首\u2060帧或尾\u2060帧，在描述里输入 @ 引用。'},
+        zh: '在此添加参\u2060考\u2060图、首\u2060帧或尾\u2060帧，并在描述中输入 @ 引用。'},
     {id: 'range', anchor: '[data-fv-guide="range"]', added: true,
         en: 'See the available sizes and lengths here, and how long each takes.', zh: '在这里查看可生成的尺\u2060寸、时长和预计用时。'},
     {id: 'generate', anchor: '[data-fv-guide="generate"]', added: false,
         en: 'Choose "Generate video". Progress and the time left appear in the preview.', zh: '点“生成视频”，进度和剩\u2060余\u2060时\u2060间会显示在预览区。'},
     {id: 'longer', anchor: '[data-fv-guide="longer"]', added: true,
         en: 'For a longer video, enter a longer duration and it is made in parts automatically. You can also add parts one by one in "Edit".',
-        zh: '要做更长的视频，把时长填长一些，会自动分段生成；也可以在“剪辑视图”里一段段接。'},
+        zh: '填写更长的时长会自动分段生成，也可在“剪辑视图”中逐段接续。'},
     {id: 'agent', anchor: '[data-fv-guide="agent"]', added: true,
         en: 'To have an AI agent such as Claude Code or Codex make videos for you, choose "Autopilot".', zh: '要让 Claude Code、Codex 等 Agent 替你生\u2060成\u2060视\u2060频，点“AI 全自动”。'},
     {id: 'editor-timeline', group: 'editor', anchor: '[data-fv-guide="editor-timeline"]', added: true,
@@ -39,7 +39,7 @@ export const CHAPTERS = [
         en: 'Drag in an empty spot to add a new part.', zh: '在空白处拖出新的一段。'},
     {id: 'editor-describe', group: 'editor', anchor: '[data-fv-guide="editor-describe"]',
         anchors: ['[data-fv-guide="editor-describe"]', '[data-fv-guide="editor-generate"]'], added: true,
-        en: 'Describe it, then choose "Generate".', zh: '写一句描述，再点“\u2060生\u2060成\u2060”\u2060。'},
+        en: 'Describe it, then choose "Generate".', zh: '填写描述，然后点“\u2060生\u2060成\u2060”\u2060。'},
 ];
 
 const chaptersFor = (group, chapters = CHAPTERS) => chapters.filter(c => (c.group || 'studio') === group);

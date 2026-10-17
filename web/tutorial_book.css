@@ -51,6 +51,6 @@
   .fv-book-layout { display:flex; }
   .fv-book-nav { display:none; }
   .fv-book-picker { display:flex; align-items:center; gap:var(--book-sm); padding:var(--book-sm) var(--book-md); border-bottom:var(--book-border) solid var(--book-line); }
-  .fv-book-picker select { flex:1; min-width:0; min-height:var(--book-control); padding:var(--book-xs); border:var(--book-border) solid var(--book-line); border-radius:var(--book-control-radius); background:var(--book-bg); }
+  .fv-book-picker select { flex:1; min-width:0; min-height:var(--book-control); padding:var(--book-xs) 28px var(--book-xs) var(--book-xs); text-overflow:ellipsis; border:var(--book-border) solid var(--book-line); border-radius:var(--book-control-radius); background:var(--book-bg); }
   .fv-book-article { flex:1; }
 }

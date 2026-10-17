@@ -23,24 +23,26 @@ const HOWTOS = [
     {id: 'reference-video', view: 'studio', title: ['Make a video from reference images', '参考图生成视频'],
         steps: [
             {id: 'media', target: mediaSection, en: 'Add images here and set each one as a reference, first frame, or last frame.',
-                zh: '在这里添加图片，每张可选作参\u2060考、首\u2060帧或尾\u2060帧。'},
+                zh: '在此添加图片，每张可设为参\u2060考、首\u2060帧或尾\u2060帧。'},
             {id: 'describe', anchor: '[data-fv-guide="describe"]', en: 'Type @ in the prompt and choose an image, then say what it does in the scene.',
-                zh: '在描述里输入 @ 选一张图，并说明它在画面里做什么。'},
+                zh: '在描述中输入 @ 选择图片，并写明它在画面中的作用。'},
+            {id: 'media-av', target: mediaSection, en: 'Videos and audio can be references too: add them with "Upload files" and mention them in the prompt with @.',
+                zh: '视频和音频也可作为参考：点“上\u2060传\u2060文\u2060件”添加，在描述中输入 @ 引用。'},
             {id: 'generate', anchor: '[data-fv-guide="generate"]', en: 'Choose "Generate video".', zh: '点“生成视频”。'}]},
     {id: 'long-video', view: 'studio', needsParts: true, title: ['Make a longer video', '连续的长视频'],
         steps: [
             {id: 'seconds', anchor: '[data-fv-guide="seconds"]', en: 'Enter a longer duration. It is made in parts automatically.',
-                zh: '把时长填长一些，会自动分段生成。'},
+                zh: '填写更长的时长，会自动分段生成。'},
             {id: 'generate', anchor: '[data-fv-guide="generate"]', en: 'Choose "Generate video".', zh: '点“生成视频”。'},
             {id: 'extend', anchor: '.fv-action-extend', image: 'extend-button',
-                en: 'To carry on from a finished video, click "Extend" on its result.', zh: '想接着做下去，在生成好的视频上点“接着生成”。'},
-            {id: 'longer', anchor: '[data-view="editor"]', en: 'Or add parts one by one in "Edit".', zh: '也可以到“剪辑视图”里一段段接。'}]},
+                en: 'Choose "Extend" on a finished video to continue it.', zh: '在生成好的视频上点“接着生成”，继续下一段。'},
+            {id: 'longer', anchor: '[data-view="editor"]', en: 'Parts can also be added one by one in "Edit".', zh: '也可在“剪辑视图”中逐段接续。'}]},
     {id: 'editor-extend-refs', view: 'editor', title: ['Add reference images when extending in Edit', '在剪辑视图延长时加参考图'],
         steps: [
-            {id: 'editor-timeline', target: selectedPart, en: 'Select the part to continue.', zh: '选中要接着生成的那一段。'},
+            {id: 'editor-timeline', target: selectedPart, en: 'Select the part to continue.', zh: '选中要接续的一段。'},
             {id: 'editor-refs', anchor: '[data-fv-guide="editor-refs"]', image: 'editor-refs',
                 en: 'Click + next to the prompt to upload or generate images, up to 3.', zh: '点描述框旁的 +，上传或生成图片，最多 3 张。'},
-            {id: 'editor-describe', anchor: '[data-fv-guide="editor-describe"]', en: 'Describe it, then choose "Generate".', zh: '写一句描述，再点“生成”。'}]},
+            {id: 'editor-describe', anchor: '[data-fv-guide="editor-describe"]', en: 'Describe it, then choose "Generate".', zh: '填写描述，然后点“生成”。'}]},
 ];
 
 export const howToList = cn => HOWTOS.map(({id, title}) => ({id, title: title[cn ? 1 : 0]}));
