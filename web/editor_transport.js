@@ -183,7 +183,7 @@ export function createEditorTransport({element, preview, transport, toolbar, edi
         try {
             if (document.fullscreenElement === fullHost) await document.exitFullscreen();
             else { sheet.hidden = true; await fullHost.requestFullscreen(); }
-        } catch { return {ok: false, reason: 'fullscreen'}; }
+        } catch { notify?.(t('Full screen is not available here.', '这里不能全屏。')); return {ok: false, reason: 'fullscreen'}; }
         refresh();
     }
     const handlers = {

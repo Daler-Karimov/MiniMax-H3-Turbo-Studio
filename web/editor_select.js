@@ -85,6 +85,7 @@ export function createSelectionActions({state, t = en => en, actions = {}, clipb
             const ids = selectedIds(state.record, state.selection);
             if (key === 'a') { state.select(selection(unlockedIds(state.record))); return {ok: true}; }
             if (['b', 'q', 'w'].includes(key) && !playheadIds(state.record, state.selection, state.playhead).length) {
+                actions.notify?.(t('Select a clip and move the playhead onto it.', '先选中片段，再把播放头移到片段上。'));
                 return {ok: false, reason: 'playhead'};
             }
             if (key === 'b') { state.apply(t('Split', '剪开'), record => actionsModel.splitAt(record, ids, state.playhead)); return {ok: true}; }
