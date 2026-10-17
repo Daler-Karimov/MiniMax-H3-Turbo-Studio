@@ -9,6 +9,7 @@ import time
 import traceback
 
 from .. import __version__
+from ..exit_diagnostics import clean_reading, clean_sample
 from ..failure_details import Redactor
 
 
@@ -185,7 +186,13 @@ class Context:
         self.machine = {}
         self.plan = None
         self.pack = None
+        self.start_memory = None
         self.update_request(value)
+
+    def note_start(self):
+        """Memory readings when the request begins; the worker's own are lost if it is ended."""
+        from ..exit_diagnostics import memory_sample
+        self.start_memory = memory_sample()
 
     def update_request(self, value):
         if not isinstance(value, dict):
@@ -273,4 +280,14 @@ class Context:
                     analysis=dict(version=__version__, hardware=hardware, geometry=geometry),
                     summary=dict(request_seconds=self.timing.seconds()), request=dict(self.request),
                     plan=plan, stages=stages, stage_at_failure=stage, error=details, pack=clean(pack, self.redactor),
-                    service=dict(video_busy=bool(video_busy), worker_restarts=worker_restarts))
+                    service=self.service(video_busy, worker_restarts, error))
+
+    def service(self, video_busy, worker_restarts, error):
+        service = dict(video_busy=bool(video_busy), worker_restarts=worker_restarts)
+        if self.start_memory:
+            service['memory_at_request_start'] = clean_sample(self.start_memory)
+        # Numbers and fixed words only, taken by the service when it saw the worker end.
+        reading = clean_reading(getattr(error, 'exit_reading', None))
+        if reading:
+            service['worker_exit'] = reading
+        return service

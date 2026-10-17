@@ -681,6 +681,11 @@ def failure(value):
     if isinstance(value.get('memory_collection_error'), list):
         result['memory_collection_error'] = [trace(row) for row in value['memory_collection_error'][:4]]
     result['allocation'] = numbers(value.get('allocation'), ('fp8_ff_activation_stash_bytes',))
+    from .exit_diagnostics import clean_reading, clean_sample
+    if isinstance(value.get('worker_exit'), dict):
+        result['worker_exit'] = clean_reading(value['worker_exit'])
+    if isinstance(value.get('memory_at_start'), dict):
+        result['memory_at_start'] = clean_sample(value['memory_at_start'])
     if value.get('kind') in ('gpu_oom', 'ram_pressure', 'cuda_error', 'timeout', 'cancelled',
                             'code_error', 'unknown_worker_exit', 'worker_stop_unconfirmed'):
         result['kind'] = value['kind']

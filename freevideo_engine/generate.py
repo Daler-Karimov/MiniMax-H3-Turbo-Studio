@@ -35,6 +35,9 @@ def child(command, env, descriptor, log, *, ram_budget_bytes=None, gpu=None, on_
     memory = ProcessMemory() if ram_budget_bytes is not None else None
     telemetry = {}
     monitor = None
+    from .exit_diagnostics import exit_reading, memory_sample
+    # A worker that the system ends cannot report its own memory: this process reads it.
+    telemetry['memory_at_start'] = memory_sample()
     with log.open('w', encoding='utf-8') as stream:
         from .resident_process import ENV, RemoteProcess, SessionRestarted
         module = command[command.index('-m')+1] if '-m' in command else None
@@ -92,6 +95,7 @@ def child(command, env, descriptor, log, *, ram_budget_bytes=None, gpu=None, on_
                     pass
             code = process.returncode
             if code:
+                telemetry['worker_exit'] = dict(exit_reading(code), memory=memory_sample())
                 raise WorkerExit(code, log)
         except BaseException as error:
             pending_error = error
