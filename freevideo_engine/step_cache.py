@@ -42,15 +42,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+import math
 import os
 
 DEFAULTS = {'easycache-av': 0.2, 'fbcache': 0.10}
 WINDOWS = {'easycache-av': (0.15, 0.95), 'fbcache': (0.10, 0.95)}
 BLOCK_LEVEL = ('fbcache',)
 STRIDE = 8
-# Kinds that a quality level or request asks for by config but that sample every step for now; an explicit
-# FREEVIDEO_STEP_CACHE still turns them on. EasyCache-AV is held back until its reuse guard ships.
-HELD_BACK = ('easycache-av',)
+GUARD = 1         # reports of the guarded easycache-av carry this; earlier ones reused steps unchecked
+MAX_SHARE = .4   # at most this share of a pass's steps may reuse the cache (measured median is about 40%)
+LAST_FULL = 3     # the last steps always run the model
 
 
 def requested(config=None):
@@ -66,6 +67,10 @@ def requested(config=None):
     if config not in DEFAULTS:
         raise ValueError('Unknown step_cache %r; use one of %s' % (config, ', '.join(DEFAULTS)))
     return config, DEFAULTS[config], 'config'
+
+
+def _copy(value):
+    return value.to(dtype=value.new_empty(0).float().dtype, copy=True)
 
 
 def _relative(current, previous):
@@ -107,7 +112,7 @@ class StepCache:
         full = self.steps - len(self.hits)
         return dict(kind=self.kind, threshold=self.threshold, steps=self.steps, cached_steps=list(self.hits),
                     full_forwards=full, decisions=self.decisions, source=self.source,
-                    disabled_reason=self.disabled_reason)
+                    disabled_reason=self.disabled_reason, guard=GUARD)
 
     # ---- block level: fbcache -----------------------------------------------------------------
     def _samples(self, residual):
@@ -151,15 +156,17 @@ class StepCache:
 
     def record_forward(self, video_in, audio_in, sigmas, video_out, audio_out):
         stride = (slice(None), slice(None, None, STRIDE))
-        current_in = (video_in[stride].float(), audio_in[stride].float())
-        current_out = (video_out[stride].float(), audio_out[stride].float())
+        # Copies: float32 latents make .float() a view, and the sampler updates them in place.
+        current_in = (_copy(video_in[stride]), _copy(audio_in[stride]))
+        current_out = (_copy(video_out[stride]), _copy(audio_out[stride]))
         if self.prev_input is not None and self.prev_out is not None:
             rates = []
             for i in range(2):
                 change_in = (current_in[i] - self.prev_input[i]).abs().mean()
                 change_out = (current_out[i] - self.prev_out[i]).abs().mean()
-                rates.append(float(change_out / change_in.clamp_min(1e-8)))
-            self.rate = rates
+                rates.append(float(change_out / change_in.clamp_min(1e-8)) if float(change_in) > 0 else None)
+            # An input that did not move gives no rate: the step cache falls back to full forwards.
+            self.rate = rates if None not in rates else None
         self.prev_input, self.prev_out = current_in, current_out
         self.prev_norm = [float(o.abs().mean()) for o in current_out]
         self.prev_diff = (video_out.float() - video_in.float(), audio_out.float() - audio_in.float())
@@ -171,8 +178,14 @@ class StepCache:
             current = (video_in[stride].float(), audio_in[stride].float())
             predicted = [self.rate[i] * float((current[i] - self.prev_input[i]).abs().mean()) / max(self.prev_norm[i], 1e-8)
                          for i in range(2)]
-            self.accumulated += max(predicted)
-            reuse = self.accumulated < self.threshold
+            estimate = max(predicted)
+            # An estimate that is not finite or is zero cannot be trusted: run the step. Never reuse twice in a
+            # row, never above MAX_SHARE of the steps, and always run the last steps.
+            trusted = math.isfinite(estimate) and estimate > 0
+            allowed = (trusted and not (self.hits and self.hits[-1] == self.step - 1)
+                       and len(self.hits) < int(MAX_SHARE * self.steps) and self.step < self.steps - LAST_FULL)
+            self.accumulated += estimate if trusted else 0.
+            reuse = allowed and self.accumulated < self.threshold
             if not reuse:
                 self.accumulated = 0.
         self.decisions.append(dict(step=self.step, accumulated=round(self.accumulated, 5), hit=reuse))
@@ -185,8 +198,6 @@ class StepCache:
 def begin_pass(transformer, steps, config=None, *, offloader=None, disabled_reason=None):
     """Attach fresh state for this sampling pass; refinement never calls this."""
     wanted = requested(config)
-    if wanted and wanted[2] == 'config' and wanted[0] in HELD_BACK:
-        wanted = None
     transformer._freevideo_step_cache = (StepCache(wanted[0], wanted[1], steps, source=wanted[2],
         offloader=offloader, disabled_reason=disabled_reason) if wanted else None)
     return transformer._freevideo_step_cache

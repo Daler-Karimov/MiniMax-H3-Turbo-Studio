@@ -48,8 +48,9 @@ LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None, upscale=2)
 # fitted to the median: EasyCache-AV is slightly conservative, the first-block
 # cache near the 8-24 GiB median. A first-block cache the planner did not keep
 # is plain 20 steps.
-# EasyCache-AV is held back (step_cache.HELD_BACK): High samples every step, so its share is 1 until that ends.
-SAMPLING_SHARE = {None: 1., 'easycache-av': 1., 'fbcache': .9}
+# EasyCache-AV, guarded (at most 40% of steps reused, never twice in a row): measured on the RTX PRO 6000,
+# 864x1184, 5 s, 20 steps, 2 reused steps: 212 s against 238 s for the plain 20 steps (about .88 of the sampling).
+SAMPLING_SHARE = {None: 1., 'easycache-av': .88, 'fbcache': .9}
 
 # Sampling time (both passes) of a two-pass request with this upscale factor,
 # as a share of the same request at 2x, for estimates without a run of that
