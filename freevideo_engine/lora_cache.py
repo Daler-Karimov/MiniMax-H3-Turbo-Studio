@@ -20,7 +20,7 @@ import time
 from safetensors.torch import save_file
 import torch
 
-from .lora_names import _targets
+from .lora_names import INT8_UNMERGEABLE, MODULATION, _targets, adapter_keys, int8_skip_reason, resolve_target
 from .tensor_io import open_tensors
 from .media_request import digest, verify_files
 from .monitoring import save
@@ -28,37 +28,10 @@ from .storage import fingerprint
 from . import disk_space
 
 
-# Per-block AdaLN projections that the int8 package keeps only as precomputed tables.
-MODULATION = re.compile(r'transformer_blocks\.\d+\.adaln_proj\.')
-
-
-INT8_UNMERGEABLE = ('This LoRA changes parts of the model that the int8 version cannot merge yet, '
-                    'so it cannot be used for now. LoRAs that change only linear layers work.')
-
-
 def index_adapter(row, targets, skipped=None):
-    pairs = {}
-    full = []
     with open_tensors(row['path']) as source:
         metadata = source.metadata() or {}
-        keys = source.keys()
-        for key in keys:
-            canonical = key.replace('.default.', '.').replace('.lora_down.weight', '.lora_A.weight').replace('.lora_up.weight', '.lora_B.weight')
-            match = re.fullmatch(r'(.+)\.lora_([AB])\.weight', canonical)
-            if match:
-                pair = pairs.setdefault(match[1], {})
-                if match[2] in pair:
-                    raise ValueError('Duplicate LoRA factor: ' + key)
-                pair[match[2]] = key
-            elif canonical.endswith('.alpha'):
-                pairs.setdefault(canonical[:-6], {})['alpha'] = key
-            elif canonical.endswith(('.diff', '.diff_b')):
-                bias = canonical.endswith('.diff_b')
-                full.append((canonical[:-7] if bias else canonical[:-5], key, bias))
-            else:
-                raise ValueError('Unsupported LoRA tensor (no patches are ignored): ' + key)
-        if not pairs and not full:
-            raise ValueError('Adapter contains no LoRA factors')
+        pairs, full = adapter_keys(source.keys())
         global_alpha = row.get('alpha') is not None or 'alpha' in metadata
         if global_alpha:
             ranks = {source.get_slice(pair['A']).get_shape()[0] for pair in pairs.values() if 'A' in pair
@@ -78,10 +51,10 @@ def index_adapter(row, targets, skipped=None):
             if not math.isfinite(alpha):
                 raise ValueError('Nonfinite LoRA alpha')
             for target, split, swap in _targets(name):
-                if target not in targets and '.attn.' in target:
-                    target = target.replace('.attn.', '.attn.orig.', 1)
-                if skipped is not None and target not in targets:
-                    skipped.append(('modulation' if MODULATION.match(target) else 'other_layer', target))
+                target = resolve_target(target, targets)
+                reason = int8_skip_reason(target, targets) if skipped is not None else None
+                if reason:
+                    skipped.append((reason, target))
                     continue
                 expected = targets.get(target)
                 rows = bshape[0] if split is None else bshape[0] // 3
@@ -94,16 +67,11 @@ def index_adapter(row, targets, skipped=None):
             shape = source.get_slice(key).get_shape()
             for target, split, swap in _targets(name):
                 target += '#bias' if bias else ''
-                if target not in targets and '.attn.' in target:
-                    target = target.replace('.attn.', '.attn.orig.', 1)
+                target = resolve_target(target, targets)
                 if skipped is not None:
                     # Quantized weights cannot take a full difference, and the int8 package
                     # keeps no bias or non-linear patch path yet: count each one, apply the rest.
-                    if target.endswith('#bias'):
-                        skipped.append(('bias', target))
-                    else:
-                        skipped.append(('quantized_diff' if target in targets or
-                                        target.replace('.attn.', '.attn.orig.', 1) in targets else 'other_layer', target))
+                    skipped.append((int8_skip_reason(target, targets, full=True), target))
                     continue
                 expected = targets.get(target)
                 actual = list(shape)
@@ -190,6 +158,7 @@ def prepare(cache, adapters, output_root=None):
                     changes_embedding |= target.startswith(('time_embedder.', 'time_proj.'))
                     changes_modulation |= bool(re.match(r'transformer_blocks\.\d+\.adaln_proj\.', target))
     identity = {'source_manifest_sha256': digest(manifest_path), 'implementation_sha256': digest(__file__),
+                'names_sha256': digest(Path(__file__).with_name('lora_names.py')),
                 'torch': str(torch.__version__), 'adapters': [{k: v for k, v in row.items() if k != 'path'} for row in adapters],
                 'arithmetic': 'prepared FP8 dequantization; FP32 delta, weight-dtype merge; original FP8 granularity'}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()

@@ -57,6 +57,7 @@ def prepare(cache, adapters, output_root=None):
         return path, dict(report, mode='fused', reason='Adapter includes non-linear or modulation patches')
     identity = dict(source_manifest_sha256=digest(cache / 'manifest.json'),
         implementation_sha256=digest(__file__), index_sha256=digest(Path(__file__).with_name('lora_cache.py')),
+        names_sha256=digest(Path(__file__).with_name('lora_names.py')),
         adapters=[{k: v for k, v in row.items() if k != 'path'} for row in adapters],
         arithmetic=('FP8' if precision == 'fp8' else 'ConvRot int8') + ' base plus independent BF16 low-rank branches')
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
