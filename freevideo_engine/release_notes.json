@@ -1,21 +1,58 @@
 {
   "schema": 1,
-  "product_version": "0.4.11",
+  "product_version": "0.4.12",
   "en": {
-    "summary": "Fixes requests being rejected with a frame count error, and LoRAs with extra parts generating on the int8 build.",
+    "summary": "Preview white-model scenes for Autopilot, LoRA compatibility checks and drag-to-reorder, clearer failure messages, deleting edits, a faster start for a busy machine, and a Medium level that samples two passes.",
     "changes": [
-      "Generating from a workflow or a restored tab where Total frames holds a number that is not a frame count is no longer rejected with a frame count error; the number is read as the duration.",
-      "int8: a LoRA that also contains modulation parts no longer stops the generation; those parts are skipped one by one and the number skipped appears in the report."
+      "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an official race-car example.",
+      "LoRA: a compatibility check before generating, and LoRAs can be reordered by dragging.",
+      "Failure messages: submission, queue and browser-extension failures share one layout and say what to do next; failed requests can be packaged with Export report or Submit to GitHub.",
+      "Editor: an edit can be deleted, an empty untouched edit is discarded, and reopening an edit restores its cover and shows its finishing stage; continuations are queued on the server.",
+      "Characters: each character carries a sheet of all views plus a face close-up; a picture that cannot be read is refused with a message on its own tile.",
+      "Medium: samples two passes from a larger first pass; Max runs all 20 steps without a cache.",
+      "Install: the GPU acceleration build has a visible share of the progress, the model line stays steady while groups download, and torch shows as Runtime components.",
+      "Downloads: before a download starts, the launcher, the page and the editor say what it is and how long it takes.",
+      "Guide: the first-run guide shows where to add reference images and first or last frames, the length field shows the part limit, and the Chinese interface links a user guide beside the guide in Settings.",
+      "Reusing reference pictures and clips when only the prompt changes skips encoding them again; on a busy machine the small CPU table work of loading runs on one thread.",
+      "Mac: a device that cannot continue a video refuses lengths over one block up front.",
+      "The feedback button opens the issue form."
     ]
   },
   "zh": {
-    "summary": "修复请求被帧数错误拒绝的问题，并让带额外部分的 LoRA 能在 int8 版本上正常生成。",
+    "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
     "changes": [
-      "用 Total frames 里填的不是帧数的工作流或恢复的标签页生成时，不再被帧数错误拒绝，这个数会按时长读取。",
-      "int8：带调制部分的 LoRA 不再让生成中断，这些部分会逐个跳过，跳过的数量写进报告。"
+      "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有官方赛车示例。",
+      "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
+      "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
+      "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
+      "角色：每个角色带有全部视角的角色图和脸部特写；读不出来的图片会被拒绝，并在对应的格子上给出提示。",
+      "标准档：从更大的第一遍起采样两遍；极致档跑满 20 步且不使用缓存。",
+      "安装：GPU 加速组件的构建在进度中占有可见的份额，模型下载分组并行时进度行保持稳定，torch 显示为“运行组件”。",
+      "下载：开始下载前，启动器、页面和编辑器会说明这是什么下载、需要多久。",
+      "指引：首次指引新增一步，说明在哪里添加参考图和首帧、尾帧；时长栏直接显示分段上限；中文界面在设置里可以打开使用说明。",
+      "只改提示词时，参考图和片段不再重复编码；机器繁忙时，加载过程中的小型 CPU 表运算改为单线程。",
+      "Mac：不能续接视频的设备会在一开始就拒绝超过一个分段的长度。",
+      "反馈按钮直接打开问题表单。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.11",
+      "en": {
+        "summary": "Fixes requests being rejected with a frame count error, and LoRAs with extra parts generating on the int8 build.",
+        "changes": [
+          "Generating from a workflow or a restored tab where Total frames holds a number that is not a frame count is no longer rejected with a frame count error; the number is read as the duration.",
+          "int8: a LoRA that also contains modulation parts no longer stops the generation; those parts are skipped one by one and the number skipped appears in the report."
+        ]
+      },
+      "zh": {
+        "summary": "修复请求被帧数错误拒绝的问题，并让带额外部分的 LoRA 能在 int8 版本上正常生成。",
+        "changes": [
+          "用 Total frames 里填的不是帧数的工作流或恢复的标签页生成时，不再被帧数错误拒绝，这个数会按时长读取。",
+          "int8：带调制部分的 LoRA 不再让生成中断，这些部分会逐个跳过，跳过的数量写进报告。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.10",
       "en": {
@@ -182,43 +219,6 @@
           "安装和启动器：设置里检查安装、开始安装时马上显示正在做什么；启动器复用已有模型时，显示查找、校验和复制的项数与速度。安装或更新后的一次性后台内核编译在 ComfyUI 打开约 5 秒后开始（原来 30 秒）。从启动器重新打开创作面板时，上次工程的素材和连线会保留。Mac 上的更新提醒写明“下载新版后替换当前版本”，按钮会打开下载页。",
           "AI 全自动：每个按钮点了都会马上响应，失败会先重试；Agent 没在接收时发出的消息，会在它恢复后发出。任务、图片、短剧和角色卡失败时写明是哪一步出的错，并和视频一样可以下载和提交诊断报告。角色库里没有正面图的角色卡会保留全部图片，同名角色可以区分，Agent 界面关闭时角色库也隐藏。",
           "旧工作流或脚本把可选输入留空、写成 \"None\" 或 \"null\" 时，不再被当成真实值，普通生成也不会再被误当作第二遍处理。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.5",
-      "en": {
-        "summary": "Generation progress now says what is happening with real percentages, image generation explains failures and waits in line behind running work, and the creation panel keeps your settings and media after a refresh. The editing view gains a first-open guide, smoother playback and clearer continued parts, prompts suggest camera and motion words, and many smaller issues are fixed.",
-        "changes": [
-          "Progress: generation progress names what is happening during loading, decoding and saving, shows real percentages, and no longer stays on the same line for minutes; the upscale before the second pass keeps reporting while it runs. When a longer run finishes in a background tab, the tab title flashes and a short sound plays; desktop notifications can be turned on in the settings.",
-          "Image generation: a failure says why on the card and offers the diagnostic report; a request made while the graphics card is busy waits in line; a size that does not fit memory is made smaller automatically; model loading shows progress by what has actually been read; the panel tells a model that is still downloading from one that is not installed; Generate with an empty description says what is missing. Graphics memory is released 45 seconds after the last picture when nothing else is waiting.",
-          "Creation panel: settings, prompt and media are kept after a refresh, undo and redo; an empty duration, size, seed or step count is asked for instead of reusing an old value; the duration control explains lengths longer than one run; part-by-part videos show cancelled, resumed and finished states after a refresh and say why a part failed; result actions, sharing and the second pass report their progress and failures.",
-          "Prompts: while you type, the start of a camera or motion word lists matching words in English or Chinese; these suggestions and @ mentions open under the line being typed.",
-          "Editing view: a short first-open guide that can be skipped; smoother timeline playback, with the next clip made ready before each cut; a failed part says which step went wrong and offers the diagnostic report; export failures say why (missing font characters, a missing or unreadable source, a full disk). Edit, Create and Autopilot in the view switch open even when no node is selected.",
-          "Editing view timeline: a part that continues the one before it shows a link mark; continued parts keep the ten-second minimum while dragging and fill to ten seconds on release; a part waiting in line still says Queued after a reload; a reopened edit fits its content; the description box and Generate button stay in place while a part is made; on phone-width windows the toolbar stays on one row, with the rest in a More menu.",
-          "LoRA: each LoRA can carry its own trigger words, added to the prompt whenever it is selected and removed when it is not, in Create, Agent and the editing view. The list keeps the three most recently used LoRAs at the top and has a Clear button.",
-          "Agent: tools no longer stall on the first call on Windows; conversations can be deleted from the row menu; drafts and failed messages stay after switching conversations, and a retry after an unclear failure no longer sends the message twice. Finished pictures have an Open button with zoom and drag, past chats show a small cover from their first finished video, screenplay problems name the field at fault, and take sheets show one frame per second unless a count is given; on narrow windows the Autopilot header keeps Settings, and the connection shows as a dot.",
-          "Launcher and offline packages: actions requested while background work is running start once it finishes or say why they are unavailable; update failures tell a full disk from a network problem; offline package imports check file contents before finishing and no longer clash with a cleanup running at the same time.",
-          "Settings: an empty manual graphics-memory value is reported instead of being ignored, compatibility saves no longer overlap and show their progress, and the placement test shows its progress and Stop button as soon as it starts; the setup Stop button appears only while something is running; the additional model folders box is taller and its save status sits beside the button, in a warning colour when a folder cannot be found.",
-          "Windows int8: the second pass on large videos chooses its group size from the graphics memory actually available, so it no longer shows a memory warning and retries.",
-          "Browser page translation leaves the product name as written."
-        ]
-      },
-      "zh": {
-        "summary": "生成进度会写明正在做什么，百分比按实际进度走；图像生成失败时会说明原因，显卡忙时自动排队；创作面板刷新后保留设置和素材。剪辑视图加了首次打开的引导，播放更顺，接续的段更清楚；写提示词时会提示运镜和动作词；另修复了多处小问题。",
-        "changes": [
-          "进度：生成进度会写明载入、解码、保存各在做什么，百分比按实际进度走，不再长时间停在同一句；第二遍前的放大过程中进度持续更新。较长的生成在后台标签页完成时，标签标题会闪烁并响一声短提示音；在设置里可以打开桌面通知。",
-          "图像生成：失败时卡片上写明原因，并可提交诊断报告；显卡忙时发起的生成自动排队；尺寸超出显存时自动缩小；模型载入进度按实际读取量显示；能区分模型“下载中”和“未安装”；描述为空时点生成会提示缺什么。最后一张图完成 45 秒后，如果没有别的任务在等，就释放显存。",
-          "创作面板：刷新、撤销和重做后，设置、提示词和素材都会保留；时长、尺寸、种子或步数留空时会提示填写，不再沿用旧值；时长控件会说明超过一次能生成的长度时怎么处理；分段生成的视频刷新后能显示已取消、已继续和已完成，失败的段会说明原因；结果操作、分享和第二遍都会显示进度和失败原因。",
-          "提示词：输入运镜或动作词的开头时，会列出匹配的词，中英文都可以；这些候选和 @ 选择器跟在正在输入的那一行下面。",
-          "剪辑视图：首次打开时有一段简短引导，可以跳过；时间线播放更顺，换段前先把下一段准备好；某一段失败时说明是哪一步出的错，并可提交诊断报告；导出失败会说明原因（字体缺字、源文件缺失或读不出、磁盘已满）。没有选中节点时，视图切换里的剪辑、创作、全自动也能打开。",
-          "剪辑视图时间线：接续上一段的部分带链环标记；接着生成的每一段在拖动时就保证至少 10 秒，松手后自动补齐；排队的段刷新后仍显示“排队中”；重新打开的作品按内容适配缩放；生成一段时描述框和“生成”按钮留在原位；手机宽度的窗口里工具栏保持一行，其余放进“更多”菜单。",
-          "LoRA：每个 LoRA 可以带自己的触发词，选中时自动加进提示词，取消时去掉，创作、Agent 和剪辑视图都适用。列表把最近用过的三个放在最上面，并新增“清除”按钮。",
-          "Agent：Windows 上第一次调用工具不再卡住；可以在对话行的菜单里删除对话；切换对话后草稿和发送失败的消息仍在，失败原因不明时重试不会把消息发两遍。做好的图片可以点“打开”放大、拖动查看；历史对话显示第一段做成的视频的小封面；剧本有问题时写明是哪个字段；审片拼图默认每秒一帧；窄窗口下全自动页顶栏保留“设置”，连接状态显示为圆点。",
-          "启动器和离线包：后台任务进行中点的操作，会在任务结束后执行一次，或者说明暂时不能用的原因；更新失败时区分磁盘已满和网络问题；导入离线包会先核对文件内容再完成，不再和同时进行的清理冲突。",
-          "设置：手动显存留空时会提示，不再被忽略；兼容性设置的保存不会重叠，并显示进度；放置测试一开始就显示进度和停止按钮；安装页的停止按钮只在运行时出现；其他模型目录输入框加高，保存结果显示在按钮旁，找不到目录时用警示色。",
-          "Windows int8：生成较大的视频时，第二遍按实际可用的显存选分组大小，不再弹显存提示后重试。",
-          "浏览器翻译页面时不再翻译产品名。"
         ]
       }
     }
