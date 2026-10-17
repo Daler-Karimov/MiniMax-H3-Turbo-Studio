@@ -23,6 +23,7 @@
 .fv-setup h3{font-size:var(--fv-body);font-weight:var(--fv-semibold);margin:0 0 12px}
 .fv-setup .fv-guide-replay-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .fv-setup .fv-guide-replay-row h3{margin:0}
+.fv-setup .fv-guide-replay-actions{display:flex;align-items:center;gap:16px}
 .fv-setup .fv-guide-replay [role=status]{margin-top:8px}
 
 /* Sections: one card each; details use the Studio's chevron, not the UA marker. */

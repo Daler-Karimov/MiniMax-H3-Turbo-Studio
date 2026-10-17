@@ -10,18 +10,25 @@ export const REPLAY_TEXT = {
     waiting: ['Waiting for the workspace to be ready. The guide will start automatically.', '正在等待创作面板就绪，随后会自动开始指引。'],
     cancel: ['Cancel', '取消'],
     unavailable: ['Open a creation workflow to view the guide.', '请先打开创作工作流，再查看指引。'],
+    manual: ['User guide', '使用说明'],
 };
+// The written guide is in Chinese only, so only the Chinese interface links it.
+export const MANUAL_URL = 'https://github.com/FlashML-org/FreeVideo/blob/main/docs/zh-CN/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md';
 
 export const CHAPTERS = [
     {id: 'describe', anchor: '[data-fv-guide="describe"]', added: false,
         en: 'Type your prompt here. You can have an agent follow the Skill at the top right, or turn on FreeToken enhancement.',
         zh: '在这里输入提示词。可以让 Agent 参⁠考 Skill，或开启 FreeToken 提示词增强。'},
+    {id: 'media', anchor: '[data-fv-guide="media"]', added: true,
+        en: 'Add reference images or a first or last frame here. Type @ in the prompt to use them.',
+        zh: '在这里添加参\u2060考\u2060图、首\u2060帧或尾\u2060帧，在描述里输入 @ 引用。'},
     {id: 'range', anchor: '[data-fv-guide="range"]', added: true,
         en: 'See the available sizes and lengths here, and how long each takes.', zh: '在这里查看可生成的尺\u2060寸、时长和预计用时。'},
     {id: 'generate', anchor: '[data-fv-guide="generate"]', added: false,
         en: 'Choose "Generate video". Progress and the time left appear in the preview.', zh: '点“生成视频”，进度和剩\u2060余\u2060时\u2060间会显示在预览区。'},
     {id: 'longer', anchor: '[data-fv-guide="longer"]', added: true,
-        en: 'For a longer video, or to change part of one, choose "Edit".', zh: '要做更长的视频，或者修\u2060改\u2060其\u2060中\u2060一\u2060段，点“剪辑视图”。'},
+        en: 'For a longer video, enter a longer duration and it is made in parts automatically. You can also add parts one by one in "Edit".',
+        zh: '要做更长的视频，把时长填长一些，会自动分段生成；也可以在“剪辑视图”里一段段接。'},
     {id: 'agent', anchor: '[data-fv-guide="agent"]', added: true,
         en: 'To have an AI agent such as Claude Code or Codex make videos for you, choose "Autopilot".', zh: '要让 Claude Code、Codex 等 Agent 替你生\u2060成\u2060视\u2060频，点“AI 全自动”。'},
     {id: 'editor-timeline', group: 'editor', anchor: '[data-fv-guide="editor-timeline"]', added: true,
@@ -117,7 +124,13 @@ export function createGuideReplayEntry({dialog, cn, openWorkspace, replay = show
     const section = el('section', null, 'fv-guide-replay'), row = el('div', null, 'fv-guide-replay-row');
     const button = el('button', text('again')); button.type = 'button';
     const status = el('div', null, 'fv-muted'); status.setAttribute('role', 'status'); status.hidden = true;
-    row.append(el('h3', text('title')), button); section.append(row, status);
+    const actions = el('div', null, 'fv-guide-replay-actions');
+    if (cn) {
+        const manual = el('a', text('manual')); manual.href = MANUAL_URL; manual.target = '_blank'; manual.rel = 'noopener noreferrer';
+        actions.append(manual);
+    }
+    actions.append(button);
+    row.append(el('h3', text('title')), actions); section.append(row, status);
     button.onclick = async () => {
         button.disabled = true;
         try {

@@ -40,6 +40,11 @@ export function createStudioLength({api, node, seconds, advanced, fields, t, fie
     controls.append(toggle, explanation, unavailable, field(t('Part length · seconds', '每段时长 · 秒'), block), reset); advanced.append(controls);
     const note = el('div', 'fv-muted fv-length-plan');
     note.hidden = true; fields.after(note); note.setAttribute('role', 'status');
+    // The limits are stated before anything is typed, not only when a request is refused.
+    const NO_PARTS = t('This device cannot make longer videos in parts.', '此设备不支持分段生成长视频。');
+    let noParts = false;
+    const hint = el('p', 'fv-muted fv-length-hint', t('Longer videos are made in parts automatically, up to 5 parts.', '较长的视频会自动分段，最多 5 段。'));
+    fields.after(hint);
     let limits = null, planLimits = null, contextKey = '', revision = 0, timer = null, request = null, capabilityRequest = null, capabilityRevision = 0;
     let capabilityState = 'idle', waiting = false, waitingTimer = null, timeoutTimer = null, submitted = false;
     let plan = null, error = null, absent = false, disposed = false, pending = null, edited = false, blockEdited = false;
@@ -73,12 +78,16 @@ export function createStudioLength({api, node, seconds, advanced, fields, t, fie
         block.title = !block.disabled || absent || seconds.disabled || effectiveSingle() ? ''
             : t('These settings cannot generate in parts.', '当前设置不能分段生成。');
         reset.title = block.title;
+        // The same sentence is the problem note once a length needs parts: say it once.
+        hint.hidden = absent || (noParts && Boolean(error));
         note.hidden = absent || !error;
         note.textContent = error ? errorMessage(error) : '';
+        note.style.margin = noParts && error === 'continuation_unavailable' ? '12px 0' : ''; // as spaced as the line it replaces
     }
     function errorMessage(kind) {
         return {single_unavailable: t('This length is beyond a single run.', '这个长度超出了单次能生成的范围。'),
-            continuation_unavailable: t('Choose a smaller picture size to make a longer video.', '如需生成更长的视频，请选择更小的画面大小。'),
+            continuation_unavailable: noParts ? NO_PARTS
+                : t('Choose a smaller picture size to make a longer video.', '如需生成更长的视频，请选择更小的画面大小。'),
             too_long: t('This video is too long. Choose a shorter duration.', '这条视频太长，请缩短时长。'),
             other: t('Could not plan this video. Try again.', '暂时无法安排这条视频的分段，请重试。')}[kind];
     }
@@ -124,6 +133,11 @@ export function createStudioLength({api, node, seconds, advanced, fields, t, fie
         setSeconds(Math.min(60, value)); invalidate(); schedule(); return true;
     }
     paint();
+    // Devices that cannot continue a video say so up front. An unreadable answer keeps the general line.
+    Promise.resolve().then(() => api.fetchApi('/freevideo/chains')).then(reply => reply?.ok ? reply.json() : null).then(value => {
+        if (disposed || value?.continuation !== false) return;
+        noParts = true; hint.textContent = NO_PARTS; invalidate(); schedule();
+    }).catch(() => {});
     return {
         commit, options, get plan() { return plan; }, get absent() { return absent; },
         get needsPlan() { return !absent && !effectiveSingle() && (total() > singleLimitSeconds(planLimits?.maximum)

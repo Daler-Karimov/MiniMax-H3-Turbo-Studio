@@ -810,12 +810,27 @@ export function openStudio(node, {extendFrom = null} = {}) {
     canvas.append(samplingSettings); cleanup.push(() => effort.dispose());
     cleanup.push(() => { clearTimeout(effortEstimateTimer); effortEstimateRequest?.abort(); });
     const mediaNode = upstream(node, 'media');
+    const mediaFilled = () => JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false)
+        || Boolean(mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null));
+    // The line beside the closed title says what the section is for, until something is added.
+    // The guide opens the section it points at; the ring stays on the title row.
+    const mediaGuideTarget = () => {
+        if (!mediaNode?.freevideoCreateMediaEditor) return null;
+        const r = mediaTitle.getBoundingClientRect();
+        return {node: mediaTitle, rect: {left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height},
+            reveal: () => { mediaDetails.open = true; }};
+    };
+    const paintMediaHint = () => { try { mediaHint.hidden = mediaDetails.open || !mediaNode?.freevideoCreateMediaEditor || mediaFilled(); } catch { mediaHint.hidden = true; } };
     const [mediaDetails, mediaMount] = expand(t('Media', '素材'));
+    const mediaTitle = mediaDetails.querySelector('summary'), mediaHint = el('span', t('Reference images, first and last frames', '参考图、首帧、尾帧'), 'fv-section-hint');
+    mediaTitle.dataset.fvGuide = 'media'; mediaTitle.append(mediaHint);
     const extendMount = el('div', null, 'fv-extend-source'); extendMount.hidden = true; mediaMount.prepend(extendMount);
     let releaseExtendThumbnail = () => {};
     cleanup.push(() => releaseExtendThumbnail());
-    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = JSON.parse(value(mediaNode, 'assets') || '[]').some(r => r.enabled !== false) || mediaNode.inputs?.some(input => ['first', 'last', ...referenceInputs, 'reference_audio'].includes(input.name) && input.link != null); }
+    if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = mediaFilled(); }
     else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板，即可在这里上传。'), 'fv-legacy'));
+    paintMediaHint(); mediaDetails.addEventListener('toggle', paintMediaHint);
+    controls.addEventListener('change', paintMediaHint, true); controls.addEventListener('input', paintMediaHint, true);
     const connectedLora = upstream(node, 'loras');
     const loraNode = connectedLora?.properties?.[CREATED_BY_PANEL] ? pendingLoras(node, connectedLora) : connectedLora || pendingLoras(node);
     const [loraDetails, loraMount] = expand(t('LoRA', 'LoRA'));
@@ -1433,7 +1448,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const wasBusy = busy;
         busy = Boolean(active) || progressLive(); queued = !state.running && Boolean(state.pending.length);
         // A finished, failed or cancelled video may have downloaded what the line above Generate still lists.
-        if (wasBusy && !busy) requestAssets?.refresh(true);
+        if (wasBusy && !busy) { requestAssets?.refresh(true); paintMediaHint(); }
         const g = active?.inputs;
         // The right-hand frame belongs to the submitted video. Draft edits on
         // the left must never reshape a video currently being generated.
@@ -1745,7 +1760,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let guide = null, closed = false;
     cleanup.push(() => { closed = true; guide?.dispose(); });
     agentDiscovery.then(() => {
-        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing});
+        if (!closed) guide = createFirstRunGuide({dialog, api, cn, isBusy: () => busy || queued || capturing, targets: {media: mediaGuideTarget}});
     });
     const recentLoad = recent.refresh();
     if (node.freevideoProgress && !node.freevideoProgress.chain) showProgress(node.freevideoProgress);
