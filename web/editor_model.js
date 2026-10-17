@@ -101,6 +101,7 @@ export function setFlag(record, key, value) {
     const next = serialize(record), settings = {...(next.settings || {})};
     if (value) settings[key] = true; else delete settings[key];
     next.settings = Object.keys(settings).length ? settings : null;
+    if (JSON.stringify(next.settings) !== JSON.stringify(record.settings)) next.keep_empty = true;
     return parse(next);
 }
 export function addAudioTrack(record) {
@@ -194,6 +195,8 @@ export function parse(value) {
         width: value.width, height: value.height, settings, serial: value.serial, tracks};
     check(value.size_mode === undefined || value.size_mode === 'first' || value.size_mode === 'fixed', 'size_mode');
     result.size_mode = value.size_mode ?? 'first';
+    check(value.keep_empty === undefined || typeof value.keep_empty === 'boolean', 'invalid');
+    if (value.keep_empty) result.keep_empty = true;
     Object.assign(result, markerFields(value));
     if (value.replacements !== undefined) {
         check(Array.isArray(value.replacements) && value.replacements.length > 0 && value.replacements.length <= RULES.maxClips, 'invalid');
@@ -613,8 +616,9 @@ export function setVolume(record, id, volume) {
     }
     return finish(next);
 }
-export const rename = (record, name) => finish({...copy(record), name});
-export const setPictureSize = (record, width, height, size_mode = 'fixed') => finish({...copy(record), width, height, size_mode});
+export const rename = (record, name) => finish({...copy(record), name, ...(name !== record.name ? {keep_empty: true} : {})});
+export const setPictureSize = (record, width, height, size_mode = 'fixed') => finish({...copy(record), width, height, size_mode,
+    ...(width !== record.width || height !== record.height || size_mode !== record.size_mode ? {keep_empty: true} : {})});
 export const setPicture = pictureEditor({copy, trackBy, check, pictureFit, finish});
 export const setPictureFit = (record, id, fit) => setPicture(record, id, {fit: pictureFit(fit)});
 

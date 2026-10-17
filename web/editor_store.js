@@ -179,6 +179,17 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
     let generationAvailable = false, generationGone = false, generationProbe = null, generationRetry = null, generationAttempts = 0;
     let disposed = false; const uploads = new Set();
     const session = holdSession();
+    let activeProject = null, sessionTimer = null, sessionWrites = Promise.resolve();
+    function activateProject(id) {
+        clock.clearTimeout(sessionTimer); sessionTimer = null;
+        const previous = activeProject; activeProject = id;
+        sessionWrites = sessionWrites.catch(() => {}).then(async () => {
+            if (previous && previous !== id) await json('/freevideo/editor/project/session', {...post({id: previous, session: session.session, release: true}), keepalive: true});
+            if (id) await json('/freevideo/editor/project/session', post({id, session: session.session}));
+        });
+        if (id && !disposed) sessionTimer = clock.setTimeout(() => { activateProject(activeProject).catch(() => {}); }, 20000);
+        return sessionWrites;
+    }
     const notice = (key, en, zh) => { if (!once.has(key)) { once.add(key); notify(t(en, zh)); } };
     const request = (path, options) => api.fetchApi(path, options);
     async function json(path, options, fallback = null) {
@@ -222,6 +233,15 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         ? injected({clock, sources, request: json, mediaURL: value => mediaURL(api, value)}) : injected;
     const store = {
         sources, cache,
+        activateProject,
+        get uploading() { return uploads.size > 0; },
+        async deleteProject(id) {
+            await sessionWrites;
+            const response = await request('/freevideo/editor/project/delete', post({id, session: session.session}));
+            if (!response.ok) throw await saveFailure(response);
+            memoryProjects.delete(id);
+            if (activeProject === id) { activeProject = null; clock.clearTimeout(sessionTimer); sessionTimer = null; }
+        },
         get generationAvailable() { return standIn ? standIn.generationAvailable ?? true : generationAvailable; },
         // The server said for certain it cannot generate (not just a missed answer that is asked again).
         get generationGone() { return !standIn && generationGone; },
@@ -302,6 +322,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 onSaved: (record, memory, local) => {
                     memoryProjects.set(record.id || local, copy({...state.record, id: record.id, revision: record.revision}));
                     state.adopt({id: record.id, revision: record.revision});
+                    if (record.id && record.id !== activeProject) activateProject(record.id).catch(() => {});
                     try { localStorage.setItem('fv-editor-last', record.id || local); } catch {}
                     if (memory) memoryProjects.set(record.id || local, copy(state.record));
                 },
@@ -460,7 +481,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         installEars: () => json('/freevideo/editor/subtitle-pack', post({action: 'install', language: true})),
         cancelEarsPack: () => json('/freevideo/editor/subtitle-pack', post({action: 'cancel'})),
         watchEarsPack(fn) { return watch(() => json('/freevideo/editor/subtitle-pack'), fn); },
-        dispose() { disposed = true; session.dispose(); for (const poller of pollers) poller.dispose(); pollers.clear(); watchers.clear();
+        dispose() { disposed = true; activateProject(null).catch(() => {}); session.dispose(); for (const poller of pollers) poller.dispose(); pollers.clear(); watchers.clear();
             for (const upload of [...uploads]) { upload.release(); upload.xhr.abort(); upload.reject(new Error('editor_closed')); } },
     };
     return store;

@@ -43,6 +43,8 @@ _REF = re.compile(r'[A-Za-z0-9_-]{1,128}')
 # A note is one line: the page refuses the same characters (editor_model.js NOTE_BREAK) and the same ends.
 _NOTE_BREAK = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029]')
 _STATE = threading.RLock()
+_SESSIONS = {}  # (output root, project id) -> {session token: monotonic expiry}
+_SESSION_SECONDS = 60
 _TRANSCODING = threading.Lock()
 _FAILED_IMPORTS = {}  # terminal statuses awaiting writable storage
 _HEADERS = {'Cache-Control': 'no-store'}
@@ -67,6 +69,12 @@ class MissingProject(FileNotFoundError):
 
 class TooLarge(ValueError):
     pass
+
+
+class DeleteRefused(ValueError):
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _whole(value, low=0, high=2**53 - 1):
@@ -314,6 +322,11 @@ def validate(record):
         raise ValueError('Invalid size mode')
     if size_mode == 'fixed':
         result['size_mode'] = size_mode
+    if 'keep_empty' in record:
+        if type(record['keep_empty']) is not bool:
+            raise ValueError('Invalid empty edit retention')
+        if record['keep_empty']:
+            result['keep_empty'] = True
     result.update(marker_fields(record))
     if 'replacements' in record:
         replacements = record['replacements']
@@ -574,7 +587,8 @@ def list_projects(root):
         cover = sources(root, [source_key(first['source'])]) if first and first['source'] else {}
         rows.append(dict(id=identity, name=record['name'], updated_at=datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(),
                          frames=duration(record), fps=FPS, width=record['width'], height=record['height'],
-                         thumbnail=next(iter(cover.values()), {}).get('thumbnail')))
+                         thumbnail=next(iter(cover.values()), {}).get('thumbnail'),
+                         **({'keep_empty': True} if record.get('keep_empty') else {})))
     return rows
 
 
@@ -582,6 +596,59 @@ def load(root, identity):
     with _STATE:
         record = _read_project(root, identity)
     return dict(project=record, sources=sources(root, references(record)))
+
+
+def project_session(root, identity, session, release=False):
+    """A tab renews its short lease while the edit is open; crashed tabs expire."""
+    with _STATE:
+        path = _project_path(root, identity)
+        if not isinstance(session, str) or not re.fullmatch(r'[0-9a-f]{32}', session):
+            raise ValueError('Invalid editor session')
+        key = (str(Path(root).resolve()), identity)
+        now = time.monotonic()
+        for old, owners in list(_SESSIONS.items()):
+            live = {token: until for token, until in owners.items() if until > now}
+            if live:
+                _SESSIONS[old] = live
+            else:
+                _SESSIONS.pop(old, None)
+        if release:
+            _SESSIONS.get(key, {}).pop(session, None)
+        else:
+            if not path.is_file():
+                raise MissingProject('Saved project unavailable')
+            _SESSIONS.setdefault(key, {})[session] = now + _SESSION_SECONDS
+
+
+def delete_project(root, identity, session=None):
+    """Delete only this edit's retained directory, never its source media."""
+    with _STATE:
+        path = _project_path(root, identity)
+        if session is not None and (not isinstance(session, str) or not re.fullmatch(r'[0-9a-f]{32}', session)):
+            raise ValueError('Invalid editor session')
+        if not path.parent.exists():
+            return
+        key = (str(Path(root).resolve()), identity)
+        if any(token != session and until > time.monotonic() for token, until in _SESSIONS.get(key, {}).items()):
+            raise DeleteRefused('project_in_use')
+        if path.exists():
+            record = _read_project(root, identity)
+            tracks = [*record['tracks'], *(track for tx in record.get('replacements', []) for track in [*tx['originals'], *tx['clips']])]
+            clips = [clip for track in tracks for clip in track['clips']]
+            from .comfy_chain import RUNNER
+            for clip in clips:
+                active = clip.get('pending') in ('queued', 'running')
+                if RUNNER is not None and clip.get('job'):
+                    try:
+                        active = RUNNER.get(clip['job'])['state'] in ('queued', 'running', 'cancelling')
+                    except KeyError:
+                        pass
+                if active:
+                    raise DeleteRefused('generation_active')
+        # _project_path rejects links in the owned path. rmtree does not follow
+        # links inside it, and the state lock excludes publication by save().
+        shutil.rmtree(path.parent)
+        _SESSIONS.pop(key, None)
 
 
 def load_by_work(root, work):
@@ -1173,6 +1240,8 @@ def register():
                     return web.json_response(dict(error='Local page required'), status=403, headers=_HEADERS)
                 try:
                     return await handler(request)
+                except DeleteRefused as error:
+                    return web.json_response(dict(error='Cannot delete this edit', reason=error.reason), status=409, headers=_HEADERS)
                 except Conflict as error:
                     return web.json_response(dict(revision=error.revision, **({'id': error.identity} if error.identity else {})), status=409, headers=_HEADERS)
                 except TooLarge:
@@ -1215,6 +1284,20 @@ def register():
             # A missing staging directory is a retryable write error, not 404.
             return web.json_response(dict(saved=False, retry=True, **_disk_full(error)), status=503, headers=_HEADERS)
         return web.json_response(dict(project=result), headers=_HEADERS)
+
+    @endpoint('post', '/freevideo/editor/project/delete')
+    async def remove_project(request):
+        body = await _body(request)
+        await asyncio.to_thread(delete_project, root(), body.get('id'), body.get('session'))
+        return web.json_response(dict(deleted=True), headers=_HEADERS)
+
+    @endpoint('post', '/freevideo/editor/project/session')
+    async def use_project(request):
+        body = await _body(request)
+        if type(body.get('release', False)) is not bool:
+            raise ValueError('Invalid session action')
+        await asyncio.to_thread(project_session, root(), body.get('id'), body.get('session'), body.get('release', False))
+        return web.json_response(dict(ok=True), headers=_HEADERS)
 
     @endpoint('get', '/freevideo/editor/sources')
     async def source_lookup(request):

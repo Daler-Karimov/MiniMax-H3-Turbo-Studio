@@ -6,6 +6,7 @@ import {wordmark} from './wordmark.js';
 import {openSetup} from './setup.js';
 import {feedbackButton} from './feedback.js';
 import * as model from './editor_model.js';
+import {discardEmptyEdit, hiddenEmptyEdit, deleteEditText} from './editor_lifecycle.js';
 import {createEditorState} from './editor_state.js';
 import {createEditorStore, sourceKey, mediaURL} from './editor_store.js';
 import {generationSize, continuedSize} from './editor_generation.js';
@@ -560,6 +561,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }
     async function replaceProject(record, key = null) {
         rememberView(); viewReady = false;
+        await store.activateProject(record.id).catch(() => {});
         viewKey = record.id || key || 'draft:' + (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
         let remembered = editorViews.get(viewKey);
         if (!remembered) try { remembered = JSON.parse(localStorage.getItem(viewPrefix + viewKey)); } catch {}
@@ -613,17 +615,72 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (!clips.length || clips.some(clip => !clip || clip.source || clip.pending !== 'draft' || clip.job) || entry.ids.some(isHeld)) continue;
             held.push({ids: [...entry.ids], text: entry.text}); markHeld(entry.ids, true);
         }
-        viewReady = true; updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
+        viewReady = true;
+        if (record.id) try { localStorage.setItem('fv-editor-last', record.id); } catch {}
+        updateTransport(); if (remembered?.held?.length) rememberView(); if (held.length) void startHeld();
     }
     async function switchProject(id) {
-        if (switching) return; switching = true; updateTop();
+        if (switching || closing || id && id === state.record.id) return; switching = true; element.inert = true; updateTop();
         try {
             await queue.flush();
             if (queue.dirty) { return; }
             const record = id ? await store.load(id) : initial();
-            if (!disposed && record) { await replaceProject(record); if (!id) { queue.enqueue(state.record); } menu.hidden = true; }
-        } catch (value) { error(value); }
-        finally { switching = false; updateTop(); }
+            if (!disposed && record) {
+                if (emptyEdit()) await discardProject({automatic: true});
+                await replaceProject(record); if (!id) { queue.enqueue(state.record); } menu.hidden = true;
+            }
+        } catch (value) {
+            const reason = deleteEditText(t)[value?.reason];
+            if (reason) notify(reason); else error(value);
+        } finally { switching = false; element.inert = false; updateTop(); }
+    }
+    const emptyEdit = () => discardEmptyEdit(state.record, initial(), {busy: jobActive(), hasMedia: store.uploading});
+    function forgetProject() {
+        const keys = new Set([state.record.id, viewKey].filter(Boolean));
+        for (const key of keys) editorViews.delete(key);
+        if (keys.has(lastDraft)) lastDraft = null;
+        try {
+            for (const key of keys) localStorage.removeItem(viewPrefix + key);
+            if (keys.has(localStorage.getItem('fv-editor-last'))) localStorage.removeItem('fv-editor-last');
+            if (keys.has(globalThis.sessionStorage?.getItem('fv-editor-draft'))) globalThis.sessionStorage?.removeItem('fv-editor-draft');
+        } catch {}
+        viewReady = false; // replaceProject/close must not remember the deleted edit again.
+    }
+    async function discardProject({automatic = false} = {}) {
+        if (state.record.id) try { await store.deleteProject(state.record.id); }
+        catch (value) {
+            // The last window to leave will remove a shared empty edit. Earlier
+            // windows must still be able to leave, quietly releasing their lease.
+            if (!automatic || value?.reason !== 'project_in_use') throw value;
+        }
+        queue.reset(); forgetProject();
+    }
+    async function deleteCurrentProject() {
+        if (switching || closing) return;
+        switching = true; element.inert = true; updateTop();
+        try {
+            const words = deleteEditText(t);
+            if (jobActive()) throw {reason: 'generation_active'};
+            await queue.flush(); releaseStamp();
+            if (queue.dirty) { notify(saveErrorText(queue.failure, t)); return; }
+            // Load the replacement before deleting, so a read failure keeps the edit open.
+            const rows = (await store.projects()).filter(row => row.id !== state.record.id)
+                .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+            const record = rows.length ? await store.load(rows[0].id) : initial();
+            if (!record) throw new Error(words.delete_failed);
+            await discardProject();
+            await replaceProject(record); menu.hidden = true; title.setAttribute('aria-expanded', 'false'); title.focus();
+        } catch (value) {
+            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed);
+        } finally { switching = false; element.inert = false; updateTop(); }
+    }
+    function confirmDelete() {
+        const words = deleteEditText(t, state.record.name);
+        menu.replaceChildren();
+        menu.append(el('p', 'fv-ed-delete-question', words.confirm));
+        const remove = button(words.remove, deleteCurrentProject, 'fv-ed-delete-confirm');
+        const cancel = button(words.cancel, showMenu);
+        menu.append(remove, cancel); cancel.focus();
     }
     async function showMenu() {
         menu.replaceChildren(); menu.hidden = false; title.setAttribute('aria-expanded', 'true');
@@ -635,9 +692,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         const fresh = button(t('New', '新建'), () => switchProject(null)); fresh.setAttribute('role', 'menuitem');
         menu.append(name, fresh);
         pictureTools.appendMenu(menu);
+        const remove = button(deleteEditText(t).item, confirmDelete, 'fv-ed-delete'); remove.setAttribute('role', 'menuitem'); menu.append(remove);
         try {
             // The current edit is already named in the box at the top.
-            const rows = (await store.projects()).filter(row => row.id !== state.record.id); if (disposed || menu.hidden) return;
+            const rows = (await store.projects()).filter(row => row.id !== state.record.id && !hiddenEmptyEdit(row, initial())); if (disposed || menu.hidden || !menu.contains(name)) return;
             if (rows.length) { const line = el('div'); line.setAttribute('role', 'separator'); menu.append(line); }
             for (const row of rows) { const item = button(row.name || new Date(row.updated_at).toLocaleDateString(), () => switchProject(row.id), 'fv-ed-project'); item.setAttribute('role', 'menuitem'); item.title = item.textContent; menu.append(item); }
         } catch (value) { error(value); }
@@ -1211,6 +1269,14 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
+                if (!queue.dirty && emptyEdit()) {
+                    try { await discardProject({automatic: true}); }
+                    catch (value) {
+                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed);
+                        closing = false; element.inert = false; closePromise = null; return false;
+                    }
+                }
+                await store.activateProject(null).catch(() => {});
                 rememberView(); disposed = true; guide?.dispose(); transportControls.dispose(); toolbarMore.dispose(); player.dispose();
                 textTools.dispose(); adjust.dispose(); notes.dispose(); pictureEdit.dispose();
                 audio.dispose(); headerFit.dispose();
