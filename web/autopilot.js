@@ -23,7 +23,7 @@ let current = null;
 export function openAutopilotView(node, {studio = null} = {}) {
     if (current?.open) { viewChanged('autopilot', node); return current; }
     studio?.querySelectorAll('video,audio').forEach(media => media.pause());
-    const dialog = el('dialog', 'fv-studio fv-autopilot'); dialog.setAttribute('aria-label', t('Autopilot', 'AI 全自动'));
+    const dialog = el('dialog', 'fv-studio fv-autopilot'); dialog.lang = cn ? 'zh' : 'en'; dialog.setAttribute('aria-label', t('Autopilot', 'AI 全自动'));
     const header = el('header', 'fv-header'), brand = el('div', 'fv-brand'), tools = el('div', 'fv-header-actions');
     brand.append(wordmark());
     const settings = el('button', 'fv-quiet', t('Settings', '设置')); settings.type = 'button'; settings.onclick = openSetup;

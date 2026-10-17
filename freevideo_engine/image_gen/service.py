@@ -178,6 +178,7 @@ class Service:
         if action not in ('generate', 'compose'):
             raise ValueError('invalid_request')
         context = Context(action, value)
+        context.note_start()
         with self.mutex:
             if self.closed:
                 raise ValueError('closed')
@@ -586,7 +587,11 @@ class Service:
                                 self.infer(session, value)
                             except RuntimeError as second:
                                 if earlier.startswith('worker_exit (') and str(second).startswith('worker_exit'):
-                                    raise RuntimeError('%s; first try: %s' % (second, earlier[len('worker_exit '):])) from None
+                                    combined = RuntimeError('%s; first try: %s' % (second, earlier[len('worker_exit '):]))
+                                    reading = getattr(second, 'exit_reading', None)
+                                    if isinstance(reading, dict):
+                                        combined.exit_reading = dict(reading, earlier_exit_code=getattr(error, 'exit_code', None))
+                                    raise combined from None
                                 raise
                 finally:
                     # Keep the parent's lease until the whole owned process tree exits.
@@ -658,14 +663,26 @@ class Service:
         return True
 
     @staticmethod
-    def worker_gone(session, heard):
+    def worker_gone(session, heard, requested_stop=False):
         """The error for a worker pipe that ended; it carries the exit code for the report."""
+        error = Service.worker_gone_error(session, heard)
+        code = getattr(error, 'exit_code', None)
+        if code is not None:
+            # The worker cannot report its memory once it is gone: read this process's view now.
+            from ..exit_diagnostics import exit_reading, memory_sample
+            error.exit_reading = dict(exit_reading(code, requested_stop=requested_stop), memory=memory_sample())
+        return error
+
+    @staticmethod
+    def worker_gone_error(session, heard):
         try:
             code = session.process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             code = None
         if code == 0 and not heard:
-            return WorkerIdleExit('worker_exit (exit code 0, before any answer)')
+            idle = WorkerIdleExit('worker_exit (exit code 0, before any answer)')
+            idle.exit_code = 0
+            return idle
         if code is None:
             return RuntimeError('worker_exit')
         session.error_reader.join(timeout=1)
@@ -676,7 +693,9 @@ class Service:
         message = 'worker_exit (exit code %d%s)' % (code, ', ' + kind if kind else '')
         # A worker that ended with an error before answering never ran the request; one
         # fresh worker gets it, and a second exit is reported with its own last words.
-        return (WorkerEarlyExit if not heard and code > 0 else RuntimeError)(message)
+        error = (WorkerEarlyExit if not heard and code > 0 else RuntimeError)(message)
+        error.exit_code = code
+        return error
 
     def infer(self, session, value):
         context = self.context or Context('generate', value)
@@ -684,7 +703,7 @@ class Service:
         try:
             session.send(action='generate', **value)
         except OSError:
-            raise self.worker_gone(session, heard)
+            raise self.worker_gone(session, heard, self.stop.is_set())
         cancelled_at = None
         deadline = time.monotonic() + INFERENCE_TIMEOUT
         while True:
@@ -702,7 +721,7 @@ class Service:
             except queue.Empty:
                 continue
             if row is None:
-                raise self.worker_gone(session, heard)
+                raise self.worker_gone(session, heard, self.stop.is_set())
             heard = True
             phase = row.get('phase')
             if phase == 'progress':

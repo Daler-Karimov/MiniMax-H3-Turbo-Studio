@@ -449,15 +449,18 @@ function storedSize(record) {
     return size;
 }
 // A saved video brings the description it was generated from; one that cannot be kept is left out.
-export function insertSource(record, {source, frames, hasVideo, hasAudio, width, height, at: position = 0, text = '', by = 'user'}) {
+export function insertSource(record, {source, frames, hasVideo, hasAudio, width, height, at: position = 0, text = '', by = 'user', targetTrack}) {
     const given = source; source = sourceData(source); check(whole(frames, 1) && whole(position), 'range');
     check(typeof hasVideo === 'boolean' && typeof hasAudio === 'boolean' && (hasVideo || hasAudio), 'source');
     check(TEXT_BY.includes(by), 'text');
     const words = hasVideo && typeof text === 'string' && validText(text.trim()) ? text.trim() : '';
     const next = copy(record);
     if (hasVideo) followFirstSize(next, width, height);
-    let track = trackBy(next, hasVideo ? 'v1' : 'a1');
-    if (!hasVideo && track.clips.some(clip => overlaps(clip, position, frames))) track = audioTrack(next, 'a2');
+    const explicitAudioTrack = !hasVideo && targetTrack !== undefined;
+    if (explicitAudioTrack) check(['a1', 'a2'].includes(targetTrack), 'track');
+    let track = explicitAudioTrack ? audioTrack(next, targetTrack) : trackBy(next, hasVideo ? 'v1' : 'a1');
+    if (!hasVideo && !explicitAudioTrack && track.clips.some(clip => overlaps(clip, position, frames))) track = audioTrack(next, 'a2');
+    check(!explicitAudioTrack || !track.locked, 'locked');
     const start = insertionAt(next, track.id, position);
     const available = hasVideo && hasAudio ? copy(makeRoom(next, start, frames, {tracks: [track.id]})) : null;
     const sound = available ? audioTrack(next, sourceAudioTrack(available, start, frames, true).id) : null;
@@ -471,21 +474,29 @@ export function insertSource(record, {source, frames, hasVideo, hasAudio, width,
     }
     const result = finish(next);
     // The description is a convenience: a project it would make too large to save takes the video without it.
-    if (words && storedSize(result) > STORED_ROOM) return insertSource(record, {source: given, frames, hasVideo, hasAudio, width, height, at: position});
+    if (words && storedSize(result) > STORED_ROOM) return insertSource(record, {source: given, frames, hasVideo, hasAudio, width, height, at: position, targetTrack});
     return result;
 }
-export function move(record, id, start) {
+export function move(record, id, start, {targetTrack} = {}) {
     if (isText(find(record, id))) return changeText(record, id, {start});
     check(whole(start), 'range'); const selected = pair(record, id); check(selected.length, 'missing'); busy(selected);
     const next = copy(record), ids = new Set(selected.map(clip => clip.id));
-    const clips = all(next).filter(clip => ids.has(clip.id)), primary = clips[0], track = trackOf(next, primary.id);
+    const clips = all(next).filter(clip => ids.has(clip.id)), primary = clips[0];
+    let track = trackOf(next, primary.id);
+    // Only independent audio changes rows; linked pairs keep automatic routing.
+    if (clips.length === 1 && track.kind === 'audio' && targetTrack !== undefined) {
+        check(['a1', 'a2'].includes(targetTrack), 'track');
+        assertUnlocked(record, [primary.id]);
+        track = audioTrack(next, targetTrack);
+        check(!track.locked, 'locked');
+    }
     for (const row of next.tracks) row.clips = row.clips.filter(clip => !ids.has(clip.id));
     start = insertionAt(next, track.id, start);
     const sound = track.kind === 'video' && clips.find(clip => trackOf(record, clip.id).kind === 'audio');
     const available = sound ? makeRoom(next, start, primary.frames, {tracks: [track.id]}) : null;
     const soundTrack = sound ? sourceAudioTrack(available, start, primary.frames, true).id : null;
     applyRoom(next, start, primary.frames, {tracks: [track.id, ...(soundTrack ? [soundTrack] : [])], excluded: ids});
-    for (const clip of clips) { clip.start = start; (clip === sound ? audioTrack(next, soundTrack) : trackBy(next, trackOf(record, clip.id).id)).clips.push(clip); }
+    for (const clip of clips) { clip.start = start; (clip === sound ? audioTrack(next, soundTrack) : clip === primary ? track : trackBy(next, trackOf(record, clip.id).id)).clips.push(clip); }
     return finish(next);
 }
 // A selected group keeps its gaps and tracks; validation rejects occupied landings.

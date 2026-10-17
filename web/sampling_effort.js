@@ -8,9 +8,12 @@ export const SAMPLING_EFFORTS = frozen([
     {name: 'High', zh: '精细', steps: 20, twoPass: false, stepCache: 'easycache-av', color: '#9d7bff'},
     {name: 'Max', zh: '极致', steps: 20, twoPass: false, stepCache: 'fbcache', color: '#ffa94d'},
 ]);
-// Mac (MPS) has no step caches yet: High samples 16 steps and Max 20, both in full.
-const MAC = {High: {steps: 16, stepCache: null}, Max: {stepCache: null}};
+// Mac (MPS) has the audio-video EasyCache only: High is as everywhere, Max samples 20 steps in full.
+const MAC = {Max: {stepCache: null}};
 export const SAMPLING_EFFORTS_MAC = frozen(SAMPLING_EFFORTS.map(tier => ({...tier, ...MAC[tier.name]})));
+// Mac results made before the cache came: High was 16 steps without one.
+export const legacyMacEffort = (steps, twoPass, stepCache = null) =>
+    steps === 16 && !twoPass && stepCacheOf(stepCache) === null ? SAMPLING_EFFORTS_MAC.find(tier => tier.name === 'High') : undefined;
 
 export const effortName = (t, tier) => t(tier.name, tier.zh);
 export const STEP_CACHES = Object.freeze([null, 'easycache-av', 'fbcache']);
@@ -41,10 +44,10 @@ export function effortFor(steps, twoPass, refine, stepCache = null, levels = SAM
 
 // The level whose sampling table a plan needs, for naming a missing download (tiers.table_level):
 // the exact level of either table (the cache tells High from Max at 20 steps; 20 steps
-// without a cache is Max and 16 steps High, as on Mac), else the first level with those steps.
+// without a cache is Max, as on Mac; 16 steps is the earlier Mac High), else the first level with those steps.
 export function tableLevel(steps, twoPass, refine, stepCache = null) {
     return effortFor(steps, twoPass, refine, stepCache) || effortFor(steps, twoPass, refine, stepCache, SAMPLING_EFFORTS_MAC)
-        || SAMPLING_EFFORTS.find(tier => tier.steps === steps && tier.twoPass === twoPass && (!twoPass || refine === 3));
+        || legacyMacEffort(steps, twoPass, stepCache) || SAMPLING_EFFORTS.find(tier => tier.steps === steps && tier.twoPass === twoPass && (!twoPass || refine === 3));
 }
 
 export function createSamplingEffort(t, {onChange, onPreview = () => {}, levels = SAMPLING_EFFORTS}) {

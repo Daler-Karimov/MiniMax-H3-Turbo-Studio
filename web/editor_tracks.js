@@ -210,6 +210,15 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
     const pixels = frame => frameToPixels(frame, state.zoom);
     const frameAt = event => Math.max(0, pixelsToFrame(event.clientX - content.getBoundingClientRect().left, state.zoom));
     const trackAt = event => event.target.closest?.('[data-track]')?.dataset.track || 'v1';
+    // Pointer capture retargets events to the view; locate audio rows by geometry.
+    const pointerTrackAt = event => {
+        const y = event.clientY - content.getBoundingClientRect().top;
+        return [...rows].find(([, row]) => y >= row.top && y < row.top + row.height)?.[0];
+    };
+    const audioTargetAt = (source, event) => {
+        const track = pointerTrackAt(event);
+        return !source.hasVideo && source.hasAudio && ['a1', 'a2'].includes(track) ? track : undefined;
+    };
     const sourceInfo = key => typeof sources === 'function' ? sources(key) : sources.get?.(key) || sources[key];
     // The snapping switch lives in the transport model: it empties the point list (and Alt flips it per gesture).
     const snap = snapFrame;
@@ -589,7 +598,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         tooltip.hidden = true; plannedLines.hidden = false; cachedPlan = ''; clearTimeout(estimateTimer); estimateToken++;
         for (const id of [...(gesture?.ids || []), ...(gesture?.rightPreviewIds || [])]) {
             const item = locate(id);
-            if (item) { item.element.classList.remove('fv-ed-dragging'); position(item.element, item.clip.start, item.clip.frames); }
+            if (item) { item.element.classList.remove('fv-ed-dragging'); item.element.style.transform = ''; position(item.element, item.clip.start, item.clip.frames); }
         }
         delete element.dataset.cursor; selectionBox.classList.remove('fv-ed-dragging', 'fv-ed-cannot-drop');
         plannedLines.querySelectorAll('[data-limited]').forEach(line => line.removeAttribute('data-limited'));
@@ -777,8 +786,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             const desired = gesture.clip.start + frame - gesture.anchor;
             const result = moveParameters(gesture.clip, gesture.anchor, frame, dragPoints(desired, gesture.clip.frames), state.zoom);
             result.track = isText(gesture.clip) ? pointerHit(event).track : null;
+            const pointedTrack = pointerTrackAt(event);
+            result.targetTrack = gesture.ids.length === 1 && ['a1', 'a2'].includes(gesture.track)
+                && ['a1', 'a2'].includes(pointedTrack) ? pointedTrack : undefined;
             gesture.result = result;
-            const track = state.record.tracks.find(row => row.id === gesture.track);
+            const track = state.record.tracks.find(row => row.id === (result.targetTrack || gesture.track));
             const drop = isText(gesture.clip) ? {hit: false} : insertionPoint(track.clips, result.frame, gesture.ids);
             showInsertion(drop.hit ? drop.frame : null); showGuide(result.guide);
             for (const id of gesture.rightPreviewIds || []) {
@@ -788,7 +800,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             let preview, error, shifted = 0;
             try {
                 if (textDropLocked(state.record, gesture.members, result.track)) throw new model.EditError('locked');
-                preview = model.move(state.record, gesture.id, result.frame);
+                preview = model.move(state.record, gesture.id, result.frame, {targetTrack: result.targetTrack});
             }
             catch (caught) { if (!(caught instanceof model.EditError)) throw caught; error = caught; }
             if (preview) for (const row of preview.tracks) for (const clip of row.clips) {
@@ -800,10 +812,13 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             }
             const landing = preview ? model.find(preview, gesture.id).start : result.frame;
             element.dataset.cursor = error ? 'not-allowed' : 'grabbing';
+            const previewTracks = new Map(result.targetTrack ? preview?.tracks.flatMap(row => row.clips.map(clip => [clip.id, row.id])) : []);
             for (const id of gesture.ids) {
                 const item = locate(id); item.element.classList.add('fv-ed-dragging'); position(item.element, landing, item.clip.frames);
+                const row = previewTracks.get(id) || item.track;
+                item.element.style.transform = row === item.track ? '' : `translateY(${rows.get(row).top - rows.get(item.track).top}px)`;
             }
-            box(selectionBox, {start: landing, frames: gesture.clip.frames, tracks: gesture.ids.map(id => locate(id).track)});
+            box(selectionBox, {start: landing, frames: gesture.clip.frames, tracks: gesture.ids.map(id => previewTracks.get(id) || locate(id).track)});
             hint({start: landing, frames: gesture.clip.frames}, event, false, true);
             selectionBox.classList.toggle('fv-ed-cannot-drop', !!error);
             if (error) tooltip.hidden = true;
@@ -921,7 +936,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         if (!result) return;
         if (finished.type === 'move') attempt(t('Move', '移动'), record => {
             if (textDropLocked(record, finished.members, result.track)) throw new model.EditError('locked');
-            return model.move(record, finished.id, result.frame);
+            return model.move(record, finished.id, result.frame, {targetTrack: result.targetTrack});
         });
         else if (finished.type === 'plannedBoundary') attempt(t('Resize parts', '调整段长'), record => model.resizePlannedBoundary(record, finished.id, finished.neighbor.clip.id, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
@@ -1051,12 +1066,12 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         if (!Array.from(event.dataTransfer?.types || []).includes(SOURCE_TYPE)) return;
         event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy';
         const frame = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom);
-        const key = `${frame.frame}/${state.zoom}/${draggedSource ? JSON.stringify(draggedSource) : trackAt(event)}`;
+        const key = `${frame.frame}/${state.zoom}/${pointerTrackAt(event)}/${draggedSource ? JSON.stringify(draggedSource) : ''}`;
         if (key !== dropPreviewKey || sourcePreview?.record !== state.record) {
             clearSourcePreview();
             dropPreviewKey = key;
             if (draggedSource) try {
-                const preview = model.insertSource(state.record, {...draggedSource, at: frame.frame});
+                const preview = model.insertSource(state.record, {...draggedSource, at: frame.frame, targetTrack: audioTargetAt(draggedSource, event)});
                 const added = previewSourcePlacement(preview), sound = added.find(item => item.track !== 'v1');
                 const name = sound ? preview.tracks.length === 3
                     ? t(`Audio ${sound.track === 'a1' ? 1 : 2}`, `声音 ${sound.track === 'a1' ? 1 : 2}`) : t('Audio', '声音') : '';
@@ -1067,7 +1082,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 dropPoint = {frame: frame.frame, error, label: null};
             }
             else {
-                const track = state.record.tracks.find(row => row.id === trackAt(event));
+                const track = state.record.tracks.find(row => row.id === pointerTrackAt(event));
                 dropPoint = insertionPoint(track?.clips || [], frame.frame);
             }
         }
@@ -1093,11 +1108,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
         const payload = sourcePayload(event.dataTransfer?.getData(SOURCE_TYPE));
         if (!payload) { showInsertion(null); showGuide(null); return; }
         event.preventDefault(); event.stopPropagation();
-        // Use the pointer position; the model chooses the audio track and shifts
-        // following clips. The insertion line is an indication, not an edit.
+        // Audio-only library drops honor the pointed row through normal insertion rules.
         const at = snap(frameAt(event), transportSnapPoints(state, allPoints([]), event), state.zoom).frame;
-        if (actions.insertSource) Promise.resolve(actions.insertSource({...payload, at}, {loadMetadata: true})).catch(error => actions.editError?.(error));
-        else attempt(t('Insert clip', '放入素材'), record => model.insertSource(record, {...payload, at}), {clearRange: true});
+        const targetTrack = audioTargetAt(payload, event);
+        if (actions.insertSource) Promise.resolve(actions.insertSource({...payload, at, targetTrack}, {loadMetadata: true})).catch(error => actions.editError?.(error));
+        else attempt(t('Insert clip', '放入素材'), record => model.insertSource(record, {...payload, at, targetTrack}), {clearRange: true});
         showInsertion(null); showGuide(null); dropPoint = null; dropPreviewKey = ''; draggedSource = null;
     }
     function zoom(value, anchor = scroll.clientWidth / 2) {

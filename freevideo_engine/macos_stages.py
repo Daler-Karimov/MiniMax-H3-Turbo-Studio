@@ -354,7 +354,8 @@ def worker(value):
                         resident_bytes=compute.get('resident_bytes', 0),
                         attention_batch_bytes=compute.get('attention_batch_bytes', 1 << 29),
                         plan_compute=bool(compute), memory_retry=retry and bool(compute),
-                        task=value.get('task', 't2va'), canvas=value['canvas']) as engine:
+                        task=value.get('task', 't2va'), canvas=value['canvas'],
+                        step_cache=None if refining else value.get('step_cache')) as engine:
                 result['load_seconds'] = engine.load_seconds
                 tick = time.monotonic()
                 # A preview stops after the first pass; joining would also refine.

@@ -72,10 +72,14 @@ export function mentionRanges(text, people) {
     if (!names.length || !text.includes('@')) return [];
     // A name written in Latin letters does not end in the middle of a longer word ("@Su Wanda" is not "@Su Wan").
     const whole = name => escape(name) + (/[A-Za-z0-9_]$/.test(name) ? '(?![A-Za-z0-9_])' : '');
-    const pattern = new RegExp('(?<![\\w.%+\\-])@(' + names.map(whole).join('|') + ')', 'gu');
+    const pattern = new RegExp('@(' + names.map(whole).join('|') + ')', 'gu');
     const ranges = [];
-    for (const match of text.matchAll(pattern))
+    for (const match of text.matchAll(pattern)) {
+        // An @ straight after the end of another mention ("@Ann@Bob") starts a mention too.
+        const joined = ranges.length > 0 && ranges[ranges.length - 1].end === match.index;
+        if (!joined && match.index > 0 && /[\w.%+\-]/.test(text[match.index - 1])) continue;
         ranges.push({start: match.index, end: match.index + 1 + match[1].length, name: match[1]});
+    }
     return ranges;
 }
 

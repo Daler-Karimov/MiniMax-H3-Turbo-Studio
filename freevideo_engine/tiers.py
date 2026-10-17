@@ -16,8 +16,10 @@ REFINE_STEPS only as the neutral value the `refine_steps` field needs; it is
 never run for them. `step_cache` is the engine's cache key: None,
 'easycache-av' (audio-video EasyCache) or 'fbcache' (first-block cache).
 
-The caches are not ported to Mac (MPS) yet: there high is one pass of 16
-steps and max one pass of 20, both without a cache (TIERS_MAC).
+On Mac (MPS) only the audio-video EasyCache is ported: high is the same plan
+as everywhere else and max is one pass of 20 steps without a cache (TIERS_MAC).
+Results made before that, one pass of 16 steps without a cache, still count as
+high (LEGACY_MAC_HIGH).
 """
 import sys
 
@@ -30,8 +32,8 @@ TIERS = {
     'high': dict(steps=20, two_pass=False, step_cache='easycache-av'),
     'max': dict(steps=20, two_pass=False, step_cache='fbcache'),
 }
-TIERS_MAC = dict(TIERS, high=dict(steps=16, two_pass=False, step_cache=None),
-                 max=dict(steps=20, two_pass=False, step_cache=None))
+TIERS_MAC = dict(TIERS, max=dict(steps=20, two_pass=False, step_cache=None))
+LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None)
 
 # Sampling time of a cached pass as a share of the same pass without a cache,
 # for estimates that have no run with that cache yet. B200, 20 s clips
@@ -69,9 +71,12 @@ def step_cache(name, mac=False):
 
 def name_for(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False):
     """The level with exactly this plan, or None for custom sampling."""
-    return next((name for name, tier in table(mac).items()
-                 if tier['steps'] == steps and tier['two_pass'] == two_pass
-                 and (not two_pass or refine_steps == REFINE_STEPS) and tier['step_cache'] == step_cache), None)
+    found = next((name for name, tier in table(mac).items()
+                  if tier['steps'] == steps and tier['two_pass'] == two_pass
+                  and (not two_pass or refine_steps == REFINE_STEPS) and tier['step_cache'] == step_cache), None)
+    if found is None and mac and (steps, two_pass, step_cache) == tuple(LEGACY_MAC_HIGH.values()):
+        return 'high'
+    return found
 
 
 def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False):
@@ -79,7 +84,7 @@ def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac
 
     Tables follow the step count only. Prefer the exact level (the cache tells
     high from max at 20 steps), then the other platform's table (20 steps
-    without a cache is "max", as on Mac; 16 steps is "high"), then the first
+    without a cache is "max", as on Mac; 16 steps is the earlier Mac "high"), then the first
     level with that step count.
     """
     found = name_for(steps, two_pass, refine_steps, step_cache, mac) or name_for(

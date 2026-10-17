@@ -14,7 +14,7 @@ from .. import tiers
 S = 'https://json-schema.org/draft/2020-12/schema'
 PREFIX = '/freevideo/agent/v1'
 # (two_pass, base_steps, refine_steps) of each level on this platform; the step
-# cache a level adds is tiers.step_cache(name, mac) (none on Mac).
+# cache a level adds is tiers.step_cache(name, mac) (on Mac only high has one, easycache-av).
 QUALITY = {name: tiers.plan(name, mac=tiers.on_mac()) for name in tiers.TIERS}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),
            '21:9': (21, 9), '2:3': (2, 3), '3:2': (3, 2)}

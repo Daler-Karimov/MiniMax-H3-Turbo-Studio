@@ -101,6 +101,13 @@ def classify_failure(error, metrics=None):
         result['ram_guard'] = {key: telemetry['ram_guard'].get(key) for key in
             ('reasons', 'working_bytes', 'budget_bytes', 'available_bytes', 'emergency_floor_bytes',
              'physical_available_bytes', 'commit_available_bytes') if key in telemetry['ram_guard']}
+    if isinstance(error, WorkerExit) and isinstance(telemetry, dict):
+        # The worker is gone; these are the controller's readings at its start and at its exit.
+        from .exit_diagnostics import clean_reading, clean_sample
+        if isinstance(telemetry.get('worker_exit'), dict):
+            result['worker_exit'] = clean_reading(telemetry['worker_exit'])
+        if isinstance(telemetry.get('memory_at_start'), dict):
+            result['memory_at_start'] = clean_sample(telemetry['memory_at_start'])
     if cleanup:
         result['cleanup_evidence'] = [str(item) for item in cleanup]
     if getattr(error, 'worker_stop_confirmed', None) is False:

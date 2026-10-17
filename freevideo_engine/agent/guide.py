@@ -73,8 +73,8 @@ GUIDE = {
     'quality': [
         'Steps per quality: "light" = 8 first-pass steps + 3 refine steps, two-pass (default); "medium" = 8 steps, '
         '"high" = 20 steps with a step cache, "max" = 20 steps with a step cache that skips less work, each in one pass. '
-        '"max" runs plain 20 steps when the GPU has no room for its cache. On a Mac, "high" is 16 steps and '
-        '"max" 20 steps, without a cache.',
+        '"max" runs plain 20 steps when the GPU has no room for its cache. On a Mac, "high" is the same and '
+        '"max" is 20 plain steps.',
         'Two-pass generation runs only with 8 first-pass steps. Any other base_steps (for example 20 with '
         'two_pass=true) runs in one pass of that many steps; the job notice says so. A preview is always two-pass '
         'with 8 steps.',
