@@ -3,6 +3,7 @@ import { closeDialog } from './motion.js';
 import { resultActions, previewBadge, icon } from './result_actions.js';
 import { videoUnavailableText } from './studio_extend.js';
 import { topDialog } from './dialog_keys.js';
+import { isNetworkTypeError, connectionLostText } from './browser_extension.js';
 
 const style = document.createElement('link');
 style.rel = 'stylesheet'; style.href = new URL('./library.css', import.meta.url).href; document.head.append(style);
@@ -660,7 +661,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             } else select(rows.get(selected), false);
             ok = true; regroup();
             if (selectedWork) { const row = [...rows.values()].find(row => row.id === selectedWork || row.video === selectedWork); if (row) { select(row); selectedWork = null; } else if (next) queueMicrotask(() => load(true)); }
-        } catch (error) { if (!disposed && error.name !== 'AbortError') message.textContent = error.message; }
+        } catch (error) { if (!disposed && error.name !== 'AbortError') message.textContent = isNetworkTypeError(error) ? connectionLostText(t) : error.message; }
         finally { if (!disposed) { loading = false; refresh.disabled = more.disabled = false; } }
         return ok;
     }

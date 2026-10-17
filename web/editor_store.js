@@ -210,9 +210,14 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
         if (query.id) return copy(memoryProjects.get(query.id) || (query.id === 'memory' ? memoryProjects.get('memory') : null));
         return copy([...memoryProjects.values()].find(record => record.tracks[0].clips[0]?.source?.id === query.work) || null);
     }
-    function watch(read, deliver) {
-        const poller = createPoller(read, deliver, {clock, interval: pollMs}); pollers.add(poller);
-        return () => { poller.dispose(); pollers.delete(poller); };
+    // lost: called once after three reads in a row fail; the watch then stops.
+    function watch(read, deliver, lost = null) {
+        let failures = 0, poller = null;
+        const stop = () => { poller?.dispose(); pollers.delete(poller); };
+        poller = createPoller(async () => { const value = await read(); failures = 0; return value; }, deliver, {clock, interval: pollMs,
+            onError: error => { if (lost && ++failures >= 3) { stop(); lost(error); } }});
+        pollers.add(poller);
+        return stop;
     }
     function generationAbsent() {
         generationGone = true; generationRetry?.dispose();
@@ -469,7 +474,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
             if (response.status === 404 || !value) { notice('export', 'To export, update FreeVideo and restart it.', '请更新 FreeVideo 并重新启动后再导出。'); return null; }
             return value?.export || null;
         },
-        watchExport(id, fn) { return watch(async () => (await json('/freevideo/editor/export?' + new URLSearchParams({id})))?.export || null, fn); },
+        watchExport(id, fn, lost) { return watch(async () => (await json('/freevideo/editor/export?' + new URLSearchParams({id})))?.export || null, fn, lost); },
         cancelExport: id => json('/freevideo/editor/export/cancel', post({id})),
         // Subtitles from speech. What this computer can recognise; null where it cannot or the server is older.
         async ears() { return (await json('/freevideo/editor/ears'))?.available || null; },

@@ -47,6 +47,9 @@ export function isNetworkTypeError(error) {
     return (type === 'TypeError' || /^TypeError:\s*/i.test(text))
         && /Failed to fetch|fetch failed|NetworkError(?: when attempting to fetch resource)?|network request failed|Load failed/i.test(text);
 }
+// One sentence for a dropped connection (engine closed, network lost); the raw
+// browser wording stays in the technical details.
+export function connectionLostText(t) { return t('Lost the connection to FreeVideo. Try again once it is back.', '与 FreeVideo 的连接已断开，恢复后请重试。'); }
 export function nativeFetch(fetchFunction = globalThis.fetch) {
     try { return typeof fetchFunction === 'function' && /\[native code\]/.test(Function.prototype.toString.call(fetchFunction)); }
     catch { return false; }

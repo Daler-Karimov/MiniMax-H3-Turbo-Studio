@@ -19,6 +19,7 @@ import { openLibrary } from './library.js';
 import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
+import { isNetworkTypeError, connectionLostText } from './browser_extension.js';
 import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, handleNames, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
@@ -48,6 +49,8 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
+// A dropped connection gets one plain sentence, not the browser's "Failed to fetch".
+const shownMessage = error => isNetworkTypeError(error) ? connectionLostText(t) : error.message;
 // The usual LoRA strength range is -4 to 4; a value the user types by hand may go further, up to 100.
 const LORA_USUAL = 4, LORA_LIMIT = 100;
 let loraRangeCount = 0;
@@ -479,7 +482,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     });
     async function refresh() {
         try { const response = await api.fetchApi('/models/loras', {cache: 'no-store'}); if (!response.ok) throw new Error(response.statusText); const listed = await response.json(); verdicts.clear(); skipped = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && /\.(ckpt|pt|pth|bin|sft)$/i.test(n)).length; names = (Array.isArray(listed) ? listed : []).filter(n => typeof n === 'string' && n.toLowerCase().endsWith('.safetensors')); render(); }
-        catch (error) { if (!disposed) note.textContent = error.message; }
+        catch (error) { if (!disposed) note.textContent = shownMessage(error); }
     }
     // Only deselects: the files stay in the folder and the recent names are kept.
     const clear = button(t('Clear', '清空'), () => { write([]); });
@@ -1162,7 +1165,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A browser extension gets the shared card; other failures stay in the status line.
     function resultActionFailed(error) {
         if (extensionCause(error)) { showQueueError(error); return; }
-        status.dataset.error = 'true'; status.textContent = error.message;
+        status.dataset.error = 'true'; status.textContent = shownMessage(error);
     }
     const trimNote = el('div', '', 'fv-note fv-trim-note'); trimNote.hidden = true; trimNote.setAttribute('role', 'status');
     // Run second pass is the preview's primary action in the result bar.
@@ -1386,7 +1389,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
         chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
         chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
-    }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || error?.message || String(error));
+    }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || (isNetworkTypeError(error) ? connectionLostText(t) : error?.message) || String(error));
     let lastQueueError = null;
     function showQueueError(error) {
         if (disposed) return;

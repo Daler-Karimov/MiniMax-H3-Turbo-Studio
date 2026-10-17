@@ -1,5 +1,5 @@
 // Shared by the Studio and graph view. Text only; never render exception HTML.
-import {detectBrowserExtension, browserExtensionAdvice, extensionSteps} from './browser_extension.js';
+import {detectBrowserExtension, browserExtensionAdvice, extensionSteps, isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {SAMPLING_EFFORTS, STEP_CACHES, UPSCALE_FACTORS, tableLevel} from './sampling_effort.js';
 import {failureIssue, failureStage} from './failure_issue.js';
 const reports = new WeakSet();
@@ -416,10 +416,14 @@ function showFailureDialog(report, t) {
 const shownCause = text => text.replace(/\s*Use PYTORCH_MPS_HIGH_WATERMARK_RATIO=[\d.]+ to disable upper limit for memory allocations(?: \(may cause system failure\))?\.?/g, '');
 
 /** The written title and explanation for a report, and whether it gets the packaged layout (not a rejected input). */
-export function adviceFor(report, t) {
+export function adviceFor(report, t, value) {
     const advice = report.browser_extension
         ? browserExtensionAdvice(report.browser_extension, t)
         : failureAdvice(report.details, t, report.known_error ?? null);
+    // A dropped connection reads as one sentence; the browser's own wording stays in the details.
+    if (advice.kind === 'unknown' && isNetworkTypeError(value) && ['submission', 'queue'].includes(report.stage)) {
+        Object.assign(advice, {kind: 'connection', title: t('Lost the connection to FreeVideo', '与 FreeVideo 的连接已断开'), summary: connectionLostText(t), action: ''});
+    }
     if (report.stage === 'submission' && advice.kind === 'unknown') {
         advice.title = t('The task could not be submitted', '任务提交失败');
         advice.summary = '';
@@ -534,7 +538,7 @@ export function createErrorPanel(t) {
     head.append(title, actions); element.append(head, explanation, location, cause, action, disclosure, privacy, downloadStatus);
     return {element, show(value, popup = true, context = {}) {
         const report = createErrorReport(value, context); currentReport = report;
-        const {advice, generated} = adviceFor(report, t);
+        const {advice, generated} = adviceFor(report, t, value);
         title.textContent = advice.title; explanation.textContent = advice.summary; explanation.hidden = !advice.summary; action.textContent = advice.action;
         element.querySelector('.fv-extension-steps')?.remove();
         if (advice.kind === 'browser-extension') action.after(extensionSteps(advice));

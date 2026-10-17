@@ -1,4 +1,5 @@
 import {createEditorText} from './editor_text.js';
+import {isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {createToolbarMore} from './editor_toolbar_more.js';
 import {isText} from './editor_text_model.js';
 import {viewSwitch, viewChanged} from './view_navigation.js';
@@ -40,6 +41,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const language = () => new URLSearchParams(location.search).get('freevideo_lang') || navigator.language;
 // Shared by error() and actions.reasonText: one sentence naming the failed step.
 export function editorErrorText(value, t = en => en) {
+    if (isNetworkTypeError(value) || isNetworkTypeError(value?.detail)) return connectionLostText(t);
     const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim())?.trim() || '' : '';
     const detail = value?.detail || (value?.error && typeof value.error === 'object' ? value.error : value);
     const raw = [detail?.response?.error?.message, detail?.response?.error, detail?.response?.message,
@@ -71,6 +73,7 @@ export function editorErrorText(value, t = en => en) {
         : t(`${generating} failed. Try again.`, `${generating}时出错，请再试一次。`);
 }
 function exportErrorText(value, t) {
+    if (isNetworkTypeError(value)) return connectionLostText(t);
     const message = [value?.response?.error?.message, value?.response?.error, value?.response?.message, value?.message]
         .find(text => typeof text === 'string' && text.trim() && text !== 'editor_request')?.trim().split(/[\r\n]+/)[0];
     // A bare status code means nothing to the user; the server's own words do.
@@ -1036,7 +1039,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 }
                 if (!exportStatus) return;
                 updateExport(exportStatus); stopExport?.();
-                stopExport = store.watchExport(exportStatus.id, updateExport);
+                stopExport = store.watchExport(exportStatus.id, updateExport, exportLost);
             } finally { exportPreparing = false; updateTop(); }
         },
     };
@@ -1049,6 +1052,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await onView('studio');
             return (await import('./studio.js')).openExtendEditor(record, undefined, options);
         }});
+    }
+    // The engine stopped answering mid-export: leave the percentage and say so.
+    function exportLost() {
+        if (disposed) return;
+        exportStatus = null; exportCancel.hidden = true; updateTop();
+        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'));
     }
     function updateExport(value) {
         if (!value) return false;
@@ -1063,6 +1072,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
                     : t('Export failed. Try again.', '导出时出错，请再试一次。'));
             }
+            if (value.state === 'cancelled') notify(t('Export cancelled. No unfinished file is kept.', '已取消导出，没有留下不完整的文件。'));
             window.FreeVideoNotifyTaskDone?.({kind: 'export', id: value.id, ok: value.state === 'done'});
         }
         return running;
