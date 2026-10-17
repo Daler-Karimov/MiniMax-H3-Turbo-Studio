@@ -5,7 +5,7 @@ from pathlib import Path
 from comfy_api.latest import ComfyExtension, InputImpl, io, ui
 
 from . import comfy_bridge
-from .comfy_continuation import node_frames, optional_text, request_options
+from .comfy_continuation import node_frames, optional_text, part_steps, request_options
 from .default_prompt import DEFAULT_PROMPT
 
 References = io.Custom('FREEVIDEO_REFERENCES')
@@ -144,6 +144,7 @@ class FreeVideoGenerate(io.ComfyNode):
             if options.get('continue_from'):
                 # A continued part turns on two passes, skips the preview and takes keyframes as pictures (execute).
                 two_pass, preview = True, False
+                base_steps, refine_steps = part_steps(base_steps, refine_steps, step_cache)[:2]
                 options.update(two_pass=True, preview=False, refine_from=refine_from or None,
                                media=dict(first=False, last=False, conditioning_info=False))
             comfy_bridge.validate_request(text, width, height, seconds, seed, **options)
@@ -181,6 +182,11 @@ class FreeVideoGenerate(io.ComfyNode):
         chain = block_context(PromptServer.instance, node_id)
         options = request_options(continue_from, node_frames(frames))
         notes = []
+        if options.get('continue_from') or chain is not None and chain.get('count', 1) > 1:
+            base_steps, refine_steps, step_cache, note = part_steps(base_steps, refine_steps, step_cache)
+            if note:
+                two_pass = True
+                notes.append(note)
         if options.get('continue_from') and not two_pass:
             two_pass = True
             notes.append('Continuing a video needs "Two-pass acceleration", so it is on for this part.')
