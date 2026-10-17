@@ -27,6 +27,8 @@ from freevideo_engine.launcher_update import LINUX_CHANNEL, RELEASE_ASSETS, buil
 from freevideo_engine.release_notes import markdown
 from scripts.build_launcher_notices import collect as collect_notices
 from scripts.build_windows import build_info, bundle_data_args, stamp_source
+from scripts.prune_qt_bundle import prune_qt_bundle, write_prune_report
+from scripts.deduplicate_bundle_data import deduplicate_bundle_data, write_data_report
 
 APP_ID = 'org.flashml.FreeVideo'
 NAME = RELEASE_ASSETS[LINUX_CHANNEL][0]
@@ -224,13 +226,19 @@ def main():
         str(ROOT / 'scripts/linux_app.py')]
     subprocess.run(command, cwd=ROOT, check=True)
     dist = out / 'dist' / 'FreeVideo'
+    write_prune_report(out, prune_qt_bundle(dist))
     bundled = bundle_libraries(dist / '_internal', args.libraries.resolve() if args.libraries else None)
     folder = appdir(out, dist, ROOT / 'freevideo_engine/assets/icon.png')
+    # copytree expands hardlinks: deduplicate the final AppDir, after copying.
+    write_data_report(out, deduplicate_bundle_data(folder))
     release = out / 'release'
     release.mkdir()
     executable = release / NAME
     env = dict(os.environ, ARCH='x86_64', APPIMAGE_EXTRACT_AND_RUN='1')
-    subprocess.run([str(appimagetool), '--no-appstream', '--runtime-file', str(runtime), str(folder), str(executable)],
+    subprocess.run([str(appimagetool), '--no-appstream', '--runtime-file', str(runtime), '--comp', 'zstd',
+                    '--mksquashfs-opt=-b', '--mksquashfs-opt=1M',
+                    '--mksquashfs-opt=-Xcompression-level', '--mksquashfs-opt=19',
+                    str(folder), str(executable)],
                    cwd=out, env=env, check=True)
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
     (release / 'SHA256SUMS.txt').write_text(digest + '  ' + NAME + '\n', encoding='utf-8')
