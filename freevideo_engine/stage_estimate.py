@@ -95,6 +95,36 @@ def _apple(h):
     return 'Apple' in _gpu(h) or h.get('os') == 'Darwin'
 
 
+APPLE_TIERS = ('base', 'Pro', 'Max', 'Ultra')
+
+
+def _apple_factors(h, p):
+    """(step, decode) multipliers for the Apple chip; (1, 1) is the M4 Max fit.
+
+    Only some chips have a report. A generation with no report takes the nearest
+    older generation that has one (the nearest newer one if there is none older),
+    so a guess errs long; the first measured step then corrects it. Inside the
+    generation used, a tier with no report steps down to the next lower tier, and
+    a tier lower than all of them is slower by a fixed ratio.
+    """
+    table = (p.get('apple') or {}).get('chip_factors')
+    found = re.search(r'\bM(\d+)(?:\s+(Pro|Max|Ultra))?', _gpu(h))
+    if not table or not found:
+        return 1., 1.
+    chips = {int(g): v for g, v in table['chips'].items()}
+    generation, tier = int(found.group(1)), found.group(2) or 'base'
+    if generation not in chips:
+        older = [g for g in chips if g < generation]
+        generation = max(older) if older else min(chips, key=lambda g: abs(g-generation))
+    own = chips[generation]
+    rank = APPLE_TIERS.index(tier)
+    for r in range(rank, -1, -1):
+        if APPLE_TIERS[r] in own:
+            return tuple(own[APPLE_TIERS[r]])
+    lowest = own[min(own, key=APPLE_TIERS.index)]
+    return tuple(x*float(table['lower_tier_slowdown']) for x in lowest)
+
+
 def speed(h, p, spec_only=False):
     key = _gpu(h)
     if _apple(h):
@@ -199,7 +229,7 @@ def step_parts(h, r, i, p):
     x += _reference_rows(h, r, x)/TOKEN_UNIT
     if _apple(h):
         b, c = p['apple']['step_bc']
-        return p['apple']['step_fixed'], x*(b+c*x)
+        return p['apple']['step_fixed'], x*(b+c*x)*_apple_factors(h, p)[0]
     b, c = p['step']['bc_normalized']
     s = _dot(stream_features(h, r, i), p['step']['s'])
     return max(0., s), x*(b+c*x)/speed(h, p)
@@ -282,7 +312,7 @@ def _raw_base(h, r, flags, p, factor=1., mode='compute', factor_pass=1):
     for name in ['video_decode', 'decode']:
         if _apple(h):
             a, d = p['apple'][name]
-            value = a+m*d*factor
+            value = a+m*d*factor*_apple_factors(h, p)[1]
         else:
             a, d, stream = p[name]['coef']
             ram = p[name]['ram16_multiplier'] if ram_tier(h)==0 else 1.
@@ -367,7 +397,7 @@ def _decode_value(h,r,p,name,method,factor=1.,slowdown=1.,warm2=None,live=False)
     if _apple(h):
         d=canvases(r)[2]; m=d['width']*d['height']*d['frames']/1e6
         a,b=p['apple'][name]
-        return a+m*b*factor
+        return a+m*b*factor*_apple_factors(h,p)[1]
     spec = p['v2']['decode'][name]
     if method in ['log_prior','log_live']:
         use_live = method=='log_live' and live
@@ -433,7 +463,7 @@ def _interval(name,value,p,kind='prior',wide=False):
 
 def _warnings(h,r,p):
     out=[]
-    if _apple(h):out.append('Apple backend has one physical-machine report; external prior accuracy is unvalidated.')
+    if _apple(h):out.append('Apple prior rests on a few physical-machine reports; chips without one borrow the nearest generation.')
     if _gpu_item(h,p) is None:out.append('Unseen GPU: supplied dense tensor rate or G=1 fallback; wide uncertainty.')
     if not (r.get('sampling_geometry') or {}).get('first'):out.append('Sampling geometry inferred from current H3 engine rules.')
     if any(r.get(f'pass{i}_resident_blocks') is None for i in [1,2]):out.append('Missing planned transformer residency: coarse VRAM fallback.')
