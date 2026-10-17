@@ -150,6 +150,16 @@ export function createGuideReplayEntry({dialog, cn, openWorkspace, replay = show
     const manual = el('button', text('manual')); manual.type = 'button'; manual.setAttribute('aria-haspopup', 'menu'); manual.setAttribute('aria-expanded', 'false');
     const menu = el('div', null, 'fv-guide-howtos'); menu.setAttribute('role', 'menu'); menu.hidden = true;
     const closeMenu = () => { menu.hidden = true; manual.setAttribute('aria-expanded', 'false'); };
+    // The last row opens the whole tutorial book; Settings closes first so a how-to started from the book plays over the workspace.
+    const openBook = el('button', cn ? '教程' : 'Tutorial'); openBook.type = 'button'; openBook.setAttribute('role', 'menuitem');
+    openBook.onclick = async () => {
+        closeMenu();
+        try {
+            const {openTutorialBook} = await import('./tutorial_book.js');
+            await new Promise(resolve => { dialog.addEventListener('close', resolve, {once: true}); dialog.close(); });
+            openTutorialBook();
+        } catch { status.textContent = text('unavailable'); status.hidden = false; }
+    };
     manual.onclick = async () => {
         if (!menu.hidden) { closeMenu(); return; }
         try {
@@ -165,7 +175,7 @@ export function createGuideReplayEntry({dialog, cn, openWorkspace, replay = show
                     } catch { status.textContent = text('unavailable'); status.hidden = false; }
                 };
                 return choice;
-            }));
+            }), openBook);
             menu.hidden = false; manual.setAttribute('aria-expanded', 'true');
         } catch { status.textContent = text('unavailable'); status.hidden = false; }
     };
