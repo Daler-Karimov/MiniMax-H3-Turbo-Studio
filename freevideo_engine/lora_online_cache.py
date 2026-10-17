@@ -9,14 +9,14 @@ import time
 import torch
 from safetensors.torch import save_file
 
-from .lora_cache import _targets, index_adapter, prepare as prepare_fused
+from .lora_cache import MODULATION, _targets, index_adapter, prepare as prepare_fused
 from .media_request import digest, verify_files
 from .monitoring import save
 from .storage import fingerprint
 from .tensor_io import open_tensors
 
 
-def _supported(adapters, linears):
+def _supported(adapters, linears, skip_modulation=False):
     for adapter in adapters:
         with open_tensors(adapter['path']) as source:
             for key in source.keys():
@@ -25,6 +25,8 @@ def _supported(adapters, linears):
                 for target, _, _ in _targets(name):
                     if target not in linears and '.attn.' in target:
                         target = target.replace('.attn.', '.attn.orig.', 1)
+                    if skip_modulation and target not in linears and MODULATION.match(target):
+                        continue
                     if target not in linears or not target.startswith(('transformer_blocks.', 'token_refiner.refiner_blocks.')):
                         return False
     return True
@@ -43,7 +45,10 @@ def prepare(cache, adapters, output_root=None):
     precision = manifest.get('precision')
     # Low-rank branches run beside the base projection, so they need no change
     # to FP8 or ConvRot int8 weights.
-    if precision not in ('fp8', 'int8') or not _supported(adapters, manifest.get('linears', {})):
+    # The int8 package cannot merge AdaLN projections, so those adapters alone
+    # are skipped and counted in the report; every other patch still applies.
+    skip_modulation = precision == 'int8'
+    if precision not in ('fp8', 'int8') or not _supported(adapters, manifest.get('linears', {}), skip_modulation):
         # Full-difference, bias and modulation patches retain the existing
         # exact preparation path. Never silently omit an unsupported patch.
         path, report = prepare_fused(cache, adapters, output_root)
@@ -74,9 +79,9 @@ def prepare(cache, adapters, output_root=None):
             save(marker, saved)
         return output, dict(enabled=True, mode='online', cache_hit=True, **saved['online_lora']['summary'])
     targets = {name: dict(shape=spec['weight_shape']) for name, spec in manifest['linears'].items()}
-    groups = {}
+    groups, skipped = {}, []
     for adapter in adapters:
-        for patch in index_adapter(adapter, targets):
+        for patch in index_adapter(adapter, targets, skipped if skip_modulation else None):
             block = (patch['target'].split('.')[1] if patch['target'].startswith('transformer_blocks.') else 'root')
             groups.setdefault(block, []).append(patch)
     output.mkdir(parents=True, exist_ok=True)
@@ -134,7 +139,7 @@ def prepare(cache, adapters, output_root=None):
     verify_files({'loras': adapters})
     root_bytes = block_bytes.get('root', 0)
     summary = dict(targets=sum(len(spec['modules']) for spec in specs.values()),
-                   adapter_count=len(adapters), factor_bytes=sum(block_bytes.values()),
+                   adapter_count=len(adapters), skipped_modulation=len(skipped), factor_bytes=sum(block_bytes.values()),
                    root_bytes=root_bytes,
                    max_block_bytes=max((v for k, v in block_bytes.items() if k != 'root'), default=0))
     online = dict(version=1, blocks=specs, block_bytes=block_bytes, summary=summary)
