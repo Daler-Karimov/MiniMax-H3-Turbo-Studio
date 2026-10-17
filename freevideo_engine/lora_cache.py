@@ -27,6 +27,10 @@ from .storage import fingerprint
 from . import disk_space
 
 
+# Per-block AdaLN projections that the int8 package keeps only as precomputed tables.
+MODULATION = re.compile(r'transformer_blocks\.\d+\.adaln_proj\.')
+
+
 def _targets(name):
     prefixes = ('base_model.model.', 'diffusion_model.', 'model.diffusion_model.', 'transformer.')
     while any(name.startswith(prefix) for prefix in prefixes):
@@ -50,7 +54,7 @@ def _targets(name):
     return [(name, None, swap)]
 
 
-def index_adapter(row, targets):
+def index_adapter(row, targets, skipped=None):
     pairs = {}
     full = []
     with open_tensors(row['path']) as source:
@@ -94,6 +98,9 @@ def index_adapter(row, targets):
             for target, split, swap in _targets(name):
                 if target not in targets and '.attn.' in target:
                     target = target.replace('.attn.', '.attn.orig.', 1)
+                if skipped is not None and target not in targets and MODULATION.match(target):
+                    skipped.append(target)
+                    continue
                 expected = targets.get(target)
                 rows = bshape[0] if split is None else bshape[0] // 3
                 if (expected is None or (split is not None and bshape[0] % 3)

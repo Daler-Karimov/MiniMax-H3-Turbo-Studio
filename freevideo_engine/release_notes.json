@@ -1,35 +1,52 @@
 {
   "schema": 1,
-  "product_version": "0.4.10",
+  "product_version": "0.4.11",
   "en": {
-    "summary": "High on Mac uses the step cache and finishes much sooner; in the editor, audio clips can move to another audio track, and several notices and narrow-window layouts are clearer; workflows saved by an earlier version generate again.",
+    "summary": "Fixes requests being rejected with a frame count error, and LoRAs with extra parts generating on the int8 build.",
     "changes": [
-      "Mac: High uses the step cache on the first pass and finishes much sooner, and the starting time estimate is based on the chip, so it is closer from the first step.",
-      "Editor: an audio clip dragged from the library onto the second audio track lands there, and a single audio clip on the timeline can be dragged to another audio track.",
-      "Editor: pressing split or trim while the playhead is outside the selected part, or asking for full screen where the browser refuses it, now says why in one line.",
-      "Character mentions written back to back, with no space between the names, are each recognised, and the character list opens again right after a name.",
-      "Autopilot: while a task is running, the Autopilot button in the header stays whole and clickable in narrow windows.",
-      "Chat: on phones and other narrow windows, button names quoted in notices stay on one line.",
-      "Diagnostic reports for failed image and video requests record the available memory when the request started and when the generation process ended, and whether the system appears to have ended the process.",
-      "Nodes: the English Width, Height and Seed labels are capitalised like the other fields.",
-      "Generating from a workflow saved by an earlier version, or from a restored tab, no longer fails with an invalid step cache setting."
+      "Generating from a workflow or a restored tab where Total frames holds a number that is not a frame count is no longer rejected with a frame count error; the number is read as the duration.",
+      "int8: a LoRA that also contains modulation parts no longer stops the generation; those parts are skipped one by one and the number skipped appears in the report."
     ]
   },
   "zh": {
-    "summary": "Mac 精细档使用步间缓存，快得多；编辑器里音频片段可以拖到另一条音频轨；几处提示和窄窗口布局更清楚；旧版本保存的工作流又能正常生成。",
+    "summary": "修复请求被帧数错误拒绝的问题，并让带额外部分的 LoRA 能在 int8 版本上正常生成。",
     "changes": [
-      "Mac：精细档第一遍使用步间缓存，快得多；开始时的预计时间按芯片给出，从第一步起就更接近实际。",
-      "编辑器：从素材库把音频拖到第二条音频轨会放在该轨；时间线上单个音频片段可以拖到另一条音频轨。",
-      "编辑器：播放头不在所选片段上时按切分或修剪，或在浏览器不允许全屏的地方点全屏，会用一行字说明原因。",
-      "连着写、名字之间没有空格的角色提及都能被识别，写完一个名字后接着输入也会弹出角色列表。",
-      "AI 全自动：有任务在跑时，窄窗口里顶栏的“AI 全自动”按钮也始终完整可点。",
-      "对话：手机等窄窗口里，提示中引号内的按钮名不再被拆到两行。",
-      "图像和视频失败请求的诊断报告现在记录请求开始和生成进程结束时的可用内存，并标明进程是否疑似被系统结束。",
-      "节点：英文界面里 Width、Height、Seed 的大小写与其他项一致。",
-      "修复：用旧版本保存的工作流或恢复的标签页生成时提示步间缓存参数无效。"
+      "用 Total frames 里填的不是帧数的工作流或恢复的标签页生成时，不再被帧数错误拒绝，这个数会按时长读取。",
+      "int8：带调制部分的 LoRA 不再让生成中断，这些部分会逐个跳过，跳过的数量写进报告。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.10",
+      "en": {
+        "summary": "High on Mac uses the step cache and finishes much sooner; in the editor, audio clips can move to another audio track, and several notices and narrow-window layouts are clearer; workflows saved by an earlier version generate again.",
+        "changes": [
+          "Mac: High uses the step cache on the first pass and finishes much sooner, and the starting time estimate is based on the chip, so it is closer from the first step.",
+          "Editor: an audio clip dragged from the library onto the second audio track lands there, and a single audio clip on the timeline can be dragged to another audio track.",
+          "Editor: pressing split or trim while the playhead is outside the selected part, or asking for full screen where the browser refuses it, now says why in one line.",
+          "Character mentions written back to back, with no space between the names, are each recognised, and the character list opens again right after a name.",
+          "Autopilot: while a task is running, the Autopilot button in the header stays whole and clickable in narrow windows.",
+          "Chat: on phones and other narrow windows, button names quoted in notices stay on one line.",
+          "Diagnostic reports for failed image and video requests record the available memory when the request started and when the generation process ended, and whether the system appears to have ended the process.",
+          "Nodes: the English Width, Height and Seed labels are capitalised like the other fields.",
+          "Generating from a workflow saved by an earlier version, or from a restored tab, no longer fails with an invalid step cache setting."
+        ]
+      },
+      "zh": {
+        "summary": "Mac 精细档使用步间缓存，快得多；编辑器里音频片段可以拖到另一条音频轨；几处提示和窄窗口布局更清楚；旧版本保存的工作流又能正常生成。",
+        "changes": [
+          "Mac：精细档第一遍使用步间缓存，快得多；开始时的预计时间按芯片给出，从第一步起就更接近实际。",
+          "编辑器：从素材库把音频拖到第二条音频轨会放在该轨；时间线上单个音频片段可以拖到另一条音频轨。",
+          "编辑器：播放头不在所选片段上时按切分或修剪，或在浏览器不允许全屏的地方点全屏，会用一行字说明原因。",
+          "连着写、名字之间没有空格的角色提及都能被识别，写完一个名字后接着输入也会弹出角色列表。",
+          "AI 全自动：有任务在跑时，窄窗口里顶栏的“AI 全自动”按钮也始终完整可点。",
+          "对话：手机等窄窗口里，提示中引号内的按钮名不再被拆到两行。",
+          "图像和视频失败请求的诊断报告现在记录请求开始和生成进程结束时的可用内存，并标明进程是否疑似被系统结束。",
+          "节点：英文界面里 Width、Height、Seed 的大小写与其他项一致。",
+          "修复：用旧版本保存的工作流或恢复的标签页生成时提示步间缓存参数无效。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.9",
       "en": {

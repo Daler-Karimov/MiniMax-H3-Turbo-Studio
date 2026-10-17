@@ -16,8 +16,14 @@ export function optionalText(value) {
     return !text || EMPTY_WORDS.has(text.toLowerCase()) ? '' : value;
 }
 
+// Total frames is 0 (follow Duration) or 5 + 17n from 39 on, as the engine reads it (node_frames).
+// Any other number came from somewhere else, such as a moved widget, and is not a requested length.
+export function frameCount(value) {
+    return Number.isSafeInteger(value) && value >= 39 && (value - 5) % 17 === 0 ? value : 0;
+}
+
 export function optionalInputValue(name, value) {
-    if (name === 'frames') return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    if (name === 'frames') return frameCount(value);
     if (name === 'refine_from' || name === 'continue_from') return optionalText(value);
     if (name === 'first_frame_reference') return value === true;
     if (name === 'step_cache') return STEP_CACHE_OPTIONS.includes(value) ? value : 'none';
