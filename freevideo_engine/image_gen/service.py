@@ -4,6 +4,7 @@ from collections import OrderedDict
 from copy import deepcopy
 import json
 import math
+import os
 from pathlib import Path
 import queue
 import re
@@ -85,6 +86,12 @@ class Worker:
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if not stream.closed:
                 stream.close()
+        crash_file = getattr(self.process, 'crash_file', None)
+        if crash_file:
+            try:
+                os.remove(crash_file)
+            except OSError:
+                pass
 
 
 class Service:
@@ -541,10 +548,20 @@ class Service:
                                            '--device', machine.get('device_backend', 'cuda'),
                                            '--idle-seconds', self.idle_seconds)
         command[0] = machine['comfy_python']
+        from ..exit_diagnostics import CRASH_FILE_ENV, new_crash_file
+        crash_file = None
+        try:
+            crash_file = new_crash_file()
+        except OSError:
+            pass
         env = dict(env, FREEVIDEO_RUNTIME_LOCK_FD=str(descriptor))
-        return processes.popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
-                               pass_fds=(descriptor,), supervise=True, start_new_session=True)
+        if crash_file:
+            env[CRASH_FILE_ENV] = crash_file
+        process = processes.popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
+                                  pass_fds=(descriptor,), supervise=True, start_new_session=True)
+        process.crash_file = crash_file
+        return process
 
     def work(self, root, machine):
         from ..locking import runtime_lock
@@ -701,8 +718,13 @@ class Service:
         code = getattr(error, 'exit_code', None)
         if code is not None:
             # The worker cannot report its memory once it is gone: read this process's view now.
-            from ..exit_diagnostics import exit_reading, memory_sample
-            error.exit_reading = dict(exit_reading(code, requested_stop=requested_stop), memory=memory_sample())
+            from ..exit_diagnostics import exit_reading, memory_sample, read_crash_stack
+            reading = dict(exit_reading(code, requested_stop=requested_stop), memory=memory_sample())
+            if reading.get('exit_class') == 'native_crash':
+                stack = read_crash_stack(getattr(session.process, 'crash_file', None))
+                if stack:
+                    reading['native_stack'] = stack
+            error.exit_reading = reading
         return error
 
     @staticmethod
