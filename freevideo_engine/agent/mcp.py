@@ -71,6 +71,10 @@ def tool_list():
     rows.extend(dict(name=PROJECT_TOOLS[name], title='Editing project: ' + name, description=summary,
                      annotations=read if method == 'GET' else write)
                 for name, (method, _, summary) in PROJECT_OPERATIONS.items())
+    from .schema import WHITEBOX_OPERATIONS, WHITEBOX_TOOLS
+    rows.extend(dict(name=WHITEBOX_TOOLS[name], title='White model: ' + name, description=summary,
+                     annotations=read if method == 'GET' else write)
+                for name, (method, _, summary) in WHITEBOX_OPERATIONS.items())
     from .schema import IMAGE_OPERATIONS, IMAGE_TOOLS
     rows.extend(dict(name=IMAGE_TOOLS[name], title='Image: ' + name, description=summary,
                      annotations=read if method == 'GET' else write)
@@ -316,7 +320,7 @@ class Server:
                     images.append(dict(type='image', **value['previous']))
                     value['previous'] = True
             return value, images
-        from .schema import IMAGE_TOOLS, PROJECT_TOOLS, TOOL_ENDPOINTS
+        from .schema import IMAGE_TOOLS, PROJECT_TOOLS, TOOL_ENDPOINTS, WHITEBOX_TOOLS
         from .schema import SESSION_OPERATIONS, SESSION_TOOLS
         if name in SESSION_TOOLS.values():
             operation = next(op for op, tool in SESSION_TOOLS.items() if tool == name)
@@ -326,7 +330,7 @@ class Server:
             if method == 'GET' and wait is not None:
                 args['wait'] = wait
             return (c.get(path, **args) if method == 'GET' else c.post(path, args)), []
-        if name in PROJECT_TOOLS.values() or name in IMAGE_TOOLS.values():
+        if name in PROJECT_TOOLS.values() or name in IMAGE_TOOLS.values() or name in WHITEBOX_TOOLS.values():
             method, path = TOOL_ENDPOINTS[name]
             if '{id}' in path:
                 path = path.replace('{id}', args.pop('id'))

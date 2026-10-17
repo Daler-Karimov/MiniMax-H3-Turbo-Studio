@@ -107,11 +107,15 @@ def edit_document():
             'x-editor-document': True}
 
 
-def media(image=False, *, local=False, clip=False, video=False):
+def media(image=False, *, local=False, clip=False, video=False, early=False):
     properties = dict(file=FILE, from_job=JOB, library=SAVED, frame=FRAME,
                       edit={'oneOf': [edit_recipe(), edit_document()]}, label=string(80))
     if local:
         properties['path'] = string(4096)
+    if early:
+        properties['early_steps'] = number(1, 32, integer=True, description=
+            'A reference video only: it guides the first pass for this many steps and is dropped afterwards, '
+            'including from the second pass. Omitted: the video guides every step.')
     if clip:
         properties.pop('frame')
         properties.pop('edit')
@@ -139,7 +143,7 @@ def common():
 
 def generation_media(*, local=False, enhance=False):
     return obj({'first': nullable(media(True, local=local)), 'last': nullable(media(True, local=local)),
-                'references': nullable(array(media(enhance, local=local), high=8 if enhance else 32))},
+                'references': nullable(array(media(enhance, local=local, early=not enhance), high=8 if enhance else 32))},
                allOf=[{'if': {'required': ['references'], 'properties': {'references': {'type': 'array', 'minItems': 1}}},
                        'then': {'properties': {'first': {'type': 'null'}, 'last': {'type': 'null'}}}}])
 
@@ -391,6 +395,13 @@ def contracts(*, local=False):
         else:
             extra.update(body=shape, idempotent=True, **({'status': 201} if name in ('create', 'generate', 'export', 'listen') else {}))
         routes[method, suffix] = route(summary, **extra)
+    for name, (method, suffix, summary) in WHITEBOX_OPERATIONS.items():
+        extra = dict(path=obj({'id': WHITEBOX}, ('id',))) if '{id}' in suffix else {}
+        if method == 'GET':
+            extra['query'] = whitebox_schema(name)
+        else:
+            extra.update(body=whitebox_schema(name), status=201)
+        routes[method, suffix] = route(summary, **extra)
     for name, (method, suffix, summary) in IMAGE_OPERATIONS.items():
         shape = image_schema(name)
         extra = dict(path=obj({'id': IMAGE}, ('id',))) if '{id}' in suffix else {}
@@ -408,12 +419,22 @@ def contracts(*, local=False):
             ('/connect/reset', 'POST', EMPTY), ('/chat', 'GET', None), ('/chat/now', 'GET', None),
             ('/chat/video', 'GET', None), ('/chat/list', 'GET', None), ('/chat/new', 'POST', EMPTY),
             ('/chat/delete', 'POST', obj({'session': SESSION}, ('session',))),
-            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION}, ('text', 'id'))),
+            ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION, 'whitebox': {'type': 'boolean'}}, ('text', 'id'))),
             ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
                                            'session': SESSION}, ('id', 'approve')))):
         routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
     routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True), 'session': SESSION})
     routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
+    for method, suffix, summary, extra in (
+            ('GET', '/next', 'The page asks for a white-model scene to render', {}),
+            ('GET', '/presets', 'The ready-made white-model scenes the page can try', {}),
+            ('POST', '/try', 'The page renders one ready-made white-model scene (no model writes code)',
+             dict(body=obj(dict(preset=string(32, pattern=r'^[a-z0-9-]{1,32}$'), session=SESSION), ('preset',)))),
+            ('POST', '/{id}/video', 'The page sends the rendered white-model video (the raw mp4 body)',
+             dict(path=obj({'id': WHITEBOX}, ('id',)))),
+            ('POST', '/{id}/failed', 'The page reports that a white-model scene could not be rendered',
+             dict(path=obj({'id': WHITEBOX}, ('id',)), body=obj(dict(message=string(500)), ('message',))))):
+        routes[method, '/freevideo/agent/whitebox' + suffix] = route(summary, auth=False, local=True, **extra)
     for suffix in ('', '/connect'):
         routes['GET', '/freevideo/agent' + suffix]['query'] = obj({'lang': enum(('zh', 'en'))})
     for name, (method, suffix, summary) in SESSION_OPERATIONS.items():
@@ -539,6 +560,7 @@ def cast_view():
 # changed with the page's commands (web/image_commands.js). Shapes follow the page's
 # own fields (lineHeight, shape width), not the /media/edit recipe's.
 IMAGE = string(34, pattern=r'^i-[0-9a-f]{32}$')
+WHITEBOX = string(12, pattern=r'^wb[0-9a-f]{10}$')
 LAYER_ID = string(128, pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
 COLOR = string(32, pattern=r'^(?:#[0-9A-Fa-f]{3,4}|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8}|transparent)$')
 IMAGE_SIDE = number(1, 8192, integer=True)
@@ -641,6 +663,20 @@ IMAGE_OPERATIONS = {
 }
 IMAGE_TOOLS = dict(create='freevideo_image_create', get='freevideo_image_read', write='freevideo_image_write',
                    operations='freevideo_image_operations', render='freevideo_image_render')
+
+
+WHITEBOX_OPERATIONS = {
+    'submit': ('POST', '/whitebox', 'Send the white-model scene code you wrote (build(THREE), see GET /guide). The user\'s open FreeVideo page renders it to a short video that joins the library.'),
+    'get': ('GET', '/whitebox/{id}', 'Read a white-model scene: waiting, rendering, ready (work = library ID for media.references with early_steps) or failed (error).'),
+}
+WHITEBOX_TOOLS = dict(submit='freevideo_whitebox_submit', get='freevideo_whitebox_read')
+
+
+def whitebox_schema(name):
+    if name == 'submit':
+        return obj(dict(code=string(65536, description='JavaScript that defines build(THREE) and returns {scene, camera, update(t)}.'),
+                        summary=string(500, description='One sentence on what the scene shows, for the confirm card.')), ('code',))
+    return obj({'wait': WAIT})
 
 
 def image_operation_fields():
@@ -773,6 +809,7 @@ def session_event(*, stored=False, agent_only=False):
             1, 20000), total_seconds=number(0)), ('type', 'shots'))]
     if not agent_only:
         variants[0]['properties']['mid'] = CHAT_ID
+        variants[0]['properties']['whitebox'] = {'type': 'boolean', 'description': 'The user chose a white-model preview for this request.'}
         from .errors import ERRORS
         variants += [obj(dict(type={'const': 'step'}, id=string(12, pattern=r'^st[0-9a-f]{10}$'),
             tool=string(200), summary=text, state=enum(('started', 'done', 'failed')),
@@ -782,6 +819,8 @@ def session_event(*, stored=False, agent_only=False):
             obj(dict(type={'const': 'confirm'}, id=string(12, pattern=r'^cf[0-9a-f]{10}$'),
                 question=text, estimate_seconds=number(0), state=enum(('asked', 'approved', 'declined')),
                 action=enum(('start', 'reshoot')), refs=obj(dict(drama=PRODUCTION, shot=SLUG)),
+                whitebox=obj(dict(work=SAVED, seconds=number(0), summary=text), ('work',),
+                             description='The rendered white-model preview the user is asked to approve.'),
                 digest=string(64, pattern=r'^[0-9a-f]{64}$')),
                 ('type', 'id', 'state'), **{'if': {'properties': {'state': {'const': 'asked'}}},
                                         'then': {'required': ['question']}}),
@@ -1253,6 +1292,7 @@ def schemas():
         cast={name: cast_schema(name) for name in CAST_OPERATIONS}, cast_view=cast_view(),
         projects={name: project_schema(name) for name in PROJECT_OPERATIONS},
         images={name: image_schema(name) for name in IMAGE_OPERATIONS},
+        whitebox={name: whitebox_schema(name) for name in WHITEBOX_OPERATIONS},
         sessions=dict(event=session_event(stored=True), meta=session_view(),
                       **{name: session_schema(name) for name in SESSION_OPERATIONS}),
         confirmations=confirm_settings(), image_result=image_result())
@@ -1377,6 +1417,8 @@ TOOL_ENDPOINTS.update({'freevideo_cast_' + name: (method, suffix)
     for name, (method, suffix, _) in CAST_OPERATIONS.items()})
 TOOL_ENDPOINTS.update({PROJECT_TOOLS[name]: (method, suffix)
     for name, (method, suffix, _) in PROJECT_OPERATIONS.items()})
+TOOL_ENDPOINTS.update({WHITEBOX_TOOLS[name]: (method, suffix)
+    for name, (method, suffix, _) in WHITEBOX_OPERATIONS.items()})
 TOOL_ENDPOINTS.update({IMAGE_TOOLS[name]: (method, suffix)
     for name, (method, suffix, _) in IMAGE_OPERATIONS.items()})
 TOOL_ENDPOINTS.update({SESSION_TOOLS[name]: SESSION_OPERATIONS[name][:2]

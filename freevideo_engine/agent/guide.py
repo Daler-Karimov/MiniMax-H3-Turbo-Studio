@@ -4,7 +4,9 @@ Summarised from MiniMax's h3-prompt-writing skill (linked below) and FreeVideo's
 own prompt rules; the enhancement job applies the same contract.
 """
 from ..default_prompt import DEFAULT_PROMPT
-from .schema import CAST_OPERATIONS, DRAMA_OPERATIONS, IMAGE_OPERATIONS, PROJECT_OPERATIONS, SESSION_OPERATIONS
+from .schema import CAST_OPERATIONS, DRAMA_OPERATIONS, IMAGE_OPERATIONS, PROJECT_OPERATIONS, SESSION_OPERATIONS, WHITEBOX_OPERATIONS
+
+from .whitebox import SCENE_PROMPT
 
 SOURCE = 'https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing'
 
@@ -133,6 +135,17 @@ GUIDE = {
         'A new paint layer is empty, so heal and clone there have nothing to work from; paint and gradients go on a paint layer above a locked picture.',
         'On 409 image_changed, recompute from error.image and its current_revision. POST /images/{id}/render makes a PNG input file from the revision you read; use the job result file as a picture source.',
     ],
+    'whitebox': [
+        'A white model is a rough 3D stand-in for the shot (boxes, camera, motion) rendered in the user\'s FreeVideo page. Used as a reference video that guides only the first steps, the final video keeps its layout and motion.',
+        'Use it only when the user asked for it: the user message carries whitebox=true, or the user says so. Never choose it yourself, and never suggest it as a default.',
+        'Write the scene with the prompt in whitebox_scene_prompt (replace {SHOT} with the user\'s one-sentence shot). POST /whitebox with the code and a one-sentence summary; it needs the page open and answers page_required otherwise: tell the user to open FreeVideo.',
+        'Read GET /whitebox/{id} every few seconds. On failed, fix the code from error and send it again, at most 3 retries; if they all fail, tell the user and stop, with no silent fallback.',
+        'On ready, ask the user to approve it first: write a confirm event with whitebox={work, seconds, summary}. After approval, generate with media.references=[{"library": work, "early_steps": K}] where K is about 3/8 of the first-pass steps rounded (8 steps -> 3, 20 steps -> 8; early_ratio in the ready answer), so the white model keeps the same share of the schedule on every quality level. The prompt describes the real look of the final video, not white boxes. Use no other kind of reference with it unless the user gave one.',
+        'When the user wants a change, write a new scene from the edited description and repeat; the earlier white model stays in the library.',
+    ],
+    'whitebox_scene_prompt': SCENE_PROMPT,
+    'whitebox_routes': [dict(operation=name, method=method, path=path, description=summary)
+                        for name, (method, path, summary) in WHITEBOX_OPERATIONS.items()],
     'image_routes': [dict(operation=name, method=method, path=path, description=summary)
                      for name, (method, path, summary) in IMAGE_OPERATIONS.items()],
     'sessions': [
@@ -272,6 +285,8 @@ CAPABILITIES_ZH = {
     ('GET', '/library/{day}/{run}/file'): '下载已保存的视频',
     ('GET', '/library/{day}/{run}/thumbnail'): '查看已保存的视频缩略图',
     ('GET', '/queue'): '查看队列顺序及任务属于 Agent 还是用户',
+    ('POST', '/whitebox'): '发送你写好的白模场景代码，由用户打开的 FreeVideo 页面渲染成短视频并存入作品库；页面没打开返回 page_required',
+    ('GET', '/whitebox/{id}'): '查看白模场景进度：waiting、rendering、ready（work 是作品库编号，放进 media.references 并加 early_steps）或 failed（error）',
     ('GET', '/editor/sources/content'): '下载剪辑项目的源素材或缩略图；使用 GET /projects/{id} 返回的素材标识',
     ('GET', '/inbox'): '等待当前工作会话中用户的消息或答复，最多 50 秒；again=true 表示暂时没有，再调一次',
     ('POST', '/drama/plan'): '预览多镜头影片的剧本和各镜头拍摄条数，不保存、不提交。'

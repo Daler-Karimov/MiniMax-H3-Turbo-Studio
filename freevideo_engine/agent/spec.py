@@ -68,13 +68,13 @@ def new_id():
     return 'j' + secrets.token_hex(6)
 
 
-def media_item(value, path, *, image=False, frame_default=None):
+def media_item(value, path, *, image=False, frame_default=None, early=False):
     if isinstance(value, str):
         value = {'file': value}
     value = dict(value) if isinstance(value, dict) else value
     if isinstance(value, dict) and frame_default is not None and any(k in value for k in ('from_job', 'library')):
         value.setdefault('frame', frame_default)
-    errors = contract.issues(contract.media(image, local=True), value, path)
+    errors = contract.issues(contract.media(image, local=True, early=early), value, path)
     if errors:
         raise SpecError(errors)
     return value
@@ -152,7 +152,7 @@ def generation_media(value):
         return {}
     result = {role: media_item(value[role], '/media/' + role, image=True) for role in FRAMES if value.get(role) is not None}
     if value.get('references'):
-        result['references'] = [media_item(v, '/media/references/%d' % i) for i, v in enumerate(value['references'])]
+        result['references'] = [media_item(v, '/media/references/%d' % i, early=True) for i, v in enumerate(value['references'])]
     return result
 
 

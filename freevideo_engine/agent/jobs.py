@@ -493,6 +493,8 @@ class Jobs:
         self.projects = Projects(port.output_root)
         from .images import Images
         self.images = Images(self, self.directory.parent / 'images')
+        from .whitebox import Whitebox
+        self.whitebox = Whitebox(self.directory.parent / 'whitebox', port.output_root)
         self.load()
         from .productions import Productions
         self.productions = Productions(self)
@@ -1515,8 +1517,10 @@ class Jobs:
                             assets.append(dict(file=self.media_file(row, spec['media'][role], role, target=target),
                                                role=role))
                     for i, item in enumerate(spec['media'].get('references', []), 1):
-                        assets.append(dict(file=self.media_file(row, item, 'reference-%02d' % i, target=target),
-                                           role='reference'))
+                        asset = dict(file=self.media_file(row, item, 'reference-%02d' % i, target=target), role='reference')
+                        if 'early_steps' in item:
+                            asset['early_steps'] = item['early_steps']
+                        assets.append(asset)
                     return assets
                 assets = resolve()
                 graph = specs.comfy_prompt(spec, node, prompt=prompt, assets=assets)
