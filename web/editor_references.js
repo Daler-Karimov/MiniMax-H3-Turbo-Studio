@@ -20,7 +20,7 @@ export function createEditorReferences({t, source, size = () => null, error = ()
     const add = el('button', 'fv-ed-ref-add'); add.type = 'button';
     add.setAttribute('aria-haspopup', 'menu'); add.setAttribute('aria-expanded', 'false');
     add.setAttribute('aria-label', t('Reference image', '参考图')); add.title = t('Reference image', '参考图');
-    add.textContent = '+';
+    add.textContent = '+'; add.dataset.fvGuide = 'editor-refs';
     const menu = el('div', 'fv-ed-ref-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
     const picker = el('input'); picker.type = 'file'; picker.accept = 'image/*'; picker.multiple = true; picker.hidden = true;
     root.append(add, chips, menu, picker);
