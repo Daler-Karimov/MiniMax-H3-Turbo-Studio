@@ -48,6 +48,9 @@ DEFAULTS = {'easycache-av': 0.2, 'fbcache': 0.10}
 WINDOWS = {'easycache-av': (0.15, 0.95), 'fbcache': (0.10, 0.95)}
 BLOCK_LEVEL = ('fbcache',)
 STRIDE = 8
+# Kinds that a quality level or request asks for by config but that sample every step for now; an explicit
+# FREEVIDEO_STEP_CACHE still turns them on. EasyCache-AV is held back until its reuse guard ships.
+HELD_BACK = ('easycache-av',)
 
 
 def requested(config=None):
@@ -182,6 +185,8 @@ class StepCache:
 def begin_pass(transformer, steps, config=None, *, offloader=None, disabled_reason=None):
     """Attach fresh state for this sampling pass; refinement never calls this."""
     wanted = requested(config)
+    if wanted and wanted[2] == 'config' and wanted[0] in HELD_BACK:
+        wanted = None
     transformer._freevideo_step_cache = (StepCache(wanted[0], wanted[1], steps, source=wanted[2],
         offloader=offloader, disabled_reason=disabled_reason) if wanted else None)
     return transformer._freevideo_step_cache
