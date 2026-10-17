@@ -31,7 +31,7 @@ FIRST_FRAME_REFERENCE_SHORT = 384
 VERSION = 1
 
 MISSING = 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.'
-SIZE_MISMATCH = 'Use the same width and height as the previous video.'
+SIZE_MISMATCH = 'Use the same aspect ratio as the previous video.'
 # Every refusal starts with UNSUPPORTED, then says what to change.
 UNSUPPORTED = 'Continue from video cannot be used with these settings.'
 UNSUPPORTED_DEVICE = UNSUPPORTED + ' Continuing a video needs an NVIDIA GPU. To make a new video, clear "Continue from video".'
@@ -398,8 +398,10 @@ def prepare(video_path, canvas, manifest=None, sampling_plan=None, *, directory=
 def _prepare_snapshot(request, value, canvas, manifest=None, sampling_plan=None):
     validate_frames(canvas['frames'])
     metadata = value['metadata']
+    # A record of another size is set aside like a missing one: the previous video's own ending is
+    # encoded instead, which scales the same shape and refuses another one.
     if any(metadata['geometry'][key] != canvas[key] for key in ('width', 'height')):
-        raise ValueError(SIZE_MISMATCH)
+        raise ValueError(MISSING)
     if manifest is not None and metadata['identity'] != identity(manifest):
         raise ValueError(MISSING)
     if sampling_plan is not None and metadata['first_canvas'] != {

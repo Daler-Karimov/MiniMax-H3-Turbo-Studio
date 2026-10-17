@@ -298,10 +298,11 @@ FAILURE_REASONS_ZH = {
     'internal_error': '没有完成',
 }
 FAILURE_MESSAGES_ZH = {
-    'The previous video is too short to continue; it needs to be at least 2 s long.': '接续的上一段视频太短，至少需要 2 秒',
+    'The previous video is too short to continue; it needs to be at least 1.7 s long.': '接续的上一段视频太短，至少需要 1.7 秒',
     'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.': '上一段视频缺少可用的接续数据',
     'The previous video cannot be read.': '接续的上一段视频无法读取',
-    'Use the same width and height as the previous video.': '接续的画面大小与上一段视频不一致',
+    "The previous video's frame rate is too low to continue; it needs at least 10 frames per second.": '接续的上一段视频帧率太低，每秒至少需要 10 帧',
+    'Use the same aspect ratio as the previous video.': '接续的画面比例与上一段视频不同',
     'The reference video is too short; it needs to be at least about 1 s long.': '参考视频太短，至少需要约 1 秒',
 }
 

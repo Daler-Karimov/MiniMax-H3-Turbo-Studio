@@ -24,8 +24,9 @@ AUDIO_RATE = 32000
 TICK_SAMPLES = 800
 AUDIO_WINDOW_TICKS = 600  # 15 s, the longest sound H3 generates
 FPS = 24
-TOO_SHORT = 'The previous video is too short to continue; it needs to be at least 2 s long.'
+TOO_SHORT = 'The previous video is too short to continue; it needs to be at least 1.7 s long.'  # NOMINAL_FRAMES is 1.625 s at 24 fps; the message rounds up so a 1.7 s video always fits
 UNREADABLE = 'The previous video cannot be read.'
+LOW_RATE = "The previous video's frame rate is too low to continue; it needs at least 10 frames per second."
 
 
 def _fit(image, width, height):
@@ -54,6 +55,8 @@ def _picture(frame):
 
 def _rate(stream):
     rate = float(stream.average_rate or stream.guessed_rate or 0)
+    if 0 < rate < 10:
+        raise ValueError(LOW_RATE)
     if not 10 <= rate <= 121:
         raise ValueError(UNREADABLE)
     return rate
