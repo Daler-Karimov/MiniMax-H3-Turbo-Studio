@@ -98,7 +98,10 @@ export function syncReferencePrompt(node, t = en => en, reset = false) {
 export function mentionAt(text, start, end = start, handles = []) {
     if (start < 1 || start !== end) return null;
     const at = text.lastIndexOf('@', start - 1);
-    if (at < 0 || (at > 0 && /[\w.%+\-]/.test(text[at - 1]))) return null;
+    if (at < 0) return null;
+    // An @ straight after a finished "@name" opens the list again.
+    const joined = handles.some(name => name && text.slice(0, at).endsWith('@' + name));
+    if (at > 0 && !joined && /[\w.%+\-]/.test(text[at - 1])) return null;
     const query = text.slice(at + 1, start);
     const rest = text.slice(at + 1);
     // A longer name that still begins like what is typed ("苏" and "苏晚") keeps the list open.
