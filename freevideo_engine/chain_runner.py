@@ -118,11 +118,60 @@ class ChainRunner:
             if isinstance(value, str):
                 source = next(row for row in record['blocks'] if row['id'] == value)
                 sources[key] = dict(block=value, output=source['output'])
+            elif isinstance(value, dict) and 'chain' in value:
+                source = self._referenced_block(value)
+                sources[key] = dict(work=source['output'], output=source['output'])
             elif value is not None:
                 sources[key] = dict(work=value['work'], output=value['work'])
             else:
                 sources[key] = None
         return sources
+
+    def _referenced_block(self, value):
+        source = self.records.get(value['chain'])
+        if source is None:
+            # A recent dependent may outlive the list's bounded startup window.
+            try:
+                self.load(value['chain'])
+            except KeyError:
+                raise ValueError('Referenced chain does not exist') from None
+            source = self.records[value['chain']]
+        block = next((row for row in source['blocks'] if row['id'] == value['block']), None)
+        if block is None:
+            raise ValueError('Referenced chain block does not exist')
+        return block
+
+    def _dependency_state(self, record):
+        waiting = False
+        for block in record['blocks']:
+            for key in ('after', 'before'):
+                value = block[key]
+                if not isinstance(value, dict) or 'chain' not in value:
+                    continue
+                try:
+                    source = self._referenced_block(value)
+                except ValueError:
+                    return 'interrupted'
+                parent = self.records[value['chain']]
+                if parent['state'] in ('cancelling', 'cancelled', 'failed', 'interrupted'):
+                    return 'interrupted'
+                if parent['state'] == 'done':
+                    if source['state'] != 'done' or not source['output']:
+                        return 'interrupted'
+                else:
+                    waiting = True
+        return 'queued' if waiting else 'ready'
+
+    def _interrupt_dependants(self):
+        # Repeat so a stopped ancestor reaches descendants in any receipt order.
+        changed = True
+        while changed:
+            changed = False
+            for waiting in list(self.records.values()):
+                if waiting['state'] == 'queued' and self._dependency_state(waiting) == 'interrupted':
+                    waiting['state'] = 'interrupted'
+                    self._save(waiting)
+                    changed = True
 
     def _elapsed(self, block):
         start = self.starts.get(block['prompt_id'])
@@ -161,12 +210,20 @@ class ChainRunner:
                     rest.append(identity)
                     continue
                 depth[identity] = 1 + sum(depth[value] if isinstance(value, str)
-                                          else self._work_parts(value['work'], seen + (record['id'],))
+                                          else self._source_parts(value, seen + (record['id'],))
                                           for value in sources)
             if len(rest) == len(pending):
                 raise ValueError('Block references cannot contain a cycle or self reference')
             pending = rest
         return depth
+
+    def _source_parts(self, value, seen):
+        if 'chain' not in value:
+            return self._work_parts(value['work'], seen)
+        self._referenced_block(value)
+        if value['chain'] in seen:
+            raise ValueError('Chain references cannot contain a cycle')
+        return self._depths(self.records[value['chain']], seen)[value['block']]
 
     def _work_parts(self, work, seen):
         key = _work_key(work)
@@ -209,6 +266,7 @@ class ChainRunner:
             if record['state'] in store.ACTIVE and record['state'] != 'cancelling':
                 record['state'] = 'cancelling'
                 self._save(record)
+                self._interrupt_dependants()
                 self.wake.set()
             return self._view(record)
 
@@ -469,6 +527,8 @@ class ChainRunner:
         self.success.pop(prompt_id, None)
         self.cancel_sent.discard(prompt_id)
         self._save(record)
+        if record['state'] in ('cancelled', 'failed', 'interrupted'):
+            self._interrupt_dependants()
 
     def step(self):
         """Run one scheduler pass; tests can drive the same loop without sleeping."""
@@ -490,11 +550,16 @@ class ChainRunner:
                         self._save(record)
                 if self.active is not None and self.records[self.active]['state'] not in store.ACTIVE:
                     self.active = None
-                while self.active is None and self.queue:
-                    identity = self.queue.pop(0)
-                    waiting = self.records[identity]
-                    if waiting['state'] == 'queued' or waiting['state'] == 'cancelling' and waiting['output_state'] == 'joining':
-                        self.active = identity
+                self._interrupt_dependants()
+                for queued_id in list(self.queue):
+                    waiting = self.records[queued_id]
+                    if waiting['state'] not in store.ACTIVE:
+                        self.queue.remove(queued_id)
+                    elif self.active is None and (waiting['state'] == 'queued'
+                            and self._dependency_state(waiting) == 'ready'
+                            or waiting['state'] == 'cancelling' and waiting['output_state'] == 'joining'):
+                        self.queue.remove(queued_id)
+                        self.active = queued_id
                 identity = self.active
             for recovering_id, snapshot in recovering:
                 if not self.closed.is_set():

@@ -337,8 +337,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         } catch (value) { if (value instanceof model.EditError) return null; throw value; }
     }
     const jobActive = () => generationBusy || [...jobStatuses.values()].some(job => ['queued', 'running', 'cancelling'].includes(job.state));
-    // Parts pressed while they cannot be sent yet: the engine is still starting, or they continue a part
-    // that is not finished. They are planned at once, shown queued, and sent in order when they can be.
+    // Only an engine that has not answered yet leaves parts held locally.
+    // Once ready, the server owns waiting parts and their dependencies.
     // Parts, and ranges not yet planned into parts, whose request is being sent.
     const held = [], sending = new Set(), sendingRanges = new Set();
     const overlaps = (a, b) => a.start < b.start + b.frames && a.start + a.frames > b.start;
@@ -352,10 +352,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return state.record.tracks[0].clips.some(clip => (generating(clip) || isHeld(clip.id) || sending.has(clip.id))
             && clip.start < range.start + range.frames && clip.start + clip.frames > range.start);
     }
-    function waitingFor(selection) {
+    function waitingFor() {
         if (!store.generationAvailable) return 'ready';
-        const before = partBefore(selectionRange(selection).start);
-        return generationBusy || generating(before) || before && isHeld(before.id) ? 'before' : null;
+        return null;
     }
     // The nearest spot at or after the chosen one where a part of the same length fits.
     function emptySpot(selection) {
@@ -424,9 +423,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const entry = held[0], clips = entry.ids.map(id => model.find(state.record, id)).filter(clip => clip && clip.pending && !generating(clip));
                 if (!clips.length) { held.shift(); markHeld(entry.ids, false); rememberView(); continue; }
                 const selection = {kind: 'clip', ids: clips.map(clip => clip.id)}, before = partBefore(Math.min(...clips.map(clip => clip.start)));
-                if (generating(before)) break;
                 held.shift(); markHeld(entry.ids, false); rememberView();
-                if (before && !before.source && before.pending) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
+                if (before && !before.source && before.pending && !before.job) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
                 try { await actions.generate({text: entry.text, selection}); }
                 catch (value) { const reason = error(value, 'generate'); if (reason && !['chain_too_long', 'chain_part_too_short'].includes(reason.reason)) genbar?.say(reason.say); }
             }
@@ -771,8 +769,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 // leaves whatever the user has moved on to, and what they typed there.
                 submittedSelection = shown && state.selection === selection ? state.select({kind: 'clip', ids}) : state.selection; await completeSources();
                 const paths = Object.fromEntries([...store.sources].map(([key, value]) => [key, value.path]));
-                const request = model.generationRequest(prepared, ids, {text, paths});
-                const follow = continuedSize(model.generationBefore(prepared, ids), store.sources), edit = capability.generationSize || generationSize(state.record);
+                const request = model.generationRequest(prepared, ids, {text, paths, queue: true});
+                const beforeKeys = model.generationBefore(prepared, ids), sizes = new Map(store.sources);
+                for (const key of beforeKeys.filter(key => key?.startsWith('chain:'))) {
+                    const job = await store.chain(key.split(':')[1]);
+                    sizes.set(key, job?.generation_size);
+                }
+                const follow = continuedSize(beforeKeys, sizes), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
                 // Parts made at another size than the edit's have that size's limit.
                 const limit = (follow && (follow.width !== edit.width || follow.height !== edit.height)
@@ -790,7 +793,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const castRows = panel.references?.available() ? panel.references.rows?.() ?? [] : [];
                 const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i,
                     text: expandCast(block.text, castRows, {continued: Boolean(block.after)}).text}));
-                const job = await store.startChain({...frozen, blocks});
+                const job = await store.startChain({...frozen, blocks, queue: true});
                 if (!job && !store.generationAvailable) {
                     if (epoch === projectEpoch) {
                         const restoreSelection = submittedSelection !== priorSelection && state.selection === submittedSelection;
@@ -823,6 +826,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         async press(text) {
             if (disposed || closing || initializing) return {say: t('Opening the edit…', '正在打开…')};
             let selection = state.selection, said = null;
+            if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
+            if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
+            // A preceding POST must supply its durable ID before a dependant can reference it.
+            const epoch = projectEpoch, awaiting = selectionRange(selection);
+            if (generationBusy) {
+                if (awaiting) sendingRanges.add(awaiting);
+                updateTransport();
+                try { while (generationBusy) await generationDone; }
+                finally { sendingRanges.delete(awaiting); }
+            }
+            if (disposed || closing || epoch !== projectEpoch) return;
             if (!selectionRange(selection)) return {say: t('Drag on the timeline to choose a part first.', '先在时间线上拖出一段。')};
             if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
             if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
