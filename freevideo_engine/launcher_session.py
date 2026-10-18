@@ -1,6 +1,7 @@
 """Widget-independent state for the Qt launcher; uses the existing installer."""
 from copy import deepcopy
 from functools import lru_cache
+import importlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import __version__
-from . import disk_space, lan_password
+from . import disk_space
 from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout, queue_busy
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text
@@ -45,6 +46,11 @@ ARCHIVE_FAILURES = {
 
 
 @lru_cache(maxsize=4)
+def _lan_password():
+    # Resolved per call: the access module is optional and may be absent.
+    return importlib.import_module('.lan_password', __package__)
+
+
 def _qr_rows(text):
     from .qr_code import encode
     try:
@@ -2005,14 +2011,14 @@ class Session:
         """(supported, set) for the optional LAN password; unsupported without the access module."""
         engine = (self.controller.selection or {}).get('engine')
         try:
-            from . import lan_password
+            lan_password = _lan_password()
             return True, bool(engine) and bool(lan_password.is_set(engine))
         except (ImportError, OSError):
             return False, False
 
     def lan_password_min(self):
         try:
-            from . import lan_password
+            lan_password = _lan_password()
             return int(getattr(lan_password, 'MIN_LENGTH', 6))
         except (ImportError, OSError, TypeError, ValueError):
             return 6
@@ -2022,7 +2028,7 @@ class Session:
         engine = (self.controller.selection or {}).get('engine')
         if not engine:
             return
-        from . import lan_password
+        lan_password = _lan_password()
         if text is None:
             lan_password.remove(engine)
         else:
