@@ -14,6 +14,31 @@
       {"file": "processor/chat_template.jinja", "component": "processor", "bytes": 5292, "sha256": "3636d0f0bd6bef02654cdffdc447b79cb2cef8ab02cc75267345946291a489e4", "sources": [{"id": "official", "url": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/chat_template.jinja"}, {"id": "hf-mirror", "url": "https://hf-mirror.com/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/chat_template.jinja"}, {"id": "modelscope", "url": "https://www.modelscope.cn/models/Qwen/Qwen-Image-2.1-Turbo/resolve/master/processor/chat_template.jinja"}]},
       {"file": "processor/processor_config.json", "component": "processor", "bytes": 1300, "sha256": "14932921ca485d458a04dafd8069fbb0a4505622a48208d19ed247115801385b", "sources": [{"id": "official", "url": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/processor_config.json"}, {"id": "hf-mirror", "url": "https://hf-mirror.com/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/processor_config.json"}, {"id": "modelscope", "url": "https://www.modelscope.cn/models/Qwen/Qwen-Image-2.1-Turbo/resolve/master/processor/processor_config.json"}]},
       {"file": "processor/tokenizer_config.json", "component": "processor", "bytes": 705, "sha256": "fd42a0b35a8d13cd473e88e310b50cbf1bccaa9eb60ed0fd873af5f8f0c59307", "sources": [{"id": "official", "url": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/tokenizer_config.json"}, {"id": "hf-mirror", "url": "https://hf-mirror.com/Qwen/Qwen-Image-2.1-Turbo/resolve/main/processor/tokenizer_config.json"}, {"id": "modelscope", "url": "https://www.modelscope.cn/models/Qwen/Qwen-Image-2.1-Turbo/resolve/master/processor/tokenizer_config.json"}]}
+    ],
+    "segment": [
+      {
+        "file": "sam2/sam2.1_hiera_small.pt",
+        "component": "segment",
+        "bytes": 184416285,
+        "sha256": "6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38",
+        "repo": "facebook/sam2.1-hiera-small",
+        "revision": "main",
+        "model_id": "sam2.1-hiera-small",
+        "sources": [
+          {
+            "id": "official",
+            "url": "https://huggingface.co/facebook/sam2.1-hiera-small/resolve/main/sam2.1_hiera_small.pt"
+          },
+          {
+            "id": "hf-mirror",
+            "url": "https://hf-mirror.com/facebook/sam2.1-hiera-small/resolve/main/sam2.1_hiera_small.pt"
+          },
+          {
+            "id": "modelscope",
+            "url": "https://www.modelscope.cn/models/facebook/sam2.1-hiera-small/resolve/master/sam2.1_hiera_small.pt"
+          }
+        ]
+      }
     ]
   }
 }

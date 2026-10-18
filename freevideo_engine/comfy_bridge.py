@@ -1486,7 +1486,7 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
             # Reference audio selects its own tables; match the encoder's choice.
             asset_task = ((ANCHOR_ADALN_TASK if anchored or pictured else ADALN_TASK) if continue_from is not None
                           else engine_task(extra.get('media', {}), media_base))
-            # The cache only names the level of a missing table (high or max at 20 steps).
+            # Tables follow the step count; the cache is carried for exact level recognition.
             preparation = prepare_sampling_assets(root, machine, dict(planned, step_cache=step_cache) if step_cache else planned,
                                                   asset_task,
                 progress=asset_progress, interrupted=interrupted, environ=environment)

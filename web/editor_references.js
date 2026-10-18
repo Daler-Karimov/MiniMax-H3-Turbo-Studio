@@ -69,15 +69,27 @@ export function createEditorReferences({t, source, size = () => null, error = ()
         return holder;
     };
     const write = rows => { try { source.write(rows); } catch (value) { error(value); } };
+    // A picture the page cannot draw would only fail minutes later, in the engine; tiff is not drawn by every browser, so it goes on unchecked.
+    const readable = async file => {
+        if (!/\.(png|jpe?g|webp|bmp)$/i.test(file.name || '')) return true;
+        if (typeof Image !== 'function') return true;
+        const url = URL.createObjectURL(file), image = new Image();
+        try { image.src = url; await image.decode(); return image.naturalWidth > 0 && image.naturalHeight > 0; }
+        catch { return false; }
+        finally { URL.revokeObjectURL(url); }
+    };
     async function addFiles(files) {
         if (working) return;
         working = true; update();
+        let skipped = false;
         try {
             for (const file of files) {
                 if (full()) break;
+                if (!await readable(file)) { skipped = true; continue; }
                 const result = await source.upload(file);
                 write([...source.rows(), {file: result.file, role: 'reference', enabled: true}]);
             }
+            if (skipped && !disposed) notify(t('Could not read this picture. Please choose another one.', '无法读取这张图片，请换一张。'));
         } catch (value) { error(value); }
         finally { working = false; picker.value = ''; update(); }
     }

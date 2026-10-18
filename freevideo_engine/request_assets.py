@@ -59,7 +59,7 @@ def _upscaler(root, sampled):
 
 def _prompt_vlm(root):
     from .prompt_vlm import assets
-    if assets.ready(root):
+    if assets.settle(root):
         return []
     spec = assets.catalog()
     return [dict(id='prompt-vlm', kind='prompt-vlm', files=len(spec['files']),

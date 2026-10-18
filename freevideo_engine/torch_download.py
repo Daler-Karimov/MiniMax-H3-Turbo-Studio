@@ -28,7 +28,7 @@ def installed_versions(python):
     # an isolated venv with the standard Lib/site-packages layout.
     directory = Path(python).parent.parent / 'Lib' / 'site-packages'
     return {dist.metadata['Name'].lower(): dist.version
-            for dist in importlib.metadata.distributions(path=[str(directory)])
+            for dist in importlib.metadata.distributions(path=[str(io_path(directory))])
             if dist.metadata['Name']}
 
 

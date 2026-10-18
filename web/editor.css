@@ -98,6 +98,8 @@
 .fv-ed-genbar{position:relative}
 .fv-ed-refs{display:flex;align-items:center;gap:6px;flex:none}
 .fv-ed-refs[hidden],.fv-ed-ref-menu[hidden]{display:none}
+.fv-ed-ref-notice{position:absolute;bottom:calc(100% + 8px);max-width:min(560px,calc(100% - 24px));border:1px solid var(--fv-border);background:var(--fv-card);padding:10px 14px;border-radius:8px;z-index:9;color:var(--fv-ink);pointer-events:none}
+.fv-ed-ref-notice[hidden]{display:none}
 .fv-ed-ref-chips{display:flex;align-items:center;gap:6px;max-width:min(240px,32vw);overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--fv-border) transparent;padding:1px}
 .fv-ed-ref-chips:empty{display:none}
 /* A strip that scrolls fades at the hidden end(s); one that fits is untouched. */

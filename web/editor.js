@@ -272,11 +272,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }
     const content = record => JSON.stringify({...record, id: null, revision: 0});
     function notify(text) { if (disposed) return; if (!text) { clearTimeout(noticeTimer); notice.hidden = true; return; } notice.textContent = text; notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, 9000); }
-    // `step` names what was being done, so a failure there says which step went wrong.
-    function error(value, step = null) {
+    // `step` names what was being done, so a failure there says which step went wrong; `out` is where the line is said (the bar's own line for a reference picture).
+    function error(value, step = null, out = notify) {
         const code = value?.reason || value?.code || value?.message;
         if (['missing_glyphs', 'MissingGlyphs', 'source_missing'].includes(code)) {
-            notify(code === 'source_missing' ? t('A source file is missing. Import it again from the library.', '有素材的原文件找不到了，请在素材库重新导入。')
+            out(code === 'source_missing' ? t('A source file is missing. Import it again from the library.', '有素材的原文件找不到了，请在素材库重新导入。')
                 : t('The chosen font is missing some characters. Choose another font.', '所选字体缺少部分字符，请换一种字体。'));
             return {ok: false, reason: code};
         }
@@ -286,7 +286,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const [en, zh] = (value.said || []).map(text => typeof text === 'string' && text ? text.slice(0, 200) : null);
             const text = code === 'chain_too_long' ? t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短一些。')
                 : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接着生成的每一段至少 10 秒，请加长一些。');
-            notify(text); return {ok: false, reason: code, say: text};
+            out(text); return {ok: false, reason: code, say: text};
         }
         if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range', 'no_audio'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
@@ -294,11 +294,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 text: t('Write a description first.', '先写一句描述。'), overlap: t('That spot is taken. Use an empty spot.', '这里已经有片段了，请放到空白处。'),
                 audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。'),
                 no_audio: t('This clip has no sound. Please choose one with sound.', '这个素材没有声音，请选一段有声音的。')}[code];
-            if (said) notify(said);
+            if (said) out(said);
             return {ok: false, reason: code};
         }
         const text = step === 'generate' ? editorErrorText(value, t) : step === 'export' ? exportErrorText(value, t) : t('Could not complete. Try again.', '没有完成，请重试');
-        notify(text); return {ok: false, reason: code, say: text};
+        out(text); return {ok: false, reason: code, say: text};
     }
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;

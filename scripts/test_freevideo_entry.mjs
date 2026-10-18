@@ -126,7 +126,8 @@ test('main browser entry registers both views and preserves node hooks', async t
             .replace("import { uploadMedia } from './media_upload.js';", 'const {uploadMedia} = globalThis.__freevideoEntryTest;')
             .replace("import { createCastLibrary } from './cast_library.js';", 'const {createCastLibrary} = globalThis.__freevideoEntryTest;')
             .replace("import { agentInterfaceEnabled } from './agent_connect.js';", 'const agentInterfaceEnabled = async () => false;')
-            .replace("import { installNativeErrorGuard } from './native_errors.js';", 'const installNativeErrorGuard = () => {};');
+            .replace("import { installNativeErrorGuard } from './native_errors.js';", 'const installNativeErrorGuard = () => {};')
+            .replace("import { installTranslateGuard } from './translate_guard.js';", 'const installTranslateGuard = () => {};');
         await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const extension = extensions.find(row => row.name === 'FreeVideo.UnifiedMedia');
         assert.ok(extension, 'the main extension must register');

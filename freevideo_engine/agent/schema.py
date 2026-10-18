@@ -14,7 +14,7 @@ from .. import tiers
 S = 'https://json-schema.org/draft/2020-12/schema'
 PREFIX = '/freevideo/agent/v1'
 # (two_pass, base_steps, refine_steps) of each level on this platform; the step
-# cache a level adds is tiers.step_cache(name, mac) (only high has one, easycache-av),
+# cache a level adds is tiers.step_cache(name, mac) (high and max use easycache-av),
 # its two-pass upscale factor tiers.upscale_factor(name, mac) (medium samples a larger first pass).
 QUALITY = {name: tiers.plan(name, mac=tiers.on_mac()) for name in tiers.TIERS}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),
@@ -316,6 +316,20 @@ def batch_schema(*, local=False):
     return obj(dict(jobs=array(job_schema(local=local, refs=True), 1, 64), ref=REF), ('jobs',), description='x-batch additionally checks earlier-row references and at most 64 jobs after takes expansion.', **{'x-batch': True})
 
 
+def import_upload():
+    return obj(dict(name=string(255, pattern=r'^[^/\\:\x00-\x1f]+$'),
+                    data_base64=string(MAX_JSON_UPLOAD_BYTES), ref=REF), ('name', 'data_base64'))
+
+
+def import_view():
+    return obj(dict(id=string(80), source=EDITOR_SOURCE, name=string(255), kind=enum(('video', 'audio')),
+        state=enum(('preparing', 'ready', 'failed')), fraction=number(0, 1), reason=nullable(string()),
+        frames=nullable(number(1, integer=True)), fps=number(1), width=nullable(number(0, integer=True)),
+        height=nullable(number(0, integer=True)), preview_width=nullable(number(0, integer=True)),
+        preview_height=nullable(number(0, integer=True)), has_audio=nullable({'type': 'boolean'}),
+        preview=nullable(string()), thumbnail=nullable(string())), ('id', 'source', 'name', 'kind', 'state', 'fraction'))
+
+
 def contracts(*, local=False):
     """Every registered route, including the UI control plane, has a contract."""
     def route(summary, body=None, query=None, **kw):
@@ -346,6 +360,9 @@ def contracts(*, local=False):
         ('POST', '/media'): route('Upload image, video or audio content',
             body=obj(dict(name=string(255, pattern=r'^[^/\\:\x00]+$'), data_base64=string(MAX_JSON_UPLOAD_BYTES)),
                      ('name', 'data_base64')), status=201, multipart=True),
+        ('POST', '/imports'): route('Import video or audio into the editing timeline; poll GET /imports until ready',
+            body=import_upload(), status=201, multipart=True, idempotent=True),
+        ('GET', '/imports'): route('List editor imports and preparation progress'),
         ('GET', '/media/{kind}/{file}/file'): route('Download uploaded or derived media'),
         ('POST', '/media/inspect'): route('Inspect media', body=obj(source, ('source',))),
         ('POST', '/media/frame'): route('Extract a video frame', body=obj(dict(source, at=dict(FRAME, default='last')), ('source',)), status=201),
@@ -1293,6 +1310,7 @@ def schemas():
         drama={name: drama_schema(name) for name in DRAMA_OPERATIONS}, production_view=production_response(),
         cast={name: cast_schema(name) for name in CAST_OPERATIONS}, cast_view=cast_view(),
         projects={name: project_schema(name) for name in PROJECT_OPERATIONS},
+        imports=dict(upload=import_upload(), item=import_view()),
         images={name: image_schema(name) for name in IMAGE_OPERATIONS},
         whitebox={name: whitebox_schema(name) for name in WHITEBOX_OPERATIONS},
         sessions=dict(event=session_event(stored=True), meta=session_view(),
@@ -1316,6 +1334,8 @@ def openapi():
             content = {'application/json': {'schema': deepcopy(contract['body'])}}
             if contract.get('multipart'):
                 content['multipart/form-data'] = {'schema': obj({'file': {'type': 'string', 'format': 'binary'}}, ('file',))}
+                if suffix == '/imports':
+                    content['multipart/form-data']['schema']['properties']['ref'] = REF
             operation['requestBody'] = dict(required=not contract.get('optional_body', False), content=content)
         operation['parameters'] = [dict(name=k, **{'in': 'query'}, required=k in contract['query'].get('required', []), schema=v)
                                    for k, v in contract['query']['properties'].items()]
@@ -1356,6 +1376,9 @@ def openapi():
                 if suffix == '/sessions' and method == 'GET' else session_view())
         elif suffix.endswith('/events'):
             content_type, response_schema = 'text/event-stream', {'type': 'string'}
+        elif suffix == '/imports':
+            response_schema = obj({'import': import_view()}, ('import',)) if method == 'POST' else obj(
+                {'items': array(import_view())}, ('items',))
         elif suffix == '/editor/sources/content':
             content_type, response_schema = 'application/octet-stream', {'type': 'string', 'format': 'binary'}
         elif suffix.endswith('/file') or suffix.endswith('/thumbnail'):
@@ -1411,6 +1434,7 @@ TOOL_ENDPOINTS = {
     'freevideo_job': ('GET', '/jobs/{id}'), 'freevideo_wait': ('GET', '/jobs/{id}'),
     'freevideo_jobs': ('GET', '/jobs'), 'freevideo_cancel': ('POST', '/jobs/{id}/cancel'),
     'freevideo_resume': ('POST', '/jobs/{id}/resume'), 'freevideo_add_media': ('POST', '/media'),
+    'freevideo_import_media': ('POST', '/imports'), 'freevideo_imports': ('GET', '/imports'),
     'freevideo_edit_image': ('POST', '/media/edit'), 'freevideo_library': ('GET', '/library'),
 }
 TOOL_ENDPOINTS.update({'freevideo_drama_' + name: (method, suffix)
@@ -1547,6 +1571,8 @@ def _tool_schema(name):
             return batch_schema(local=True)
         if name == 'freevideo_add_media':
             return obj({'path': string(4096)}, ('path',))
+        if name == 'freevideo_import_media':
+            return obj(dict(path=string(4096), ref=REF), ('path',))
         if '{id}' in suffix:
             value['properties']['id'] = contract.get('path', {}).get('properties', {}).get('id', JOB)
             value['required'] = list(value.get('required', [])) + ['id']

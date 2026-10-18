@@ -6,12 +6,11 @@ that cannot import it (web JS, prose docs) against this table.
 
 - light: two-pass, 8 + 3 steps, first pass at half size (2x learned upscale).
 - medium: two-pass, 8 + 3 steps, a larger first pass (`upscale`, below 2).
-- high: one pass of 20 steps with the audio-video EasyCache.
-- max: one pass of 20 steps, every step sampled.
+- high: one pass of 16 steps with the guarded audio-video EasyCache.
+- max: one pass of 20 steps with the same guarded cache.
 
-A level in one pass always samples 20 steps; fewer steps come only from a
-user's own setting. Only a two-pass level samples a second time. Single-pass
-levels carry REFINE_STEPS only as the neutral value the `refine_steps` field
+Each level uses the step count in the table below. Only a two-pass level
+samples a second time. Single-pass levels carry REFINE_STEPS only as the neutral value the `refine_steps` field
 needs; it is never run for them, and their `upscale` is 2 (no factor).
 `step_cache` is the engine's cache key: None, 'easycache-av' (audio-video
 EasyCache) or 'fbcache' (first-block cache, no level uses it; a request may
@@ -20,7 +19,8 @@ still ask for it). `upscale` is the two-pass learned upscale factor
 
 Mac (MPS) runs the same levels (TIERS_MAC). Results made before the
 audio-video EasyCache was ported there, one pass of 16 steps without a cache,
-still count as high (LEGACY_MAC_HIGH).
+still count as high (LEGACY_MAC_HIGH). Earlier one-pass 20-step results
+without a cache still count as max on every platform (LEGACY_MAX).
 """
 import sys
 
@@ -30,10 +30,11 @@ STEP_CACHES = (None, 'easycache-av', 'fbcache')
 TIERS = {
     'light': dict(steps=8, two_pass=True, step_cache=None, upscale=2),
     'medium': dict(steps=8, two_pass=True, step_cache=None, upscale=1.5),
-    'high': dict(steps=20, two_pass=False, step_cache='easycache-av', upscale=2),
-    'max': dict(steps=20, two_pass=False, step_cache=None, upscale=2),
+    'high': dict(steps=16, two_pass=False, step_cache='easycache-av', upscale=2),
+    'max': dict(steps=20, two_pass=False, step_cache='easycache-av', upscale=2),
 }
 TIERS_MAC = TIERS
+LEGACY_MAX = dict(steps=20, two_pass=False, step_cache=None, upscale=2)
 LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None, upscale=2)
 
 # Sampling time of a cached pass as a share of the same pass without a cache,
@@ -50,6 +51,8 @@ LEGACY_MAC_HIGH = dict(steps=16, two_pass=False, step_cache=None, upscale=2)
 # is plain 20 steps.
 # EasyCache-AV, guarded (at most 40% of steps reused, never twice in a row): measured on the RTX PRO 6000,
 # 864x1184, 5 s, 20 steps, 2 reused steps: 212 s against 238 s for the plain 20 steps (about .88 of the sampling).
+# At 16 steps the guarded cache reused 1–4 steps (about 14% on average),
+# so the same conservative .88 share also applies at 16 steps.
 SAMPLING_SHARE = {None: 1., 'easycache-av': .88, 'fbcache': .9}
 
 # Sampling time (both passes) of a two-pass request with this upscale factor,
@@ -94,6 +97,8 @@ def name_for(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=Fa
                   if tier['steps'] == steps and tier['two_pass'] == two_pass
                   and (not two_pass or refine_steps == REFINE_STEPS) and tier['step_cache'] == step_cache
                   and tier['upscale'] == upscale), None)
+    if found is None and (steps, two_pass, step_cache, upscale) == tuple(LEGACY_MAX.values()):
+        return 'max'
     if found is None and mac and (steps, two_pass, step_cache, upscale) == tuple(LEGACY_MAC_HIGH.values()):
         return 'high'
     return found
@@ -102,10 +107,10 @@ def name_for(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=Fa
 def table_level(steps, two_pass, refine_steps=REFINE_STEPS, step_cache=None, mac=False, upscale=2):
     """The level whose sampling table a plan needs, for naming a missing download.
 
-    Tables follow the step count only. Prefer the exact level (the cache tells
-    high from max at 20 steps), then the other platform's table (16 steps is
-    the earlier Mac "high"), then the first level with that step count (light
-    for 8 + 3, whatever the upscale factor).
+    Tables follow the step count only: 16 steps names high, 20 names max.
+    Prefer the exact level or a legacy alias, then the other platform's table,
+    then the first level with that step count (light for 8 + 3, whatever the
+    upscale factor).
     """
     found = name_for(steps, two_pass, refine_steps, step_cache, mac, upscale) or name_for(
         steps, two_pass, refine_steps, step_cache, not mac, upscale)

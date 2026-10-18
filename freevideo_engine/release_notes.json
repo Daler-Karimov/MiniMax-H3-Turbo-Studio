@@ -1,39 +1,72 @@
 {
   "schema": 1,
-  "product_version": "0.4.13",
+  "product_version": "0.4.14",
   "en": {
-    "summary": "High is faster than Max again, videos at another size of the same shape can be continued, LoRAs on int8 models apply what they can, Settings adds step-by-step how-tos and an offline tutorial, and the installers are smaller.",
+    "summary": "Max is faster, a picture can now be changed only inside a region you select, agents can import their own clips into the timeline, and long videos can take more requests into the queue while they generate.",
     "changes": [
-      "High: the step cache is back with added checks, so High runs faster than Max again.",
-      "Long videos: parts of a long video and continued parts use 8 + 3 steps, so a second part is no longer refused.",
-      "Continue: a video at another size of the same shape now continues from its own ending. Videos that are too short or have too low a frame rate show a clear message.",
-      "LoRA: on int8 models, the parts of a LoRA that cannot be applied are skipped and the rest takes effect, instead of the whole LoRA being refused.",
-      "Help: \"User guide\" in Settings shows three how-tos on the real interface, and the new \"Tutorial\" opens an offline illustrated manual in English and Chinese.",
-      "Upgrade: a FreeVideo tab left open from an older version switches to the current workflow and keeps the prompt, size, length, seed, assets and LoRAs.",
-      "Agent: assembled videos are saved to \"Your creations\", and their task cards can be opened.",
-      "Install: the Windows and Linux installers are smaller, the prompt enhancement model can also download from ModelScope, and the GPU acceleration step shows one steady name and description while it builds."
+      "Quality levels: Max now uses 20 steps with a guarded step cache and finishes sooner; High uses 16 steps with the step cache. The level names stay the same.",
+      "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
+      "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
+      "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
+      "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
+      "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
+      "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
+      "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
+      "Feedback: feedback sent for a failed generation now includes the engine's error message.",
+      "Install: the Windows library checks also handle files in deeply nested folders."
     ]
   },
   "zh": {
-    "summary": "精细档重新比极致档快；同比例、不同尺寸的视频可以接着生成；int8 模型上的 LoRA 能用的部分照常生效；设置中新增分步演示和离线教程；安装包变小。",
+    "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
     "changes": [
-      "精细档：重新启用步缓存，并加上检查，精细档重新比极致档快。",
-      "长视频：长视频的分段和接着生成的分段统一使用 8 + 3 步，第二段不再被拒绝。",
-      "接着生成：同比例、不同尺寸的视频改为从它自己的结尾接着生成；太短或帧率太低的视频会给出明确提示。",
-      "LoRA：在 int8 模型上，LoRA 中无法应用的部分会跳过，其余照常生效，不再整个拒绝。",
-      "帮助：设置中的“使用说明”改为在真实界面上演示三项操作；新增“教程”，可打开中英文离线图文手册。",
-      "升级：旧版本留在标签页中的 FreeVideo 工作流会换成当前版本，并保留提示词、尺寸、时长、种子、素材和 LoRA。",
-      "Agent：拼接的成片保存到“我的作品”，任务卡可以打开。",
-      "安装：Windows 和 Linux 安装包变小；提示词增强模型也可以从魔搭下载；GPU 加速组件构建时，名称和说明保持不变。"
+      "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
+      "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
+      "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
+      "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
+      "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
+      "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
+      "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
+      "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
+      "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
+      "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.13",
+      "en": {
+        "summary": "High is faster than Max again, videos at another size of the same shape can be continued, LoRAs on int8 models apply what they can, Settings adds step-by-step how-tos and an offline tutorial, and the installers are smaller.",
+        "changes": [
+          "High: the step cache is back with added checks, so High runs faster than Max again.",
+          "Long videos: parts of a long video and continued parts use 8 + 3 steps, so a second part is no longer refused.",
+          "Continue: a video at another size of the same shape now continues from its own ending. Videos that are too short or have too low a frame rate show a clear message.",
+          "LoRA: on int8 models, the parts of a LoRA that cannot be applied are skipped and the rest takes effect, instead of the whole LoRA being refused.",
+          "Help: \"User guide\" in Settings shows three how-tos on the real interface, and the new \"Tutorial\" opens an offline illustrated manual in English and Chinese.",
+          "Upgrade: a FreeVideo tab left open from an older version switches to the current workflow and keeps the prompt, size, length, seed, assets and LoRAs.",
+          "Agent: assembled videos are saved to \"Your creations\", and their task cards can be opened.",
+          "Install: the Windows and Linux installers are smaller, the prompt enhancement model can also download from ModelScope, and the GPU acceleration step shows one steady name and description while it builds."
+        ]
+      },
+      "zh": {
+        "summary": "精细档重新比极致档快；同比例、不同尺寸的视频可以接着生成；int8 模型上的 LoRA 能用的部分照常生效；设置中新增分步演示和离线教程；安装包变小。",
+        "changes": [
+          "精细档：重新启用步缓存，并加上检查，精细档重新比极致档快。",
+          "长视频：长视频的分段和接着生成的分段统一使用 8 + 3 步，第二段不再被拒绝。",
+          "接着生成：同比例、不同尺寸的视频改为从它自己的结尾接着生成；太短或帧率太低的视频会给出明确提示。",
+          "LoRA：在 int8 模型上，LoRA 中无法应用的部分会跳过，其余照常生效，不再整个拒绝。",
+          "帮助：设置中的“使用说明”改为在真实界面上演示三项操作；新增“教程”，可打开中英文离线图文手册。",
+          "升级：旧版本留在标签页中的 FreeVideo 工作流会换成当前版本，并保留提示词、尺寸、时长、种子、素材和 LoRA。",
+          "Agent：拼接的成片保存到“我的作品”，任务卡可以打开。",
+          "安装：Windows 和 Linux 安装包变小；提示词增强模型也可以从魔搭下载；GPU 加速组件构建时，名称和说明保持不变。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.12",
       "en": {
         "summary": "Preview white-model scenes for Autopilot, LoRA compatibility checks and drag-to-reorder, clearer failure messages, deleting edits, a faster start for a busy machine, and a Medium level that samples two passes.",
         "changes": [
-          "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an official race-car example.",
+          "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an example.",
           "LoRA: a compatibility check before generating, and LoRAs can be reordered by dragging.",
           "Failure messages: submission, queue and browser-extension failures share one layout and say what to do next; failed requests can be packaged with Export report or Submit to GitHub.",
           "Editor: an edit can be deleted, an empty untouched edit is discarded, and reopening an edit restores its cover and shows its finishing stage; continuations are queued on the server.",
@@ -50,7 +83,7 @@
       "zh": {
         "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
         "changes": [
-          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有官方赛车示例。",
+          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有示例。",
           "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
           "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
           "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",

@@ -27,6 +27,22 @@ def fail(path, message):
     raise SpecError(contract.diagnostic(path, message, None))
 
 
+def import_name(name):
+    """Timeline imports accept video/audio content, with no HTTP filesystem paths."""
+    from ..comfy_assets import media_kind
+    problems = contract.issues(contract.import_upload()['properties']['name'], name, '/name')
+    if problems:
+        raise SpecError(problems)
+    try:
+        if media_kind(name) not in ('video', 'audio'):
+            raise ValueError
+    except ValueError:
+        error = SpecError(contract.diagnostic('/name', 'a supported video or audio filename', None))
+        error.code = 'invalid_media'
+        raise error from None
+    return name
+
+
 # Field checks for values no route schema describes: screenplays and filming records.
 def _bool(value, path):
     if type(value) is not bool:
@@ -147,9 +163,7 @@ def sampling(value):
     cache = tiers.step_cache(quality, mac) if own else None
     factor = tiers.upscale_factor(quality, mac) if own and two else 2
     if custom:
-        quality = next((k for k, v in QUALITY.items() if v == (two, base, refine)
-                        and tiers.step_cache(k, mac) == cache
-                        and (not two or tiers.upscale_factor(k, mac) == factor)), 'custom')
+        quality = tiers.name_for(base, two, refine, cache, mac, factor) or 'custom'
     return dict(quality=quality, two_pass=two, base_steps=base, refine_steps=refine,
                 **({'step_cache': cache} if cache else {}), **({'upscale_factor': factor} if factor != 2 else {}),
                 **({'sampling_note': note} if note else {}))

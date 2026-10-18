@@ -150,7 +150,7 @@ def failure(error, mode='rewrite'):
     Tokenizers may quote only a fragment of either draft: replacing the full
     prompt in an exception is not sufficient to make that exception private.
     """
-    allowed = {'ram_space', 'image_size', 'context_length', 'invalid_output'}
+    allowed = {'ram_space', 'image_size', 'context_length', 'invalid_output', 'out_of_memory'}
     message = str(error)
     fallback = 'ask_failed' if mode == 'ask' else 'rewrite_failed'
     code = message if message in allowed else 'out_of_memory' if 'out of memory' in message.lower() else fallback
@@ -205,6 +205,7 @@ def tokenize(processor, messages, max_pixels=512 * 32 * 32):
 # CUDA context alone take about 2.5 GB of commit). Other placements map and
 # merge the whole model in RAM; theirs is checked after the imports.
 RESIDENT_RAM = 4 * 2**30
+STREAMED_RAM = 6 * 2**30   # download-card figure for 6 GB cards: resident part plus the streamed layers' host copy
 MAPPED_RAM = 11 * 2**30
 
 
@@ -263,6 +264,8 @@ def load_model(folder, torch, stats, checkpoint):
     shapes = stored(folder)
     weights = sum(row['bytes'] for row in shapes.values())
     resident = None
+    keep = None
+    host_bytes = 0
     weight_budget = 0
     if torch.cuda.is_available():
         from .. import gpu_budget
@@ -277,7 +280,19 @@ def load_model(folder, torch, stats, checkpoint):
         kv = kv_bytes(shapes, reserved_tokens(stats))
         stats.update(gpu_allocator_budget_bytes=free, gpu_weight_budget_bytes=weight_budget, gpu_kv_reserve_bytes=kv)
         resident = placement(weights, int8.saved_bytes(shapes), kv, free)
-    stats['ram_required_bytes'] = RESIDENT_RAM if resident else MAPPED_RAM
+        if not resident:
+            # Too big even as int8: keep what fits on the GPU and stream the other
+            # layers' int8 rows from host memory, a layer ahead of use.
+            plan = int8.resident_layers(weights, shapes, free - kv - WORKING_VRAM)
+            if plan:
+                resident, (keep, host_bytes) = 'int8', plan
+        stats.update(streamed_layers=len(int8.layer_bytes(shapes)) - keep if keep is not None else 0,
+                     streamed_host_bytes=host_bytes)
+        if not resident and weight_budget <= 2 * 2**30:
+            # Not even the streaming tier fits: the model would run on the CPU at
+            # about 0.2 tokens/s and hit the request deadline, so say so at once.
+            raise ValueError('out_of_memory')
+    stats['ram_required_bytes'] = (RESIDENT_RAM + host_bytes) if resident else MAPPED_RAM
     available = stats['available_memory_at_start_bytes' if resident else 'available_memory_before_load_bytes']
     if available < stats['ram_required_bytes']:
         raise ValueError('ram_space')
@@ -285,7 +300,7 @@ def load_model(folder, torch, stats, checkpoint):
     loading = time.monotonic()
     if resident:
         from .load import resident as load_resident
-        model = load_resident(folder, torch, 'cuda:0', resident)
+        model = load_resident(folder, torch, 'cuda:0', resident, keep)
         mapping, device = {'': 0}, 'cuda:0'
         stats.update(weights=resident, kv_positions=kv_positions(reserved_tokens(stats)))
     else:

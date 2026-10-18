@@ -82,6 +82,7 @@ ApplicationWindow {
             var more = rate > 0 || s.bytes_per_second > 0 ? sizeAndTime(left, rate).split(" · ")[1] : ""
             return t("Downloading the prompt model · ", "正在下载提示词模型 · ") + gb(m.install.done) + " / " + total + (more ? " · " + more : "")
         }
+        if (m.checking) return t("Checking the prompt model…", "正在检查提示词模型…")
         if (m.failure) return m.failure
         if (m.install.state === "cancelled") return t("Prompt model download paused · ", "提示词模型下载已暂停 · ") + done + " / " + total
         return t("You can also download the prompt model (", "可以再下载提示词模型（") + sizeAndTime(m.total_bytes).replace(" · ", t(", ", "，"))
@@ -670,7 +671,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             objectName: "promptModelRow"
-                            visible: !!s.prompt_model && !s.prompt_model.ready
+                            visible: !!s.prompt_model && !s.prompt_model.ready && !s.prompt_model.checking
                             Layout.fillWidth: true; spacing: 14
                             FCheck {
                                 objectName: "promptModelSwitch"; Layout.fillWidth: true
@@ -962,7 +963,7 @@ ApplicationWindow {
                     }
                     FCard {
                         objectName: "promptModelCard"
-                        visible: !!s.prompt_model && !s.prompt_model.ready && (s.prompt_model.suggest || s.prompt_model.busy
+                        visible: !!s.prompt_model && !s.prompt_model.ready && (s.prompt_model.suggest || s.prompt_model.busy || s.prompt_model.checking
                                  || ["failed", "cancelled"].indexOf(s.prompt_model.install.state) >= 0)
                         Layout.fillWidth: true; padding: 16; spacing: 10
                         FText {
@@ -974,8 +975,8 @@ ApplicationWindow {
                             fraction: s.prompt_model.install.total > 0 ? s.prompt_model.install.done / s.prompt_model.install.total : -1
                         }
                         Flow {
-                            Layout.fillWidth: true; spacing: 8
-                            FButton { objectName: "promptModelDownload"; visible: !s.prompt_model.busy
+                            visible: !s.prompt_model.checking; Layout.fillWidth: true; spacing: 8
+                            FButton { objectName: "promptModelDownload"; visible: !s.prompt_model.busy && !s.prompt_model.checking
                                 text: s.prompt_model.suggest ? t("Download", "下载") : t("Resume", "继续"); enabled: !s.busy; onClicked: backend.promptModelAction("install") }
                             FButton { objectName: "promptModelPause"; visible: s.prompt_model.busy; text: t("Pause", "暂停"); onClicked: backend.promptModelAction("cancel") }
                             FButton { objectName: "promptModelDismiss"; visible: s.prompt_model.suggest; text: t("Don't ask again", "不再提示"); flat: true; onClicked: backend.dismissPromptHint() }

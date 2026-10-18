@@ -223,7 +223,8 @@ class ImageRunner:
             gpu_budget_bytes=self.budget(), host_available_bytes=host_available, width=width, height=height,
             reference_pixels=reference_pixels, shape=self.shape)
 
-    def generate(self, prompt, *, width, height, seed=None, reference_images=None, progress=None, cancel=None):
+    def generate(self, prompt, *, width, height, seed=None, reference_images=None, edit_mask=None,
+                 progress=None, cancel=None):
         plan = self.plan(width, height, reference_images)
         self.last_plan = plan
         if not plan.feasible:
@@ -233,7 +234,8 @@ class ImageRunner:
         self.generator.vae_tile = plan.vae_tiling
         self.generator.vae_tile_size = plan.vae_tile_size
         return self.generator.generate(prompt, width=width, height=height, seed=seed,
-                                       reference_images=reference_images, progress=progress, cancel=cancel)
+                                       reference_images=reference_images, edit_mask=edit_mask,
+                                       progress=progress, cancel=cancel)
 
     def at_boundary(self):
         """False when a failure left a weights streamer inside a layer pass; the next request cannot use it."""

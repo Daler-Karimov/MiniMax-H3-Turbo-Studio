@@ -257,7 +257,7 @@ class QwenImageGenerator:
 
     @torch.no_grad()
     def generate(self, prompt: str, *, width: int, height: int, seed: int | None = None, steps: int = 8,
-                 reference_images=None, progress=None, cancel=None) -> Image.Image:
+                 reference_images=None, edit_mask=None, progress=None, cancel=None) -> Image.Image:
         if self._closed:
             raise RuntimeError("Generator is closed")
         if not isinstance(prompt, str):
@@ -267,6 +267,8 @@ class QwenImageGenerator:
         if reference_images is not None and not isinstance(reference_images, list):
             raise ValueError("reference_images must be a flat list of PIL images")
         width, height = normalize_dimensions(width, height)
+        if edit_mask is not None and not reference_images:
+            raise ValueError("edit_mask needs a reference image: the first one is the picture being edited")
 
         def check_cancel():
             if cancel is not None and cancel():
@@ -314,6 +316,21 @@ class QwenImageGenerator:
                     encoded = (encoded - mean) / std
                     ref_latents.append(self._pack_latents(encoded, 1, channels, *encoded.shape[-2:]).to(embeds.dtype))
                     check_cancel()
+        keep_latents = cell_mask = None
+        if edit_mask is not None:
+            from . import region_edit
+
+            original = reference_images[0].convert("RGBA")
+            with self._stage("encode"):
+                check_cancel()
+                resized = original.resize((width, height), Image.Resampling.LANCZOS)
+                array = np.asarray(resized, dtype=np.float32)[None] / 255.0
+                tensor = torch.from_numpy(array).permute(0, 3, 1, 2).unsqueeze(2) * 2 - 1
+                encoded = _encoded_latents(self.vae.encode(tensor.to(device=self.device, dtype=_dtype(self.vae)), tile=True))
+                mean, std = self._stats(encoded)
+                keep_latents = self._pack_latents((encoded - mean) / std, 1, channels, *encoded.shape[-2:]).to(embeds.dtype)
+            cell_mask = torch.from_numpy(region_edit.latent_mask(edit_mask, (width, height))).to(self.device)
+            cell_mask = cell_mask.reshape(1, -1, 1)
         ref_latents = torch.cat(ref_latents, dim=1) if ref_latents else None
         ref_tokens = 0 if ref_latents is None else ref_latents.shape[1]
         if image_mask.sum().item() * 4 != ref_tokens:
@@ -325,6 +342,7 @@ class QwenImageGenerator:
         latents = torch.randn((1, 1, channels, latent_height, latent_width), generator=generator,
                               device=self.device, dtype=embeds.dtype)
         latents = self._pack_latents(latents, 1, channels, latent_height, latent_width)
+        start_noise = latents.clone() if keep_latents is not None else None
         img_shapes = [[*[(1, h // 16, w // 16) for w, h in sizes], (1, latent_height, latent_width)]]
         image_mask = torch.cat([image_mask, image_mask.new_ones(1, latents.shape[1] // 4)], dim=1)
         sigmas = torch.tensor(self.sample_sigmas, device=self.device, dtype=torch.float32)
@@ -348,6 +366,11 @@ class QwenImageGenerator:
                 ))[:, -latents.shape[1]:]
                 check_cancel()
                 latents = euler_step(latents, prediction, sigmas[i], sigmas[i + 1])
+                if keep_latents is not None:
+                    # Outside the selection the latent stays on the original's own path to this sigma.
+                    s = sigmas[i + 1]
+                    kept = (1 - s) * keep_latents.float() + s * start_noise.float()
+                    latents = (cell_mask * latents.float() + (1 - cell_mask) * kept).to(prediction.dtype)
                 report("denoise", (i + 1) / steps)
 
         check_cancel()
@@ -366,6 +389,9 @@ class QwenImageGenerator:
             check_cancel()
             array = (pixels / 2 + 0.5).clamp(0, 1).float().cpu().permute(0, 2, 3, 1).numpy()[0]
             image = Image.fromarray((array * 255).round().astype(np.uint8))
+            if edit_mask is not None:
+                image = region_edit.composite(reference_images[0], image,
+                                              region_edit.blend_alpha(edit_mask, reference_images[0].size))
             report("decode", 1.0)
         return image
 

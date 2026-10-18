@@ -165,7 +165,8 @@ def features(continuation, vlm):
     from .editor_runtime import available
     rules = available()
     return {'capabilities': True, 'plan': True, 'jobs.cancel': True, 'jobs.resume': True, 'takes': True,
-            'library.read': True, 'library.download': True, 'errors.validation': True, 'errors.missing_media': True,
+            'library.read': True, 'library.download': True, 'imports.create': True, 'imports.read': True,
+            'errors.validation': True, 'errors.missing_media': True,
             'generate.text': True, 'generate.size': True, 'generate.first_frame': True, 'generate.seed': True,
             'queue.shared': True, 'queue.busy': True, 'chain.auto': bool(continuation),
             'enhance': bool(vlm.get('ready')), 'drama.film': True, 'images.edit': rules,
@@ -196,7 +197,7 @@ def capabilities(port, jobs):
     service = getattr(port.server, '_freevideo_prompt_vlm', None)
     if service is not None:
         try:
-            vlm = {k: v for k, v in service.info().items() if k in ('ready', 'model', 'license', 'bytes', 'busy')}
+            vlm = {k: v for k, v in service.info(wait=False).items() if k in ('ready', 'model', 'license', 'bytes', 'busy')}
         except (OSError, ValueError):
             vlm = dict(ready=False)
     running, pending = port.snapshot()
@@ -387,6 +388,7 @@ def register():
     token_failures = set()
     thumbnails = asyncio.Semaphore(1)
     upload_decoders = asyncio.Semaphore(1)
+    import_lock = asyncio.Lock()
 
     def expected(root=None):
         from ..comfy_bridge import installation_root
@@ -492,7 +494,7 @@ def register():
                     if definition.get('multipart') and request.content_type == 'multipart/form-data':
                         pass
                     else:
-                        limit = contract.MAX_JSON_UPLOAD_BYTES if suffix == '/media' else contract.MAX_BODY_BYTES
+                        limit = contract.MAX_JSON_UPLOAD_BYTES if suffix in ('/media', '/imports') else contract.MAX_BODY_BYTES
                         value = await read_body(request, limit, definition.get('optional_body', False))
                         try:
                             contract.validate(definition['body'], value)
@@ -518,8 +520,10 @@ def register():
                     value['next'] = value['next'].replace('{id}', request.match_info['id'])
                 if error.code == 'too_large':
                     limit = error.details.get('limit_bytes', contract.MAX_UPLOAD_BYTES)
+                    location = ({'path': '/file' if request.content_type == 'multipart/form-data' else '/data_base64'}
+                                if suffix == '/imports' else {})
                     value.update(message='The upload must be at most %d bytes; a larger payload was received.' % limit,
-                                 details=[dict(limit_bytes=limit)], next='Reduce the payload to at most %d bytes and retry.' % limit)
+                                 details=[dict(limit_bytes=limit, **location)], next='Reduce the payload to at most %d bytes and retry.' % limit)
                 if error.code == 'busy':
                     entries = (await asyncio.to_thread(jobs.queue_view))['entries']
                     value = errors.build('busy', owner=entries[0]['owner'] if entries else 'ui')
@@ -1465,6 +1469,26 @@ def register():
             info.pop('path', None)
             made.pop('path', None)
             return assets.public(dict(made, **info, file=relative, view=assets.view(relative)))
+
+    @routes.post(PREFIX + '/imports')
+    @guarded
+    async def import_media(request):
+        from . import imports
+        value = None if request.content_type == 'multipart/form-data' else await body(request)
+        try:
+            result, status = await imports.upload(request, value, port.output_root,
+                getattr(server, '_freevideo_editor', None), import_lock, upload_decoders)
+        except specs.SpecError:
+            raise
+        except (ValueError, AssertionError):
+            imports.invalid('/file', 'a well-formed multipart upload with video or audio content')
+        return reply(result, status)
+
+    @routes.get(PREFIX + '/imports')
+    @guarded
+    async def list_imports(request):
+        from . import imports
+        return reply(await asyncio.to_thread(imports.listing, port.output_root))
 
     @routes.post(PREFIX + '/media')
     @guarded

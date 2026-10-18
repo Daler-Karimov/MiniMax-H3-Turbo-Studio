@@ -2,15 +2,15 @@
 // Each eligible product version gets one chapter in the existing guide.json seen list.
 export const SHOWCASE_START_VERSION = '0.4.10';
 // The ready-made white-model scene the showcase's button starts.
-export const SHOWCASE_SCENE = 'car';
+export const SHOWCASE_SCENE = 'cat';
 export const SHOWCASE_ASSET = new URL('./assets/entry-showcase.webp', import.meta.url).href;
 export const SHOWCASE_TEXT = {
     title: ['From whitebox animation to finished video', '从白模动画到写实视频'],
     try: ['Get started', '开始使用'],
     close: ['Close', '关闭'],
     example: [
-        "A red race car hits the end of a straight at full speed and throws itself into a corner, the rear sliding out in a controlled drift with a little tyre smoke, while the camera orbits half a circle around the car and then follows it out of the bend. Sunny circuit with red and white kerbs, grandstands and green grass, realistic paint and tarmac, strong sense of speed, smooth camera. Roaring engine and the squeal of tyres.",
-        "一辆红色赛车在直道尽头全速冲入弯道，车尾受控地甩出，带起少许轮胎烟，镜头绕车半圈后跟着它驶出弯道。晴天的赛道，红白相间的路缘石、看台和绿草地，写实的漆面和柏油路，速度感强，镜头平滑。引擎轰鸣，轮胎尖啸。",
+        "A ginger cat crouches on a living room floor, gathers itself and leaps up a staggered wooden bookshelf, jumping from one shelf to the next between rows of books, and finally settles on the top shelf, while the camera pans sideways and tilts up slightly to follow. Warm indoor daylight, realistic fur and wood, soft shadows, smooth camera motion. Soft room tone and the light thud of paws on wood.",
+        "一只橘猫在客厅地板上蹲下蓄力，跳上错落的木书架，在成排的书之间一层一层往上跳，最后稳稳落在最高一层，镜头向侧面平移并略微上摇跟随。温暖的室内日光，写实的毛发和木纹，柔和的阴影，镜头平滑。安静的室内环境声，爪子落在木头上的轻响。",
     ],
 };
 

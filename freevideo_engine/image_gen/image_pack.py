@@ -138,17 +138,22 @@ def validate_catalog(spec):
                 or not isinstance(spec['repo'], str) or not spec['repo']
                 or not isinstance(spec['revision'], str) or not spec['revision']):
             raise PackError('invalid_catalog')
-        found = spec['groups']['image']
-        if not found or len({r['file'] for r in found}) != len(found):
+        image_rows = spec['groups']['image']
+        segment_rows = spec['groups'].get('segment', [])
+        found = image_rows + segment_rows
+        if (not image_rows or len({r['file'] for r in found}) != len(found)
+                or any(row['component'] == 'segment' for row in image_rows)
+                or any(row['component'] != 'segment' for row in segment_rows)):
             raise PackError('invalid_catalog')
         for row in found:
             _relative(row['file'])
             if (type(row['bytes']) is not int or row['bytes'] <= 0
                     or not re.fullmatch('[0-9a-f]{64}', row['sha256'])
-                    or row['component'] not in ('dit', 'text_encoder', 'vae', 'text_encoder_config', 'processor')):
+                    or row['component'] not in ('dit', 'text_encoder', 'vae', 'text_encoder_config', 'processor', 'segment')):
                 raise PackError('invalid_catalog')
             ids = [s['id'] for s in row['sources']]
-            if (len(set(ids)) != len(ids) or not {'official', 'modelscope'} <= set(ids)
+            required = {'official', 'modelscope'}
+            if (len(set(ids)) != len(ids) or not required <= set(ids)
                     or not set(ids) <= {'official', 'modelscope', 'hf-mirror'}):
                 raise PackError('invalid_catalog')
             for source in row['sources']:
@@ -159,11 +164,13 @@ def validate_catalog(spec):
         raise PackError('invalid_catalog') from error
 
 
-def rows(spec=None):
+def rows(spec=None, *, group='image'):
     spec = spec if spec is not None else catalog()
     validate_catalog(spec)
-    return [dict(row, family='image', model_id=spec['model_id'], repo=spec['repo'], revision=spec['revision'])
-            for row in spec['groups']['image']]
+    groups = spec['groups'].values() if group is None else [spec['groups'][group]]
+    return [dict(row, family='image', model_id=row.get('model_id', spec['model_id']),
+                 repo=row.get('repo', spec['repo']), revision=row.get('revision', spec['revision']))
+            for found in groups for row in found]
 
 
 def base(root=None):
@@ -216,27 +223,30 @@ def _owned_intact(path, stamp):
 # for people reading the source and is never needed at run time.
 NOTICE_TEXT = (b'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi '
                b'Laboratory Technology Co., Ltd. All Rights Reserved.\n')
+SEGMENT_NOTICE_TEXT = (b'SAM 2.1 Hiera small, Copyright (c) Meta Platforms, Inc. and affiliates.\n'
+                       b'Licensed under Apache-2.0; see freevideo_engine/licenses/SAM2-Apache-2.0.txt.\n'
+                       b'https://github.com/facebookresearch/sam2\n')
 
 
 def _notice():
     return NOTICE_TEXT
 
 
-def _notice_ready(path):
+def _notice_ready(path, *, group='image'):
     """Informational only: a missing or different notice never makes the pack unusable."""
     try:
-        return path.is_file() and path.read_bytes() == NOTICE_TEXT
+        return path.is_file() and path.read_bytes() == (SEGMENT_NOTICE_TEXT if group == 'segment' else NOTICE_TEXT)
     except OSError:
         return False
 
 
-def _write_notice(folder, owned):
+def _write_notice(folder, owned, *, group='image'):
     """Put the notice into the model folder when possible; a failure is logged and the install goes on."""
     try:
-        notice = _path(folder, 'NOTICE.txt')
+        notice = _path(folder, 'SAM2-NOTICE.txt' if group == 'segment' else 'NOTICE.txt')
         if notice.exists():
             return   # present (ours or the user's own text): left as it is
-        notice.write_bytes(NOTICE_TEXT)
+        notice.write_bytes(SEGMENT_NOTICE_TEXT if group == 'segment' else NOTICE_TEXT)
         _own(folder, owned, notice)
     except Exception as error:
         logging.warning('[FreeVideo] Could not write the image model notice: %s', redacted_launcher_error(error))
@@ -277,7 +287,7 @@ def _recheck(root, folder, pending):
     try:
         stamps = deepcopy(_read(folder, LEDGER))
         results = []
-        for row in rows():
+        for row in rows(group=None):
             path = target(row, root)
             name = str(path)
             if name in pending and _stale(path, row, stamps):
@@ -349,13 +359,13 @@ def _start_recheck(root, folder, stale):
     return True
 
 
-def status(root=None):
+def status(root=None, *, group='image'):
     """Missing files and unique retained bytes; no network and no weight reads on this thread."""
     folder = base(root)
     ledger = _read(folder, LEDGER)
     files, missing, downloaded, verified_bytes = [], [], 0, 0
     stale = []
-    for row in rows():
+    for row in rows(group=group):
         path = target(row, root)
         intact = _intact(path, row, ledger)
         old = not intact and _stale(path, row, ledger)
@@ -372,7 +382,7 @@ def status(root=None):
         files.append(dict(file=row['file'], bytes=row['bytes'], ready=intact, downloaded_bytes=retained, stale=old))
     checking = bool(stale) and _start_recheck(root, folder, stale)
     try:
-        notice_ready = _notice_ready(_path(folder, 'NOTICE.txt'))
+        notice_ready = _notice_ready(_path(folder, 'SAM2-NOTICE.txt' if group == 'segment' else 'NOTICE.txt'), group=group)
     except PackError:
         notice_ready = False
     total = sum(r['bytes'] for r in files)
@@ -391,8 +401,8 @@ def checking(root=None) -> bool:
     return base(root) in _RECHECKS
 
 
-def ready(root=None):
-    return status(root)['ready']
+def ready(root=None, *, group='image'):
+    return status(root, group=group)['ready']
 
 
 def downloading(root=None, engine_root=None) -> bool:
@@ -444,19 +454,19 @@ def _lease(root, engine_root=None, destructive=False):
         yield folder
 
 
-def verify(root=None, progress=None, check=None):
+def verify(root=None, progress=None, check=None, *, group='image'):
     """Explicit full integrity check; bad stamps are discarded, files are kept."""
     with _lease(root) as folder:
-        _verify(folder, root, progress or (lambda v: None), check or (lambda: None), full=True)
-        return status(root)
+        _verify(folder, root, progress or (lambda v: None), check or (lambda: None), full=True, group=group)
+        return status(root, group=group)
 
 
-def _verify(folder, root, progress, check, full=False):
+def _verify(folder, root, progress, check, full=False, *, group='image'):
     ledger = _read(folder, LEDGER)
     todo = []
-    total = sum(r['bytes'] for r in rows())
+    total = sum(r['bytes'] for r in rows(group=group))
     done = 0
-    for row in rows():
+    for row in rows(group=group):
         check()
         path = target(row, root)
         hashed = False
@@ -559,14 +569,14 @@ def _transfer(plan, row, path, progress, check, background=None, diagnostic=None
             raise PackError(reason) from error
 
 
-def install(root=None, progress=None, check=None, *, engine_root=None, repair=False, _background=None):
+def install(root=None, progress=None, check=None, *, engine_root=None, repair=False, _background=None, group='image'):
     """Install only missing weights. Repair also hashes and retains bad originals."""
     progress = progress or (lambda v: None)
     check = check or (lambda: None)
     transfer_check = _background.check if _background is not None else check
     try:
         with _lease(root, engine_root, destructive=repair) as folder:
-            ledger, todo = _verify(folder, root, progress, check, full=repair)
+            ledger, todo = _verify(folder, root, progress, check, full=repair, group=group)
             total = sum(r['bytes'] for r in todo)
             retained = 0
             for row in todo:
@@ -581,11 +591,11 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
             plan = _download_plan(engine_root)
             plan.update(quiet=True, resource_check=check)
             owned = _read(folder, OWNERSHIP)
-            _write_notice(folder, owned)
+            _write_notice(folder, owned, group=group)
             done = 0
             pending_prefixes = 0
             if _background is not None:
-                done = sum(r['bytes'] for r in rows()) - total
+                done = sum(r['bytes'] for r in rows(group=group)) - total
                 total += done
                 pending_prefixes = sum(min(row['bytes'], _path(folder, row['file'] + '.partial').stat().st_size)
                                        for row in todo if _path(folder, row['file'] + '.partial').is_file())
@@ -624,7 +634,7 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
                 done += row['bytes']
                 progress(dict(phase='download', done=done + pending_prefixes, total=total))
             check()
-            return status(root)
+            return status(root, group=group)
     except (PackError, InterruptedError):
         raise
     except BlockingIOError as error:
@@ -633,18 +643,19 @@ def install(root=None, progress=None, check=None, *, engine_root=None, repair=Fa
         raise PackError('download_failed') from error
 
 
-def repair(root=None, progress=None, check=None, *, engine_root=None):
-    return install(root, progress, check, engine_root=engine_root, repair=True)
+def repair(root=None, progress=None, check=None, *, engine_root=None, group='image'):
+    return install(root, progress, check, engine_root=engine_root, repair=True, group=group)
 
 
-def removal_plan(root=None):
+def removal_plan(root=None, *, group='image'):
     folder = base(root)
     owned = _read(folder, OWNERSHIP)
-    allowed = {'NOTICE.txt'}
-    for row in rows():
+    notice = 'SAM2-NOTICE.txt' if group == 'segment' else 'NOTICE.txt'
+    allowed = {notice}
+    for row in rows(group=group):
         allowed.update((row['file'], row['file'] + '.partial', row['file'] + '.partial.source.json'))
     for name in allowed:
-        if name == 'NOTICE.txt':
+        if name == notice:
             continue
         _path(folder, name)
     files, skipped = [], []
@@ -654,7 +665,7 @@ def removal_plan(root=None):
         try:
             path = _path(folder, name)
         except PackError:
-            if name != 'NOTICE.txt':
+            if name != notice:
                 raise
             skipped.append(name)
             continue
@@ -667,12 +678,12 @@ def removal_plan(root=None):
     return dict(files=files, bytes=sum(f['bytes'] for f in files), skipped=skipped)
 
 
-def remove(root=None, check=None, *, engine_root=None):
+def remove(root=None, check=None, *, engine_root=None, group='image'):
     """Delete our unchanged downloads/partials/notice; keep imports and repairs."""
     check = check or (lambda: None)
     try:
         with _lease(root, engine_root, destructive=True) as folder:
-            plan = removal_plan(root)
+            plan = removal_plan(root, group=group)
             owned, ledger = _read(folder, OWNERSHIP), _read(folder, LEDGER)
             released, removed = 0, []
             for entry in plan['files']:
@@ -696,8 +707,9 @@ def remove(root=None, check=None, *, engine_root=None):
 
 class Installer:
     """One background action per pack; cancel keeps completed files and prefixes."""
-    def __init__(self, root=None, *, engine_root=None, busy=None):
+    def __init__(self, root=None, *, engine_root=None, busy=None, group='image'):
         self.root, self.engine_root = root, engine_root
+        self.group = group
         self.generation_busy = busy
         self.lock = threading.Lock()
         self.stop = threading.Event()
@@ -805,9 +817,11 @@ class Installer:
         try:
             control = _Background(self, stop) if background else None
             if background:
-                initial = status(self.root)
+                initial = status(self.root, group=self.group)
                 self._set(done=initial['downloaded_bytes'], total=initial['total_bytes'])
             options = dict(root=self.root, check=control.wait if control else check)
+            if self.group != 'image':
+                options['group'] = self.group
             if control:
                 options['_background'] = control
             if action != 'verify':
@@ -833,11 +847,11 @@ class Installer:
         code = image_pack_error_code(error)
         try:
             spec = catalog()
-            entries = rows(spec)
+            entries = rows(spec, group=self.group)
         except Exception:
             spec, entries = {}, []
         try:
-            pack = status(self.root)
+            pack = status(self.root, group=self.group)
         except Exception:
             pack = dict(ready=False, files=[], missing=[], downloaded_bytes=0)
         with self.lock:
@@ -853,7 +867,8 @@ class Installer:
             file.update(checks.get(row['file'], {}))
             files.append(file)
         pack = {k: pack[k] for k in ('ready', 'missing', 'downloaded_bytes', 'verified_bytes', 'total_bytes') if k in pack}
-        pack.update(name=spec.get('model_id', 'image'), repo=spec.get('repo'), revision=spec.get('revision'),
+        identity = entries[0] if entries and self.group == 'segment' else spec
+        pack.update(name=identity.get('model_id', 'image'), repo=identity.get('repo'), revision=identity.get('revision'),
                     format=spec.get('format'), files=files, transferred_bytes=downloaded,
                     sources=[dict(file=row['file'], id=s['id'], host=urlsplit(s['url']).hostname)
                              for row in entries for s in row['sources']], events=events)
@@ -901,6 +916,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     download = commands.add_parser('download')
     download.add_argument('--background', action='store_true')
+    download.add_argument('--group', choices=('image', 'segment'), default='image')
     download.add_argument('--root', type=Path)
     download.add_argument('--engine-root', type=Path)
     download.add_argument('--status-file', type=Path, required=True)
@@ -915,7 +931,7 @@ def main(argv=None):
             print('Image pack status is unavailable.', file=sys.stderr)
             return 1
 
-    installer = Installer(args.root, engine_root=args.engine_root)
+    installer = Installer(args.root, engine_root=args.engine_root, group=args.group)
     received = threading.Event()
     def cancelled(signum, frame):
         received.set()

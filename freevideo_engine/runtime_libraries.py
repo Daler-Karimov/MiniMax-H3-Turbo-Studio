@@ -57,7 +57,7 @@ def site_packages(environment):
 
 def _digest(path, algorithm):
     digest = hashlib.new(algorithm)
-    with open(path, 'rb') as handle:
+    with open(io_path(path), 'rb') as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b''):
             digest.update(chunk)
     return algorithm + '=' + base64.urlsafe_b64encode(digest.digest()).rstrip(b'=').decode('ascii')
@@ -83,7 +83,7 @@ def check(site, progress=None):
     root = os.path.normcase(os.path.normpath(str(site)))
     result = dict(owners=[], checked=0, changed=[], unrecorded=[], unreadable=[], directories=[])
     expected = {}
-    for distribution in importlib.metadata.distributions(path=[str(site)]):
+    for distribution in importlib.metadata.distributions(path=[str(io_path(site))]):
         try:
             rows = list(csv.reader(io.StringIO(distribution.read_text('RECORD') or '')))
             name = distribution.metadata['Name']
@@ -108,10 +108,10 @@ def check(site, progress=None):
         directories.add(os.path.dirname(path))
         result['checked'] += 1
         try:
-            if not os.path.isfile(path):
+            if not os.path.isfile(io_path(path)):
                 result['changed'].append(dict(entry, state='missing'))
                 continue
-            size = os.path.getsize(path)
+            size = os.path.getsize(io_path(path))
             matching = [(value, length) for _, value, length in records if length is None or length == size]
             hashed = {}
             def matches(value):
@@ -133,7 +133,7 @@ def check(site, progress=None):
     recorded = {_canonical(path) for path, _ in expected.values()}
     for directory in sorted(directories):
         try:
-            names = sorted(os.listdir(directory))
+            names = sorted(os.listdir(io_path(directory)))
         except OSError:
             continue
         for name in names:
@@ -266,7 +266,7 @@ def dependency_closure(python, requirements, additional=()):
     dependencies = {}
     site = site_for(python)
     if site is not None:
-        for distribution in importlib.metadata.distributions(path=[str(site)]):
+        for distribution in importlib.metadata.distributions(path=[str(io_path(site))]):
             try:
                 name = distribution.metadata['Name']
                 if name:
@@ -367,7 +367,7 @@ def installed_bytes(python, name):
     """Installed size of one distribution in this Python's environment, from its RECORD."""
     try:
         site = site_for(python)
-        for distribution in importlib.metadata.distributions(path=[str(site)] if site else []):
+        for distribution in importlib.metadata.distributions(path=[str(io_path(site))] if site else []):
             if (distribution.metadata['Name'] or '').lower() == name.lower():
                 rows = csv.reader(io.StringIO(distribution.read_text('RECORD') or ''))
                 return sum(int(row[2]) for row in rows if len(row) > 2 and row[2].isdigit())

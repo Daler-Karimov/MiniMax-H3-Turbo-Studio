@@ -866,7 +866,7 @@ def _display_name(value):
     return name
 
 
-async def receive(request, root):
+async def receive(request, root, *, receipt=None):
     if request.content_length is not None and request.content_length > MAX_IMPORT_BYTES:
         raise TooLarge('Import exceeds 8 GiB')
     name = _display_name(request.headers.get('X-FreeVideo-Filename'))
@@ -894,6 +894,9 @@ async def receive(request, root):
         await asyncio.to_thread(os.replace, temporary, destination)
         value = dict(id=identity, name=name, kind=kind, state='preparing', fraction=0., reason=None,
                      frames=None, fps=FPS, width=None, height=None, has_audio=False)
+        if receipt is not None:
+            # Keep the Agent replay key in the same atomic record as the import.
+            value['agent_receipt'] = receipt
         await asyncio.to_thread(_write, _import_path(root, identity), value)
         return {key: value[key] for key in ('id', 'name', 'kind', 'state', 'fraction')}
     except BaseException:
