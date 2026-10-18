@@ -58,6 +58,11 @@ def _non_block_children(module, skip):
             yield child
 
 
+def _kept(plan):
+    kept = getattr(plan, 'dit_kept_layers', None)
+    return plan.dit_resident_layers if kept is None else kept
+
+
 class _Placement:
     """Stage hooks for QwenImageGenerator: nothing but moves between host and card."""
 
@@ -66,7 +71,9 @@ class _Placement:
 
     def enter(self, stage):
         runner = self.runner
-        if stage == 'text':
+        if stage == 'denoise':
+            runner.dit_stack.set_resident(runner.last_plan.dit_resident_layers)
+        elif stage == 'text':
             visual = getattr(runner.text_model.model, 'visual', None)
             if visual is not None:
                 visual.to(runner.device)
@@ -84,6 +91,10 @@ class _Placement:
             runner.vae.to('cpu')
             self._trim()
         elif stage == 'denoise':
+            # Blocks the other stages have no room for go back; the next denoise fills them again.
+            # A pass that failed between layers is left as it is (the runner is not reused).
+            if runner.dit_stack.offloader.at_boundary:
+                runner.dit_stack.set_resident(_kept(runner.last_plan))
             self._trim()
 
     @staticmethod
@@ -229,7 +240,7 @@ class ImageRunner:
         self.last_plan = plan
         if not plan.feasible:
             raise MemoryError('; '.join(plan.reasons) or 'the image model does not fit this machine')
-        self.dit_stack.set_resident(plan.dit_resident_layers)
+        self.dit_stack.set_resident(_kept(plan))
         self.te_stack.set_resident(plan.te_resident_layers)
         self.generator.vae_tile = plan.vae_tiling
         self.generator.vae_tile_size = plan.vae_tile_size
