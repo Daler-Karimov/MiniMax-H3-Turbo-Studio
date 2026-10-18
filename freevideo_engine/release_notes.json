@@ -33,7 +33,7 @@
       "en": {
         "summary": "Preview white-model scenes for Autopilot, LoRA compatibility checks and drag-to-reorder, clearer failure messages, deleting edits, a faster start for a busy machine, and a Medium level that samples two passes.",
         "changes": [
-          "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an official race-car example.",
+          "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an example.",
           "LoRA: a compatibility check before generating, and LoRAs can be reordered by dragging.",
           "Failure messages: submission, queue and browser-extension failures share one layout and say what to do next; failed requests can be packaged with Export report or Submit to GitHub.",
           "Editor: an edit can be deleted, an empty untouched edit is discarded, and reopening an edit restores its cover and shows its finishing stage; continuations are queued on the server.",
@@ -50,7 +50,7 @@
       "zh": {
         "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
         "changes": [
-          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有官方赛车示例。",
+          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有示例。",
           "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
           "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
           "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
