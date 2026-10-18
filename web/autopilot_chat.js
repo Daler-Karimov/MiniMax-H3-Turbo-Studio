@@ -311,7 +311,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         try {
             const id = await startScene(api, preset, session);
             const result = id ? await watchScene(api, id, {stopped: () => stopped, onState: value => { if (value.status === 'rendering') say(t(...SCENE_TEXT.rendering)); }}) : {status: 'ready'};
-            if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '').replace(/[.。]+$/, '') + t(...SCENE_TEXT.retry)); }
+            if (result.status === 'failed') {
+                sceneWaiting = false; const why = (result.error || '').replace(/[.。]+$/, '');
+                say(why ? t(...SCENE_TEXT.failed) + why + t(...SCENE_TEXT.retry) : t(...SCENE_TEXT.bare));
+            }
             else if (result.status === 'timeout') {
                 sceneWaiting = false;
                 say(t(...(result.last === 'rendering' ? SCENE_TEXT.timeout : result.page_open ? SCENE_TEXT.notStarted : SCENE_TEXT.noPage)));

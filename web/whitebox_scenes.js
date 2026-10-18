@@ -7,9 +7,10 @@ export const SCENE_TEXT = Object.freeze({
     label: ['Ready-made', '现成场景'], name: ['Start from a ready-made white-model scene', '用现成的白模场景开始'],
     preparing: ['Preparing the white model…', '正在准备白模…'], failed: ['The white model could not be made: ', '白模没有做成：'],
     rendering: ['Rendering the white model…', '正在渲染白模…'], retry: ['. Try again.', '。请重试。'],
-    noPage: ['The white-model renderer is not running in this page, so nothing was made. Reload the page and try again.', '这个页面里的白模渲染没有运行，没有做成。请刷新页面后重试。'],
-    notStarted: ['Rendering did not start within 3 minutes, so no white model was made. Try again.', '等了三分钟渲染仍没有开始，没有做成白模。请重试。'],
-    timeout: ['Rendering did not finish within 3 minutes, so no white model was made. Try again.', '渲染三分钟内没有完成，没有做成白模。请重试。'],
+    bare: ['The white model could not be made. Try again.', '白模没有做成。请重试。'],
+    noPage: ['The white model could not be made: the renderer is not running in this page. Reload the page and try again.', '白模没有做成：这个页面里的渲染没有运行。请刷新页面后重试。'],
+    notStarted: ['The white model could not be made: rendering did not start within 3 minutes. Try again.', '白模没有做成：三分钟内渲染没有开始。请重试。'],
+    timeout: ['The white model could not be made: rendering did not finish within 3 minutes. Try again.', '白模没有做成：渲染三分钟内没有完成。请重试。'],
 });
 
 export async function sceneList(api) {
