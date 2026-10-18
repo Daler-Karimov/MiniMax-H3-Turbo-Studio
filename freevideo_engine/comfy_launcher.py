@@ -96,7 +96,7 @@ class Launcher:
             from .launcher_update import current_build, UpdateClient
             identity = current_build()
             if identity:
-                update_client = UpdateClient(identity, launcher_root())
+                update_client = UpdateClient(identity, launcher_root(), language='zh' if self.zh else 'en')
         if update_client is not None:
             from .launcher_update_ui import UpdateUI
             self.updates = UpdateUI(self, update_client, self.update_row)
