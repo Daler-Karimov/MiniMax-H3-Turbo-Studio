@@ -36,6 +36,7 @@ export function agentConnectCard(t, api, shown = () => true) {
     const body = el('section', 'fv-agent-connect-body');
     const mark = el('span', 'fv-agent-connect-icon'); mark.append(icon('plug'));
     const title = el('h2', null, t('Connect an agent', '连接 Agent'));
+    const intro = el('p', 'fv-agent-connect-intro', t('Once connected, describe the video you want. It generates and edits it for you.', '连上后，说想做什么视频，它来生成和剪辑。'));
     const subtitle = el('p', 'fv-muted', t('Claude Code, Codex, FreeToken and others', 'Claude Code、Codex、FreeToken 等'));
     const actions = el('div', 'fv-agent-connect-actions');
     const button = el('button', 'fv-primary'); button.type = 'button'; button.disabled = true;
@@ -44,7 +45,7 @@ export function agentConnectCard(t, api, shown = () => true) {
     actions.append(button, arrow, el('span', 'fv-agent-connect-hint', t('Paste to your agent', '粘贴给 Agent')));
     const sentence = el('p', 'fv-agent-sentence'); sentence.hidden = true;
     const status = el('p', 'fv-agent-connect-status', t('Getting the connection address…', '正在获取连接地址…')); status.setAttribute('role', 'status');
-    body.append(mark, title, subtitle, actions, sentence, status);
+    body.append(mark, title, intro, subtitle, actions, sentence, status);
 
     let feedback = false, text = '', failures = 0;
     let timer, feedbackTimer, controller, generation = 0;
