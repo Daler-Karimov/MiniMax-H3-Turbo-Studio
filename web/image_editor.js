@@ -10,6 +10,7 @@ import {FONT_KEYS, fontStack, fontLoaded, loadFont, loadFonts} from './fonts.js'
 import {api} from '../../scripts/api.js';
 import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio, segmentAt} from './image_generation.js';
 import {productVersion} from './updates.js';
+import {issueButton} from './issue_button.js';
 
 const css = document.createElement('link');
 css.rel = 'stylesheet'; css.href = new URL('./image_editor.css', import.meta.url).href;
@@ -921,14 +922,14 @@ export async function openImageEditor({source = null, name = source || '', targe
             commitInserted(commands.addImageLayer(doc, {src: file, nw: img.naturalWidth, nh: img.naturalHeight,
                 name: label || file.split('/').pop()}));
             select('move');
-        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。')); }
+        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。'), ['Image editor', '图片编辑器']); }
     }
     filePicker.onchange = async () => {
         const file = filePicker.files?.[0]; filePicker.value = '';
         if (!file || !upload) return;
         message(t('Uploading the image…', '正在上传图片…'));
         try { const result = await upload(file); message(''); await addImageLayer(result.file, file.name); }
-        catch (error) { message(error.message || t('Upload failed.', '上传失败。')); }
+        catch (error) { message(error.message || t('Upload failed.', '上传失败。'), ['Image editor upload', '图片编辑器上传']); }
     };
     function duplicateLayer() {
         const layer = active();
@@ -1254,7 +1255,7 @@ export async function openImageEditor({source = null, name = source || '', targe
                 addPart({shape: 'mask', layer: src.id, file, upto: src.ops.length}, how); message('');
             }).catch(error => {
                 message(error?.code === 'busy_video' ? t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。')
-                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'));
+                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'), error?.code === 'busy_video' ? null : ['Image object selection', '图片智能抠图']);
             }).finally(() => { pointBusy = false; });
             return null;
         }
@@ -1548,6 +1549,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
         // Nothing typed here reaches ComfyUI's canvas shortcuts behind the dialog.
         if (event.key !== 'Escape' && event.key !== 'Tab') event.stopPropagation();
+        if (event.target.closest?.('.fv-issue-button')) return;
         if (typing) { if (mod && key === 'enter') { event.preventDefault(); finish(); } return; }
         if (mod && key === 'z') { event.preventDefault(); step(event.shiftKey ? 1 : -1); return; }
         if (mod && key === 'y') { event.preventDefault(); step(1); return; }
@@ -1608,7 +1610,12 @@ export async function openImageEditor({source = null, name = source || '', targe
     let resolveResult;
     const result = new Promise(r => { resolveResult = r; });
     let messageTimer = null;
-    function message(text) { status.textContent = text; clearTimeout(messageTimer); if (text) messageTimer = setTimeout(() => { status.textContent = ''; }, 5000); }
+    function message(text, where = null) {
+        status.textContent = text;
+        if (text && where) status.append(issueButton(t, () => ({where, message: text})));
+        clearTimeout(messageTimer);
+        if (text) messageTimer = setTimeout(() => { status.textContent = ''; }, where ? 20000 : 5000);
+    }
     async function leave() {
         void generation.cancel();
         if (healing) await healing;
@@ -1628,7 +1635,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             const {blob, width, height} = await renderer.export(doc, extension === 'jpg' ? 'image/jpeg' : 'image/png');
             close({blob, name: name ? `${stem}-edit.${extension}` : `${stem}.${extension}`, edit: doc, width, height});
         } catch {
-            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'));
+            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'), ['Image editor save', '图片编辑器保存']);
             save.disabled = cancel.disabled = false;
         }
     }

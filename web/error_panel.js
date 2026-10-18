@@ -484,7 +484,7 @@ export function createErrorPanel(t) {
     const download = document.createElement('button'); download.type = 'button'; download.textContent = t('Export report', '导出报告');
     // A generation that stopped offers two buttons: the report file, or the same facts as a GitHub issue.
     const github = document.createElement('button'); github.type = 'button'; github.className = 'fv-failure-github';
-    github.textContent = t('Submit to GitHub', '提交到 GitHub');
+    github.textContent = t('Report a problem', '提交问题');
     // Shown only for a browser extension, whose steps end with a reload.
     const reload = document.createElement('button'); reload.type = 'button'; reload.className = 'fv-failure-reload';
     reload.textContent = t('Reload page', '刷新页面'); reload.hidden = true; reload.onclick = () => globalThis.location?.reload();
@@ -607,7 +607,7 @@ export function createErrorPanel(t) {
         const lora = advice.kind === 'lora-unusable' || advice.kind === 'lora-int8';
         // An int8 limit is not a judgement, so there is no mistake to report.
         github.hidden = !generated || advice.kind === 'lora-int8'; githubLora = lora;
-        github.textContent = lora ? t('Report a mistake', '报告误判') : t('Submit to GitHub', '提交到 GitHub');
+        github.textContent = lora ? t('Report a mistake', '报告误判') : t('Report a problem', '提交问题');
         if (generated && typeof window !== 'undefined') loadIssueModules();
         if (popup) showFailureDialog(report, t);
         return report;

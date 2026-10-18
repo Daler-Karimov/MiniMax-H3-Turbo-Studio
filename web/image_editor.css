@@ -254,6 +254,7 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
 .fv-ie-confirm span{flex:1 1 220px}
 .fv-ie-status{padding:0 16px;color:var(--fv-muted);font-size:var(--fv-micro)}
 .fv-ie-status:empty{display:none}
+.fv-ie-status .fv-issue-button{pointer-events:auto;margin-left:8px}
 .fv-ie-status:not(:empty){position:absolute;left:0;right:0;bottom:0;padding:7px 16px;border-top:1px solid var(--fv-border);background:var(--fv-panel,#0f1620);z-index:3;pointer-events:none}
 
 @media (max-width:900px){

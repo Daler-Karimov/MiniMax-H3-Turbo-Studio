@@ -1078,12 +1078,24 @@ def register():
                 raise JobError('not_found', 'No conversation')
             # Work in progress still writes into its conversation; finished videos stay in the library.
             # New work is refused first, so what is counted below cannot grow before the file goes.
+            def busy(leaving=()):
+                return (any(r.get('session') == sid and r['status'] in ACTIVE and r['status'] not in leaving for r in jobs.rows())
+                        or any(f['session'] == sid and not f['paused']
+                               for f in jobs.productions.list(status='active', limit=None)))
+            stop = value.get('stop') is True
+            if stop:  # The user confirmed: stop its jobs and pause its films first, as the stop button does.
+                jobs.stop_session(sid)
+                for _ in range(20):  # A running job takes a moment to reach its cancelled state.
+                    with jobs.lock:
+                        if not busy():
+                            break
+                    time.sleep(0.25)
             store.begin_delete(sid)
             try:
                 with jobs.lock:  # Productions share it.
-                    if (any(r.get('session') == sid and r['status'] in ACTIVE for r in jobs.rows())
-                            or any(f['session'] == sid and not f['paused']
-                                   for f in jobs.productions.list(status='active', limit=None))):
+                    # After the user's stop, a job still winding down no longer holds the conversation: its
+                    # writes are refused once deletion begins, so a stuck one cannot block deleting forever.
+                    if busy(('cancelling',) if stop else ()):
                         raise JobError('conflict', 'Work is in progress in this conversation')
                     store.delete(sid)
             except BaseException:

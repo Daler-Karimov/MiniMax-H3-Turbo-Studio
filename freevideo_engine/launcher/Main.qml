@@ -446,6 +446,7 @@ ApplicationWindow {
                                       text: t("Download the latest ↗", "下载最新版 ↗"); onClicked: backend.link("https://github.com/FlashML-org/FreeVideo/releases/latest") }
                             FButton { objectName: "copyError"; visible: !diskFailure; text: t("Copy details", "复制详情"); onClicked: backend.copy(s.error) }
                             FButton { objectName: "showError"; text: errorDetailsOpen ? t("Hide details", "收起详情") : t("Show details", "查看详情"); flat: true; onClicked: errorDetailsOpen = !errorDetailsOpen }
+                            FButton { objectName: "reportProblem"; visible: !diskFailure; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(s.error, s.failure.title || "") }
                             FButton { objectName: "exportError"; visible: !diskFailure; text: t("Export report", "导出报告"); enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
                         }
                         ScrollView {
@@ -830,6 +831,7 @@ ApplicationWindow {
                         FText { visible: !s.update.phase && !!text; text: releaseSummary(availableRelease); Layout.fillWidth: true; color: theme.muted; font.pixelSize: theme.micro }
                         FButton { text: t("What's new", "更新内容"); flat: true; visible: !s.update.phase && !!availableRelease; implicitHeight: theme.heightSm; onClicked: releaseNotesOpen = true }
                         FButton { objectName: "updateBannerManualDownload"; text: t("Download from the release page ↗", "去发布页手动下载 ↗"); flat: true; visible: s.update.status === "error" && !!s.update.release_page; implicitHeight: theme.heightSm; onClicked: backend.link(s.update.release_page) }
+                        FButton { objectName: "updateBannerReport"; text: t("Report a problem", "提交问题"); flat: true; visible: s.update.status === "error" && !!s.update.error; implicitHeight: theme.heightSm; onClicked: backend.reportProblem(s.update.error, t("Update", "更新")) }
                     }
                     FCard {
                         objectName: "modelUpgradeCard"
@@ -848,6 +850,7 @@ ApplicationWindow {
                             FButton { objectName: "modelUpgradeLater"; visible: ["available", "low-disk", "releasable", "complete", "failed"].indexOf(upgrade.status) >= 0; flat: true
                                       text: upgrade.status === "complete" || upgrade.status === "low-disk" ? t("Close", "关闭") : t("Later", "稍后"); onClicked: backend.dismissModelUpgrade() }
                             FButton { objectName: "modelUpgradeStop"; visible: upgrade.status === "downloading"; flat: true; text: t("Stop download", "停止下载"); onClicked: backend.cancelModelUpgrade() }
+                            FButton { objectName: "modelUpgradeReport"; visible: upgrade.status === "failed"; flat: true; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(upgradeExplanation(), t("Model upgrade", "模型升级")) }
                             FButton {
                                 objectName: "modelUpgradeButton"; primary: true
                                 visible: upgrade.status === "available" || upgrade.status === "releasable"
@@ -951,6 +954,7 @@ ApplicationWindow {
                             FButton { objectName: "imagePackRemove"; visible: s.image_pack.removable_bytes > 0 && !s.image_pack.busy; text: t("Remove", "删除"); flat: true; enabled: s.image_pack.can_act; onClicked: backend.imagePackAction("remove") }
                         }
                         FText { objectName: "imagePackFailureReason"; visible: s.image_pack.install.state === "failed"; text: s.image_pack.detail; color: theme.danger; Layout.fillWidth: true }
+                        FButton { objectName: "imagePackReport"; visible: s.image_pack.install.state === "failed"; text: t("Report a problem", "提交问题"); onClicked: backend.reportProblem(s.image_pack.detail || "", t("Image pack", "图像模型包")) }
                         Flow {
                             visible: s.image_pack.install.state === "failed" && !!s.image_pack.report_id
                             Layout.fillWidth: true; spacing: 8
@@ -980,6 +984,7 @@ ApplicationWindow {
                                 text: s.prompt_model.suggest ? t("Download", "下载") : t("Resume", "继续"); enabled: !s.busy; onClicked: backend.promptModelAction("install") }
                             FButton { objectName: "promptModelPause"; visible: s.prompt_model.busy; text: t("Pause", "暂停"); onClicked: backend.promptModelAction("cancel") }
                             FButton { objectName: "promptModelDismiss"; visible: s.prompt_model.suggest; text: t("Don't ask again", "不再提示"); flat: true; onClicked: backend.dismissPromptHint() }
+                            FButton { objectName: "promptModelReport"; visible: s.prompt_model.install.state === "failed"; text: t("Report a problem", "提交问题"); flat: true; onClicked: backend.reportProblem(win.promptModelLine(), t("Prompt model", "提示词模型")) }
                         }
                     }
                 }
@@ -1399,6 +1404,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true; spacing: 8
                                 FButton { text: t("Copy details", "复制详情"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.copy(s.error) }
                                 FButton { text: t("Export report", "导出报告"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; enabled: s.report.status !== "running"; onClicked: backend.exportReport() }
+                                FButton { objectName: "settingsReportProblem"; text: t("Report a problem", "提交问题"); implicitHeight: theme.heightSm; font.pixelSize: theme.micro + 1; onClicked: backend.reportProblem(s.error, s.failure.title || "") }
                             }
                             FText {
                                 visible: s.report.status !== "idle"; Layout.fillWidth: true; font.pixelSize: theme.micro; color: theme.muted
@@ -1659,6 +1665,7 @@ ApplicationWindow {
             FButton { text: t("Version & release notes", "版本与更新说明"); flat: true; onClicked: releaseNotesOpen = true }
             FText { visible: !!s.update.error; text: s.update.error || ""; color: theme.danger; Layout.fillWidth: true; font.pixelSize: theme.micro }
             FButton { objectName: "updateManualDownloadButton"; text: t("Download from the release page ↗", "去发布页手动下载 ↗"); flat: true; Layout.fillWidth: true; visible: s.update.status === "error" && !!s.update.release_page; onClicked: backend.link(s.update.release_page) }
+            FButton { objectName: "updateDialogReport"; text: t("Report a problem", "提交问题"); flat: true; Layout.fillWidth: true; visible: s.update.status === "error" && !!s.update.error; onClicked: backend.reportProblem(s.update.error, t("Update", "更新")) }
             }
             }
             RowLayout {

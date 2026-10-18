@@ -3,6 +3,7 @@
 import * as commands from './image_commands.js';
 import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.js';
 import {saveReport, reportIssue, showReportTip} from './report_issue.js';
+import {issueButton} from './issue_button.js';
 import {about} from './request_assets.js';
 
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
@@ -222,16 +223,19 @@ export function renderImageFailure(host, {error, report_id, stage, fitted} = {},
     const anchor = doc.createElement('button'); anchor.type = 'button';
     anchor.className = 'fv-action fv-action-secondary fv-action-report';
     anchor.textContent = t(...REPORT_LABELS.download); anchor.title = t(...REPORT_LABELS.description);
+    const issue = issueButton(t, () => ({where: ['Image diagnostic report', '生图诊断报告'], message: t(...REPORT_LABELS.unavailable)}));
+    issue.hidden = true;
     anchor.onclick = async () => {
         if (anchor.disabled) return;
         const restoreFocus = doc.activeElement === anchor;
+        issue.hidden = true;
         anchor.disabled = true; anchor.textContent = t(...REPORT_LABELS.preparing);
         try {
             await saveReport(await fetchReport());
             if (card.isConnected) showReportTip(bar, anchor, t, {mode: 'downloaded',
                 submit: () => reportIssue(fetchReport, version(), {save: false}), onHide: () => anchor.focus()});
             anchor.textContent = t(...REPORT_LABELS.download);
-        } catch { anchor.textContent = t(...REPORT_LABELS.unavailable); }
+        } catch { anchor.textContent = t(...REPORT_LABELS.unavailable); issue.hidden = false; }
         finally {
             anchor.disabled = false;
             if (restoreFocus && card.isConnected && doc.activeElement === doc.body) anchor.focus({preventScroll: true});
@@ -242,7 +246,7 @@ export function renderImageFailure(host, {error, report_id, stage, fitted} = {},
     card.addEventListener('keydown', event => {
         if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
     });
-    bar.append(anchor); card.append(bar);
+    bar.append(anchor, issue); card.append(bar);
     return card;
 }
 export function imagePackUnavailableMessage(info, t) {
