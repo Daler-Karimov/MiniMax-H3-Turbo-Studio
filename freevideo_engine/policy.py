@@ -1320,6 +1320,7 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
                 reduced = free_gpu - int(MIN_GPU_RESERVE_GIB * GiB) - placement_workspace
                 if reduced >= reserve + GPU_ATTENTION_OUTPUT_BYTES:
                     reserve_gpu = MIN_GPU_RESERVE_GIB
+                    request_gpu_budget = free_gpu - int(reserve_gpu * GiB)
                     gpu_budget = reduced
                     cpu_outputs = False
             if not cpu_outputs:
