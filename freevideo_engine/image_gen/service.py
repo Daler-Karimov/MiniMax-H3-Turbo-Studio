@@ -285,7 +285,19 @@ class Service:
         """Show the folder in the file manager of this machine."""
         folder = str(self.output_directory())
         if os.name == 'nt':
-            os.startfile(folder)
+            # The shell can block for good without a desktop session (SSH, service); never wait on it here.
+            failure = []
+
+            def show():
+                try:
+                    os.startfile(folder)
+                except OSError as error:
+                    failure.append(error)
+            thread = threading.Thread(target=show, name='history-open', daemon=True)
+            thread.start()
+            thread.join(2)
+            if failure:
+                raise failure[0]
         else:
             from .. import processes
             processes.popen(['xdg-open', folder], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -1159,7 +1171,7 @@ def register():
             elif name == 'history-open':
                 if request.remote not in ('127.0.0.1', '::1'):
                     raise ValueError('invalid_request')
-                result = service.history_open()
+                result = await asyncio.to_thread(service.history_open)
             else:
                 result = service.start(name, value)
             return web.json_response(result)
