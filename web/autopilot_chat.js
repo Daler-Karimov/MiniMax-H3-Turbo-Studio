@@ -310,9 +310,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         say(t(...SCENE_TEXT.preparing)); sceneWaiting = true;
         try {
             const id = await startScene(api, preset, session);
-            const result = id ? await watchScene(api, id, {stopped: () => stopped}) : {status: 'ready'};
-            if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '')); }
-            else if (result.status === 'timeout') { sceneWaiting = false; say(t(...SCENE_TEXT.timeout)); }
+            const result = id ? await watchScene(api, id, {stopped: () => stopped, onState: value => { if (value.status === 'rendering') say(t(...SCENE_TEXT.rendering)); }}) : {status: 'ready'};
+            if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '').replace(/[.。]+$/, '') + t(...SCENE_TEXT.retry)); }
+            else if (result.status === 'timeout') {
+                sceneWaiting = false;
+                say(t(...(result.last === 'rendering' ? SCENE_TEXT.timeout : result.page_open ? SCENE_TEXT.notStarted : SCENE_TEXT.noPage)));
+            }
         } catch (failure) { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + reason(failure)); }
     }
     form.append(input, scenesButton, whiteboxButton, sendButton); scroller.append(log); main.append(scroller, down, sceneMenu, form); element.append(main);
