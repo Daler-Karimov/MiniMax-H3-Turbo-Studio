@@ -59,8 +59,18 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     failureBar.append(failureReason, report); failure.append(failureBar); failure.hidden = true; host.append(failure);
     let failureId = null, downloading = false;
     // Reference pictures for a part that starts fresh: thumbnails and a small "+" before the description.
-    const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: actions.error, notify: actions.references.notify}) : null;
-    if (references) description.before(references.element);
+    // What goes wrong with a reference picture is said above the "+", where the eyes are, not in the page-wide line.
+    const refNotice = el('div', 'fv-ed-ref-notice'); refNotice.hidden = true; refNotice.setAttribute('role', 'status');
+    let refNoticeTimer = null;
+    const sayAtRefs = text => {
+        clearTimeout(refNoticeTimer);
+        if (!text || disposed) { refNotice.hidden = true; return; }
+        refNotice.textContent = text; refNotice.hidden = false;
+        refNotice.style.left = Math.max(0, (references?.element.getBoundingClientRect().left || 0) - host.getBoundingClientRect().left) + 'px';
+        refNoticeTimer = setTimeout(() => { refNotice.hidden = true; }, 9000);
+    };
+    const references = actions.references ? createEditorReferences({t, source: actions.references.source, size: actions.references.size, error: value => actions.error(value, null, sayAtRefs), notify: sayAtRefs}) : null;
+    if (references) { description.before(references.element); host.append(refNotice); }
     let status = null, serial = 0, disposed = false, pressing = new Set(), previewSelection = null, estimateCache = null, noteTimer = null, queuedAt = null;
     // Which parts are generating, or how the job ended: a "Queued" line goes once this moves on.
     const progressKey = () => ['done', 'failed', 'cancelled', 'interrupted'].includes(status?.state) ? status.state
@@ -223,7 +233,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); clearTimeout(refNoticeTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.
