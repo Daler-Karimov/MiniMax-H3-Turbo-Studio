@@ -14,7 +14,7 @@ from .. import tiers
 S = 'https://json-schema.org/draft/2020-12/schema'
 PREFIX = '/freevideo/agent/v1'
 # (two_pass, base_steps, refine_steps) of each level on this platform; the step
-# cache a level adds is tiers.step_cache(name, mac) (only high has one, easycache-av),
+# cache a level adds is tiers.step_cache(name, mac) (high and max use easycache-av),
 # its two-pass upscale factor tiers.upscale_factor(name, mac) (medium samples a larger first pass).
 QUALITY = {name: tiers.plan(name, mac=tiers.on_mac()) for name in tiers.TIERS}
 ASPECTS = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:3': (4, 3), '3:4': (3, 4),

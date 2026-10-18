@@ -1,5 +1,5 @@
 import { referenceItems } from './prompt_references.js';
-import { stepCacheOf, upscaleOf } from './sampling_effort.js';
+import { effortFor, effortsFrom, stepCacheOf, upscaleOf } from './sampling_effort.js';
 
 const PRESETS = [.5, .75, .98, 1.5, 2];
 const COLUMN_SPACING = 'equal'; // 'equal' or 'width'
@@ -77,11 +77,11 @@ export function capabilityContext(node, state) {
     return query.toString();
 }
 
-// The grid's level with exactly this plan; a step cache tells High from Max at 20 steps, the
-// upscale factor Light from Medium (a row without one is 2x).
-const gridTier = (grid, steps, twoPass, refine, stepCache, upscale = 2) => Object.values(grid.tiers || {}).find(v => v.steps === steps
-    && v.two_pass === twoPass && (!v.two_pass || refine === 3) && stepCacheOf(v.step_cache) === stepCacheOf(stepCache)
-    && (!v.two_pass || upscaleOf(v.upscale) === upscaleOf(upscale)));
+// Shared recognition includes legacy Max and the Mac-only legacy High.
+const gridTier = (grid, steps, twoPass, refine, stepCache, upscale = 2) => {
+    const level = effortFor(steps, twoPass, refine, stepCache, effortsFrom(grid), upscale);
+    return grid.tiers?.[level?.name.toLowerCase()];
+};
 
 export function capabilitySurface(grid, state) {
     if (grid?.version !== 1 || grid.status !== 'ready' || typeof grid.revision !== 'string' || !grid.machine?.system

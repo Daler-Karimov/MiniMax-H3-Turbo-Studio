@@ -88,7 +88,7 @@ def sampling_table_failure(value, *, zh=False):
         return None
     from .launcher_copy import size_text
     language = 1 if zh else 0
-    # Tables follow the step count; the cache tells high from max at 20 steps.
+    # Tables follow the step count: 16 steps is high, 20 steps is max.
     level = table_level(details['base_steps'], details['two_pass'], details['refine_steps'],
                         details.get('step_cache'), on_mac(), details.get('scale', 2))
     index = list(TIERS).index(level) if level else None

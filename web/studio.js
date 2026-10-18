@@ -818,9 +818,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (extension.source) return;
         const wantsTwoPass = mode !== 'off', wantsPreview = mode === 'preview';
         if (twoPass.checked !== wantsTwoPass) {
-            // A level in one pass samples 20 steps; two-pass from one is Light. Typed steps stay.
+            // Switching off uses Max including its cache; switching on uses uncached Light. Typed steps stay.
             const next = passSwitch(wantsTwoPass, Number(baseSteps.value), Number(refineSteps.value), stepCacheNow(), effort.levels());
-            twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); clearStepCache(); setUpscale(next.upscale);
+            twoPass.checked = wantsTwoPass; autoSinglePass = false; set(node, 'two_pass', wantsTwoPass); set(node, 'step_cache', next.stepCache || 'none'); setUpscale(next.upscale);
             if (next.steps !== Number(baseSteps.value) && !linked(node, 'base_steps') && widget(node, 'base_steps')) {
                 baseSteps.value = String(next.steps); set(node, 'base_steps', next.steps);
                 if (next.refine !== Number(refineSteps.value) && set(node, 'refine_steps', next.refine)) refineSteps.value = String(next.refine);

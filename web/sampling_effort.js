@@ -1,19 +1,24 @@
 // One editor control. The queued request remains an immutable graph snapshot.
 // Each level is a complete plan (freevideo_engine/tiers.py): Light and Medium are two-pass 8 + 3,
 // told apart by the learned upscale factor (Medium starts from a larger first pass); High and Max
-// sample 20 steps once, High with a step cache. `upscale` is 2 for every single-pass level.
+// sample 16 and 20 steps once, both with the guarded step cache. `upscale` is 2 for every single-pass level.
 const frozen = rows => Object.freeze(rows.map(row => Object.freeze({...row})));
 export const SAMPLING_EFFORTS = frozen([
     {name: 'Light', zh: '轻量', steps: 8, twoPass: true, stepCache: null, upscale: 2, color: '#3dd6b5'},
     {name: 'Medium', zh: '标准', steps: 8, twoPass: true, stepCache: null, upscale: 1.5, color: '#4ea8ff'},
-    {name: 'High', zh: '精细', steps: 20, twoPass: false, stepCache: 'easycache-av', upscale: 2, color: '#9d7bff'},
-    {name: 'Max', zh: '极致', steps: 20, twoPass: false, stepCache: null, upscale: 2, color: '#ffa94d'},
+    {name: 'High', zh: '精细', steps: 16, twoPass: false, stepCache: 'easycache-av', upscale: 2, color: '#9d7bff'},
+    {name: 'Max', zh: '极致', steps: 20, twoPass: false, stepCache: 'easycache-av', upscale: 2, color: '#ffa94d'},
 ]);
-// Mac runs the same levels.
-export const SAMPLING_EFFORTS_MAC = SAMPLING_EFFORTS;
+// Mac runs the same plans; retain platform identity for its legacy High alias.
+const macLevels = new WeakSet();
+export const SAMPLING_EFFORTS_MAC = frozen(SAMPLING_EFFORTS);
+macLevels.add(SAMPLING_EFFORTS_MAC);
+// Earlier Max sampled 20 plain steps, on every platform.
+export const legacyMaxEffort = (steps, twoPass, stepCache = null, levels = SAMPLING_EFFORTS) =>
+    steps === 20 && !twoPass && stepCacheOf(stepCache) === null ? levels.find(tier => tier.name === 'Max') : undefined;
 // Mac results made before the cache came: High was 16 steps without one.
-export const legacyMacEffort = (steps, twoPass, stepCache = null) =>
-    steps === 16 && !twoPass && stepCacheOf(stepCache) === null ? SAMPLING_EFFORTS_MAC.find(tier => tier.name === 'High') : undefined;
+export const legacyMacEffort = (steps, twoPass, stepCache = null, levels = SAMPLING_EFFORTS_MAC) =>
+    steps === 16 && !twoPass && stepCacheOf(stepCache) === null ? levels.find(tier => tier.name === 'High') : undefined;
 
 export const effortName = (t, tier) => t(tier.name, tier.zh);
 export const STEP_CACHES = Object.freeze([null, 'easycache-av', 'fbcache']);
@@ -34,13 +39,15 @@ export function effortsFrom(grid) {
     const base = grid?.machine?.system === 'Darwin' ? SAMPLING_EFFORTS_MAC : SAMPLING_EFFORTS;
     const tiers = grid?.tiers;
     if (!tiers || typeof tiers !== 'object') return base;
-    return frozen(base.map(tier => {
+    const levels = frozen(base.map(tier => {
         const row = tiers[tier.name.toLowerCase()];
         if (!row || !Number.isInteger(row.steps) || typeof row.two_pass !== 'boolean') return tier;
         return {...tier, steps: row.steps, twoPass: row.two_pass,
             stepCache: 'step_cache' in row ? stepCacheOf(row.step_cache) : tier.stepCache,
             upscale: !row.two_pass ? 2 : 'upscale' in row ? upscaleOf(row.upscale) : tier.upscale};
     }));
+    if (base === SAMPLING_EFFORTS_MAC) macLevels.add(levels);
+    return levels;
 }
 
 // The level a plan matches, or undefined for custom steps; the upscale factor tells the
@@ -48,7 +55,9 @@ export function effortsFrom(grid) {
 export function effortFor(steps, twoPass, refine, stepCache = null, levels = SAMPLING_EFFORTS, upscale = 2) {
     const cache = stepCacheOf(stepCache), factor = twoPass ? upscaleOf(upscale) : 2;
     return levels.find(tier => tier.steps === steps && tier.twoPass === twoPass && (!twoPass || refine === 3)
-        && tier.stepCache === cache && tier.upscale === factor);
+        && tier.stepCache === cache && tier.upscale === factor)
+        || legacyMaxEffort(steps, twoPass, cache, levels)
+        || (macLevels.has(levels) ? legacyMacEffort(steps, twoPass, cache, levels) : undefined);
 }
 
 // The level a result's sampling_plan names. Results made with the earlier 8 + 2 default count as
@@ -60,11 +69,15 @@ export function resultEffort(plan) {
 }
 
 // The steps and factor switching two-pass leaves. Off from an 8-step first pass samples the
-// single-pass levels' 20 steps; on from a single-pass level gives Light. Typed steps stay.
+// Max plan including its cache; on from a single-pass level gives Light without a cache. Typed steps stay.
 export function passSwitch(on, steps, refine, stepCache = null, levels = SAMPLING_EFFORTS) {
-    if (!on) return {steps: steps === 8 ? levels.find(tier => !tier.twoPass)?.steps ?? 20 : steps, refine, upscale: 2};
+    const max = levels.find(tier => tier.name === 'Max');
+    if (!on) return {steps: steps === 8 ? max?.steps ?? 20 : steps, refine, upscale: 2,
+        stepCache: steps === 8 ? max?.stepCache ?? null : null};
     const light = levels.find(tier => tier.twoPass && tier.upscale === 2);
-    return effortFor(steps, false, refine, stepCache, levels) && light ? {steps: light.steps, refine: 3, upscale: 2} : {steps, refine, upscale: 2};
+    return effortFor(steps, false, refine, stepCache, levels) && light
+        ? {steps: light.steps, refine: 3, upscale: 2, stepCache: null}
+        : {steps, refine, upscale: 2, stepCache: null};
 }
 
 // A continuation samples 8 + 3 in two passes: it keeps the factor of a two-pass level, else 2 (widget text).
@@ -72,8 +85,8 @@ export const continuationUpscale = (steps, twoPass, refine, stepCache, upscale, 
     String(effortFor(Number(steps), twoPass !== false, Number(refine), stepCache, levels, upscale)?.twoPass ? upscaleOf(upscale) : 2);
 
 // The level whose sampling table a plan needs, for naming a missing download (tiers.table_level):
-// the exact level (the cache tells High from Max at 20 steps, the factor Light from Medium; 16 steps
-// is the earlier Mac High), else the first level with those steps (Light for 8 + 3, whatever the factor).
+// the exact level or legacy alias, else the first with those steps (16 is High, 20 is Max,
+// Light for 8 + 3 whatever the factor).
 export function tableLevel(steps, twoPass, refine, stepCache = null, upscale = 2) {
     return effortFor(steps, twoPass, refine, stepCache, SAMPLING_EFFORTS, upscale)
         || legacyMacEffort(steps, twoPass, stepCache) || SAMPLING_EFFORTS.find(tier => tier.steps === steps && tier.twoPass === twoPass && (!twoPass || refine === 3));
@@ -182,7 +195,8 @@ export function createSamplingEffort(t, {onChange, onPreview = () => {}, levels 
     // The machine's own table (effortsFrom); the names stay, the plans follow the machine.
     function setLevels(next) {
         const same = (a, b) => a.steps === b.steps && a.twoPass === b.twoPass && a.stepCache === b.stepCache && a.upscale === b.upscale;
-        if (!next || next.length !== efforts.length || next.every((tier, i) => same(tier, efforts[i]))) return;
+        if (!next || next.length !== efforts.length || (macLevels.has(next) === macLevels.has(efforts)
+            && next.every((tier, i) => same(tier, efforts[i])))) return;
         efforts = next;
         update({baseSteps: currentSteps, refineSteps: currentRefine, twoPass, stepCache, upscale, disabled, reason});
     }

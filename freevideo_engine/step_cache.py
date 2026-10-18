@@ -111,6 +111,7 @@ class StepCache:
     def stats(self):
         full = self.steps - len(self.hits)
         return dict(kind=self.kind, threshold=self.threshold, steps=self.steps, cached_steps=list(self.hits),
+                    cached_share=round(len(self.hits) / self.steps, 3) if self.steps else 0.,
                     full_forwards=full, decisions=self.decisions, source=self.source,
                     disabled_reason=self.disabled_reason, guard=GUARD)
 
