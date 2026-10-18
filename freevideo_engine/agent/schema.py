@@ -424,7 +424,15 @@ def contracts(*, local=False):
             ('/chat', 'POST', obj({'text': string(8000), 'id': CHAT_ID, 'session': SESSION, 'whitebox': {'type': 'boolean'}}, ('text', 'id'))),
             ('/chat/confirm', 'POST', obj({'id': string(12, pattern=r'^cf[0-9a-f]{10}$'), 'approve': {'type': 'boolean'},
                                            'session': SESSION}, ('id', 'approve')))):
-        routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True)
+        routes[(method, '/freevideo/agent' + suffix)] = route('Studio Agent controls', body=body, auth=False, local=True,
+            lan=suffix in ('/chat', '/chat/now', '/chat/confirm', '/chat/list', '/chat/new', '/chat/video',
+                           '/activity', '/activity/cancel'))
+    # These existing ComfyUI handlers are registered outside the Agent dispatcher.
+    # /chain is a creation POST; monitoring reads /chains and /chain/{id}.
+    for suffix in ('/freevideo/progress', '/freevideo/chains', '/freevideo/chain/{id}'):
+        routes['GET', suffix] = route('Read generation monitoring', auth=False, lan=True, external=True,
+            query=obj({'client_id': string()}) if suffix != '/freevideo/progress' else EMPTY,
+            **({'path': obj({'id': string()}, ('id',))} if '{id}' in suffix else {}))
     routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True), 'session': SESSION})
     routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for method, suffix, summary, extra in (

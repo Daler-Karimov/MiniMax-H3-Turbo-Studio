@@ -32,7 +32,7 @@ from .comfy_source import RECEIPT, SOURCE_DISK_BYTES, new_layout, validate_targe
 from .desktop_runtime import materialize_source, source_release
 from .monitoring import save
 from .long_paths import io_path, resolved, plain, plain_text, plain_error, plain_errors
-from . import engine_binding, processes
+from . import engine_binding, processes, lan_password
 
 PROTOCOL = 1
 TEMPLATE = 'FreeVideo-All-in-One.json'
@@ -747,9 +747,10 @@ class Controller:
         from .proxy import local_addresses
         self.access_polled = time.monotonic()
         secret = token(self.selection['engine'])
-        self.access_links = [address(host, self.selection['lan_port']) + '/?freevideo=launch&token=' + secret
-                             for host in local_addresses()]
-        self.state = dict(self.state, lan_status='' if self.access_links else 'no-address')
+        password_set = lan_password.is_set(self.selection['engine'])
+        suffix = '/m/' if password_set else '/m/?freevideo=launch&token=' + secret
+        self.access_links = [address(host, self.selection['lan_port']) + suffix for host in local_addresses()]
+        self.state = dict(self.state, lan_status='' if self.access_links else 'no-address', lan_password_set=password_set)
 
     def check_access_proxy(self):
         """Poll child lifetimes and refresh network links without moving ComfyUI."""
