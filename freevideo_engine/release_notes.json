@@ -1,41 +1,70 @@
 {
   "schema": 1,
-  "product_version": "0.4.12",
+  "product_version": "0.4.13",
   "en": {
-    "summary": "Preview white-model scenes for Autopilot, LoRA compatibility checks and drag-to-reorder, clearer failure messages, deleting edits, a faster start for a busy machine, and a Medium level that samples two passes.",
+    "summary": "High is faster than Max again, videos at another size of the same shape can be continued, LoRAs on int8 models apply what they can, Settings adds step-by-step how-tos and an offline tutorial, and the installers are smaller.",
     "changes": [
-      "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an official race-car example.",
-      "LoRA: a compatibility check before generating, and LoRAs can be reordered by dragging.",
-      "Failure messages: submission, queue and browser-extension failures share one layout and say what to do next; failed requests can be packaged with Export report or Submit to GitHub.",
-      "Editor: an edit can be deleted, an empty untouched edit is discarded, and reopening an edit restores its cover and shows its finishing stage; continuations are queued on the server.",
-      "Characters: each character carries a sheet of all views plus a face close-up; a picture that cannot be read is refused with a message on its own tile.",
-      "Medium: samples two passes from a larger first pass; Max runs all 20 steps without a cache.",
-      "Install: the GPU acceleration build has a visible share of the progress, the model line stays steady while groups download, and torch shows as Runtime components.",
-      "Downloads: before a download starts, the launcher, the page and the editor say what it is and how long it takes.",
-      "Guide: the first-run guide shows where to add reference images and first or last frames, the length field shows the part limit, and the Chinese interface links a user guide beside the guide in Settings.",
-      "Reusing reference pictures and clips when only the prompt changes skips encoding them again; on a busy machine the small CPU table work of loading runs on one thread.",
-      "Mac: a device that cannot continue a video refuses lengths over one block up front.",
-      "The feedback button opens the issue form."
+      "High: the step cache is back with added checks, so High runs faster than Max again.",
+      "Long videos: parts of a long video and continued parts use 8 + 3 steps, so a second part is no longer refused.",
+      "Continue: a video at another size of the same shape now continues from its own ending. Videos that are too short or have too low a frame rate show a clear message.",
+      "LoRA: on int8 models, the parts of a LoRA that cannot be applied are skipped and the rest takes effect, instead of the whole LoRA being refused.",
+      "Help: \"User guide\" in Settings shows three how-tos on the real interface, and the new \"Tutorial\" opens an offline illustrated manual in English and Chinese.",
+      "Upgrade: a FreeVideo tab left open from an older version switches to the current workflow and keeps the prompt, size, length, seed, assets and LoRAs.",
+      "Agent: assembled videos are saved to \"Your creations\", and their task cards can be opened.",
+      "Install: the Windows and Linux installers are smaller, the prompt enhancement model can also download from ModelScope, and the GPU acceleration step shows one steady name and description while it builds."
     ]
   },
   "zh": {
-    "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
+    "summary": "精细档重新比极致档快；同比例、不同尺寸的视频可以接着生成；int8 模型上的 LoRA 能用的部分照常生效；设置中新增分步演示和离线教程；安装包变小。",
     "changes": [
-      "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有官方赛车示例。",
-      "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
-      "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
-      "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
-      "角色：每个角色带有全部视角的角色图和脸部特写；读不出来的图片会被拒绝，并在对应的格子上给出提示。",
-      "标准档：从更大的第一遍起采样两遍；极致档跑满 20 步且不使用缓存。",
-      "安装：GPU 加速组件的构建在进度中占有可见的份额，模型下载分组并行时进度行保持稳定，torch 显示为“运行组件”。",
-      "下载：开始下载前，启动器、页面和编辑器会说明这是什么下载、需要多久。",
-      "指引：首次指引新增一步，说明在哪里添加参考图和首帧、尾帧；时长栏直接显示分段上限；中文界面在设置里可以打开使用说明。",
-      "只改提示词时，参考图和片段不再重复编码；机器繁忙时，加载过程中的小型 CPU 表运算改为单线程。",
-      "Mac：不能续接视频的设备会在一开始就拒绝超过一个分段的长度。",
-      "反馈按钮直接打开问题表单。"
+      "精细档：重新启用步缓存，并加上检查，精细档重新比极致档快。",
+      "长视频：长视频的分段和接着生成的分段统一使用 8 + 3 步，第二段不再被拒绝。",
+      "接着生成：同比例、不同尺寸的视频改为从它自己的结尾接着生成；太短或帧率太低的视频会给出明确提示。",
+      "LoRA：在 int8 模型上，LoRA 中无法应用的部分会跳过，其余照常生效，不再整个拒绝。",
+      "帮助：设置中的“使用说明”改为在真实界面上演示三项操作；新增“教程”，可打开中英文离线图文手册。",
+      "升级：旧版本留在标签页中的 FreeVideo 工作流会换成当前版本，并保留提示词、尺寸、时长、种子、素材和 LoRA。",
+      "Agent：拼接的成片保存到“我的作品”，任务卡可以打开。",
+      "安装：Windows 和 Linux 安装包变小；提示词增强模型也可以从魔搭下载；GPU 加速组件构建时，名称和说明保持不变。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.12",
+      "en": {
+        "summary": "Preview white-model scenes for Autopilot, LoRA compatibility checks and drag-to-reorder, clearer failure messages, deleting edits, a faster start for a busy machine, and a Medium level that samples two passes.",
+        "changes": [
+          "Autopilot: an optional white-model preview, with ready-made scenes, shows the scene before the video is made; the entry showcase has an official race-car example.",
+          "LoRA: a compatibility check before generating, and LoRAs can be reordered by dragging.",
+          "Failure messages: submission, queue and browser-extension failures share one layout and say what to do next; failed requests can be packaged with Export report or Submit to GitHub.",
+          "Editor: an edit can be deleted, an empty untouched edit is discarded, and reopening an edit restores its cover and shows its finishing stage; continuations are queued on the server.",
+          "Characters: each character carries a sheet of all views plus a face close-up; a picture that cannot be read is refused with a message on its own tile.",
+          "Medium: samples two passes from a larger first pass; Max runs all 20 steps without a cache.",
+          "Install: the GPU acceleration build has a visible share of the progress, the model line stays steady while groups download, and torch shows as Runtime components.",
+          "Downloads: before a download starts, the launcher, the page and the editor say what it is and how long it takes.",
+          "Guide: the first-run guide shows where to add reference images and first or last frames, the length field shows the part limit, and the Chinese interface links a user guide beside the guide in Settings.",
+          "Reusing reference pictures and clips when only the prompt changes skips encoding them again; on a busy machine the small CPU table work of loading runs on one thread.",
+          "Mac: a device that cannot continue a video refuses lengths over one block up front.",
+          "The feedback button opens the issue form."
+        ]
+      },
+      "zh": {
+        "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
+        "changes": [
+          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有官方赛车示例。",
+          "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
+          "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
+          "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
+          "角色：每个角色带有全部视角的角色图和脸部特写；读不出来的图片会被拒绝，并在对应的格子上给出提示。",
+          "标准档：从更大的第一遍起采样两遍；极致档跑满 20 步且不使用缓存。",
+          "安装：GPU 加速组件的构建在进度中占有可见的份额，模型下载分组并行时进度行保持稳定，torch 显示为“运行组件”。",
+          "下载：开始下载前，启动器、页面和编辑器会说明这是什么下载、需要多久。",
+          "指引：首次指引新增一步，说明在哪里添加参考图和首帧、尾帧；时长栏直接显示分段上限；中文界面在设置里可以打开使用说明。",
+          "只改提示词时，参考图和片段不再重复编码；机器繁忙时，加载过程中的小型 CPU 表运算改为单线程。",
+          "Mac：不能续接视频的设备会在一开始就拒绝超过一个分段的长度。",
+          "反馈按钮直接打开问题表单。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.11",
       "en": {
