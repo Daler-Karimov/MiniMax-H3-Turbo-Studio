@@ -1,5 +1,6 @@
 import { createErrorPanel, errorText, createErrorReport, adviceFor } from './error_panel.js';
 import { installNativeErrorGuard } from './native_errors.js';
+import { installTranslateGuard } from './translate_guard.js';
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { openEditorView } from './editor_loader.js';
@@ -846,6 +847,7 @@ api.addEventListener('freevideo_prewarm', event => {
     if (value) app.graph?.getNodeById(value.node)?.freevideoShowPrewarm?.(value);
 });
 
+installTranslateGuard({chinese: cn});
 installNativeErrorGuard({api, app, describe: detail => {
     const {advice} = adviceFor(createErrorReport(detail, {stage: 'execution', graph: app.graph}), text);
     return [advice.title, advice.summary].filter(Boolean).join('\n');
