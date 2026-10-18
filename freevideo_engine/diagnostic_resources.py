@@ -243,7 +243,7 @@ def decoder_measurements(value):
     result = numbers(value, ('vae_load_seconds', 'video_decode_seconds',
         'audio_load_decode_seconds', 'video_postprocess_seconds', 'encode_seconds',
         'decoded_artifact_save_seconds', 'decode_save_seconds', 'vae_resident_blocks',
-        'vae_pinned_weight_bytes'))
+        'vae_pinned_weight_bytes', 'audio_rms', 'audio_peak', 'audio_samples'))
     for key in ('vae_linear_compute_cache', 'resident_vae_cache_hit', 'resident_audio_vae_cache_hit',
                 'streamed_video_output', 'streamed_vae_weights'):
         if type(value.get(key)) is bool:

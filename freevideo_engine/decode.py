@@ -227,6 +227,9 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             audio = audio[:, :round(kept_frames * 40 / 24) * 800]
         if continuation is not None:
             audio = audio[:, continuation['audio_latents'] * 800:]
+        audio_level = {'audio_rms': float(audio.square().mean().sqrt()) if audio.numel() else 0.,
+                       'audio_peak': float(audio.abs().max()) if audio.numel() else 0.,
+                       'audio_samples': int(audio.shape[-1])}
         del audio_vae, audio_mean, audio_std
         gc.collect()
         torch.cuda.empty_cache()
@@ -269,6 +272,7 @@ def decode_to_file(latents, audio_latents, out_path, *, base, offload=False, pre
             'vae_linear_compute_cache': linear_compute_cache, 'vae_compute_cache_preparation': compute_cache_metrics,
             'resident_vae_cache_hit': vae_cache_hit, 'resident_audio_vae_cache_hit': audio_cache_hit,
             'vae_preload_seconds': preload_seconds,
+            **audio_level,
             'audio_load_decode_seconds': audio_seconds, 'encode_seconds': time.perf_counter() - encode_started,
             'decoded_artifact_save_seconds': artifact_seconds,
             'streamed_video_output': stream_output, 'streamed_vae_weights': stream_weights,
