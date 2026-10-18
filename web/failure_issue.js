@@ -20,6 +20,18 @@ export function failureStage(report) {
     return null;
 }
 
+const TAIL = 1500, TAIL_HEAD = 500;
+
+// The engine's failure text, not ComfyUI's traceback after it: details end with
+// the bridge's own frames. The error and stage lead that text and the child
+// log's error ends it, so a long one gives up its middle.
+function cause(report) {
+    const message = String(report?.message || '');
+    const text = message.includes('\n') ? message : String(report?.details || '');
+    if (text.length <= TAIL) return text;
+    return text.slice(0, TAIL_HEAD) + '\n...\n' + text.slice(-(TAIL - TAIL_HEAD - 5));
+}
+
 /** Title, text and summary for the prefilled issue. `lora` marks a LoRA the check judged wrongly. */
 export function failureIssue(report, kind, {lora = false, t = en => en} = {}) {
     const stage = failureStage(report);
@@ -32,7 +44,7 @@ export function failureIssue(report, kind, {lora = false, t = en => en} = {}) {
     const types = (report?.nodes || []).map(node => node.type).filter(Boolean);
     const summary = JSON.stringify({kind: kind || 'unknown', stage: report?.stage, exception_type: report?.exception_type,
         known_error: report?.known_error, nodes: types, settings: report?.settings, progress: report?.progress,
-        tail: String(report?.details || '').slice(-1500)});
+        tail: cause(report)});
     const title = lora ? t('[Feedback] LoRA compatibility misjudged', '[Feedback] LoRA 兼容判断有误')
         : t('[Feedback] Generation did not finish', '[Feedback] 生成未完成') + (stage ? t(`: ${stage[0]}`, `：${stage[1]}`) : '');
     return {title, text, summary};
