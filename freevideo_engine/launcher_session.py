@@ -11,7 +11,7 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import __version__
-from . import disk_space, lan_password
+from . import disk_space
 from .comfy_launcher_runtime import Controller, layout, local_url, loopback_url, managed_frontend, new_layout, queue_busy
 from .desktop_runtime import launcher_root, materialize_source
 from .download_settings import Probe, read as download_preferences, speed_text

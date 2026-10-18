@@ -457,16 +457,12 @@ def register():
                 definition = contracts.get((method, suffix))
                 if definition is None:
                     raise JobError('method_not_allowed' if any(p == suffix for _, p in contracts) else 'not_found', 'No contract')
-                access.check(request, local=definition.get('local', False), lan=definition.get('lan', False))
+                access.check(request, local=definition.get('local', False))
                 if definition.get('auth') is False and definition.get('local') and method not in ('GET', 'HEAD'):
                     session = page_sessions.get(request.cookies.get('freevideo_agent_page', ''))
                     csrf = request.headers.get('X-FreeVideo-CSRF', '')
-                    if proxy_identity.HEADER in request.headers:
-                        valid = definition.get('lan') and proxy_identity.check_csrf(request)
-                    else:
-                        valid = (session is not None and session[1] >= time.monotonic() and csrf
-                                 and secrets.compare_digest(csrf.encode(), session[0].encode()))
-                    if not valid:
+                    if (session is None or session[1] < time.monotonic() or not csrf
+                            or not secrets.compare_digest(csrf.encode(), session[0].encode())):
                         raise JobError('page_session_required', 'Page session required')
                 header = request.headers.get('Authorization', '')
                 given = header[7:].strip() if header[:7].lower() == 'bearer ' else request.headers.get('X-FreeVideo-Agent', '')

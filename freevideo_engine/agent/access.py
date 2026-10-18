@@ -27,13 +27,12 @@ def lan_enabled():
         return False
 
 
-def check(request, *, local=False, lan=False):
+def check(request, *, local=False):
     address = peer_address(request)
     proxied = proxy_identity.HEADER in request.headers
-    # Only explicitly listed browser routes may use a verified proxy device.
-    local_only = local and not (proxied and lan and bool(proxy_identity.device(request)))
-    if (proxied and (not proxy_identity.trusted(request) or local_only or not lan_enabled())
-            or address is None or not address.is_loopback and (local_only or not address.is_private or not lan_enabled())):
+    # Even a proxy client on loopback is never a local control-plane client.
+    if (proxied and (not proxy_identity.trusted(request) or local or not lan_enabled())
+            or address is None or not address.is_loopback and (local or not address.is_private or not lan_enabled())):
         raise JobError('local_only', 'Peer is not permitted')
     socket = request.transport.get_extra_info('sockname') if request.transport else None
     try:
