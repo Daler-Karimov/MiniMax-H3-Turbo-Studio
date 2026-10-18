@@ -1307,6 +1307,21 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
                         head, reserve = 8, wider
         else:
             cpu_outputs = not no_weights and gpu_budget < reserve + GPU_ATTENTION_OUTPUT_BYTES
+            if (cpu_outputs and hardware.system == 'Linux' and not int8 and gpu_reserve_gib is None and free_gpu < 7.5 * GiB
+                    and reserve_gpu > MIN_GPU_RESERVE_GIB):
+                # Host outputs plus staging cost 70 to 100 times the sampling
+                # time, so a shortfall of a few MiB must not select them while
+                # the minimum growth reserve would cover the outputs. A 6 GiB
+                # card at 20 steps missed by 13 MiB (the modulation tables
+                # grow with steps) and the same request one step count lower
+                # ran the plain route in 211 s. The plain route peaked 5312 MiB
+                # of a 6246 MiB cap at 6.1 GiB, so the reduced reserve is the
+                # same trade the residual admission above already makes.
+                reduced = free_gpu - int(MIN_GPU_RESERVE_GIB * GiB) - placement_workspace
+                if reduced >= reserve + GPU_ATTENTION_OUTPUT_BYTES:
+                    reserve_gpu = MIN_GPU_RESERVE_GIB
+                    gpu_budget = reduced
+                    cpu_outputs = False
             if not cpu_outputs:
                 reserve += GPU_ATTENTION_OUTPUT_BYTES
         # Outputs in host memory means the budget could not cover them on the
