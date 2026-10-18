@@ -459,13 +459,10 @@ def register():
                     raise JobError('method_not_allowed' if any(p == suffix for _, p in contracts) else 'not_found', 'No contract')
                 access.check(request, local=definition.get('local', False), lan=definition.get('lan', False))
                 if definition.get('auth') is False and definition.get('local') and method not in ('GET', 'HEAD'):
-                    session = page_sessions.get(request.cookies.get('freevideo_agent_page', ''))
-                    csrf = request.headers.get('X-FreeVideo-CSRF', '')
                     if proxy_identity.HEADER in request.headers:
                         valid = definition.get('lan') and proxy_identity.check_csrf(request)
                     else:
-                        valid = (session is not None and session[1] >= time.monotonic() and csrf
-                                 and secrets.compare_digest(csrf.encode(), session[0].encode()))
+                        valid = valid_page_session(request)
                     if not valid:
                         raise JobError('page_session_required', 'Page session required')
                 header = request.headers.get('Authorization', '')
@@ -669,16 +666,19 @@ def register():
     async def body(request, **ignored):
         return request[body_key]
 
+    def valid_page_session(request):
+        page = page_sessions.get(request.cookies.get('freevideo_agent_page', ''))
+        csrf = request.headers.get('X-FreeVideo-CSRF', '')
+        return (page is not None and page[1] >= time.monotonic() and bool(csrf)
+                and secrets.compare_digest(csrf.encode(), page[0].encode()))
+
     def session_caller(request):
         """guarded verifies supplied tokens; otherwise require a local page and CSRF."""
         header = request.headers.get('Authorization', '')
         given = header[7:].strip() if header[:7].lower() == 'bearer ' else request.headers.get('X-FreeVideo-Agent', '')
         if given:
             return 'agent'
-        page = page_sessions.get(request.cookies.get('freevideo_agent_page', ''))
-        csrf = request.headers.get('X-FreeVideo-CSRF', '')
-        if (page is not None and page[1] >= time.monotonic() and csrf
-                and secrets.compare_digest(csrf.encode(), page[0].encode())):
+        if valid_page_session(request):
             access.check(request, local=True)
             return 'user'
         raise JobError('unauthorized', 'Token or valid page session required')
@@ -691,7 +691,7 @@ def register():
         return path == '/freevideo/agent' or path.startswith('/freevideo/agent/')
 
     async def no_cross_site_headers(request, response):
-        if agent_path(request.path):
+        if agent_path(request.path) or request.path in ('/freevideo/lan', '/api/freevideo/lan'):
             for key in list(response.headers):
                 if key.lower().startswith('access-control-'):
                     del response.headers[key]
@@ -737,8 +737,51 @@ def register():
         response = reply(dict(csrf=page_sessions[current][0]))
         # The cookie follows the copy the page asked: its later calls go to the same one.
         response.set_cookie('freevideo_agent_page', current, httponly=True, samesite='Strict', secure=request.secure,
-                            path=('/api' if request.path.startswith('/api/') else '') + '/freevideo/agent', max_age=12 * 3600)
+                            path=('/api' if request.path.startswith('/api/') else '') + '/freevideo', max_age=12 * 3600)
         return response
+
+    # Page controls stay outside the Agent contract and never use its bearer token.
+    # ComfyUI mirrors these routes under /api along with the other page routes.
+    @routes.get('/freevideo/lan')
+    @routes.post('/freevideo/lan')
+    async def lan_settings(request):
+        from .. import lan_page
+        from ..comfy_bridge import installation_root
+        identity = errors.REQUEST_ID.set('r-' + uuid.uuid4().hex)
+        try:
+            access.check(request, local=True)
+            root = installation_root()
+            if request.method == 'POST':
+                if not valid_page_session(request):
+                    raise JobError('page_session_required', 'Page session required')
+                value = await read_body(request, contract.MAX_BODY_BYTES)
+                return reply(await asyncio.to_thread(lan_page.apply, root, value))
+            return reply(await asyncio.to_thread(lan_page.read, root))
+        except lan_page.InvalidRequest as error:
+            field = error.field if error.field in ('enabled', 'password', '') else '<unknown>'
+            row = contract.diagnostic('/' + field, error.allowed, error.got)
+            if field == 'password' and not isinstance(error.got, str):
+                row = contract.diagnostic('/password', error.allowed, None)
+                row.update(got='<redacted>', message='/password must be %s.' % error.allowed)
+            value = errors.validation([row])
+            return reply({'error': value}, 422)
+        except lan_page.LanUnavailable:
+            return problem('lan_unavailable')
+        except JobError as error:
+            return reply({'error': error.view()}, errors.ERRORS[error.code][0])
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+            return problem('invalid_json')
+        except specs.SpecError as error:
+            return reply({'error': errors.validation(error.errors)}, 422)
+        except web.HTTPException as error:
+            return problem('too_large' if error.status == 413 else 'invalid_request')
+        except OSError:
+            return problem('storage_unavailable')
+        except Exception:
+            # Do not log exception text or request bodies from password controls.
+            return problem('internal_error')
+        finally:
+            errors.REQUEST_ID.reset(identity)
 
     def activity_item(row, *, card=False):
         view = jobs.view(row, detail=False)
