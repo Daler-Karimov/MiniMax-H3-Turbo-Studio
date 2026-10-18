@@ -17,7 +17,6 @@ CONFIRM = ContextVar('agent_confirm', default=None)
 ERRORS = {
     'forbidden': (403, False, 'This caller cannot write this session event.', 'Only the user may stop or continue a session or answer a confirmation; steps are written by the server.'),
     'session_full': (409, False, 'This session has reached its event limit.', 'Create a new session with POST /freevideo/agent/v1/sessions.'),
-    'lan_unavailable': (409, False, 'LAN settings require a launcher installation.', 'Complete installation in the FreeVideo launcher on this computer. 请在本机 FreeVideo 启动器中完成安装。'),
     'page_session_required': (403, False, 'A valid page session and CSRF header are required.', 'Reload the page served by this FreeVideo instance and repeat the action.'),
     'redirect_forbidden': (403, False, 'A credentialed request cannot follow a cross-origin redirect.', 'Connect directly to the intended FreeVideo instance using its verified HTTP or HTTPS endpoint.'),
     'method_not_allowed': (405, False, 'This method is not registered for the requested endpoint.', 'Read GET /freevideo/agent/v1/openapi.json and use the documented method.'),
@@ -253,7 +252,6 @@ def safe_details(value):
 # One public sentence shared by conversation cards, HTTP and MCP. Backend text
 # is classified, never echoed: it can contain prompts, filenames or credentials.
 FAILURE_REASONS_ZH = {
-    'lan_unavailable': '局域网设置需要启动器安装记录',
     'out_of_memory': '生成时显存或内存不足',
     'insufficient_memory': '可用显存或内存不够生成这段内容',
     'no_memory': '可用显存或内存不够生成这张图片',
