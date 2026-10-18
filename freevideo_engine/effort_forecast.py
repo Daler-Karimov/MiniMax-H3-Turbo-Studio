@@ -71,6 +71,9 @@ def timing_record(report, gpu_uuid, system, *, stage_details=True):
     if measured[0]['steps'] != base or (refine and measured[1]['steps'] != refine):
         return None
     cache = effective_step_cache(passes[0])
+    if cache == 'easycache-av' and not passes[0]['step_cache'].get('guard'):
+        # Before the guard this cache reused steps unchecked and ran too fast to describe any request.
+        return None
     encoding = report.get('encoding') or {}
     cached = bool(encoding.get('cache_hit') or report.get('input_cache', {}).get('conditioning_hit')
                   or report.get('tuning', {}).get('conditioning_cache_hit'))

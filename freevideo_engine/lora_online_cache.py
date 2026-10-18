@@ -1,4 +1,5 @@
 """Prepare small, streamable adapter factors beside unchanged FP8 weights."""
+from collections import Counter
 import hashlib
 import json
 import os
@@ -9,7 +10,7 @@ import time
 import torch
 from safetensors.torch import save_file
 
-from .lora_cache import MODULATION, _targets, index_adapter, prepare as prepare_fused
+from .lora_cache import INT8_UNMERGEABLE, MODULATION, _targets, index_adapter, prepare as prepare_fused
 from .media_request import digest, verify_files
 from .monitoring import save
 from .storage import fingerprint
@@ -45,16 +46,18 @@ def prepare(cache, adapters, output_root=None):
     precision = manifest.get('precision')
     # Low-rank branches run beside the base projection, so they need no change
     # to FP8 or ConvRot int8 weights.
-    # The int8 package cannot merge AdaLN projections, so those adapters alone
-    # are skipped and counted in the report; every other patch still applies.
+    # The int8 package cannot merge AdaLN projections, full differences, biases or
+    # layers outside its linear projections, so those patches alone are skipped and
+    # counted by category in the report; every low-rank linear patch still applies.
     skip_modulation = precision == 'int8'
-    if precision not in ('fp8', 'int8') or not _supported(adapters, manifest.get('linears', {}), skip_modulation):
+    if precision not in ('fp8', 'int8') or (not skip_modulation and not _supported(adapters, manifest.get('linears', {}), False)):
         # Full-difference, bias and modulation patches retain the existing
         # exact preparation path. Never silently omit an unsupported patch.
         path, report = prepare_fused(cache, adapters, output_root)
         return path, dict(report, mode='fused', reason='Adapter includes non-linear or modulation patches')
     identity = dict(source_manifest_sha256=digest(cache / 'manifest.json'),
         implementation_sha256=digest(__file__), index_sha256=digest(Path(__file__).with_name('lora_cache.py')),
+        names_sha256=digest(Path(__file__).with_name('lora_names.py')),
         adapters=[{k: v for k, v in row.items() if k != 'path'} for row in adapters],
         arithmetic=('FP8' if precision == 'fp8' else 'ConvRot int8') + ' base plus independent BF16 low-rank branches')
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -84,6 +87,8 @@ def prepare(cache, adapters, output_root=None):
         for patch in index_adapter(adapter, targets, skipped if skip_modulation else None):
             block = (patch['target'].split('.')[1] if patch['target'].startswith('transformer_blocks.') else 'root')
             groups.setdefault(block, []).append(patch)
+    if skip_modulation and not groups:
+        raise ValueError(INT8_UNMERGEABLE)
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     records, specs, block_bytes = [], {}, {}
@@ -139,7 +144,8 @@ def prepare(cache, adapters, output_root=None):
     verify_files({'loras': adapters})
     root_bytes = block_bytes.get('root', 0)
     summary = dict(targets=sum(len(spec['modules']) for spec in specs.values()),
-                   adapter_count=len(adapters), skipped_modulation=len(skipped), factor_bytes=sum(block_bytes.values()),
+                   adapter_count=len(adapters), skipped_modulation=sum(1 for c, _ in skipped if c == 'modulation'),
+                   skipped=dict(sorted(Counter(c for c, _ in skipped).items())), factor_bytes=sum(block_bytes.values()),
                    root_bytes=root_bytes,
                    max_block_bytes=max((v for k, v in block_bytes.items() if k != 'root'), default=0))
     online = dict(version=1, blocks=specs, block_bytes=block_bytes, summary=summary)

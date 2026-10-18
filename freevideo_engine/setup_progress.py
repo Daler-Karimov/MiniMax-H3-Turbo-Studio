@@ -18,6 +18,9 @@ VERB_ACTIVITIES = ('verify', 'assemble', 'copy_bytes', 'check', 'copy', 'downloa
 COMPONENT_NAMES = ('Video ', 'Text ', 'Sampling ', 'Image ', 'Model', 'Runtime components')
 
 
+RUNTIME_NAME = 'Runtime components'
+
+
 class ProgressState:
     def __init__(self):
         self.phase = {}
@@ -25,6 +28,8 @@ class ProgressState:
         self.last = {}
         self.model_groups = []
         self.download_notices = {}
+        self.runtime_parts = {}
+        self.runtime_total = self.runtime_done = 0
 
     def update(self, event, now=None):
         now = time.monotonic() if now is None else now
@@ -52,6 +57,13 @@ class ProgressState:
         state = event.get('state', 'running')
         self.tasks[key] = dict(previous, **event, observed_at=now)
         self.tasks[key]['state'] = state
+        row = self.tasks[key]
+        if row.get('name') == RUNTIME_NAME and row.get('unit') == 'bytes' and number(row.get('total')) and row['total'] > 0:
+            self.runtime_parts[row.get('scope') or key] = (min(row.get('done') or 0, row['total']), row['total'])
+            # Wheels download side by side, each with its own size; the group
+            # keeps one total that only grows, as a model group does.
+            self.runtime_done = max(self.runtime_done, sum(d for d, _ in self.runtime_parts.values()))
+            self.runtime_total = max(self.runtime_total, sum(t for _, t in self.runtime_parts.values()))
         self.last = self.tasks[key]
         # Completed events need not grow with the number of downloaded files.
         for name in list(self.tasks):
@@ -71,12 +83,16 @@ class ProgressState:
         active.sort(key=lambda row: (models(row), number(row.get('total')) and row['total'] > 0,
                                      row.get('unit') == 'bytes'), reverse=True)
         current = active[0] if active else self._view(self.last, now)
+        if (current.get('name') == RUNTIME_NAME and current.get('activity') == 'download'
+                and self.runtime_total > 0):
+            current = dict(current, unit='bytes', total=self.runtime_total, done=min(self.runtime_done, self.runtime_total),
+                           fraction=min(self.runtime_done, self.runtime_total) / self.runtime_total)
         if self.download_notices:
             notice = next(reversed(self.download_notices.values()))
             # A temporary activity line, with the underlying stage and counters
             # retained so clearing it restores the current operation immediately.
             current = dict(current, label=current.get('label') or notice['label'],
-                           detail=notice['detail'], activity='', name='')
+                           detail=notice['detail'], activity='', name='', notice=True)
         return dict(phase_progress=dict(self.phase), active_tasks=active, progress=current, model_groups=self.model_groups)
 
     @staticmethod
@@ -131,7 +147,9 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
         # MiB rather than tenths of GiB: even slow disks change the visible text.
         parts = [t(verb[0], verb[1] + gap) + name]
         done, total = event.get('done'), event.get('total')
-        if event.get('unit') == 'bytes' and number(done) and number(total) and total >= 2**20 and done <= total:
+        # Sampling caches are checked file by file; the changing count would only flicker.
+        if (event.get('unit') == 'bytes' and number(done) and number(total) and total >= 2**20 and done <= total
+                and name.lower() not in ('sampling caches', '采样缓存')):
             parts.append('%d / %d %s' % (done // 2**20, total // 2**20, 'MiB'))
         return ' · '.join(parts)
     if activity == 'resume':
@@ -158,6 +176,43 @@ def progress_text(event, zh=False, *, decimal_sizes=False):
         return ' · '.join([t('Downloading ', '正在下载' + gap) + name] +
                           transfer_parts(event.get('done'), total or 0, event.get('rate'), decimal_sizes))
     return ''
+
+
+class LineHold:
+    """A changed line stays three seconds before the latest one replaces it; the lines in between are skipped.
+    Retry, resume, stall and error lines are shown at once and do not start a hold, a language
+    switch drops the held line, and a line that ends stays until a new one replaces it or three
+    seconds pass without one."""
+    HOLD_SECONDS = 3.
+
+    def __init__(self):
+        self.shown = self.shown_at = self.zh = self.blank_since = None
+
+    def text(self, text, now=None, immediate=False, zh=False):
+        now = time.monotonic() if now is None else now
+        if zh != self.zh:
+            self.shown = self.shown_at = None
+        self.zh = zh
+        if immediate:
+            self.shown = self.shown_at = self.blank_since = None
+            return text
+        if not text:
+            # A blank is a change too: the line stays, a new one replaces it at once,
+            # and the blank shows only when no new line came within three seconds.
+            if self.shown is None:
+                return text
+            self.blank_since = now if self.blank_since is None else self.blank_since
+            if now - self.blank_since < self.HOLD_SECONDS or now - self.shown_at < self.HOLD_SECONDS:
+                return self.shown
+            self.shown = self.shown_at = self.blank_since = None
+            return text
+        self.blank_since = None
+        if text == self.shown:
+            return text
+        if self.shown is not None and now - self.shown_at < self.HOLD_SECONDS:
+            return self.shown
+        self.shown, self.shown_at = text, now
+        return text
 
 
 class ModelLine:

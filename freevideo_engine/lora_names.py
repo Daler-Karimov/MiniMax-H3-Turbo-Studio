@@ -2,6 +2,52 @@
 import re
 
 
+# Per-block projections absent from the int8 package's linear index.
+MODULATION = re.compile(r'transformer_blocks\.\d+\.adaln_proj\.')
+INT8_UNMERGEABLE = ('This LoRA changes parts of the model that the int8 version cannot merge yet, '
+                    'so it cannot be used for now. LoRAs that change only linear layers work.')
+
+
+def adapter_keys(keys):
+    """Index factor/difference names without reading any tensors."""
+    pairs, full = {}, []
+    for key in keys:
+        canonical = key.replace('.default.', '.').replace('.lora_down.weight', '.lora_A.weight').replace('.lora_up.weight', '.lora_B.weight')
+        match = re.fullmatch(r'(.+)\.lora_([AB])\.weight', canonical)
+        if match:
+            pair = pairs.setdefault(match[1], {})
+            if match[2] in pair:
+                raise ValueError('Duplicate LoRA factor: ' + key)
+            pair[match[2]] = key
+        elif canonical.endswith('.alpha'):
+            pairs.setdefault(canonical[:-6], {})['alpha'] = key
+        elif canonical.endswith(('.diff', '.diff_b')):
+            bias = canonical.endswith('.diff_b')
+            full.append((canonical[:-7] if bias else canonical[:-5], key, bias))
+        else:
+            raise ValueError('Unsupported LoRA tensor (no patches are ignored): ' + key)
+    if not pairs and not full:
+        raise ValueError('Adapter contains no LoRA factors')
+    return pairs, full
+
+
+def resolve_target(target, targets):
+    if target not in targets and '.attn.' in target:
+        target = target.replace('.attn.', '.attn.orig.', 1)
+    return target
+
+
+def int8_skip_reason(target, targets, *, full=False):
+    """The online int8 patch policy, shared with the header-only check."""
+    if full:
+        if target.endswith('#bias'):
+            return 'bias'
+        return 'quantized_diff' if resolve_target(target, targets) in targets else 'other_layer'
+    if target not in targets:
+        return 'modulation' if MODULATION.match(target) else 'other_layer'
+    return None
+
+
 def _targets(name):
     prefixes = ('base_model.model.', 'diffusion_model.', 'model.diffusion_model.', 'transformer.')
     while any(name.startswith(prefix) for prefix in prefixes):

@@ -20,6 +20,8 @@
 .fv-studio .fv-guide-bubble[data-side=below] .fv-guide-arrow{top:-7px;border-left:1px solid var(--fv-border);border-top:1px solid var(--fv-border)}
 .fv-studio .fv-guide-wait{position:absolute;top:76px;right:24px;z-index:40;display:flex;align-items:center;gap:16px;max-width:calc(100% - 48px);padding:14px 18px;background:var(--fv-raised);border:1px solid var(--fv-border);border-radius:var(--fv-r-sm);box-shadow:0 8px 24px #0005}
 .fv-studio .fv-guide-wait p{margin:0;font-size:14px;line-height:1.6}
+.fv-studio .fv-guide-bubble[data-side=center] .fv-guide-arrow{display:none}
+.fv-studio .fv-guide-picture{display:block;width:100%;height:auto;margin:0 0 14px;border-radius:8px;border:1px solid var(--fv-border)}
 @media(prefers-reduced-motion:reduce){.fv-studio .fv-guide-layer *{transition:none!important;animation:none!important}}
 
 .fv-studio .fv-entry-showcase{display:grid;place-items:center;pointer-events:auto;padding:24px;background:#0008;overflow:auto}

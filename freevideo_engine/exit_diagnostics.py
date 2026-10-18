@@ -5,6 +5,10 @@ started it takes the readings: once when the request starts and once when the
 exit is seen. Only numbers and fixed words leave this module, never text from
 the worker, so a diagnostic report stays free of user data.
 """
+import os
+import re
+import tempfile
+
 from .system import windows
 
 # Exit codes of a Windows process that the system, not the program, ended.
@@ -99,6 +103,37 @@ def exit_reading(code, *, requested_stop=False, system=None):
     return result
 
 
+CRASH_FILE_ENV = 'FREEVIDEO_CRASH_FILE'
+_FRAME = re.compile(r'^\s+File "(?P<file>[^"]*)", line (?P<line>\d+) in (?P<name>[A-Za-z0-9_<>.]{1,80})\s*$')
+_FRAME_OUT = re.compile(r'^[A-Za-z0-9_.-]{1,80}:\d{1,7} [A-Za-z0-9_<>.]{1,80}$')
+MAX_FRAMES = 40
+
+
+def new_crash_file():
+    """An empty file the worker's crash handler writes the native crash's Python stack to."""
+    handle, path = tempfile.mkstemp(prefix='freevideo-crash-', suffix='.txt')
+    os.close(handle)
+    return path
+
+
+def read_crash_stack(path):
+    """Frames of the crashed thread as 'file.py:line function': no folder, no other text."""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as stream:
+            text = stream.read(64 * 1024)
+    except (OSError, TypeError):
+        return []
+    frames = []
+    for line in text.splitlines():
+        match = _FRAME.match(line)
+        if match:
+            name = re.split(r'[\\/]', match.group('file'))[-1]
+            frames.append('%s:%s %s' % (name[-80:], match.group('line'), match.group('name')))
+        if len(frames) >= MAX_FRAMES:
+            break
+    return [frame for frame in frames if _FRAME_OUT.match(frame)]
+
+
 _SAMPLE_KEYS = _FIELDS + ('process_working_set_bytes', 'process_private_commit_bytes')
 _CLASSES = frozenset({'clean', 'stopped_by_us', 'terminated_externally', 'interrupted', 'native_crash',
                       'error_exit', 'killed_by_signal', 'signal', 'unknown'}
@@ -124,4 +159,9 @@ def clean_reading(value):
     memory = clean_sample(value.get('memory'))
     if memory:
         result['memory'] = memory
+    stack = value.get('native_stack')
+    if isinstance(stack, list):
+        frames = [row for row in stack[:MAX_FRAMES] if isinstance(row, str) and _FRAME_OUT.match(row)]
+        if frames:
+            result['native_stack'] = frames
     return result

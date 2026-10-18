@@ -298,6 +298,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     let skipped = 0;
     const idleNote = () => loraWarning() + (skipped ? t(skipped === 1 ? ' 1 other LoRA file in the folder is not in .safetensors format and is not listed.' : ` ${skipped} other LoRA files in the folder are not in .safetensors format and are not listed.`, ` 文件夹中另有 ${skipped} 个 LoRA 文件不是 .safetensors 格式，未列出。`) : '');
     const verdicts = createVerdicts((path, options) => api.fetchApi(path, options));
+    let rowChecks = [];
     let focusGrip = null;
     const read = () => { const rows = JSON.parse(value(node, 'adapters') || '[]'); if (!Array.isArray(rows) || rows.length > 32) throw new Error(t('Use at most 32 LoRAs', '最多使用 32 个 LoRA')); return rows; };
     function syncPrompt(rows) {
@@ -391,6 +392,7 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
         if (rendering) { renderAgain = true; return; }
         rendering = true;
         try {
+            rowChecks = [];
             list.replaceChildren(); clear.remove();
             const rows = read();
             syncPrompt(rows);
@@ -443,11 +445,22 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                     if (row.enabled !== false || wrap.dataset.unusable === 'true' || event.target.closest('button,select,input,.fv-lora-grip')) return;
                     row.enabled = true; write(rows);
                 };
+                let marked = null;
                 const mark = verdict => {
+                    const stamp = JSON.stringify(verdict);
+                    if (stamp === marked) return;
+                    marked = stamp;
                     const described = describeVerdict(verdict, t);
-                    wrap.dataset.unusable = String(Boolean(described));
-                    problem.hidden = !described; off.hidden = off.hidden || Boolean(described);
+                    const unusable = verdict.usable === false;
+                    wrap.dataset.unusable = String(unusable);
+                    problem.classList.toggle('fv-lora-partial', Boolean(described?.partial));
+                    problem.hidden = !described || (described.partial && (row.enabled === false || Number(row.strength ?? 1) === 0));
+                    off.hidden = row.enabled !== false || unusable;
+                    enabled.checked = row.enabled !== false; enabled.disabled = unusable;
+                    strength.disabled = trigger.disabled = unusable || row.enabled === false;
+                    select.disabled = !unusable && row.enabled === false;
                     if (!described) return;
+                    if (described.partial) { problem.textContent = described.reason; return; }
                     enabled.checked = false; enabled.disabled = true; strength.disabled = trigger.disabled = true; select.disabled = false;
                     const fold = el('details', null, 'fv-lora-why'), why = el('pre', described.lines.join('\n'));
                     const report = button(t('Report a mistake', '报告误判'), () => {
@@ -455,12 +468,16 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
                         window.open(feedbackIssueURL(draft.text, productVersion(), draft.diagnostics, draft.title), '_blank', 'noopener');
                     });
                     fold.append(el('summary', t('Details', '详情')), why, report);
-                    problem.replaceChildren(el('p', t('Cannot be used: ', '不能使用：') + described.reason), fold);
+                    problem.replaceChildren(el('p', (verdict.reason === 'int8-unmergeable' ? '' : t('Cannot be used: ', '不能使用：')) + described.reason), fold);
                     if (row.enabled !== false) queueMicrotask(() => disableUnusable(row.name));
                 };
+                const check = refresh => verdicts.get(row.name, {refresh}).then(verdict => {
+                    if (verdict && !disposed && wrap.isConnected && select.value === row.name) mark(verdict);
+                });
+                rowChecks.push(check);
                 const known = verdicts.peek(row.name);
                 if (known) mark(known);
-                else verdicts.get(row.name).then(verdict => { if (verdict && !disposed && wrap.isConnected && select.value === row.name) mark(verdict); });
+                else check(false);
                 list.append(wrap);
                 loadTriggers(row.name).catch(error => { if (!disposed && trigger.isConnected) note.textContent = error.message; });
             });
@@ -494,8 +511,11 @@ export function loraPanel(node, panel, {promptNode = null} = {}) {
     const configure = node.onConfigure;
     // Only the persistent node panel participates in graph loading.
     if (panel.classList.contains('fv-lora-panel')) node.onConfigure = function (...args) { const result = configure?.apply(this, args); queueMicrotask(render); return result; };
+    // Setup can bind another installation while this panel stays open. Recheck
+    // its model context without rebuilding rows or interrupting edits.
+    const modelTimer = setInterval(() => { for (const check of rowChecks) check(true); }, 5000);
     render(); refresh();
-    const dispose = () => { disposed = true; window.removeEventListener('freevideo-loras', changed); window.removeEventListener('freevideo-lora-triggers', triggersChanged); };
+    const dispose = () => { disposed = true; clearInterval(modelTimer); window.removeEventListener('freevideo-loras', changed); window.removeEventListener('freevideo-lora-triggers', triggersChanged); };
     dispose.refresh = refresh;
     return dispose;
 }
@@ -739,7 +759,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     resolutionSelect.append(mp, resolutionValue, icon('chevron'));
     const legacyOption = [...mp.options].find(o => Number(o.value) === 1);
     mp.disabled = dimensionsLinked;
-    const seconds = el('input'); seconds.type = 'number'; seconds.required = true; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）'));
+    const seconds = el('input'); seconds.type = 'number'; seconds.required = true; seconds.min = '1.625'; seconds.step = 'any'; seconds.value = savedSeconds(node, value(node, 'seconds')); seconds.disabled = linked(node, 'seconds'); seconds.setAttribute('aria-label', t('Duration in seconds', '时长（秒）')); seconds.dataset.fvGuide = 'seconds';
     const fields = el('div', null, 'fv-fields'); fields.append(field(t('Resolution', '清晰度'), resolutionSelect), field(t('Duration · seconds', '时长 · 秒'), seconds)); canvas.append(fields);
     const canvasNote = el('div', null, 'fv-canvas-note'), dimensions = el('span'), duration = el('span'); canvasNote.append(dimensions, duration); canvas.append(canvasNote);
     const rangeMount = el('div'); canvas.append(rangeMount);

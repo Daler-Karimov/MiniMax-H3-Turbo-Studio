@@ -329,7 +329,9 @@ class LogProgress:
         self.parallel_tasks = {}
         self.model_groups = None
         # Ninja runs several times during one build, each with its own count.
-        self.compile_before, self.compile_last, self.compile_runs = 0, (0, 0), 0
+        self.compile_last, self.compile_runs = (0, 0), 0
+
+    COMPILE_LINE = 'Compile acceleration for your GPU · the first build takes longer'
 
     def compile_fraction(self):
         """How far the compile has advanced, never reaching 1; None before any step.
@@ -441,18 +443,18 @@ class LogProgress:
                 if package_phase[0] == 'compile':
                     done, total = int(match[1]), int(match[2])
                     if total != self.compile_last[1] or done < self.compile_last[0]:
-                        self.compile_before += self.compile_last[1]
                         self.compile_runs += self.compile_last[1] > 0
                     self.compile_last = (done, total)
-                shown_done, shown_total = int(match[1]), int(match[2])
                 if package_phase[0] == 'compile':
-                    # One count across the runs, so it never restarts from 1.
-                    shown_done += self.compile_before
-                    shown_total += self.compile_before
-                update(done=shown_done, total=shown_total,
-                              activity='count', name=package_phase[1],
-                              detail='Installing packages' if self.installing_packages else 'Compiling CUDA kernels',
-                              scope='package-' + package_phase[0], unit='items')
+                    # The runs have different sizes and their number is unknown, so a count
+                    # would grow in jumps; the line keeps the step's own sentence, which says
+                    # the wait is expected, and the bar keeps the progress.
+                    update(done=0, total=0, activity='note', name=self.COMPILE_LINE,
+                           detail='Compiling CUDA kernels', scope='package-compile', unit='items')
+                else:
+                    update(done=int(match[1]), total=int(match[2]), activity='count', name=package_phase[1],
+                           detail='Installing packages' if self.installing_packages else 'Compiling CUDA kernels',
+                           scope='package-' + package_phase[0], unit='items')
             try:
                 event = json.loads(line)
             except (ValueError, TypeError):
@@ -612,7 +614,7 @@ class LogProgress:
                 speed = event.get('network_bytes_per_second')
                 shown_speed = speed if speed is not None else event['bytes_per_second']
                 update(done=done, total=total, scope=description + self.model_source, rate=event['bytes_per_second'], unit='bytes',
-                    activity='download', name=event.get('name') or ('Python' if description.startswith('cpython-') else 'Runtime components' if description == 'torch'
+                    activity='download', name=event.get('name') or ('Python' if description.startswith('cpython-') else 'Runtime components' if description == 'torch' or event.get('counter_source') == 'uv-terminal'
                         else model_download_name(description).split(' · ')[0]),
                     detail='%s%s%.1f MiB/s · %.1f / %.1f MiB · %s' %
                     (source + ' · ' if source else '',

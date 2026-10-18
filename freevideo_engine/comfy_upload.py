@@ -99,12 +99,12 @@ def register():
     @server.routes.get('/freevideo/lora/check')
     async def lora_check(request):
         from .comfy_assets import resolve_loras
-        from .lora_check import check_file
+        from .lora_check import check_installed_file
         try:
             name = request.query.get('name')
             path = resolve_loras(json.dumps([dict(name=name)]), folder_paths.get_filename_list('loras'),
                                  lambda n: folder_paths.get_full_path_or_raise('loras', n))[0]['path']
-            result = await asyncio.to_thread(check_file, path)
+            result = await asyncio.to_thread(check_installed_file, path)
         except (OSError, ValueError, TypeError) as error:
             return web.json_response({'error': str(error)}, status=400)
         return web.json_response(result, headers={'Cache-Control': 'no-store'})

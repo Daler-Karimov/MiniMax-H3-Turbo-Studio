@@ -21,7 +21,7 @@ from .launcher_terminal import Tail
 from .model_status import FAMILIES, NAMES
 from .model_guidance import (package_instructions, video_instructions, runtime_packages_supported, download_view,
                              export_download_list, DownloadListError, DOWNLOAD_COPY)
-from .setup_progress import ModelLine, progress_text
+from .setup_progress import LineHold, ModelLine, progress_text
 from .terminal_ui import clean, duration
 from .model_upgrade import TARGET
 from .runtime_alias import checked_real_path
@@ -2141,6 +2141,16 @@ class Session:
             imported = self.importer.state
             file_text = progress_text(dict(activity=imported['activity'], unit='bytes',
                 name=display('Package files', zh), done=imported.get('activity_done'), total=imported.get('activity_total')), zh)
+        if not hasattr(self, 'line_hold'):
+            self.line_hold = LineHold()
+        detail = clean(progress.get('detail', ''))
+        urgent = (progress.get('notice') or progress.get('activity') == 'resume'
+                  or progress.get('state') in ('failed', 'cancelled') or steady == display('Connecting to download server', zh))
+        held = self.line_hold.text(file_text or detail, immediate=bool(urgent), zh=zh)
+        if held != (file_text or detail):
+            file_text, detail = held, ''
+        else:
+            detail = '' if file_text else detail
         # The time row's estimate: only while downloading, from what is left at the current speed.
         from .setup_progress import number
         left, rate = (current.get('total') or 0) - (current.get('done') or 0), current.get('rate')
@@ -2247,7 +2257,7 @@ class Session:
             # Qt reads a list as an array; LEVELS is a tuple.
             compatibility=dict(self.compatibility, levels=list(self.compatibility.get('levels') or ())),
             report=dict(self.report),
-            models=models, overall=overall, progress=progress, detail='' if file_text else clean(progress.get('detail', '')),
+            models=models, overall=overall, progress=progress, detail=detail,
             progress_text=file_text, remaining_seconds=remaining,
             # The elapsed row is only shown while working. An idle clock would
             # keep publishing changed snapshots after a launch has failed.

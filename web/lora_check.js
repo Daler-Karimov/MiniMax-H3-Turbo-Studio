@@ -2,12 +2,15 @@
 const FAMILIES = {wan: 'Wan 2.x', hunyuan: 'HunyuanVideo', ltx: 'LTX-Video', sd: 'Stable Diffusion'};
 const size = shape => Array.isArray(shape) ? shape.join('×') : '';
 
-/** One short reason, and the lines behind it for the "Details" fold. Null when the LoRA can be used. */
+/** Row notice: partial application has no details; unusable files keep their explanation. */
 export function describeVerdict(verdict, t) {
-    if (!verdict || verdict.usable !== false) return null;
+    if (!verdict) return null;
+    if (verdict.usable !== false) return verdict.usable === true && verdict.precision === 'int8' && verdict.partial > 0
+        ? {partial: true, reason: t('Partly applied', '此 LoRA 部分生效')} : null;
     const family = FAMILIES[verdict.family];
     let reason;
     if (verdict.reason === 'unreadable') reason = t('the file could not be read. It may be incomplete; download it again.', '文件无法读取，可能未下载完整，请重新下载');
+    else if (verdict.reason === 'int8-unmergeable') reason = t('This LoRA cannot be used', '此 LoRA 无法使用');
     else if (verdict.reason === 'format') reason = t('not a LoRA file FreeVideo can read', '不是 FreeVideo 能读取的 LoRA 文件');
     else if (verdict.reason === 'shape') reason = t('does not match the current model', '和当前模型的结构不匹配');
     else reason = family ? t(`made for ${family}`, `这是给 ${family} 训练的 LoRA`) : t('not made for the FreeVideo model', '不适用于 FreeVideo 的模型');
@@ -37,23 +40,24 @@ export function feedbackDraft(name, verdict, described, t = (en) => en) {
     return {title: (t('[Feedback] LoRA compatibility misjudged: ', '[Feedback] LoRA 兼容判断有误：') + base).slice(0, 120), text, diagnostics};
 }
 
-/** Verdicts by LoRA name, read once per list refresh. A check that fails to run says nothing, so the LoRA stays usable. */
+/** Verdicts by name. Refresh also checks the currently installed model; failures say nothing. */
 export function createVerdicts(fetchApi) {
     let known = new Map(), pending = new Map();
     return {
         peek: name => known.get(name),
         clear() { known = new Map(); pending = new Map(); },
-        async get(name) {
-            if (known.has(name)) return known.get(name);
+        async get(name, {refresh = false} = {}) {
+            if (!refresh && known.has(name)) return known.get(name);
             if (!pending.has(name)) {
                 const mine = pending, request = (async () => {
                     try {
                         const response = await fetchApi('/freevideo/lora/check?' + new URLSearchParams({name}), {cache: 'no-store'});
                         const verdict = response.ok ? await response.json() : null;
-                        if (verdict && typeof verdict.usable === 'boolean' && mine === pending) known.set(name, verdict);
-                        if (!verdict && mine === pending) pending.delete(name);
+                        if (mine !== pending) return null;
+                        if (verdict && typeof verdict.usable === 'boolean') known.set(name, verdict);
                         return verdict;
                     } catch { return null; }
+                    finally { mine.delete(name); }
                 })();
                 pending.set(name, request);
             }

@@ -181,6 +181,15 @@ def main():
     args = parser.parse_args()
     if not 0 < args.idle_seconds < float('inf'):
         parser.error('--idle-seconds must be positive and finite')
+    # A native crash (access violation, driver fault) leaves no Python error: the crash
+    # handler writes the Python stack to a file the service reads once the worker is gone.
+    crash_file = os.environ.get('FREEVIDEO_CRASH_FILE')
+    if crash_file:
+        try:
+            import faulthandler
+            faulthandler.enable(file=open(crash_file, 'w'), all_threads=False)
+        except (OSError, RuntimeError, ValueError):
+            pass
     stream = None
     if os.name == 'nt':
         from ..win32 import private_stdin

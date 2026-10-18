@@ -24,6 +24,9 @@
 .fv-setup .fv-guide-replay-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .fv-setup .fv-guide-replay-row h3{margin:0}
 .fv-setup .fv-guide-replay-actions{display:flex;align-items:center;gap:16px}
+.fv-setup .fv-guide-howtos{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin-top:10px;width:100%}
+.fv-setup .fv-guide-howtos [role=menuitem]{width:100%;justify-content:flex-start;text-align:left}
+.fv-setup .fv-guide-howtos[hidden]{display:none}
 .fv-setup .fv-guide-replay [role=status]{margin-top:8px}
 
 /* Sections: one card each; details use the Studio's chevron, not the UA marker. */

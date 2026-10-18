@@ -1,8 +1,9 @@
 """Tell from a LoRA file's header alone whether it can be used with the FreeVideo model.
 
-Only the key names and tensor shapes are read; no weights are loaded. The module
-list below is the model's fixed layout, so the verdict needs no prepared model.
-The engine still makes the exact check when it merges the adapter.
+Only the key names and tensor shapes are read; no weights are loaded. The fixed
+layout supports precision-independent checks without a prepared model. The UI
+also uses the active int8 manifest's linear index to count skipped patches.
+The engine still makes the exact check when it prepares the adapter.
 """
 import json
 import os
@@ -10,7 +11,7 @@ import re
 import struct
 import threading
 
-from .lora_names import _targets
+from .lora_names import INT8_UNMERGEABLE, _targets, adapter_keys, int8_skip_reason, resolve_target
 
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 BLOCKS, REFINER_BLOCKS = 50, 2
@@ -119,47 +120,55 @@ def _block(target):
     return int(found[1]) + 1 if found else None
 
 
-def assess(shapes):
+def assess(shapes, *, int8_targets=None, skipped=None):
     """None when the adapter fits, else why not: reason 'other-model' (names of another model), 'shape' (our names,
     a different size) or 'format' (not a LoRA we can read). 'layer' and the sizes say where. A layer name the table
-    does not list, in a file that matches no other known model, is let through."""
+    does not list, in a file that matches no other known model, is let through.
+    With int8_targets, use the installed linear shapes and collect the runtime's
+    skipped patch categories; 'int8-unmergeable' means every patch was skipped."""
     keys = list(shapes)
-    pairs, full = {}, []
-    for key in keys:
-        canonical = key.replace('.default.', '.').replace('.lora_down.weight', '.lora_A.weight').replace('.lora_up.weight', '.lora_B.weight')
-        match = re.fullmatch(r'(.+)\.lora_([AB])\.weight', canonical)
-        if match:
-            pairs.setdefault(match[1], {})[match[2]] = shapes[key]
-        elif canonical.endswith('.alpha'):
-            pairs.setdefault(canonical[:-6], {})
-        elif canonical.endswith(('.diff', '.diff_b')):
-            bias = canonical.endswith('.diff_b')
-            full.append((canonical[:-7] if bias else canonical[:-5], shapes[key], bias))
-        else:
-            return _bad('other-model' if family(keys) else 'format', keys, layer=key)
+    try:
+        pairs, full = adapter_keys(keys)
+    except ValueError:
+        return _bad('other-model' if family(keys) else 'format', keys, layer=None)
     if not any('A' in pair for pair in pairs.values()) and not full:
         return _bad('format', keys, layer=None)
-    wrong = []
+    wrong, applied = [], set()
+    skipped = [] if skipped is None else skipped
     for name, pair in pairs.items():
         if not {'A', 'B'} <= pair.keys():
             return _bad('format', keys, layer=name)
-        a, b = pair['A'], pair['B']
+        a, b = shapes[pair['A']], shapes[pair['B']]
         if len(a) != 2 or len(b) != 2 or a[0] != b[1] or a[0] <= 0:
             return _bad('format', keys, layer=name)
         for target, split, swap in _targets(name):
-            found = _find(target)
+            if int8_targets is not None:
+                target = resolve_target(target, int8_targets)
+                reason = int8_skip_reason(target, int8_targets)
+                if reason:
+                    skipped.append((reason, target))
+                    continue
+                if target in applied:
+                    return _bad('format', keys, layer=target)
+                applied.add(target)
+            found = target if int8_targets is not None else _find(target)
             if found is None:
                 if family(keys):
                     return _bad('other-model', keys, layer=name)
                 continue  # a name this table does not list: the engine makes the exact check
-            expected = LAYOUT[found]
+            expected = int8_targets[found] if int8_targets is not None else LAYOUT[found]
             rows = b[0] if split is None else b[0] // 3
             if expected is UNCHECKED:
                 continue
             if (split is not None and b[0] % 3) or (swap and rows % 2) or list(expected) != [rows, a[1]]:
                 wrong.append((found, list(expected), [rows, a[1]]))
-    for name, shape, bias in full:
+    for name, key, bias in full:
+        shape = shapes[key]
         for target, split, swap in _targets(name):
+            if int8_targets is not None:
+                target = resolve_target(target + ('#bias' if bias else ''), int8_targets)
+                skipped.append((int8_skip_reason(target, int8_targets, full=True), target))
+                continue
             found = _find(target)
             if found is None:
                 if family(keys):
@@ -179,6 +188,8 @@ def assess(shapes):
     if wrong:
         layer, expected, actual = wrong[0]
         return dict(reason='shape', family=None, layer=layer, block=_block(layer), expected=expected, actual=actual, count=len(wrong))
+    if int8_targets is not None and not applied:
+        return _bad('int8-unmergeable', keys)
     return None
 
 
@@ -192,11 +203,14 @@ def summarize(shapes, metadata):
     return dict(keys=len(shapes), first=first, base=base)
 
 
-def check_file(path):
+def check_file(path, *, int8_targets=None):
     """{'usable', 'reason', ...} for a LoRA file, remembered until the file changes."""
     try:
         stat = os.stat(path)
-        stamp = (str(path), stat.st_size, stat.st_mtime_ns)
+        # The same file can be checked against a different installed model while
+        # the page stays open. Never reuse its int8 verdict for another index.
+        target_stamp = None if int8_targets is None else tuple(sorted((name, tuple(shape)) for name, shape in int8_targets.items()))
+        stamp = (str(path), stat.st_size, stat.st_mtime_ns, target_stamp)
     except OSError:
         return {'usable': False, 'reason': 'unreadable'}
     with _LOCK:
@@ -204,8 +218,11 @@ def check_file(path):
             return dict(_CACHE[stamp])
     try:
         shapes, metadata = read_header(path)
-        problem = assess(shapes)
+        skipped = []
+        problem = assess(shapes, int8_targets=int8_targets, skipped=skipped)
         result = {'usable': problem is None, 'reason': None, **(problem or {}), 'summary': summarize(shapes, metadata)}
+        if int8_targets is not None:
+            result['partial'] = len(skipped)
     except (OSError, ValueError):
         result = {'usable': False, 'reason': 'unreadable'}
     with _LOCK:
@@ -215,7 +232,31 @@ def check_file(path):
     return dict(result)
 
 
+def check_installed_file(path):
+    """Header check for the same installed cache generation uses; no Torch import.
+
+    Unknown installation/manifest means the precision-independent check, never an
+    assumed int8 warning. Only the precision leaves the server, not model paths.
+    """
+    from .comfy_bridge import installation
+    from .long_paths import io_path
+    precision, targets = None, None
+    try:
+        _, machine = installation()
+        manifest = json.loads((io_path(machine['cache']) / 'manifest.json').read_text(encoding='utf-8'))
+        precision = manifest.get('precision')
+        if precision == 'int8':
+            targets = {name: spec['weight_shape'] for name, spec in manifest['linears'].items()}
+            if any(not isinstance(shape, list) or len(shape) != 2 or
+                   any(type(n) is not int or n <= 0 for n in shape) for shape in targets.values()):
+                raise ValueError('Invalid linear index')
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        precision, targets = None, None
+    return dict(check_file(path, int8_targets=targets), precision=precision)
+
+
 def require_usable(path):
     """Stop a request before generation starts when a LoRA cannot work with the model."""
-    if not check_file(path)['usable']:
-        raise ValueError(UNUSABLE)
+    result = check_installed_file(path)
+    if not result['usable']:
+        raise ValueError(INT8_UNMERGEABLE if result['reason'] == 'int8-unmergeable' else UNUSABLE)
