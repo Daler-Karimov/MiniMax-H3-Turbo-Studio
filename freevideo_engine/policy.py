@@ -913,7 +913,14 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
     # Scale the existing activation estimate with output and reference rows.
     # Keep the decoder's fixed workspace funded; neither weights nor its
     # temporal tile shrink in proportion to the number of output frames.
-    fixed_workspace = decoder_workspace(canvas)
+    # The decoder runs after the transformer is released, and with it the
+    # schedule tables, LoRA workspace and step cache: it is funded from the
+    # request budget, as its resident blocks are below. gpu_budget has those
+    # sampling allocations taken out already, so charge the decoder only what
+    # they do not cover. Sampling still has to fit its own working set beside
+    # them. Charging both refused full-size requests whose sampling and decode
+    # each fit the card.
+    fixed_workspace = max(0, decoder_workspace(canvas) - placement_workspace)
     # The staging estimate was measured on per-tensor FP8, whose FF keeps every
     # SwiGLU row for one scale (1.94 GiB at 72576 tokens). Int8 rows carry their
     # own scales and stash nothing. At 1344x768x243 on int8, with a 4.70 GiB
@@ -948,7 +955,11 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
     # WDDM, and the two bounds above: the head group may not exceed its
     # measured requirement, and the no-weights path stays on the platform
     # whose margin was measured.
-    if not desktop and gpu_reserve_gib is None and free_gpu < 10 * GiB and gpu_budget < residual_need:
+    # The trigger keeps the decoder's whole workspace. The credit above is for
+    # admission; the cards this reduction already covered spend the headroom
+    # keeping attention outputs on the GPU, which is worth more than the margin.
+    if (not desktop and gpu_reserve_gib is None and free_gpu < 10 * GiB
+            and gpu_budget < max(residual_need, decoder_workspace(canvas))):
         reserve_gpu = MIN_GPU_RESERVE_GIB
         request_gpu_budget = free_gpu - int(reserve_gpu * GiB)
         gpu_budget = request_gpu_budget - placement_workspace
