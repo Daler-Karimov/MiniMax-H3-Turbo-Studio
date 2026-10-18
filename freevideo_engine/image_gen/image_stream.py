@@ -99,9 +99,20 @@ class ResidentStack:
 
     def to_streamed(self, **options):
         """Copy the layers back to the host and return a ``StreamedStack`` over them."""
-        for layer in self.layers:
-            layer.to('cpu')
-        return StreamedStack(self.layers, name=self.name, device=self.device, **options)
+        moved = []
+        try:
+            for layer in self.layers:
+                layer.to('cpu')
+                moved.append(layer)
+        except BaseException:
+            for layer in moved:
+                layer.to(self.device)
+            raise
+        try:
+            return StreamedStack(self.layers, name=self.name, device=self.device, **options)
+        except Exception:
+            # Locking pages failed: stream from ordinary memory instead.
+            return StreamedStack(self.layers, name=self.name, device=self.device, **{**options, 'pin': False})
 
     def close(self):
         pass

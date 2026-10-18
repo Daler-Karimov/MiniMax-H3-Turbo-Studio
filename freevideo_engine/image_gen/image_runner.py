@@ -233,11 +233,14 @@ class ImageRunner:
 
     def _to_streamed(self):
         """A request no longer fits the whole model on the card: put the host copy back and stream."""
-        with torch.no_grad():
-            self.dit_stack = self.dit_stack.to_streamed()
-            self.te_stack = self.te_stack.to_streamed()
-        self.full_card = False
-        torch.cuda.empty_cache()
+        try:
+            with torch.no_grad():
+                self.dit_stack = self.dit_stack.to_streamed()
+                self.te_stack = self.te_stack.to_streamed()
+        finally:
+            # Each stack is usable on its own whichever one stopped, so the next request plans from stacks as they are.
+            self.full_card = False
+            torch.cuda.empty_cache()
 
     def budget(self):
         if self.gpu_budget_bytes is not None:
