@@ -72,9 +72,10 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
     }
     return {
         info,
-        async generate({prompt, width, height, images = [], mask, seed}) {
+        async generate({prompt, width, height, images = [], mask, seed, cast_view}) {
             const value = await post('generate', {[p.prompt]: prompt, [p.width]: width, [p.height]: height,
-                [p.images]: images, ...(mask ? {[p.mask]: mask} : {}), ...(seed === undefined ? {} : {[p.seed]: seed})});
+                [p.images]: images, ...(mask ? {[p.mask]: mask} : {}), ...(seed === undefined ? {} : {[p.seed]: seed}),
+                ...(cast_view === 'back' ? {cast_view} : {})});
             return {...value, job: value[p.job]};
         },
         async status(job) {

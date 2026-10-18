@@ -432,9 +432,12 @@ class Service:
                         raise ValueError('invalid_media')
             except OSError:
                 raise ValueError('invalid_media') from None
+        cast_view = value.get('cast_view')
+        if cast_view is not None and (cast_view != 'back' or len(paths) != 1 or mask_path is not None):
+            raise ValueError('invalid_request')
         return dict(prompt=prompt, width=dimensions[0] // 32 * 32, height=dimensions[1] // 32 * 32,
                     steps=8, seed=seed, images=paths, **(dict(mask=mask_path) if mask_path else {}),
-                    path=self.output_path(named=True))
+                    **(dict(cast_view='back') if cast_view == 'back' else {}), path=self.output_path(named=True))
 
     def start(self, action, value):
         if action not in ('generate', 'compose'):
