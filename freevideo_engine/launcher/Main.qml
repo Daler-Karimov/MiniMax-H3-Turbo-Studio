@@ -972,7 +972,7 @@ ApplicationWindow {
                         objectName: "promptModelCard"
                         visible: !!s.prompt_model && !s.prompt_model.ready && (s.prompt_model.suggest || s.prompt_model.busy || s.prompt_model.checking
                                  || ["failed", "cancelled"].indexOf(s.prompt_model.install.state) >= 0)
-                        Layout.fillWidth: true; padding: 16; spacing: 10
+                        Layout.fillWidth: true; padding: 22; spacing: 10
                         FText {
                             objectName: "promptModelText"; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             text: win.promptModelLine()
