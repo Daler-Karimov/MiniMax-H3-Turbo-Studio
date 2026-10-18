@@ -229,11 +229,12 @@ class Service:
         """Available RAM the model usually needs on this computer, for the download card.
 
         The worker decides from free VRAM when it loads: 8 GB and larger NVIDIA
-        cards hold the whole model. Asks the driver once, without CUDA; anything
+        cards keep their layers on the GPU; 6 GB cards stream from RAM the layers
+        that do not fit, which needs more of it. Asks the driver once, without CUDA; anything
         unknown states the larger figure.
         """
         if self.ram is None:
-            from .worker import MAPPED_RAM, RESIDENT_RAM
+            from .worker import MAPPED_RAM, RESIDENT_RAM, STREAMED_RAM
             self.ram = MAPPED_RAM
             if machine.get('device_backend', 'cuda') == 'cuda':
                 from .. import processes
@@ -246,6 +247,8 @@ class Service:
                     total = totals.get(machine.get('gpu_uuid')) or (len(totals) == 1 and next(iter(totals.values())))
                     if total and total >= 7.5 * 1024:
                         self.ram = RESIDENT_RAM
+                    elif total and total >= 5.5 * 1024:
+                        self.ram = STREAMED_RAM
                 except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
                     pass
         return self.ram
