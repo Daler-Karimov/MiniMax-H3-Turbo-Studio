@@ -52,6 +52,7 @@ export const ICONS = {
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     unlink: '<path d="m18.84 12.25 1.72-1.71h-.02a5 5 0 0 0-.12-7.07 5 5 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5 5 0 0 0 .12 7.07 5 5 0 0 0 6.95 0l1.71-1.71"/><path d="M8 2v3M2 8h3M16 19v3M19 16h3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5L5 20"/>',
     copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
@@ -134,7 +135,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const baseImage = hasOriginal ? await loadImage(resolve(source)) : null;
     const renderer = new Renderer(resolve);
     const fresh = !edit;
-    const blankSizeForRatio = ratio => blankCanvasSize(ratio, null);
+    const blankSizeForRatio = (ratio, tier = 'standard') => blankCanvasSize(ratio, null, tier);
     const blankSize = edit || (target?.width > 0 && target?.height > 0 ? target : blankSizeForRatio('16:9'));
     const original = () => {
         if (!hasOriginal) return blankDocument(blankSize, edit?.ratio || blankCanvasRatio(target));
@@ -229,7 +230,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const genClient = imageGenClient || createImageGenClient(api.fetchApi.bind(api));
     const generation = createImageGeneration({client: genClient,
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
-        library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio, onPlace: (file, label) => addImageLayer(file, label), productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
         resumeKey: `${role}|${source || ''}|${name}`});
 
     // ----- tools ----------------------------------------------------------------
@@ -956,9 +957,9 @@ export async function openImageEditor({source = null, name = source || '', targe
     }
 
     // ----- canvas: shape, orientation, size ----------------------------------------------
-    function setBlankCanvasRatio(ratio, resumed = false) {
+    function setBlankCanvasRatio(ratio, tier = 'standard', resumed = false) {
         if (doc.layers.length || (!resumed && generation.state().running)) return;
-        const next = blankDocument(blankSizeForRatio(ratio), ratio);
+        const next = blankDocument(blankSizeForRatio(ratio, tier), ratio);
         followSize(doc, next); deselectQuiet(); commit(next);
     }
     function aspectOf(id, r = rect()) {
