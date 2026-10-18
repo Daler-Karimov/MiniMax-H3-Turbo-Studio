@@ -6,6 +6,7 @@ export const SCENE_TEXT = Object.freeze({
     icon: 'M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z',
     label: ['Ready-made', '现成场景'], name: ['Start from a ready-made white-model scene', '用现成的白模场景开始'],
     preparing: ['Preparing the white model…', '正在准备白模…'], failed: ['The white model could not be made: ', '白模没有做成：'],
+    timeout: ['The white model took too long and was not made. Try again.', '白模等了太久，没有做成，请重试。'],
 });
 
 export async function sceneList(api) {

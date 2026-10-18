@@ -45,6 +45,10 @@ MOVED_BACK = (' It is one the user was in before, and the user means what was sa
 RESUMED = ('This conversation is already under way; its last lines are in "before". Do not introduce yourself again: '
            'say nothing until the user speaks, then carry on from there.')
 BEFORE_LINES, BEFORE_TEXT = 8, 600
+# The user started a white-model scene and then spoke: the words may be about it, not a new request.
+WHITEBOX_PENDING = ('The user started a white-model scene in this conversation ("whitebox" lists it). If the words ask about '
+                    'it or about progress, answer from its status in one sentence (waiting or rendering: still being made; '
+                    'failed: say it was not made, and why) and start nothing. A question is never a prompt.')
 
 
 def local_address(request):
@@ -1725,6 +1729,10 @@ def register():
         follow = store is not None and not request.headers.get('X-FreeVideo-Session', '').strip()
         def answer(value):
             told, chat['told'][client] = chat['told'].get(client), value['session']
+            scenes = jobs.whitebox.open_for(value['session']) if value['inbox'] else []
+            if scenes:
+                value['whitebox'] = scenes
+                value['next'] = (WHITEBOX_PENDING + ' ' + value.get('next', '')).strip()
             if follow and told != value['session']:
                 first = value['inbox'][0]['seq'] if value['inbox'] else store.get(value['session'])['last_seq'] + 1
                 if first > 1:

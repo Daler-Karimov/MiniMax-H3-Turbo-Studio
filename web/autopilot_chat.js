@@ -291,23 +291,28 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     let sceneRows = null, entryScene = initialScene || null, sceneWaiting = false;
     function toggleScenes(open = sceneMenu.hidden) {
         sceneMenu.hidden = !open; scenesButton.setAttribute('aria-expanded', String(open));
-        if (!open || sceneRows) return;
+        if (!open) return;
+        // One ready-made scene needs no choosing: the button starts it.
+        if (sceneRows?.length === 1) { toggleScenes(false); void runScene(sceneRows[0].id); return; }
+        if (sceneRows) return;
         sceneRows = [];
         void sceneList(api).then(rows => {
-            sceneRows = rows; sceneMenu.replaceChildren(...rows.map(row => {
+            sceneRows = rows;
+            if (rows.length === 1 && !sceneMenu.hidden) { toggleScenes(false); void runScene(rows[0].id); return; }
+            sceneMenu.replaceChildren(...rows.map(row => {
                 const item = press('fv-chat-scene-item', row.name, () => { toggleScenes(false); void runScene(row.id); });
                 item.setAttribute('role', 'menuitem'); return item;
             }));
         }).catch(() => { sceneRows = null; toggleScenes(false); say(t(...SCENE_TEXT.failed) + t('Connection lost. Try again.', '连接中断，请重试。')); });
     }
     async function runScene(preset, session = state.session) {
-        if (!session || stopped) return;
+        if (!session || stopped || sceneWaiting) return;
         say(t(...SCENE_TEXT.preparing)); sceneWaiting = true;
         try {
             const id = await startScene(api, preset, session);
             const result = id ? await watchScene(api, id, {stopped: () => stopped}) : {status: 'ready'};
             if (result.status === 'failed') { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + (result.error || '')); }
-            else if (result.status === 'timeout') { sceneWaiting = false; say(''); }
+            else if (result.status === 'timeout') { sceneWaiting = false; say(t(...SCENE_TEXT.timeout)); }
         } catch (failure) { sceneWaiting = false; say(t(...SCENE_TEXT.failed) + reason(failure)); }
     }
     form.append(input, scenesButton, whiteboxButton, sendButton); scroller.append(log); main.append(scroller, down, sceneMenu, form); element.append(main);
