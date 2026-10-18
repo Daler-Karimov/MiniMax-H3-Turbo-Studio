@@ -1,5 +1,6 @@
 """One active image and one waiting job, with a worker leased until idle or video work."""
 import atexit
+import asyncio
 from collections import OrderedDict
 from copy import deepcopy
 import json
@@ -26,7 +27,7 @@ INFERENCE_TIMEOUT = 600.
 QUEUE_TIMEOUT = 600.
 QUEUE_POLL = .1
 INVALID_ERRORS = frozenset(('invalid_request', 'invalid_prompt', 'invalid_dimensions', 'invalid_seed',
-                            'invalid_media', 'too_many_images'))
+                            'invalid_media', 'invalid_points', 'too_many_images'))
 
 
 class WorkerIdleExit(RuntimeError):
@@ -122,6 +123,12 @@ class Service:
         self.queue_wake = threading.Event()
         self.finished = OrderedDict()
         self.pack_installer = None
+        self.segment_installer = None
+        self.segment_worker = None
+        self.segmenting = False
+        self.segment_stop = threading.Event()
+        self.segment_done = threading.Event()
+        self.segment_done.set()
         atexit.register(self.close)
 
     @staticmethod
@@ -130,7 +137,7 @@ class Service:
         return OWNER.active
 
     def busy(self):
-        return self._busy
+        return self._busy or self.segmenting
 
     def info(self):
         engine_root, machine = self.installation()
@@ -141,6 +148,9 @@ class Service:
                     downloading=not ready and image_pack.downloading(machine['model_root'], engine_root),
                     bytes=sum(row['bytes'] for row in spec['groups']['image']), busy=self.busy(),
                     max_images=MAX_IMAGES, install=self.pack_state(ready),
+                    segment=dict(ready=image_pack.ready(machine['model_root'], group='segment'),
+                                 max_points=16, device='cpu',
+                                 install=self.segment_installer.state() if self.segment_installer else None),
                     bytes_per_second=None if ready else observed_speed(engine_root))
 
     def pack_state(self, ready):
@@ -157,20 +167,152 @@ class Service:
                        message_zh=image_pack_failure(value.get('reason'), zh=True)['detail'])
         return row
 
-    def pack_action(self, action):
+    def pack_action(self, action, *, group='image'):
         """Start or pause the image model download from the page; it yields to a running video."""
         engine_root, machine = self.installation()
         root = machine['model_root']
         with self.mutex:
-            installer = self.pack_installer
+            attribute = 'segment_installer' if group == 'segment' else 'pack_installer'
+            installer = getattr(self, attribute)
             if action == 'cancel':
                 if installer is not None:
                     installer.cancel()
-            elif not image_pack.ready(root) and not image_pack.downloading(root, engine_root):
+            elif not image_pack.ready(root, group=group) and not image_pack.downloading(root, engine_root):
                 if installer is None or installer.root != root or installer.engine_root != engine_root:
-                    installer = self.pack_installer = image_pack.Installer(root, engine_root=engine_root, busy=self.video_busy)
+                    options = dict(group=group) if group != 'image' else {}
+                    installer = image_pack.Installer(root, engine_root=engine_root, busy=self.video_busy, **options)
+                    setattr(self, attribute, installer)
                 installer.start('install', background=True)
         return self.info()
+
+    def media_path(self, name):
+        """Shared input-name and symlink policy for generation and point selection."""
+        directory = Path(self.input_directory()).resolve()
+        folder, _, leaf = name.rpartition('/') if isinstance(name, str) else ('', '', '')
+        if (not isinstance(name, str) or not leaf or name.startswith('/') or leaf in ('.', '..')
+                or folder not in ('', 'freevideo-image')
+                or any(char in name for char in ('\\', ':', '\0'))):
+            raise ValueError('invalid_media')
+        parent = directory / folder if folder else directory
+        path = parent / leaf
+        if (parent.is_symlink() or path.is_symlink() or parent.resolve() != parent
+                or path.resolve().parent != parent or not path.is_file()):
+            raise ValueError('invalid_media')
+        return str(path)
+
+    def output_path(self):
+        directory = Path(self.input_directory()).resolve()
+        output = directory / 'freevideo-image'
+        if output.is_symlink() or output.resolve().parent != directory:
+            raise ValueError('invalid_media')
+        output.mkdir(exist_ok=True)
+        return str(output / (uuid.uuid4().hex + '.png'))
+
+    def close_segment_worker(self):
+        from .. import processes
+        with self.mutex:
+            session, self.segment_worker = self.segment_worker, None
+        if session is not None:
+            processes.stop(session.process, grace=1)
+            session.process.wait()
+            session.close()
+
+    def spawn_segment_worker(self, root, machine):
+        from .. import processes
+        row = image_pack.rows(group='segment')[0]
+        command = processes.module_command('freevideo_engine.image_gen.segment_worker',
+                    image_pack.target(row, machine['model_root']), '--idle-seconds', 45.)
+        command[0] = machine['comfy_python']
+        env = dict(self.environment(root), CUDA_VISIBLE_DEVICES='', HIP_VISIBLE_DEVICES='',
+                   OMP_NUM_THREADS='4', MKL_NUM_THREADS='4', OPENBLAS_NUM_THREADS='4')
+        return Worker(processes.popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
+                      supervise=True, start_new_session=True))
+
+    def segment(self, value):
+        """Immediate admission, no waiting queue. The HTTP caller runs this off its event loop."""
+        from .segment import validate_points
+        from ..locking import runtime_lock
+        if not isinstance(value, dict):
+            raise ValueError('invalid_request')
+        validate_points(value.get('points'))
+        path = self.media_path(value.get('image'))
+        with self.mutex:
+            if self.closed:
+                raise ValueError('closed')
+            if self.yielding or self.video_busy():
+                raise ValueError('busy_video')
+            if self.busy() or self.queued is not None:
+                raise ValueError('busy')
+            try:
+                root, machine = self.installation()
+            except (OSError, ValueError):
+                raise ValueError('segment_not_installed') from None
+            try:
+                if not image_pack.ready(machine['model_root'], group='segment'):
+                    raise ValueError('segment_not_installed')
+            except (OSError, image_pack.PackError):
+                raise ValueError('segment_not_installed') from None
+            self.segmenting = True
+            self.segment_stop.clear()
+            self.segment_done.clear()
+            # Reap the idle Qwen worker before taking its runtime lease.
+            self.session_stop.set()
+            thread = self.thread
+        try:
+            if thread is not None:
+                thread.join()
+            output = self.output_path()
+            with runtime_lock(Path(root) / 'engine.lock', inherit=False):
+                for attempt in range(2):
+                    with self.mutex:
+                        if self.closed or self.segment_stop.is_set() or self.yielding or self.video_busy():
+                            raise ValueError('busy_video')
+                        session = self.segment_worker
+                        if session is not None and session.process.poll() is not None:
+                            self.close_segment_worker()
+                            session = None
+                        if session is None:
+                            session = self.segment_worker = self.spawn_segment_worker(root, machine)
+                    accepted = False
+                    deadline = time.monotonic() + INFERENCE_TIMEOUT
+                    try:
+                        session.send(action='generate', image=path, points=value['points'], path=output)
+                        while True:
+                            if self.closed or self.segment_stop.is_set() or self.yielding or self.video_busy():
+                                raise ValueError('busy_video')
+                            if time.monotonic() >= deadline:
+                                raise ValueError('timeout')
+                            try:
+                                row = session.rows.get(timeout=.1)
+                            except queue.Empty:
+                                continue
+                            if row is None:
+                                raise WorkerIdleExit()
+                            if row.get('phase') == 'accepted':
+                                accepted = True
+                            elif row.get('phase') == 'result':
+                                if row.get('path') != output or not Path(output).is_file():
+                                    raise ValueError('worker_exit')
+                                return dict(mask='freevideo-image/' + Path(output).name)
+                            elif row.get('phase') == 'error':
+                                raise ValueError(row['code'] if row.get('code') in ERRORS else 'generation_failed')
+                    except (BrokenPipeError, WorkerIdleExit):
+                        self.close_segment_worker()
+                        if accepted or attempt:
+                            raise ValueError('worker_exit') from None
+        except BlockingIOError:
+            raise ValueError('busy') from None
+        except Exception:
+            self.close_segment_worker()
+            if self.segment_stop.is_set():
+                raise ValueError('busy_video') from None
+            raise
+        finally:
+            with self.mutex:
+                self.segmenting = False
+                self.segment_done.set()
+                self.queue_wake.set()
 
     def request(self, value):
         if not isinstance(value, dict):
@@ -191,27 +333,24 @@ class Service:
             raise ValueError('invalid_media')
         if len(images) > MAX_IMAGES:
             raise ValueError('too_many_images')
-        directory = Path(self.input_directory()).resolve()
-        paths = []
-        for name in images:
-            # A file in the input directory, or one of our own results as freevideo-image/<name>.
-            folder, _, leaf = name.rpartition('/') if isinstance(name, str) else ('', '', '')
-            if (not isinstance(name, str) or not leaf or leaf in ('.', '..')
-                    or folder not in ('', 'freevideo-image')
-                    or any(char in name for char in ('\\', ':', '\0'))):
+        paths = [self.media_path(name) for name in images]
+        mask = value.get('mask')
+        mask_path = None
+        if mask is not None:
+            # The region to change: a mask drawn on the picture being edited, the first one.
+            if not paths:
                 raise ValueError('invalid_media')
-            parent = directory / folder if folder else directory
-            path = parent / leaf
-            if (parent.is_symlink() or path.is_symlink() or parent.resolve() != parent
-                    or path.resolve().parent != parent or not path.is_file()):
-                raise ValueError('invalid_media')
-            paths.append(str(path))
-        output = directory / 'freevideo-image'
-        if output.is_symlink() or output.resolve().parent != directory:
-            raise ValueError('invalid_media')
-        output.mkdir(exist_ok=True)
+            mask_path = self.media_path(mask)
+            from PIL import Image
+            try:
+                with Image.open(paths[0]) as picture, Image.open(mask_path) as drawn:
+                    if drawn.size != picture.size:
+                        raise ValueError('invalid_media')
+            except OSError:
+                raise ValueError('invalid_media') from None
         return dict(prompt=prompt, width=dimensions[0] // 32 * 32, height=dimensions[1] // 32 * 32,
-                    steps=8, seed=seed, images=paths, path=str(output / (uuid.uuid4().hex + '.png')))
+                    steps=8, seed=seed, images=paths, **(dict(mask=mask_path) if mask_path else {}),
+                    path=self.output_path())
 
     def start(self, action, value):
         if action not in ('generate', 'compose'):
@@ -221,6 +360,8 @@ class Service:
         with self.mutex:
             if self.closed:
                 raise ValueError('closed')
+            if self.segmenting:
+                raise ValueError('busy')
             if self.queued is not None:
                 raise ValueError('busy')
             if self.yielding:
@@ -503,9 +644,11 @@ class Service:
         back from an idle worker but never cut off an image that is being made.
         """
         with self.mutex:
-            if only_idle and (self._busy or self.thread is None or not self.thread.is_alive()):
+            if only_idle and (self.busy() or (self.segment_worker is None and
+                    (self.thread is None or not self.thread.is_alive()))):
                 return False
             self.yielding = True
+            self.segment_stop.set()
             self.stop.set()
             self.session_stop.set()
             if self.queued is not None:
@@ -514,6 +657,8 @@ class Service:
                     self.queued['video_since'] = time.monotonic()
             thread = self.thread
         try:
+            self.close_segment_worker()
+            self.segment_done.wait()
             if thread is not None and thread is not threading.current_thread():
                 thread.join()
         finally:
@@ -570,6 +715,7 @@ class Service:
         failure = 'worker_exit'
         failure_error = None
         try:
+            self.close_segment_worker()
             from ..background_compile import COMPILE
             from ..encoder_prewarm import IDLE
             COMPILE.stop()
@@ -667,7 +813,7 @@ class Service:
             with self.mutex:
                 self.process = self.worker = None
                 self.session_stop.set()
-                if self.busy():
+                if self._busy:
                     context = self.context or Context('generate', {})
                     fitted = self.state.get('fitted')
                     self.state = (dict(phase='cancelled') if self.stop.is_set()
@@ -915,6 +1061,10 @@ def register():
                 result = service.cancel(value.get('job'))
             elif name in ('pack-install', 'pack-cancel'):
                 result = service.pack_action(name.split('-')[1])
+            elif name in ('segment-install', 'segment-cancel'):
+                result = service.pack_action(name.split('-')[1], group='segment')
+            elif name == 'segment':
+                result = await asyncio.to_thread(service.segment, value)
             else:
                 result = service.start(name, value)
             return web.json_response(result)

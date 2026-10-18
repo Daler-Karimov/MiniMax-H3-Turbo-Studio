@@ -15,8 +15,8 @@ from ..failure_details import Redactor
 
 ERRORS = frozenset(('no_memory', 'busy_video', 'busy', 'pack_missing', 'model_unreadable',
                     'device_unavailable', 'worker_exit', 'timeout', 'cancelled',
-                    'invalid_request', 'generation_failed'))
-NO_REPORT = frozenset(('busy', 'invalid_request', 'cancelled'))
+                    'invalid_request', 'invalid_media', 'invalid_points', 'segment_not_installed', 'generation_failed'))
+NO_REPORT = frozenset(('busy', 'invalid_request', 'invalid_media', 'invalid_points', 'segment_not_installed', 'cancelled'))
 STAGES = ('start', 'load', 'text', 'encode', 'denoise', 'decode')
 KINDS = ('generate', 'edit', 'cast', 'compose', 'download', 'install')
 MESSAGE_ZH = {
@@ -30,6 +30,9 @@ MESSAGE_ZH = {
     'timeout': '这一张用时太长，已停止。请再试一次。',
     'generation_failed': '图像生成出错了，请再试一次。',
     'invalid_request': '图片设置有误，请调整后重试。',
+    'invalid_media': '图片无效，请重新选择输入目录中的图片。点选支持不超过 4096×4096 像素总数的图片。',
+    'invalid_points': '请选择 1–16 个图片范围内的点，且至少有一个选中点；1 为选中，0 为排除。',
+    'segment_not_installed': '点选模型未安装，请先下载点选模型（SAM 2.1 small）。',
 }
 _DEVICE = re.compile(
     r'cuda.*(?:initializ|device.*(?:lost|unavailable|removed)|invalid device ordinal|'

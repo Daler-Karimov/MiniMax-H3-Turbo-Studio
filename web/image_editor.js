@@ -4,11 +4,11 @@
 // new image and keeps the document, so the next visit starts from the original
 // with every layer and step in place. Closing frees every canvas it made.
 import {BLENDS, emptyAdjust, migrate, blankDocument, orientedSize, orientMatrix, canvasRect, layerMatrix, scaleSelection,
-    rasterKinds, measureText, Renderer} from './image_editor_engine.js';
+    rasterKinds, measureText, Renderer, traceOutline, simplifyLoop} from './image_editor_engine.js';
 import * as commands from './image_commands.js';
 import {FONT_KEYS, fontStack, fontLoaded, loadFont, loadFonts} from './fonts.js';
 import {api} from '../../scripts/api.js';
-import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio} from './image_generation.js';
+import {createImageGenClient, createImageGeneration, imageGenerationSupported, blankCanvasSize, blankCanvasRatio, segmentAt} from './image_generation.js';
 import {productVersion} from './updates.js';
 
 const css = document.createElement('link');
@@ -29,6 +29,7 @@ export const ICONS = {
     lasso: '<path d="M7 17c-3-1.5-4-4-3-6.5C5.5 6.5 10 4.5 14.5 5S21 8.5 20 12s-6 5-10 4.5"/><path d="M7 17c0 2 1.5 3.5 3.5 3"/><circle cx="7" cy="17" r="1.6"/>',
     polygon: '<path d="M5 18 4 8l8-4 8 6-4 9z" stroke-dasharray="2.6 2.4"/>',
     wand: '<path d="m4 20 11-11"/><path d="M15 4v2M18.5 5.5l-1.4 1.4M20 9h-2M18.5 12.5l-1.4-1.4M12 5.5l1.4 1.4"/>',
+    point: '<path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.04 9.69a.5.5 0 0 1 .65-.65l11 4.5a.5.5 0 0 1-.07.95l-4.35 1.04a1 1 0 0 0-.74.74l-1.04 4.35a.5.5 0 0 1-.95.07z"/>',
     brush: '<path d="M18.4 3.6a2 2 0 0 1 2.8 2.8L11 16.6 7.4 13z"/><path d="M7.4 13c-2.6 0-4 1.8-4 4.2 0 1.6-.6 2.6-1.4 3.2 4.6.6 8.6-.6 9-4.2"/>',
     eraser: '<path d="m7 21-4-4a2 2 0 0 1 0-2.8L13.2 4a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L10 21z"/><path d="M21 21H7M8.5 9.5l6 6"/>',
     heal: '<rect x="2.8" y="8.2" width="18.4" height="7.6" rx="3.8" transform="rotate(-45 12 12)"/><path d="M10.5 10.5h.01M13.5 13.5h.01M10.5 13.5h.01M13.5 10.5h.01"/>',
@@ -166,7 +167,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     let tool = 'move';
     const opts = {
         marquee: {shape: 'rect', mode: 'replace', feather: 0}, lasso: {type: 'free', mode: 'replace', feather: 0},
-        wand: {tolerance: 24, contiguous: true, mode: 'replace'},
+        wand: {tolerance: 24, contiguous: true, mode: 'replace'}, point: {mode: 'replace'},
         brush: {size: .02, hardness: .85, opacity: 1}, eraser: {size: .035, hardness: .7, opacity: 1},
         heal: {size: .025, hardness: .6, text: false}, clone: {size: .035, hardness: .6, opacity: 1, source: null, offset: null, picking: false},
         blur: {size: .05, hardness: .4, strength: .6}, gradient: {shape: 'linear', end: 'bg'},
@@ -225,7 +226,8 @@ export async function openImageEditor({source = null, name = source || '', targe
     const filePicker = el('input'); filePicker.type = 'file'; filePicker.accept = 'image/*'; filePicker.hidden = true;
     dialog.append(header, main, confirmBar, status, filePicker);
     document.body.append(dialog);
-    const generation = createImageGeneration({client: imageGenClient || createImageGenClient(api.fetchApi.bind(api)),
+    const genClient = imageGenClient || createImageGenClient(api.fetchApi.bind(api));
+    const generation = createImageGeneration({client: genClient,
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
         library, resolve, icon, onRatioChange: setBlankCanvasRatio, productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
         resumeKey: `${role}|${source || ''}|${name}`});
@@ -234,7 +236,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const TOOLS = [
         ['generate', t('Generate with AI', 'AI 生成'), null], null,
         ['move', t('Move', '移动'), 'V'], ['crop', t('Crop and canvas', '裁剪与画布'), 'C'], null,
-        ['marquee', t('Marquee', '选框'), 'M'], ['lasso', t('Lasso', '套索'), 'L'], ['wand', t('Magic wand', '魔棒'), 'W'], null,
+        ['marquee', t('Marquee', '选框'), 'M'], ['lasso', t('Lasso', '套索'), 'L'], ['wand', t('Magic wand', '魔棒'), 'W'], ['point', t('Click select', '点选'), 'P'], null,
         ['brush', t('Brush', '画笔'), 'B'], ['eraser', t('Eraser', '橡皮擦'), 'E'], ['heal', t('Spot healing', '污点修复'), 'J'],
         ['clone', t('Clone stamp', '仿制图章'), 'S'], ['blur', t('Blur', '模糊'), 'R'], ['gradient', t('Gradient', '渐变'), 'G'], null,
         ['text', t('Text', '文字'), 'T'], ['shape', t('Shape', '形状'), 'U'], ['eyedropper', t('Eyedropper', '吸管'), 'I'], ['hand', t('Hand', '抓手'), 'H'],
@@ -243,9 +245,27 @@ export async function openImageEditor({source = null, name = source || '', targe
     for (const entry of TOOLS) {
         if (!entry) { toolbar.append(el('span', null, 'fv-ie-tool-gap')); continue; }
         const [id, label, key] = entry;
-        if (id === 'generate' && !imageGenerationSupported()) continue;
+        if ((id === 'generate' || id === 'point') && !imageGenerationSupported()) continue;
         const b = iconButton(id === 'marquee' ? 'marquee' : id, key ? `${label} (${key})` : label, () => select(id), 'fv-ie-tool');
         b.dataset.tool = id; toolButtons[id] = b; toolbar.append(b);
+        if (id === 'point') b.hidden = true;
+    }
+    // Click select needs the engine's selection pack; the tool appears once the engine says it offers it.
+    let pointInfo = null, pointBusy = false, pointTimer = null;
+    async function refreshPoint() {
+        try { pointInfo = (await genClient.info()).segment || null; } catch { pointInfo = null; }
+        if (toolButtons.point) toolButtons.point.hidden = !pointInfo;
+        if (tool === 'point') { if (!pointInfo) select('move'); else renderOptions(); }
+        clearTimeout(pointTimer); pointTimer = null;
+        if (pointInfo?.install?.state === 'running') pointTimer = setTimeout(refreshPoint, 1500);
+    }
+    if (toolButtons.point) void refreshPoint();
+    // A click before the model is here answers with the one thing to do, not with a line of text.
+    function flashPointDownload() {
+        const b = optionsBar.querySelector('.fv-ie-point-download');
+        if (!b) return;
+        b.classList.add('fv-ie-active');
+        setTimeout(() => b.classList.remove('fv-ie-active'), 700);
     }
     const colors = el('div', null, 'fv-ie-colors');
     const fgInput = el('input'); fgInput.type = 'color'; fgInput.className = 'fv-ie-fg'; fgInput.value = fg;
@@ -447,15 +467,22 @@ export async function openImageEditor({source = null, name = source || '', targe
     }
     // Marching ants: the selection's edge, striped, moving.
     let antsEdge = null;
+    const exactEdge = () => layout.k * layout.dpr < 1 && !selection?.parts.some(p => p.shape === 'wand' || p.shape === 'mask');
+    const edgeScale = () => exactEdge() ? layout.k * layout.dpr : previewScale();
     function selectionEdge() {
-        const s = previewScale(), key = JSON.stringify([selection, s]) + (selection?.parts.some(p => p.shape === 'wand') ? composited?.doc === doc : '');
-        if (antsEdge?.key === key && antsEdge.doc === doc) return antsEdge.canvas;
-        const mask = renderer.selectionMask(doc, selection, {layer: canvasLayer(), scale: s});
-        const shifted = (dx, dy) => { const c = document.createElement('canvas'); c.width = mask.width; c.height = mask.height; const x = c.getContext('2d');
-            x.drawImage(mask, 0, 0); x.globalCompositeOperation = 'xor'; x.drawImage(mask, dx, dy); return c; };
-        const edge = shifted(1, 0); edge.getContext('2d').drawImage(shifted(0, 1), 0, 0);
-        antsEdge = {key, doc, canvas: edge};
-        return edge;
+        // Zoomed out, the edge is made at the screen's own pixel size so every side stays one whole line.
+        const s = edgeScale(), key = JSON.stringify([selection, s]) + (selection?.parts.some(p => p.shape === 'wand' || p.shape === 'mask') ? composited?.doc === doc : '');
+        if (antsEdge?.key === key && antsEdge.doc === doc) return antsEdge;
+        const soft = renderer.selectionMask(doc, selection, {layer: canvasLayer(), scale: s});
+        // The outline follows the half-way line of the selection; feathering shows only in the result.
+        const mask = document.createElement('canvas'); mask.width = soft.width; mask.height = soft.height;
+        const m = mask.getContext('2d', {willReadFrequently: true}); m.drawImage(soft, 0, 0);
+        const bits = m.getImageData(0, 0, mask.width, mask.height);
+        for (let i = 3; i < bits.data.length; i += 4) bits.data[i] = bits.data[i] >= 128 ? 255 : 0;
+        m.putImageData(bits, 0, 0);
+        const loops = traceOutline(bits.data, mask.width, mask.height).map(loop => simplifyLoop(loop, 0.75));
+        antsEdge = {key, doc, loops, w: mask.width, h: mask.height};
+        return antsEdge;
     }
     function drawAnts() {
         const ctx = ants.getContext('2d');
@@ -463,15 +490,17 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (!selection) return;
         const edge = selectionEdge(), r = rect(), [x0, y0] = fromO(r.x, r.y), dpr = layout.dpr;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(edge, x0, y0, r.w * layout.k, r.h * layout.k);
-        ctx.globalCompositeOperation = 'source-in';
-        const stripe = document.createElement('canvas'); stripe.width = stripe.height = 8; const st = stripe.getContext('2d');
-        st.fillStyle = '#fff'; st.fillRect(0, 0, 8, 8); st.fillStyle = '#0b0f15'; st.fillRect(0, 0, 4, 8);
-        const pattern = ctx.createPattern(stripe, 'repeat');
-        pattern.setTransform?.(new DOMMatrix().translateSelf(antsPhase, 0).rotateSelf(45));
-        ctx.fillStyle = pattern; ctx.fillRect(0, 0, layout.w, layout.h);
-        ctx.globalCompositeOperation = 'source-over';
+        // One closed polyline per border, every side drawn with the same dash phase.
+        const sx = (exactEdge() ? edge.w / dpr : r.w * layout.k) / edge.w, sy = (exactEdge() ? edge.h / dpr : r.h * layout.k) / edge.h;
+        const path = new Path2D();
+        for (const loop of edge.loops) {
+            loop.forEach(([x, y], i) => (i ? path.lineTo(x0 + x * sx, y0 + y * sy) : path.moveTo(x0 + x * sx, y0 + y * sy)));
+            path.closePath();
+        }
+        ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+        ctx.setLineDash([]); ctx.strokeStyle = '#fff'; ctx.stroke(path);
+        ctx.setLineDash([4, 4]); ctx.lineDashOffset = -antsPhase; ctx.strokeStyle = '#0b0f15'; ctx.stroke(path);
+        ctx.setLineDash([]);
     }
     function canvasLayer() {
         const r = rect(), centre = toD([r.x + r.w / 2, r.y + r.h / 2]);
@@ -490,6 +519,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             b.setAttribute('aria-pressed', String(id === tool));
         }
         stage.dataset.tool = tool;
+        stage.dataset.pick = String(tool === 'generate' && generation.drawsSelection());
     }
     function select(id) {
         if (!doc.layers.length && !['generate', 'hand'].includes(id)) { message(emptyCanvasReason()); return; }
@@ -561,6 +591,20 @@ export async function openImageEditor({source = null, name = source || '', targe
             }
             add(sep(), segmented([['replace', t('New', '新选区')], ['add', t('Add · Shift', '添加 · Shift')], ['subtract', t('Subtract · Alt', '减去 · Alt')]], o.mode, v => { o.mode = v; }, t('Mode', '方式')).group);
             if (tool !== 'wand') add(slider(`fv-ie-${tool}-feather`, t('Feather', '羽化'), 0, 80, 1, o.feather, v => { o.feather = v; }, null, ' px').row);
+            add(sep(), ...selectionActions());
+        } else if (tool === 'point') {
+            const o = opts.point, install = pointInfo?.install;
+            if (pointInfo && !pointInfo.ready) {
+                const running = install?.state === 'running';
+                const share = install?.total > 0 ? Math.min(100, Math.round(100 * (install.done || 0) / install.total)) : 0;
+                const b = running ? button(t(`Downloading ${share}%`, `正在下载 ${share}%`), null, () => {}, 'fv-ie-button fv-ie-point-download')
+                    : button(t('Download click-select model', '下载点选模型'), install?.state === 'failed' ? t(install.message_en, install.message_zh) : null,
+                        async () => { try { pointInfo = {...pointInfo, install: (await genClient.segmentInstall()).install}; } catch { /* the next refresh shows it */ } void refreshPoint(); renderOptions(); }, 'fv-ie-button fv-ie-point-download');
+                if (running) b.disabled = true;
+                add(b);
+            } else {
+                add(segmented([['replace', t('New', '新选区')], ['add', t('Add · Shift', '添加 · Shift')], ['subtract', t('Subtract · Alt', '减去 · Alt')]], o.mode, v => { o.mode = v; }, t('Mode', '方式')).group);
+            }
             add(sep(), ...selectionActions());
         } else if (tool === 'brush' || tool === 'eraser') {
             const o = opts[tool];
@@ -1171,12 +1215,15 @@ export async function openImageEditor({source = null, name = source || '', targe
         return null;
     }
     function startGesture(event, p) {
-        if (!doc.layers.length || tool === 'generate') return null;
+        // In "Edit this" dragging on the picture selects the part to change, as the marquee does.
+        const choosing = tool === 'generate' && generation.drawsSelection();
+        if (!doc.layers.length || tool === 'generate' && !choosing) return null;
+        const use = choosing ? 'marquee' : tool;
         const o = toO(...p), d = toD(o), layer = active();
         const mode = event.shiftKey ? 'add' : event.altKey ? 'subtract' : null;
-        if (tool === 'crop') return cropGesture(event, o);
-        if (tool === 'move') return moveGesture(event, p, d);
-        if (tool === 'marquee') {
+        if (use === 'crop') return cropGesture(event, o);
+        if (use === 'move') return moveGesture(event, p, d);
+        if (use === 'marquee') {
             const om = opts.marquee;
             return dragBox(o, (a, b) => {
                 const [x1, y1] = toD(a), [x2, y2] = toD(b);
@@ -1185,15 +1232,32 @@ export async function openImageEditor({source = null, name = source || '', targe
                 addPart(part, mode || om.mode);
             }, om.shape === 'ellipse');
         }
-        if (tool === 'lasso') return lassoGesture(o, mode || opts.lasso.mode);
-        if (tool === 'wand') {
+        if (use === 'lasso') return lassoGesture(o, mode || opts.lasso.mode);
+        if (use === 'wand') {
             const src = rasterKinds.has(layer.kind) ? layer : doc.layers[0];
             const [u, v] = toLocal(src, d);
             if (u < 0 || v < 0 || u > 1 || v > 1) { message(t('Click on an image layer.', '请点在图片图层上。')); return null; }
             addPart({shape: 'wand', layer: src.id, u, v, tolerance: opts.wand.tolerance, contiguous: opts.wand.contiguous, upto: src.ops.length}, mode || opts.wand.mode);
             return null;
         }
-        if (tool === 'eyedropper') {
+        if (use === 'point') {
+            const src = rasterKinds.has(layer.kind) ? layer : doc.layers[0];
+            const [u, v] = toLocal(src, d);
+            if (u < 0 || v < 0 || u > 1 || v > 1) { message(t('Click on an image layer.', '请点在图片图层上。')); return null; }
+            if (!pointInfo?.ready) { flashPointDownload(); return null; }
+            if (pointBusy) return null;
+            const how = mode || opts.point.mode;
+            pointBusy = true; message(t('Finding the object…', '正在找出物体……'));
+            segmentAt(renderer, genClient, doc, src, [u, v]).then(file => {
+                if (doc.layers.indexOf(src) < 0) return;
+                addPart({shape: 'mask', layer: src.id, file, upto: src.ops.length}, how); message('');
+            }).catch(error => {
+                message(error?.code === 'busy_video' ? t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。')
+                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'));
+            }).finally(() => { pointBusy = false; });
+            return null;
+        }
+        if (use === 'eyedropper') {
             const {canvas: pic, scale} = picture(), r = rect();
             const x = Math.floor((o[0] - r.x) * scale), y = Math.floor((o[1] - r.y) * scale);
             if (x < 0 || y < 0 || x >= pic.width || y >= pic.height) { message(t('Click on the canvas to pick a color.', '请点在画布上取色。')); return null; }
@@ -1204,35 +1268,35 @@ export async function openImageEditor({source = null, name = source || '', targe
             message(t(`Picked ${hex}.`, `已吸取 ${hex}。`));
             return null;
         }
-        if (tool === 'text') {
+        if (use === 'text') {
             const hit = hitLayer(p);
             if (hit?.kind === 'text') { setActive(hit.id); renderPanels(); textArea?.focus(); return null; }
             addText(d); return null;
         }
-        if (tool === 'shape') return shapeGesture(o);
+        if (use === 'shape') return shapeGesture(o);
         // Pixel tools.
         let target = layer, base = doc;
-        if ((tool === 'brush' || tool === 'gradient') && (!rasterKinds.has(layer.kind) || (layer.locked && !maskTarget))) {
+        if ((use === 'brush' || use === 'gradient') && (!rasterKinds.has(layer.kind) || (layer.locked && !maskTarget))) {
             // Paint goes on a layer of its own above the picture, so it can be erased or hidden alone.
-            const reuse = tool === 'brush' && [...doc.layers].reverse().find(l => l.kind === 'paint' && l.visible);
+            const reuse = use === 'brush' && [...doc.layers].reverse().find(l => l.kind === 'paint' && l.visible);
             if (reuse) { target = reuse; base = commands.setActive(doc, reuse.id); }
             else {
                 const n = doc.layers.filter(l => l.kind === 'paint').length + 1;
-                base = commands.addPaintLayer(doc, tool === 'gradient' ? t('Gradient', '渐变') : t(`Paint ${n}`, `绘画 ${n}`));
+                base = commands.addPaintLayer(doc, use === 'gradient' ? t('Gradient', '渐变') : t(`Paint ${n}`, `绘画 ${n}`));
                 target = base.layers.find(l => l.id === base.active);
             }
         } else if (!rasterKinds.has(layer.kind)) { message(t('Pick an image or paint layer to work on its pixels.', '请选择图片图层或绘画图层再处理像素。')); return null; }
-        if (tool === 'gradient') {
+        if (use === 'gradient') {
             return dragLine(o, (a, b) => {
                 const from = toLocal(target, toD(a)), to = toLocal(target, toD(b));
                 pushOp(target, {type: 'gradient', shape: opts.gradient.shape, from, to, c1: fg, c2: opts.gradient.end === 'bg' ? bg : 'transparent', selection}, base);
             });
         }
-        if (tool === 'clone' && (event.altKey || opts.clone.picking)) {
+        if (use === 'clone' && (event.altKey || opts.clone.picking)) {
             opts.clone.source = d; opts.clone.picking = false; opts.clone.offset = null;
             renderOptions(); showHint(); drawOverlay(); return null;
         }
-        if (tool === 'clone' && !opts.clone.source) { message(t('Alt-click to set the source first.', '请先按住 Alt 点击设置取样点。')); return null; }
+        if (use === 'clone' && !opts.clone.source) { message(t('Alt-click to set the source first.', '请先按住 Alt 点击设置取样点。')); return null; }
         return strokeGesture(target, d, base);
     }
     function strokeGesture(layer, d, base) {
@@ -1477,7 +1541,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     function actualSize() { viewState = {zoom: 1 / layout.fitK, panX: 0, panY: 0}; computeLayout(); draw(); controls(); }
 
     // ----- keys ----------------------------------------------------------------------------------
-    const KEYS = {v: 'move', c: 'crop', m: 'marquee', l: 'lasso', w: 'wand', b: 'brush', e: 'eraser', j: 'heal', s: 'clone', r: 'blur', g: 'gradient', t: 'text', u: 'shape', i: 'eyedropper', h: 'hand'};
+    const KEYS = {v: 'move', c: 'crop', m: 'marquee', l: 'lasso', w: 'wand', p: 'point', b: 'brush', e: 'eraser', j: 'heal', s: 'clone', r: 'blur', g: 'gradient', t: 'text', u: 'shape', i: 'eyedropper', h: 'hand'};
     function keys(event) {
         const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) && !['range', 'checkbox', 'color', 'radio'].includes(event.target.type);
         const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();

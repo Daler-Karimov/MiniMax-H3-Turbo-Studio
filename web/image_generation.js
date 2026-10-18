@@ -8,7 +8,7 @@ import {about} from './request_assets.js';
 export const IMAGE_GEN_PROTOCOL = Object.freeze({
     root: '/freevideo/image-gen', header: 'X-FreeVideo-Image', upload: '/upload/image',
     installed: 'ready', phase: 'phase', bytes: 'bytes', downloading: 'downloading', checking: 'checking',
-    token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', seed: 'seed',
+    token: 'token', job: 'job', prompt: 'prompt', width: 'width', height: 'height', images: 'images', mask: 'mask', seed: 'seed',
     stage: 'stage', fraction: 'fraction', file: 'file', error: 'error', name: 'name', subfolder: 'subfolder',
     states: {queued: 'waiting', starting: 'queued', progress: 'running', complete: 'done', failed: 'error',
         cancelling: 'running', cancelled: 'error'},
@@ -69,9 +69,9 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
     }
     return {
         info,
-        async generate({prompt, width, height, images = [], seed}) {
+        async generate({prompt, width, height, images = [], mask, seed}) {
             const value = await post('generate', {[p.prompt]: prompt, [p.width]: width, [p.height]: height,
-                [p.images]: images, ...(seed === undefined ? {} : {[p.seed]: seed})});
+                [p.images]: images, ...(mask ? {[p.mask]: mask} : {}), ...(seed === undefined ? {} : {[p.seed]: seed})});
             return {...value, job: value[p.job]};
         },
         async status(job) {
@@ -87,6 +87,10 @@ export function createImageGenClient(fetchImpl = globalThis.fetch.bind(globalThi
         // The image models are fetched by this page's own engine; the reply is the new info.
         async packInstall() { const value = await post('pack-install', {}); return {...value, installed: value.installed ?? value[p.installed] ?? false}; },
         async packCancel() { const value = await post('pack-cancel', {}); return {...value, installed: value.installed ?? value[p.installed] ?? false}; },
+        // Click select: the engine finds the object under a point; the pack it needs is fetched on demand like the image models.
+        async segment({image, points}) { return post('segment', {image, points}); },
+        segmentInstall: () => post('segment-install', {}),
+        segmentCancel: () => post('segment-cancel', {}),
         // The prompts and sizes of a new character's five pictures (the Agent's cards use the same ones).
         castViews: async description => (await post('cast-views', {description})).views,
         async upload(file) {
@@ -264,6 +268,46 @@ export async function uploadGenerationReference(renderer, client, context, alive
     return client.upload(file);
 }
 
+// The selection as a black and white picture the size of the layer being edited, uploaded beside it.
+// Nothing is sent when nothing is selected, so the whole picture is edited as before.
+export async function uploadGenerationMask(renderer, client, context, alive = () => true) {
+    if (!context.layer || !context.selection) return null;
+    const shape = renderer.selectionMask(context.doc, context.selection, {layer: context.layer, scale: 1});
+    const mask = globalThis.document.createElement('canvas');
+    mask.width = shape.width; mask.height = shape.height;
+    const draw = mask.getContext('2d', {willReadFrequently: true});
+    draw.fillStyle = '#000'; draw.fillRect(0, 0, mask.width, mask.height);
+    draw.drawImage(shape, 0, 0);
+    const pixels = draw.getImageData(0, 0, mask.width, mask.height).data;
+    let any = false;
+    for (let i = 0; i < pixels.length; i += 4) if (pixels[i] >= 128) { any = true; break; }
+    if (!any) return null;
+    const blob = await new Promise((resolve, reject) => mask.toBlob(b => b ? resolve(b) : reject(failure()), 'image/png'));
+    if (!alive()) throw failure('cancelled');
+    return client.upload(new File([blob], `freevideo-image-mask-${crypto.randomUUID()}.png`, {type: 'image/png'}));
+}
+
+// The object under a click, as the name of a black and white picture the size of the layer's pixels.
+// The layer is uploaded once for as long as it looks the same.
+const segmentUploads = new WeakMap();
+export async function segmentAt(renderer, client, doc, layer, point) {
+    const look = JSON.stringify([layer.ops.map(o => o.id), layer.adjust, layer.src, layer.mask?.ops.map(o => o.id)]);
+    let known = segmentUploads.get(layer);
+    if (known?.look !== look) {
+        await renderer.preload(doc);
+        const raster = renderer.layerImage(doc, layer, 1, true);
+        const blob = await new Promise((resolve, reject) => raster.toBlob(b => b ? resolve(b) : reject(failure()), 'image/png'));
+        known = {look, name: await client.upload(new File([blob], `freevideo-image-reference-${crypto.randomUUID()}.png`, {type: 'image/png'})), width: raster.width, height: raster.height};
+        segmentUploads.set(layer, known);
+    }
+    const x = Math.min(known.width - 1, Math.max(0, Math.floor(point[0] * known.width))), y = Math.min(known.height - 1, Math.max(0, Math.floor(point[1] * known.height)));
+    const value = await client.segment({image: known.name, points: [[x, y, 1]]});
+    if (typeof value?.mask !== 'string') throw failure();
+    const image = await renderer.image(value.mask);
+    renderer.images.get(value.mask).value = image;
+    return value.mask;
+}
+
 // "Edit this" can take more pictures beside the layer being edited: that layer is always image 1 and
 // the others follow in the order they were added. The page offers fewer than the service accepts.
 export const PAGE_REFERENCE_LIMIT = 3;
@@ -308,7 +352,7 @@ export function insertGenerationResult(doc, result, context, t) {
         geometry = {cx: point.x, cy: point.y, w: c.w, h: c.h, rotation: -doc.rotate, flipX: doc.flipX, flipY: doc.flipY};
     }
     next = {...next, layers: next.layers.map(l => l.id === next.active ? {...l, ...geometry} : l)};
-    if (context.selection) next = commands.maskFromSelection(next, next.active, scaleSelection(context.selection, sx, sy));
+    if (context.selection && !context.region) next = commands.maskFromSelection(next, next.active, scaleSelection(context.selection, sx, sy));
     return next;
 }
 
@@ -399,10 +443,10 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
         emit({running: true, job: null, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
         const alive = () => current === epoch && !disposed;
         try {
-            const {context, images = []} = await prepare(request, alive);
+            const {context, images = [], mask} = await prepare(request, alive);
             if (!alive()) return;
             const withImages = images.length > 0;
-            const row = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images});
+            const row = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images, mask});
             const {job} = row;
             if (!job) throw failure(row.error, row);
             if (row.fitted) emit({fitted: row.fitted});
@@ -492,7 +536,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             const context = generationContext(getDoc(), getSelection(), request.mode);
             const images = request.mode === 'edit' ? [await uploadGenerationReference(renderer, client, context, alive),
                 ...await uploadExtraReferences(client, request.references || [], referencePNG, copies, alive)] : [];
-            return {context, images};
+            // Only the selected part of the edited picture (the first) is changed.
+            const mask = images.length ? await uploadGenerationMask(renderer, client, context, alive) : null;
+            return {context: mask ? {...context, region: true} : context, images, mask};
         },
         apply: async (result, context, alive) => {
             const image = await renderer.image(result.file);
@@ -587,7 +633,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             b.setAttribute('aria-pressed', String(b.dataset.value === mode));
         }); input.disabled = disabled;
         renderReferences(refs, disabled);
-        input.placeholder = mode === 'edit' ? t('What to change', '要改什么') : t('Describe the picture', '描述画面');
+        input.placeholder = mode === 'edit' ? getSelection() ? t('What to change in the selection', '要改选区里的什么') : t('What to change', '要改什么') : t('Describe the picture', '描述画面');
         input.setAttribute('aria-label', input.placeholder);
         const pack = missing ? packView(state.info, t) : null;
         action.textContent = pack ? pack.button : state.running ? t('Stop', '停止') : t('Generate', '生成');
@@ -674,7 +720,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         };
         grow(); update();
     }
-    return {mount, unmount() { clearAttention(); promptRequired = false; mounted = null; },
+    return {mount, drawsSelection: () => mode === 'edit' && getDoc().layers.length > 0, unmount() { clearAttention(); promptRequired = false; mounted = null; },
         selected: () => session.check(), cancel: session.cancel,
         // The blank canvas a reloaded generation was started on, to be set again by the editor.
         resumedCanvas: resumed?.context?.mode === 'new'

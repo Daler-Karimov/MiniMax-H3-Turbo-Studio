@@ -120,9 +120,13 @@ def serve(pack_dir, *, device='cuda', idle_seconds=45., stream=None, output=None
                     for path in value.get('images', []):
                         image = stack.enter_context(Image.open(path))
                         references.append(_flatten(image))
+                    region = {}
+                    if value.get('mask'):
+                        region['edit_mask'] = stack.enter_context(Image.open(value['mask']))
+                        region['edit_mask'].load()
                     image = runner.generate(
                         value['prompt'], width=value['width'], height=value['height'],
-                        seed=value.get('seed'), reference_images=references,
+                        seed=value.get('seed'), reference_images=references, **region,
                         progress=progress,
                         cancel=inbox.cancel.is_set)
                     if inbox.cancel.is_set():
