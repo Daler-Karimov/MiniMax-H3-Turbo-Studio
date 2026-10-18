@@ -281,6 +281,16 @@ class Client:
 
     def upload(self, path):
         """Read on the client computer and upload content; never send a local path."""
+        return self._upload(path, '/media')
+
+    def import_media(self, path, *, ref=None):
+        """Import a client file into the editor. Poll /imports until its state is ready."""
+        from . import schema
+        if ref is not None:
+            schema.validate(schema.obj({'ref': schema.REF}), dict(ref=ref))
+        return self._upload(path, '/imports', ref=ref)
+
+    def _upload(self, path, endpoint, *, ref=None):
         from .schema import MAX_UPLOAD_BYTES, MAX_JSON_UPLOAD_BYTES
         source = local_file(path)
         try:
@@ -289,7 +299,10 @@ class Client:
                 raise ApiError(413, 'too_large', 'File exceeds upload limit',
                     dict(next='Reduce the file to at most %d bytes.' % MAX_UPLOAD_BYTES, details=[dict(limit_bytes=MAX_UPLOAD_BYTES)]))
             if size * 4 // 3 + 4096 <= MAX_JSON_UPLOAD_BYTES:
-                return self.upload_bytes(source.name, source.read_bytes())
+                if endpoint == '/media':
+                    return self.upload_bytes(source.name, source.read_bytes())
+                return self.post(endpoint, dict(name=source.name, data_base64=base64.b64encode(source.read_bytes()).decode(),
+                    **({'ref': ref} if ref is not None else {})), timeout=600)
             import secrets
             boundary = 'freevideo-' + secrets.token_hex(16)
             # Only a safe extension crosses a MIME header; local filenames stay local.
@@ -298,14 +311,15 @@ class Client:
                 raise ApiError(422, 'invalid_media', 'Invalid media extension')
             prefix = ('--%s\r\nContent-Disposition: form-data; name="file"; filename="media%s"\r\n'
                       'Content-Type: application/octet-stream\r\n\r\n' % (boundary, suffix)).encode('ascii')
-            ending = ('\r\n--%s--\r\n' % boundary).encode('ascii')
+            ending = (('\r\n--%s\r\nContent-Disposition: form-data; name="ref"\r\n\r\n%s' % (boundary, ref)
+                       if ref is not None else '') + '\r\n--%s--\r\n' % boundary).encode('ascii')
             with source.open('rb') as stream:
                 def chunks():
                     yield prefix
                     while data := stream.read(1024 * 1024):
                         yield data
                     yield ending
-                return self.request('POST', '/freevideo/agent/v1/media', encoded=chunks(),
+                return self.request('POST', '/freevideo/agent/v1' + endpoint, encoded=chunks(),
                     content_type='multipart/form-data; boundary=' + boundary,
                     content_length=len(prefix) + size + len(ending), timeout=600)
         except OSError:

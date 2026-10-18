@@ -31,7 +31,12 @@ Chain shots by starting the next shot from the previous one's last frame (media.
 "frame": "last"}), look at results with freevideo_look, ask the local VLM with freevideo_ask, and join clips
 with freevideo_assemble. For durable filming, use freevideo_drama_plan → start → get → sheet → choose/reshoot → finish.
 Cast first: search freevideo_cast_list, reuse the card the user named or one that fits, create a card only if none does.
-If paused is set, wait for the user using get with since and wait=25. Only the user may pause/resume."""
+If paused is set, wait for the user using get with since and wait=25. Only the user may pause/resume.
+Bring your own footage: render complete video clips on your computer with ffmpeg/Canvas, baking effects into pixels.
+freevideo_import_media reads your local file and uploads content (up to 2 GiB); reuse ref for safe retries.
+Poll freevideo_imports about every two seconds until state=ready (failed is terminal), then insert its source=import:<id>
+at an integer frame in a 24 fps project, add subtitles/audio, and export. GET /guide bring_your_own_footage explains
+authenticated source downloads, dimensions and audio. No second video track or blend mode is needed."""
 
 
 def tool_list():
@@ -53,6 +58,8 @@ def tool_list():
         dict(name='freevideo_cancel', title='Cancel a job', description='Cancel a waiting, queued or running job.', annotations={'readOnlyHint': False, 'destructiveHint': True, 'openWorldHint': False}),
         dict(name='freevideo_resume', title='Resume generation', description='Resume a failed, interrupted or cancelled generation; only unfinished blocks run. Poll the same job ID.', annotations=write),
         dict(name='freevideo_add_media', title='Add media', description='Read a local image, video or audio file and upload its content; returns the "file" to use in media.', annotations=write),
+        dict(name='freevideo_import_media', title='Import footage', description='Read a local video or audio file and upload it into the editor. Returns import.source (import:<id>) and state. Poll freevideo_imports until ready, then insert that source into a project. Same ref and content safely replay.', annotations=write),
+        dict(name='freevideo_imports', title='Imported footage', description='List editor imports with source, state (preparing/ready/failed), fraction and authenticated preview URLs. Wait for ready before insert; failed is terminal.', annotations=read),
         dict(name='freevideo_look', title='Look at media', description='Return a picture you can see: one frame of a video (at = first, last or seconds) or a contact sheet of timed frames (mode = sheet), or an image file. Use it to review shots.', annotations=read),
         dict(name='freevideo_edit_image', title='Edit an image', description="Crop/rotate/flip/pad/adjust an image, add text, shapes or image overlays, or remove burned-in captions (remove_text), without the browser. The result is a new input file plus an editor document a person can reopen in FreeVideo's image editor.", annotations=write),
         dict(name='freevideo_ask', title='Ask the local VLM', description='Ask FreeVideo\'s local vision-language model about images or sampled frames of a video (e.g. "Does this shot match its description? Answer as JSON {score, issues}").', annotations=write),
@@ -359,6 +366,10 @@ class Server:
             return c.resume(args['id'], **({'ref': args['ref']} if 'ref' in args else {})), []
         if name == 'freevideo_add_media':
             return c.upload(args['path']), []
+        if name == 'freevideo_import_media':
+            return c.import_media(args['path'], **({'ref': args['ref']} if 'ref' in args else {})), []
+        if name == 'freevideo_imports':
+            return c.get('/imports'), []
         if name == 'freevideo_edit_image':
             made = c.edit(args['source'], args.get('recipe'), document=args.get('document'), target=args.get('target'))
             return made, self.picture(made['view'])

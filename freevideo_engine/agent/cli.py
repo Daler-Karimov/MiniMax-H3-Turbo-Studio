@@ -76,6 +76,12 @@ def build_parser():
     schema.cli_arguments(command, schema.contracts()['GET', '/jobs']['query'])
     command = commands.add_parser('upload', help='Copy a local media file into FreeVideo inputs')
     command.add_argument('path')
+    command = commands.add_parser('imports', help='Bring local video or audio into the editing timeline')
+    imports = command.add_subparsers(dest='operation', required=True)
+    command = imports.add_parser('add', help='Upload content; poll imports list until ready before insert')
+    command.add_argument('path')
+    schema.cli_arguments(command, schema.obj({'ref': schema.REF}))
+    imports.add_parser('list', help='List imported sources and preparation progress')
     command = commands.add_parser('generate-image', help='Generate or change a picture with the local image model')
     schema.cli_arguments(command, schema.image(), exclude=('kind',))
     command.add_argument('--wait', action='store_true', help='Wait for the picture and print the result')
@@ -280,6 +286,9 @@ def main(argv=None):
             result = client.get(path, **value) if method == 'GET' else client.post(path, value)
         elif args.command == 'upload':
             result = client.upload(args.path)
+        elif args.command == 'imports':
+            result = (client.import_media(args.path, **({'ref': args.ref} if hasattr(args, 'ref') else {}))
+                      if args.operation == 'add' else client.get('/imports'))
         else:
             result = client.frame(source(args.source), values.get('at', 'last'))
     except ApiError as error:

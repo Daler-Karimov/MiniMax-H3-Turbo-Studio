@@ -128,6 +128,14 @@ GUIDE = {
     ],
     'project_routes': [dict(operation=name, method=method, path=path, description=summary)
                        for name, (method, path, summary) in PROJECT_OPERATIONS.items()],
+    'bring_your_own_footage': [
+        'Render complete clips with ffmpeg/Canvas on your computer; bake overlays into their pixels. FreeVideo receives media, not your code. Use the project dimensions (even pixels), 24 fps and integer frame positions; seconds = frames / 24.',
+        'Download generated shots using result.video.url, library video.url, or sources[key].video/audio from GET /projects/{id}, with the same Authorization: Bearer token (Range supported). These URLs are relative to the server origin. Render your changes locally.',
+        'POST /imports accepts multipart file then optional ref, or JSON {name, data_base64, ref?}; HTTP never reads a local path. MCP freevideo_import_media and CLI imports add read a local path and upload content, like media upload. Limits: 2 GiB content, 96 MiB JSON body, and the same media decode limits.',
+        'The answer is {import: {id, source: "import:<id>", state, fraction, ...}}. As on the page, poll GET /imports (MCP freevideo_imports, CLI imports list) about every two seconds. Match id in items; preparing is not insertable, ready is usable, failed is terminal with reason. Same ref or Idempotency-Key and filename/content reuses one import for that X-FreeVideo-Client, including after restart; changed content conflicts.',
+        'The page receiver and transcode queue create an upright 24 fps H.264 preview by dropping/duplicating timestamped frames, with even dimensions and longest side at most 1920; preview audio is 32 kHz stereo AAC. Original dimensions are retained. Inserting the first video follows its original size by default (up to 8192 pixels); set project size_mode="fixed" to keep a chosen canvas. Later clips fit the canvas (cover by default). Export reads the original when available at the project output size/rate (preview fallback if missing).',
+        'Insert with {op:"insert", source:"import:<id>", at:48} in POST /projects/{id}/operations using the current revision. Add subtitles/text and audio through project operations, then POST /projects/{id}/export and wait for the job. There is one video track; effects are baked into complete clips, not separate overlay tracks or blend modes.',
+    ],
     'editing_images': [
         'POST /images opens a picture as the image editor does; GET /images/{id} reads its document (layers), selection and revision.',
         'POST /images/{id}/operations sends revision and 1-64 operations run with the page\'s own commands; the batch saves once or changes nothing. Layer IDs of new layers are in results[i].new_layer_ids.',
@@ -275,6 +283,8 @@ CAPABILITIES_ZH = {
     ('POST', '/jobs/{id}/cancel'): '取消任务',
     ('POST', '/jobs/{id}/resume'): '接着生成一条视频里还没完成的部分',
     ('POST', '/media'): '上传图片、视频或音频内容',
+    ('POST', '/imports'): '导入视频或音频到剪辑时间线；轮询 GET /imports 等待就绪',
+    ('GET', '/imports'): '列出已导入素材和准备进度',
     ('GET', '/media/{kind}/{file}/file'): '下载上传或处理后的素材',
     ('POST', '/media/inspect'): '查看素材信息',
     ('POST', '/media/frame'): '提取视频的一帧',
