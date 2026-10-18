@@ -43,6 +43,21 @@ function currentStudioWorkflow(saved, bundled) {
     if (finite(height, 256, 4096) && Number.isInteger(height)) node.widgets_values[2] = height;
     if (finite(seconds, 1.625, 60)) node.widgets_values[3] = seconds;
     if (finite(seed, 0, 2 ** 53 - 1) && Number.isInteger(seed)) node.widgets_values[4] = seed;
+    // A tab saved by 0.4.13 or later keeps these at fixed positions (6, 7, 8, 17, 18); an unstamped one moved them.
+    const [major, minor, patch] = String(old.properties?.freevideo_version).split('.').map(Number);
+    const stamped = [major, minor, patch].every(Number.isInteger) && (major > 0 || minor > 4 || (minor === 4 && patch >= 13));
+    if (stamped && Array.isArray(old.widgets_values)) {
+        const values = node.widgets_values, kept = old.widgets_values;
+        // The bundled workflow lists only the first widgets: fill up to the last one with the node's defaults.
+        const defaults = [8, 3, false, false, '', '', 0, false, false, false, 'none', '2'];
+        while (values.length < 19) values.push(defaults[values.length - 7]);
+        if (typeof kept[6] === 'boolean') values[6] = kept[6];
+        // The quality level is these steps: High and Max are 20 first-pass steps.
+        if (Number.isInteger(kept[7]) && finite(kept[7], 1, 32)) values[7] = kept[7];
+        if (Number.isInteger(kept[8]) && finite(kept[8], 1, 31)) values[8] = kept[8];
+        if (['none', 'easycache-av', 'fbcache'].includes(kept[17])) values[17] = kept[17];
+        if (['2', '1.5', '1.2'].includes(kept[18])) values[18] = kept[18];
+    }
     const media = graph.nodes.find(row => row.type === 'FreeVideoMedia');
     const assets = (saved.nodes.find(row => row.type === 'FreeVideoMedia')?.widgets_values || [])[0];
     try {
