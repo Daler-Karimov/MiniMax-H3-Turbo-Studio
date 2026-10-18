@@ -1099,6 +1099,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
     stage.append(stageMedia); previewSpace.append(stage);
     const progress = createGenerationProgress(t, undefined, {compact: true, api}); stage.append(progress.element);
     const chainLine = el('div', '', 'fv-muted fv-chain-position'); chainLine.hidden = true; progress.element.prepend(chainLine);
+    // The queued count sits after the part number; a line too narrow for both keeps the part number only.
+    const setChainLine = text => {
+        const main = el('span', text), more = chainController?.waiting;
+        chainLine.replaceChildren(main, ...(more ? [el('span', t(` · ${more} more queued`, ` · 另有 ${more} 条排队`), 'fv-chain-queued')] : []));
+    };
     progress.updateReport({report_id: node.freevideoReportId});
     cleanup.push(() => progress.dispose());
     cleanup.push(createPreviewScene(stage, progress.element, stageMedia));
@@ -1302,13 +1307,13 @@ export function openStudio(node, {extendFrom = null} = {}) {
         },
     }));
     const queueController = studioQueues.get(node);
-    let chainWasActive = false;
+    let chainWasActive = false, stopNote = '';
     chainController = createStudioChain({api, node, onProgress: (message, chain) => {
             const position = chainPosition(chain, message);
             const joining = readChainResult(chain).joining, waiting = chain.state === 'queued' && message.phase === 'prepare';
-            chainLine.textContent = joining ? t('Joining the parts.', '正在接合各段。')
+            setChainLine(joining ? t('Joining the parts.', '正在接合各段。')
                 : waiting ? t(`Waiting in queue · Part ${position.index + 1} of ${position.count}`, `正在排队 · 第 ${position.index + 1} 段，共 ${position.count} 段`)
-                : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`);
+                : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`));
             progress.element.querySelector('.fv-generation-label').hidden = joining || waiting;
             progress.updateReport(message); showProgress(message);
         },
@@ -1324,12 +1329,14 @@ export function openStudio(node, {extendFrom = null} = {}) {
             partList.update(chain, active);
             busy = active || Boolean(queueState?.running || queueState?.pending.length); queued = chain?.state === 'queued';
             chainLine.hidden = !active;
-            chainLine.textContent = outcome?.joining ? t('Joining the parts.', '正在接合各段。')
-                : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`);
+            setChainLine(outcome?.joining ? t('Joining the parts.', '正在接合各段。')
+                : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`));
             if (active && node.properties.freevideo_chain?.width) previewSize(node.properties.freevideo_chain.width, node.properties.freevideo_chain.height);
             if (!active) { cancelling = false; hideProgress(); }
             if (!active) progress.element.querySelector('.fv-generation-label').hidden = false;
             if (chain?.state === 'cancelled') status.textContent = t('Cancelled', '已取消');
+            // After a stop with videos queued the next one starts at once; its line says so until something else is done.
+            if (stopNote) { status.dataset.error = 'false'; status.textContent = stopNote; }
             resumeChain.hidden = !['cancelled', 'failed', 'interrupted'].includes(chain?.state);
             queueActions.hidden = !active && !busy && resumeChain.hidden;
             updateRunButton();
@@ -1439,15 +1446,18 @@ export function openStudio(node, {extendFrom = null} = {}) {
         runMode = multiple || extension.source ? 'single'
             : ['single', 'batch', 'loop'].includes(node.properties?.freevideo_run_mode) ? node.properties.freevideo_run_mode : runMode;
         const chain = chainController?.state, position = chainPosition(chain);
-        const chainReason = !chainController?.active ? '' : readChainResult(chain)?.joining
+        // Only another long video can join a running chain; a single-part request would be submitted
+        // straight to the busy GPU, so its button waits like a full queue does.
+        const chainWait = Boolean(chainController?.active && (!chainController.canQueue || !multiple));
+        const chainReason = !chainWait ? '' : readChainResult(chain)?.joining
             ? t('Joining parts…', '正在拼接…')
             : chain?.state === 'queued' ? t('Queued…', '排队中…')
             : t(`Generating part ${position.index + 1}…`, `正在生成第 ${position.index + 1} 段…`);
-        generate.disabled = submitting || chainController?.active || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
+        generate.disabled = submitting || chainWait || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
         generate.textContent = submitting ? t('Adding…', '正在添加…')
             : chainReason || (runMode === 'batch' ? t(`Add ${count.value || '…'} videos`, `添加 ${count.value || '…'} 个视频`)
             : runMode === 'loop' ? (queueState?.looping ? t('Looping', '循环中') : t('Start loop', '开始循环'))
-            : busy ? t('Add to queue', '添加到队列')
+            : busy ? t('Add to queue', '加入队列')
             : previewFirst.checked && !previewFirst.disabled ? t('Generate preview', '生成预览') : t('Generate video', '生成视频'));
         generate.title = (lengthControl.blocked ? lengthControl.message : submitting ? t('Adding…', '正在添加…') : '');
         for (const b of modeButtons) b.setAttribute('aria-pressed', String(b.dataset.mode === runMode));
@@ -1543,7 +1553,12 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (cancelling) return;
         try {
             cancelling = true; updateRunButton();
-            if (chainController.active) { await chainController.cancel(); cancelling = false; updateRunButton(); return; }
+            if (chainController.active) {
+                stopNote = chainController.waiting > 0 ? t('Stopped. The next queued video is starting.', '已停止，队列中的下一条开始生成。') : '';
+                await chainController.cancel(); cancelling = false; updateRunButton();
+                if (stopNote) { status.dataset.error = 'false'; status.textContent = stopNote; }
+                return;
+            }
             await syncQueue();
             const id = queueController.state().running?.id;
             if (!id) { cancelling = false; updateRunButton(); return; }
@@ -1579,7 +1594,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         let held = null, accepted = false;
         const onAccepted = () => { accepted = true; };
         try {
-            lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
+            stopNote = ''; lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
             capturing = true; updateRunButton(); status.dataset.error = 'false'; runOptions.open = false;
             lengthControl.freeze();
             if ((!extension.source || prompt.value.trim()) && await enhancer.beforeGenerate() === false) return;
@@ -1604,8 +1619,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;
             if (lengthPlan?.count > 1) {
+                const waitingBefore = chainController.waiting;
                 const chain = await chainController.start(snapshot, lengthOptions, {onAccepted});
                 if (disposed) return;
+                if (chain && chainController.waiting > waitingBefore) { status.dataset.error = 'false'; status.textContent = addedNote; return; }
                 if (!chain) { if (source) throw new Error(extendText(t, 'unavailable')); lengthControl.fallback(); if (!seconds.reportValidity()) return;
                     await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted}); }
             } else await queueController.start(snapshot, {count: batchCount, repeat: chosenMode === 'loop', seedIndex, onAccepted});
@@ -1685,6 +1702,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         b.append(el('span', null, 'fv-shape-icon'), el('span', label)); shapes.append(b);
     }
     mp.onchange = () => { try { pixels = Number(mp.value); applySize(); if (pixels !== 1) legacyOption?.remove(); } catch (error) { status.dataset.error = 'true'; status.textContent = error.message; } };
+    // The note describes the request just sent; once the draft changes it could read as the new one.
+    const addedNote = t('Added to the queue. It starts when the current video finishes.', '已加入队列，当前视频完成后自动开始。');
+    const clearAddedNote = () => { if (status.textContent === addedNote) status.textContent = ''; };
+    seconds.addEventListener('input', clearAddedNote); prompt.addEventListener('input', clearAddedNote);
     seconds.onchange = () => { if (lengthControl.commit({report: false})) updateCanvas(); };
     const mediaChanged = async e => { if (String(e.detail) !== String(mediaNode?.id)) return; refreshEffortEstimate(true); if (selected !== 'input') return; try { await inputRatio(); } catch (error) { status.textContent = error.message; } };
     const lorasChanged = e => { if (String(e.detail) === String(loraNode?.id)) refreshEffortEstimate(true); };
