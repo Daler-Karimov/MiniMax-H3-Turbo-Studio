@@ -141,7 +141,7 @@ def register():
         value = json.loads((source / 'example_workflows' / 'FreeVideo-All-in-One.json').read_text(encoding='utf-8'))
         # The tab restored from an older version is replaced when this stamp differs.
         from .release_notes import installed_details
-        version = installed_details(source).get('version')
+        version = installed_details(Path(__file__).parent).get('version')
         if isinstance(version, str) and version:
             for node in value['nodes']:
                 if node.get('type') == 'FreeVideoGenerate':
