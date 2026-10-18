@@ -6,11 +6,11 @@ import re
 import shutil
 import sys
 
-import freevideo_ed25519 as ed25519
-import freevideo_source_bootstrap as source
-import freevideo_update_keys as keys
 from . import disk_space, execution_paths, network
 from . import launcher_update as update
+from .top_level_modules import update_modules
+
+ed25519, keys, source = update_modules()
 
 log = logging.getLogger(__name__)
 DOMAIN = b'FreeVideo source manifest v1\x00'

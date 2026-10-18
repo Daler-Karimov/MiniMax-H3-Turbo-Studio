@@ -172,9 +172,10 @@ def check_launcher_payload(source, destination):
 def materialize_source(bundle=None, destination=None):
     """A one-file executable's temporary extraction must never back an editable install."""
     if bundle is None:
-        import freevideo_source_bootstrap
-        if freevideo_source_bootstrap.ACTIVE:
-            return Path(plain(freevideo_source_bootstrap.ACTIVE['source']))
+        from .top_level_modules import update_modules
+        active = update_modules()[2].ACTIVE
+        if active:
+            return Path(plain(active['source']))
     if bundle is None and not getattr(sys, 'frozen', False):
         return Path(plain(resolved(__file__).parents[1]))
     bundle = io_path(bundle or Path(sys._MEIPASS) / 'engine-source')

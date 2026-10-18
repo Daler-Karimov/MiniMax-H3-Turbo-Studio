@@ -20,14 +20,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import freevideo_ed25519 as ed25519
-import freevideo_update_keys as keys
 from . import execution_paths
+from .top_level_modules import load
 from .monitoring import save
 from .long_paths import io_path, resolved, plain, plain_errors
 from . import disk_space, network
 from .launcher_settings import default_language
 from .system import windows
+
+ed25519, keys = load('freevideo_ed25519'), load('freevideo_update_keys')
 
 REPOSITORY = 'FlashML-org/FreeVideo'
 # Mirror repository on the ModelScope domestic site; the release script uploads each release there.
