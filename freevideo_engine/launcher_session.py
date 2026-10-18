@@ -815,6 +815,9 @@ class Session:
         engine = self._image_location()[1]
         if self.prompt_installer and self.prompt_installer.busy:
             return
+        from .prompt_vlm import assets
+        if assets.checking(engine):
+            return
         if not (self.prompt_installer and self.prompt_installer.root == engine):
             self.prompt_installer = prompt_installer.Installer(engine, busy=self.generating)
         self.prompt_installer.start()
@@ -826,6 +829,7 @@ class Session:
         total = sum(row['bytes'] for row in spec['files'])
         engine = self._image_location()[1] if self.installation_engine() else None
         ready = bool(engine) and assets.ready(engine)
+        checking = bool(engine) and not ready and assets.checking(engine)
         installer = self.prompt_installer
         active = installer.state() if installer and engine and installer.root == engine else {}
         busy = bool(active and installer.busy)
@@ -841,9 +845,9 @@ class Session:
             failure = {'disk_space': self.t('Not enough disk space.', '磁盘空间不足。'),
                        'busy': self.t('Another download of this model is running.', '这个模型正在被另一处下载。')}.get(
                 active.get('reason'), self.t('The download stopped. Resume to continue.', '下载中断了，点继续可接着下载。'))
-        return dict(ready=ready, total_bytes=total, enough_disk=enough, busy=busy, install=active, failure=failure,
+        return dict(ready=ready, checking=checking, total_bytes=total, enough_disk=enough, busy=busy, install=active, failure=failure,
                     downloaded_bytes=active.get('done', 0), title=self.t(*NAMES['text']),
-                    suggest=bool(engine) and not ready and not busy and enough and not self.form['prompt_hint_dismissed']
+                    suggest=bool(engine) and not ready and not checking and not busy and enough and not self.form['prompt_hint_dismissed']
                     and active.get('state') not in ('failed', 'cancelled'))
 
     def dismiss_prompt_hint(self):

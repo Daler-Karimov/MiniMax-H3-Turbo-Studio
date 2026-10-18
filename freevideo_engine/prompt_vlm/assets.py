@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import shutil
+import threading
 from .. import disk_space
 
 FAMILY = 'image-models'
@@ -17,15 +18,107 @@ def directory(root):
 
 
 def ready(root):
+    """Cheap, safe on the launcher's UI thread: version, sizes and modified times only.
+
+    Files whose modified time moved are checked by content once, in the
+    background; this returns False until that check has accepted them."""
+    return _state(root, wait=False)
+
+
+def settle(root):
+    """Same answer, but a moved modified time is checked by content in the
+    calling thread. For request handlers, never for a UI thread or under a lock."""
+    return ready(root) or _state(root, wait=True)
+
+
+_RECHECK = threading.Lock()
+_BOOKKEEPING = threading.Lock()
+_OUTCOME = {}
+_RUNNING = set()
+
+
+def _state(root, wait):
     spec, folder = catalog(), directory(root)
     try:
         receipt = json.loads((folder / 'verified.json').read_text(encoding='utf-8'))
-        return receipt.get('revision') == spec['revision'] and all(
-            (folder / row['file']).stat().st_size == row['bytes'] and
-            receipt['files'].get(row['file']) == (folder / row['file']).stat().st_mtime_ns
-            for row in spec['files'])
+        if receipt.get('revision') != spec['revision']:
+            return False
+        stats = {row['file']: (folder / row['file']).stat() for row in spec['files']}
+        if any(stats[row['file']].st_size != row['bytes'] for row in spec['files']):
+            return False
+        moved = [row for row in spec['files']
+                 if receipt['files'].get(row['file']) != stats[row['file']].st_mtime_ns]
+        if not moved:
+            return True
+        key = (str(folder), spec['revision'],
+               tuple((row['file'], stats[row['file']].st_size, stats[row['file']].st_mtime_ns) for row in moved))
+        known = _OUTCOME.get(key)
+        if known is not None:
+            return known
+        if wait:
+            return _recheck(folder, spec, moved, key)
+        with _BOOKKEEPING:
+            if key in _RUNNING:
+                return False
+            _RUNNING.add(key)
+        threading.Thread(target=_recheck, args=(folder, spec, moved, key), daemon=True,
+                         name='prompt-model-recheck').start()
+        return False
     except (OSError, ValueError, KeyError, TypeError):
         return False
+
+
+def checking(root):
+    """True while the files' content is being checked after a modified time moved.
+
+    A cheap look at the same file identity ready() uses, for a page that must not
+    call the model missing, or offer its download, in the meantime."""
+    spec, folder = catalog(), directory(root)
+    try:
+        receipt = json.loads((folder / 'verified.json').read_text(encoding='utf-8'))
+        if receipt.get('revision') != spec['revision']:
+            return False
+        stats = {row['file']: (folder / row['file']).stat() for row in spec['files']}
+        if any(stats[row['file']].st_size != row['bytes'] for row in spec['files']):
+            return False
+        key = (str(folder), spec['revision'], tuple(
+            (row['file'], stats[row['file']].st_size, stats[row['file']].st_mtime_ns)
+            for row in spec['files'] if receipt['files'].get(row['file']) != stats[row['file']].st_mtime_ns))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    with _BOOKKEEPING:
+        return key in _RUNNING and key not in _OUTCOME
+
+
+def _recheck(folder, spec, moved, key):
+    """Accept files whose modified time changed (copied folder, unpacked archive,
+    antivirus) when their content still matches the catalog, then refresh the
+    receipt. The outcome is remembered per file identity, so one set of files is
+    hashed once whatever the answer."""
+    from .. import provision
+    from ..monitoring import save
+    ledger_path = folder / 'download-verified.json'
+    try:
+        with _RECHECK:
+            if key in _OUTCOME:
+                return _OUTCOME[key]
+            try:
+                ledger = json.loads(ledger_path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                ledger = {}
+            ok = all(provision.verified(folder / row['file'], row, ledger) for row in moved)
+            if ok:
+                save(ledger_path, ledger)
+                save(folder / 'verified.json', dict(revision=spec['revision'], files={
+                    row['file']: (folder / row['file']).stat().st_mtime_ns for row in spec['files']}))
+            _OUTCOME[key] = ok
+            return ok
+    except Exception:
+        _OUTCOME[key] = False
+        return False
+    finally:
+        with _BOOKKEEPING:
+            _RUNNING.discard(key)
 
 
 def remote(spec, row):

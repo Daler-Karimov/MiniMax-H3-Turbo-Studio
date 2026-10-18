@@ -197,7 +197,7 @@ def capabilities(port, jobs):
     service = getattr(port.server, '_freevideo_prompt_vlm', None)
     if service is not None:
         try:
-            vlm = {k: v for k, v in service.info().items() if k in ('ready', 'model', 'license', 'bytes', 'busy')}
+            vlm = {k: v for k, v in service.info(wait=False).items() if k in ('ready', 'model', 'license', 'bytes', 'busy')}
         except (OSError, ValueError):
             vlm = dict(ready=False)
     running, pending = port.snapshot()

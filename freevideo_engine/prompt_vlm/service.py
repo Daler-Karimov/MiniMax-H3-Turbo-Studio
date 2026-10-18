@@ -217,10 +217,11 @@ class Service:
                                pass_fds=() if descriptor is None else (descriptor,),
                                supervise=True, start_new_session=True)
 
-    def info(self):
+    def info(self, wait=True):
+        """wait=False answers from the cheap check, for callers on an event loop or UI thread."""
         root, machine = self.installation()
         spec = assets.catalog()
-        return dict(ready=assets.ready(root), model=spec['repo'], license=spec['license'],
+        return dict(ready=assets.settle(root) if wait else assets.ready(root), model=spec['repo'], license=spec['license'],
                     bytes=sum(row['bytes'] for row in spec['files']), busy=self.busy(),
                     ram_bytes=self.ram_bytes(machine))
 
@@ -271,15 +272,15 @@ class Service:
             if value.get('accept_download') is not True:
                 raise ValueError('consent_required')
         elif action == 'ask':
-            if not assets.ready(root):
+            if not assets.settle(root):
                 raise ValueError('model_missing')
             value = self.ask_images(rules.ask_request(value))
         elif action == 'split':
-            if not assets.ready(root):
+            if not assets.settle(root):
                 raise ValueError('model_missing')
             value = rules.split_request(value)
         else:
-            if not assets.ready(root):
+            if not assets.settle(root):
                 raise ValueError('model_missing')
             value = rules.request(value)
             from ..comfy_assets import resolve_assets
@@ -627,6 +628,7 @@ def stop_prestart_for_generation(server):
 
 
 def register():
+    import asyncio
     from aiohttp import web
     from server import PromptServer
     import folder_paths
@@ -641,7 +643,7 @@ def register():
     @server.routes.get('/freevideo/prompt-vlm')
     async def info(request):
         try:
-            return web.json_response(dict(service.info(), token=token))
+            return web.json_response(dict(await asyncio.to_thread(service.info), token=token))
         except (OSError, ValueError):
             return web.json_response(dict(error='setup_required'), status=400)
 
@@ -670,6 +672,10 @@ def register():
                 running, pending = server.prompt_queue.get_current_queue()
                 if running or pending:
                     raise ValueError('busy')
+                if name in ('ask', 'split', 'rewrite'):
+                    # A moved modified time is checked by content here, off the event loop;
+                    # start() then finds the remembered answer.
+                    await asyncio.to_thread(assets.settle, service.installation()[0])
                 result = service.start(name, value)
             return web.json_response(result)
         except (ValueError, OSError) as error:
