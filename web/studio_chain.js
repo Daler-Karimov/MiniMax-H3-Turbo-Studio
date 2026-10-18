@@ -3,7 +3,6 @@ import {buildChainRequest} from './length_plan.js?v=20261011-length';
 
 export const CHAIN_PROPERTY = 'freevideo_chain';
 const activeStates = new Set(['queued', 'running', 'cancelling']);
-const MAX_WAITING = 5;
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const post = body => ({method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
 
@@ -56,17 +55,14 @@ export function singleRunSnapshot(snapshot, node, plan) {
 
 export function createStudioChain({api, node, onState = () => {}, onProgress = () => {}, onResult = () => {},
     onError = () => {}, pollMs = 2000, now = () => Date.now()}) {
-    let chain = null, poller = null, disposed = false, epoch = 0, submitting = false, promoting = false;
-    // Chains the server took while another was running; the next one is shown when the running one stops.
-    const waiting = [];
+    let chain = null, poller = null, disposed = false, epoch = 0, submitting = false;
     let previous = {}, lastMessage = {}, delivered = null, errorShown = null, corrected = false, etaAt = 0, lastIndex = -1;
     const timers = new Set();
     const clock = {now, setTimeout(fn, ms) { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; },
         clearTimeout(id) { clearTimeout(id); timers.delete(id); }};
     function clearPolls() { for (const id of timers) clearTimeout(id); timers.clear(); }
     function refresh() { clearPolls(); return poller?.poll(); }
-    const running = () => activeStates.has(chain?.state) || chain?.output_state === 'joining';
-    const active = () => submitting || running();
+    const active = () => submitting || activeStates.has(chain?.state) || chain?.output_state === 'joining';
     async function json(path, options, allowMissing = false) {
         const response = await api.fetchApi(path, options);
         if (response.status === 404 && allowMissing) return null;
@@ -106,7 +102,6 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
         chain = value; onState(chain);
         const result = readChainResult(chain);
         if (active()) progress({}, fresh);
-        else if (waiting.length) void promote();
         if (result.error && errorShown !== result.error) {
             errorShown = result.error; onError(Object.assign(new Error(result.error), {joining: chain.output_state === 'failed', ...chainPosition(chain)}));
         }
@@ -120,24 +115,6 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
                 geometry: {width: metadata.width, height: metadata.height}, report_id: chain.last_report_id}, result, chain);
         }
         return active();
-    }
-    async function promote() {
-        if (promoting || disposed) return;
-        promoting = true;
-        let again = false;
-        try {
-            while (waiting.length && !disposed && !running()) {
-                const next = waiting[0];
-                let value;
-                try { value = (await json(chainRoute(next.id), {cache: 'no-store'}, true))?.chain; }
-                catch { again = true; break; }
-                waiting.shift();
-                if (!value?.id || value.state === 'cancelled') continue;
-                adopt(value, next.metadata); break;
-            }
-        } finally { promoting = false; }
-        if (again && !disposed) clock.setTimeout(() => void promote(), 3000);
-        else if (!disposed && chain) onState(chain);
     }
     function watch(fresh = false) {
         poller?.dispose(); clearPolls();
@@ -158,10 +135,9 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
             const known = node.properties?.[CHAIN_PROPERTY]?.id;
             const reply = await json('/freevideo/chains', undefined, true);
             if (disposed || version !== epoch || chain) return;
-            const mine = row => String(row.node) === String(node.id) && activeStates.has(row.state) && row.client_id && row.client_id === api.clientId;
-            const found = reply?.chains?.find(row => String(row.node) === String(node.id) && (known ? row.id === known : mine(row)));
+            const found = reply?.chains?.find(row => String(row.node) === String(node.id) && (known ? row.id === known
+                : activeStates.has(row.state) && row.client_id && row.client_id === api.clientId));
             if (!found) return;
-            for (const row of reply.chains) if (row.id !== found.id && mine(row)) waiting.push({id: row.id, metadata: null});
             const value = (await json(chainRoute(found.id), undefined, true))?.chain;
             if (disposed || version !== epoch || chain || !value) return;
             adopt(value);
@@ -201,12 +177,10 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
     }
     recover();
     return {
-        get active() { return active(); }, get state() { return chain; }, get waiting() { return waiting.length; },
-        // A chain that is running does not stop the next one from being added behind it.
-        get canQueue() { return !disposed && !submitting && running() && chain?.state !== 'cancelling' && waiting.length < MAX_WAITING; },
+        get active() { return active(); }, get state() { return chain; },
         async start(snapshot, options, {onAccepted = null} = {}) {
-            if (disposed || submitting || (running() && waiting.length >= MAX_WAITING)) throw new Error('chain_busy');
-            submitting = true;
+            if (disposed || active()) throw new Error('chain_busy');
+            submitting = true; epoch++;
             try {
                 const body = buildChainRequest(options, {node: node.id, prompt: snapshot.output,
                     extra_data: {extra_pnginfo: {workflow: snapshot.workflow || {}}}, ...(api.clientId ? {client_id: api.clientId} : {})});
@@ -215,10 +189,7 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
                 if (!value.id) throw new Error('chain_missing');
                 onAccepted?.();
                 const inputs = snapshot.output[String(node.id)].inputs;
-                const metadata = {width: inputs.width, height: inputs.height, seconds: options.seconds};
-                submitting = false;
-                if (running() && chain.id !== value.id) { waiting.push({id: value.id, metadata}); onState(chain); return value; }
-                epoch++; adopt(value, metadata);
+                submitting = false; adopt(value, {width: inputs.width, height: inputs.height, seconds: options.seconds});
                 return value;
             } finally { submitting = false; }
         },
