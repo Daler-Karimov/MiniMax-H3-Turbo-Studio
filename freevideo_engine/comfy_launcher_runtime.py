@@ -405,6 +405,19 @@ def address(hostname, port):
     return 'http://%s:%d' % ('[%s]' % hostname if ':' in hostname else hostname, port)
 
 
+def lan_access_links(engine, port, *, password_set=None):
+    """Use the same phone entry and authentication policy for launcher and page."""
+    from .comfy_service import token
+    from .proxy import local_addresses
+    hosts = local_addresses()
+    if not hosts:
+        return []
+    if password_set is None:
+        password_set = lan_password.is_set(engine)
+    suffix = '/m/' if password_set else '/m/?freevideo=launch&token=' + token(engine)
+    return [address(host, port) + suffix for host in hosts]
+
+
 def next_free_address(url, count=12):
     """The next local address after this one that nothing listens or answers on, as setup.sh chooses."""
     parsed = urlsplit(url)
@@ -743,13 +756,10 @@ class Controller:
         self.state = dict(self.state, selection=dict(self.selection), lan_status='stopped')
 
     def refresh_access_links(self):
-        from .comfy_service import token
-        from .proxy import local_addresses
         self.access_polled = time.monotonic()
-        secret = token(self.selection['engine'])
         password_set = lan_password.is_set(self.selection['engine'])
-        suffix = '/m/' if password_set else '/m/?freevideo=launch&token=' + secret
-        self.access_links = [address(host, self.selection['lan_port']) + suffix for host in local_addresses()]
+        self.access_links = lan_access_links(self.selection['engine'], self.selection['lan_port'],
+                                            password_set=password_set)
         self.state = dict(self.state, lan_status='' if self.access_links else 'no-address', lan_password_set=password_set)
 
     def check_access_proxy(self):
