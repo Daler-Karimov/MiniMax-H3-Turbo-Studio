@@ -1134,7 +1134,7 @@ class Controller:
         """Take the next free port for this ComfyUI and keep it in the selection the launcher saves."""
         url = next_free_address(selected['url'])
         if url is None:
-            raise ValueError('Other programs use this port and the next ones. Set a different local ComfyUI address.')
+            raise ValueError('This port and the next ones are in use or reserved by the system. Set a different local ComfyUI address.')
         if self.port_move is None:
             self.port_move = urlsplit(selected['url']).port or 80
         selected = self.selection = dict(selected, url=url)
@@ -1209,7 +1209,7 @@ class Controller:
                 port = (urlsplit(selected['url']).port or 80) + 1
             candidate = next_free_address(address('0.0.0.0', port - 1)) if port <= 65535 else None
             if candidate is None:
-                raise ValueError('The ports for LAN access are in use. Choose another ComfyUI port.')
+                raise ValueError('The ports for LAN access are in use or reserved by the system. Choose another ComfyUI port.')
             port = urlsplit(candidate).port
             self.selection = selected = dict(selected, lan_port=port)
             self.state = dict(self.state, selection=dict(selected))
