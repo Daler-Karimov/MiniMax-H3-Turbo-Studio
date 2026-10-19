@@ -5,7 +5,7 @@
     "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
     "changes": [
       "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
-      "Image generation: on 6–8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
+      "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
       "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
       "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
       "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
@@ -13,7 +13,7 @@
       "Mac: long videos can now be generated in parts.",
       "Launcher and updates: Windows updates download faster in mainland China. When GitHub is slow, the launcher can fetch the update from a domestic mirror, and every file from the mirror is checked against the release signature before use. The install confirmation page now fits narrow windows: the sidebar collapses to icons and the buttons stay visible.",
       "Workflows: workflows saved by older versions run again. Options added in later versions that are empty or invalid in an old file are set back to their defaults.",
-      "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920×1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
+      "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920x1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
       "LoRA: a LoRA trained for Wan 2.x now says so when it is selected for the int8 model, instead of only saying it cannot be used.",
       "Linux: on computers with less memory, generating again right after a generation no longer runs out of memory near the end of sampling. On 6 GB graphics cards, Max no longer takes hours to finish."
     ]
