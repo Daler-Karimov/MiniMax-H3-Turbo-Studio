@@ -557,6 +557,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 state.settle(record => pinStoppedJob(record, [block.id], job.id));
             } else if (block.state === 'running' && clip.pending !== 'running') state.settle(record => model.settle(record, [block.id], 'running'));
         }
+        // The status word of a part the engine dropped is read from the job, which arrives after the record is drawn.
+        const dropped = job => (job?.blocks || []).filter(block => block.state === 'interrupted').length;
+        if (dropped(job) !== dropped(previous)) tracks?.refresh?.();
         genbar?.update(barJob(job)); updateTop(); updateTransport();
         const active = ['queued', 'running', 'cancelling'].includes(job.state);
         if (completed.size || (!active && previous?.state !== job.state) || (job.output && job.output !== previous?.output))
@@ -781,6 +784,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         reasonText: value => editorErrorText(value, t),
         failureText: id => failures.text(id),
+        // A part that was running when the engine went away, as opposed to one the user stopped.
+        interrupted: clip => clip.pending === 'stopped' && !clip.source && !!clip.job
+            && (jobStatuses.get(clip.job)?.blocks || []).some(block => block.state === 'interrupted' && model.attemptClip(state.record, block.id)?.id === clip.id),
         selectedFailure() {
             const clip = state.selection?.kind === 'clip' && state.record.tracks.flatMap(track => track.clips).find(clip => state.selection.ids.includes(clip.id) && clip.pending === 'failed');
             if (clip) return {id: clip.id, text: failures.text(clip.id)};
