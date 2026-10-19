@@ -647,6 +647,25 @@ def _report(run):
     return report if isinstance(report, dict) else {}
 
 
+def _checkpoint_change(report):
+    """The file-identity fields a streamed checkpoint check found changed, or ''.
+
+    Only the fixed names kept by the diagnostics: no paths or timestamp values.
+    """
+    from .diagnostic_resources import checkpoint_change
+    encoding, attempts = report.get('encoding_failure'), report.get('resource_attempts')
+    found = [report, encoding.get('failure') if isinstance(encoding, dict) else None]
+    found += [row.get('failure') for row in attempts if isinstance(row, dict)] if isinstance(attempts, list) else []
+    for holder in found:
+        rows = holder.get('exception') if isinstance(holder, dict) else None
+        for row in rows if isinstance(rows, list) else [rows]:
+            if isinstance(row, dict) and row.get('category') == 'checkpoint_changed':
+                change = checkpoint_change(row.get('checkpoint_change'))
+                if change.get('source') and change['fields']:
+                    return 'Checkpoint changed: %s (%s)' % (change['source'], ', '.join(change['fields']))
+    return ''
+
+
 # Stands in for the repair sentence until the report text is redacted: the
 # redactor reads "Install / repair" as a path.
 REPAIR_MARK = 'FREEVIDEO_REPAIR_SENTENCE'
@@ -685,6 +704,9 @@ def generation_failure(run, exit_code=None, *, repair=None):
     explained = _runtime_explanation(report, REPAIR_MARK)
     if explained:
         lines.append(explained)
+    changed = _checkpoint_change(report)
+    if changed:
+        lines.append(changed)
     error = report.get('error_message') or report.get('error')
     if isinstance(error, str):
         lines.append(error[:8192])
