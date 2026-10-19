@@ -97,11 +97,12 @@ class _Placement:
                 runner.dit_stack.set_resident(_kept(runner.last_plan))
             self._trim()
 
-    @staticmethod
-    def _trim():
+    def _trim(self):
         # Stage peaks are planned on allocated bytes; give the cached blocks back so the
         # next stage's workspace is not fragmented by the previous one's.
-        if torch.cuda.is_available():
+        if self.runner.device.type == 'mps':
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 
@@ -117,6 +118,7 @@ class ImageRunner:
     """
 
     full_card = False
+    mapped = False
 
     def __init__(self, pack_dir, *, device='cuda', gpu_budget_bytes=None, log=None, progress=None):
         from .qwen_pipeline import QwenImageGenerator
@@ -136,9 +138,12 @@ class ImageRunner:
         loading = _LoadProgress(progress or (lambda stage, fraction: None))
         started = time.monotonic()
         # A card that holds every weight plus a request's working memory keeps no host copy.
-        self.full_card = self._fits_whole_model()
+        # An Apple GPU shares the host's memory: its layers stay views of the mapped files (mapped.py).
+        self.mapped = self.device.type == 'mps'
+        self.full_card = not self.mapped and self._fits_whole_model()
         self.transformer = load_dit(self.pack_dir / _DIT_FILE, device=self.device if self.full_card else 'cpu',
-                                    progress=lambda done, total: loading.report('dit', done, total))
+                                    progress=lambda done, total: loading.report('dit', done, total),
+                                    **({'mapped': True} if self.mapped else {}))
         self.load_seconds['dit'] = time.monotonic() - started
         loading.complete('dit')
         started = time.monotonic()
@@ -150,7 +155,8 @@ class ImageRunner:
         config_dir = self.pack_dir / 'text_encoder'
         processor_dir = self.pack_dir / 'processor'
         text = load_text_encoder(self.pack_dir / _TE_FILE, config_path=config_dir / 'config.json', device='cpu',
-                                 progress=lambda done, total: loading.report('text', done, total))
+                                 progress=lambda done, total: loading.report('text', done, total),
+                                 **({'mapped': True} if self.mapped else {}))
         from transformers import Qwen3VLProcessor
         processor = Qwen3VLProcessor.from_pretrained(str(processor_dir), local_files_only=True)
         self.load_seconds['text'] = time.monotonic() - started
@@ -183,7 +189,15 @@ class ImageRunner:
             return lambda done, total: loading.report(
                 'pin', offset + stack_bytes[index] * (done / total if total else 0.), pin_total)
 
-        if self.full_card:
+        if self.mapped:
+            from .mapped import MappedStack
+            self.dit_stack = MappedStack(stacks[0], name='dit', device=self.device)
+            self.te_stack = MappedStack(stacks[1], name='text_encoder', device=self.device)
+            from . import mlx_attention, qwen_dit
+            if mlx_attention.available() and not getattr(qwen_dit.attention, 'mlx', False):
+                qwen_dit.attention = mlx_attention.routed(qwen_dit.attention)
+                qwen_dit.attention.mlx = True
+        elif self.full_card:
             # Move the encoder layers over one at a time so the host copy is freed as it goes.
             for layer in stacks[1]:
                 layer.to(self.device)
@@ -246,6 +260,9 @@ class ImageRunner:
     def budget(self):
         if self.gpu_budget_bytes is not None:
             return int(self.gpu_budget_bytes)
+        if self.device.type == 'mps':
+            from ..system import system_memory
+            return image_policy.unified_budget(system_memory()['total_bytes'])
         free, _ = torch.cuda.mem_get_info(self.device)
         return int(free + torch.cuda.memory_reserved(self.device))
 
@@ -267,7 +284,7 @@ class ImageRunner:
             memory = system_memory()
             free = memory.get('physical_available_bytes') or memory['available_bytes']
             host_available = free + self.dit_stack.host_bytes + self.te_stack.host_bytes
-            if self.full_card:
+            if self.full_card or self.mapped:
                 host_available = None
         except Exception:
             host_available = None

@@ -82,6 +82,19 @@ MIN_MARGIN = 1.5 * GiB            # allocator fragmentation, stage hand-over, dr
 MARGIN_FRACTION = 0.06
 MIN_HOST_WORKING = 4 * GiB        # beyond the weights: images, tokenizer, the process itself
 
+# Apple GPUs draw on the host's memory, where the weights are mapped file pages the
+# system can drop. Planning against half of it kept a 24 GB M5 with a browser open
+# out of heavy swapping; planning against what was free at the time let the second
+# request keep 16 encoder layers resident and swap 4 GB. A Mac below 16 GB cannot
+# plan even with every block streamed (4 GiB), and closing programs does not change it.
+UNIFIED_SHARE = 0.5
+UNIFIED_MIN_TOTAL = 15 * GiB      # 16 GB Macs report exactly 16 GiB
+
+
+def unified_budget(total_bytes):
+    """What a request on an Apple GPU plans against, from the machine's total memory."""
+    return int(total_bytes * UNIFIED_SHARE)
+
 
 @dataclass(frozen=True)
 class ImagePlan:

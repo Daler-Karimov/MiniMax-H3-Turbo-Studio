@@ -13,14 +13,15 @@ from ..exit_diagnostics import clean_reading, clean_sample
 from ..failure_details import Redactor
 
 
-ERRORS = frozenset(('no_memory', 'busy_video', 'busy', 'pack_missing', 'model_unreadable',
+ERRORS = frozenset(('no_memory', 'small_memory', 'busy_video', 'busy', 'pack_missing', 'model_unreadable',
                     'device_unavailable', 'worker_exit', 'timeout', 'cancelled',
                     'invalid_request', 'invalid_media', 'invalid_points', 'segment_not_installed', 'generation_failed'))
-NO_REPORT = frozenset(('busy', 'invalid_request', 'invalid_media', 'invalid_points', 'segment_not_installed', 'cancelled'))
+NO_REPORT = frozenset(('small_memory', 'busy', 'invalid_request', 'invalid_media', 'invalid_points', 'segment_not_installed', 'cancelled'))
 STAGES = ('start', 'load', 'text', 'encode', 'denoise', 'decode')
 KINDS = ('generate', 'edit', 'cast', 'compose', 'download', 'install')
 MESSAGE_ZH = {
     'no_memory': '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。',
+    'small_memory': '这台 Mac 的内存不够生成图片，需要 16 GB 或以上的内存。',
     'busy_video': '视频正在生成，完成后再试。',
     'busy': '已有一张图在生成，请等它完成。',
     'pack_missing': '请先在启动器里下载“图像生成模型”。',
@@ -47,7 +48,10 @@ _MODEL = re.compile(
     r'safetensors?|(?:deserializ|invalid|incomplete|too large).*header|'
     r'(?:checkpoint|weights?).*(?:cannot|could not|unable|failed|corrupt|unreadable|mismatch)|'
     r'pytorchstreamreader|unexpected (?:end of file|eof)', re.I)
+_MPS_MEMORY = re.compile(r'MPS backend out of memory', re.I)
 _LIMIT = 16 * 1024
+# On a Mac the GPU's memory is the machine's: the same failure, in its words.
+UNIFIED_MESSAGE_ZH = {'no_memory': '内存不够，最小尺寸也没能生成。关掉其他程序后再试。'}
 
 
 class FailureError(ValueError):
@@ -70,7 +74,7 @@ def classify_exception(error, *, stage='start', cancelled=False):
         error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
     for item in chain:
         names = {cls.__name__ for cls in type(item).__mro__}
-        if isinstance(item, MemoryError) or 'OutOfMemoryError' in names:
+        if isinstance(item, MemoryError) or 'OutOfMemoryError' in names or _MPS_MEMORY.search(str(item)):
             return 'no_memory'
     for item in chain:
         cuda_init = any(frame.f_globals.get('__name__') == 'torch.cuda'

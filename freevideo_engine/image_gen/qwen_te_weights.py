@@ -117,7 +117,8 @@ def _install_text_weights(model, st, *, dtype, chunk_rows, reads=None):
                 _dequantize_vocabulary(st, name, shape, dtype, chunk_rows, reads), requires_grad=False
             )
         else:
-            from ..int8_ops import Int8Linear
+            from .int8_linear import ops
+            Int8Linear = ops().Int8Linear
 
             weight = st.get_tensor(name + ".weight")
             if weight.dtype != torch.int8 or weight.shape != shape or shape[1] % 256:
@@ -158,7 +159,7 @@ def _install_text_weights(model, st, *, dtype, chunk_rows, reads=None):
 
 
 def load_text_encoder(path, *, config=None, config_path=None, device="cpu", dtype=torch.bfloat16,
-                      chunk_rows=8192, progress=None):
+                      chunk_rows=8192, progress=None, mapped=False):
     """Return a Qwen3VLForConditionalGeneration with int8 language projections.
 
     ``config`` accepts a transformers Qwen3VLConfig or its dictionary. Otherwise
@@ -196,6 +197,9 @@ def load_text_encoder(path, *, config=None, config_path=None, device="cpu", dtyp
     with safe_open(str(path), framework="pt", device="cpu") as st:
         reads = (TensorProgress(st, progress, (key for key in st.keys()
                  if not key.startswith(("model.visual.", "lm_head.")))) if progress is not None else None)
+        if mapped:   # CPU only: tensors stored as they are on disk stay views of the mapped file
+            from .mapped import MappedCheckpoint
+            st = MappedCheckpoint(st, path)
         _install_text_weights(model, st, dtype=dtype, chunk_rows=chunk_rows, reads=reads)
     model.eval().requires_grad_(False).to(device=device)
     model_ref = weakref.ref(model)
