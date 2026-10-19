@@ -545,7 +545,9 @@ class ResourceBudgetError(ValueError):
             ram_total_bytes=hardware.ram_total, ram_capacity_bytes=ram_total,
             ram_available_bytes=free_ram, ram_reserve_bytes=int(reserve_ram * GiB),
             ram_budget_bytes=free_ram-int(reserve_ram * GiB), ram_minimum_bytes=ram_minimum_bytes,
-            cgroup_ram_limit_bytes=hardware.cgroup_ram_limit)
+            cgroup_ram_limit_bytes=hardware.cgroup_ram_limit,
+            ram_physical_available_bytes=hardware.ram_physical_available,
+            ram_commit_available_bytes=hardware.ram_commit_available)
         failed = [name for name in ('gpu', 'ram')
                   if self.details[name+'_budget_bytes'] < self.details[name+'_minimum_bytes']]
         self.details['insufficient'] = failed
@@ -587,6 +589,9 @@ class ResourceBudgetError(ValueError):
                           self.details[name+'_total_bytes']/GiB))
             if self.details[name+'_shortfall_bytes']:
                 lines.append('%s shortfall: %.2f GiB.' % (label, self.details[name+'_shortfall_bytes']/GiB))
+        if hardware.ram_commit_available is not None and hardware.ram_physical_available is not None:
+            lines.append('Windows reports %.2f GiB of free physical RAM and %.2f GiB of commit headroom.' %
+                         (hardware.ram_physical_available / GiB, hardware.ram_commit_available / GiB))
         lines.append('Available memory includes validated idle-cache credit, if present. Resolution, frames and steps were not reduced.')
         super().__init__('\n'.join(lines))
 

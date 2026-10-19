@@ -15,6 +15,10 @@ TOKEN = re.compile(r'\b[A-Za-z0-9_\-]{32,}\b')
 HARDWARE_KEYS = ('gpu_name', 'vram_total', 'ram_total', 'system', 'architecture', 'driver_version',
                  'torch_version', 'cuda_version')
 
+# Free physical RAM and commit headroom stay apart: a refusal text is cut
+# short, and the two numbers say which of them left too little.
+MEMORY_KEYS = ('physical_available_bytes', 'commit_available_bytes', 'available_bytes', 'total_bytes')
+
 
 def scrub(value):
     return TOKEN.sub('<token>', PATH.sub('<path>', str(value)))
@@ -37,13 +41,19 @@ def summary(report, machine=None):
         for key in ('version', 'status', 'request_seconds', 'geometry', 'config', 'stages', 'budgets'):
             if key in analysis:
                 out[key] = analysis[key]
+        planning = analysis.get('resource_planning')
+        memory = planning[-1].get('system_memory') if isinstance(planning, list) and planning and isinstance(planning[-1], dict) else None
+        if isinstance(memory, dict):
+            memory = {k: memory[k] for k in MEMORY_KEYS if type(memory.get(k)) is int}
+            if memory:
+                out['memory'] = memory
         errors = analysis.get('errors')
         if isinstance(errors, list):
             out['errors'] = [scrub(e)[:300] for e in errors[:3]]
     if hardware:
         out['hardware'] = hardware
     # Bound the whole summary; drop the largest optional parts first.
-    for key in ('stages', 'config', 'errors', 'budgets', 'geometry'):
+    for key in ('stages', 'config', 'errors', 'budgets', 'geometry', 'memory'):
         if len(json.dumps(out, separators=(',', ':'), ensure_ascii=False)) <= MAX_DIAGNOSTICS:
             break
         out.pop(key, None)
