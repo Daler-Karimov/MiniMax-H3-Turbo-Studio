@@ -37,6 +37,10 @@ from .monitoring import save
 # default prompt encodes to 460 tokens.
 DEFAULT_SHAPE = dict(task='t2va', width=1344, height=768, frames=243, two_pass=True,
                      base_steps=8, refine_steps=3, text_tokens=(460,))
+# Medium starts from a larger first pass, which is another canvas to compile. An
+# installation with no request on record has not shown which level it uses.
+MEDIUM_SHAPE = dict(DEFAULT_SHAPE, upscale_factor=1.5)
+DEFAULT_SHAPES = [DEFAULT_SHAPE, MEDIUM_SHAPE]
 SHAPES = 2
 LENGTHS = 2
 TIMEOUT_SECONDS = 600
@@ -187,9 +191,9 @@ def run(machine, *, environment=None, timeout=TIMEOUT_SECONDS, background=False,
         hardware = detect()
         history = ResourceHistory(history_path())
         identity = local_identity(hardware, Path(machine['cache']))
-        shapes = recent_shapes(history) or [DEFAULT_SHAPE]
+        shapes = recent_shapes(history) or DEFAULT_SHAPES
     except Exception as error:
-        hardware, history, identity, shapes = None, None, None, [DEFAULT_SHAPE]
+        hardware, history, identity, shapes = None, None, None, DEFAULT_SHAPES
         receipt['history_error'] = repr(error)
     receipt.update(identity=identity, requested=shapes)
     try:
