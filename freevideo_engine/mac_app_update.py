@@ -41,6 +41,20 @@ if [ "$inject" = "after_backup" ] || ! /bin/mv "$staged" "$app"; then note "coul
 if [ "$inject" = "after_swap" ] || ! "$opener" "$app"; then
     note "the new app did not open"; /bin/mv "$app" "$staged" && restore; exit 1
 fi
+# A new app that opens and then dies is as bad as one that does not open: it has to stay up for
+# STABLE ticks. This is judged from outside, so it also holds for an app that cannot run any code.
+tick="${FREEVIDEO_SWAP_TICK:-1}"; stable_need="${FREEVIDEO_SWAP_STABLE:-15}"; appear_max="${FREEVIDEO_SWAP_APPEAR:-60}"
+alive() { "${FREEVIDEO_PGREP:-/usr/bin/pgrep}" -f -- "$app/Contents/MacOS/" >/dev/null 2>&1; }
+stable=0; seen=0; tries=0
+while [ "$stable" -lt "$stable_need" ]; do
+    if alive; then seen=1; stable=$((stable + 1)); elif [ "$seen" = 1 ]; then break; fi
+    tries=$((tries + 1))
+    if [ "$tries" -gt $((appear_max + stable_need)) ]; then break; fi
+    sleep "$tick"
+done
+if [ "$stable" -lt "$stable_need" ]; then
+    note "the new app did not stay open"; /bin/mv "$app" "$staged" && restore; exit 1
+fi
 # The old app stays until the new launcher has run well; it removes it (settle).
 '''
 
