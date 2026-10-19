@@ -158,12 +158,35 @@ def disk_review(plan, engine, comfy, *, separate, new_comfy):
     return extra, list(disks.values()), errors(disks.values())
 
 
+def _is_comfy_root(path):
+    return (path / 'main.py').is_file() and (path / 'folder_paths.py').is_file()
+
+
+def nearby_comfy(selected):
+    """Name of a ComfyUI folder just above or one level below the chosen one, else ''.
+
+    Only a name is returned: the launcher hides absolute paths in its messages.
+    """
+    try:
+        for parent in (selected, *list(selected.parents)[:3]):
+            if _is_comfy_root(parent):
+                return parent.name
+        for child in sorted(p for p in selected.iterdir() if p.is_dir())[:200]:
+            if _is_comfy_root(child) or _is_comfy_root(child / 'ComfyUI'):
+                return child.name
+    except OSError:
+        pass
+    return ''
+
+
 def layout(path):
     try:
         selected = resolved(Path(path).expanduser())
         root = selected / 'ComfyUI' if (selected / 'ComfyUI' / 'main.py').is_file() else selected
-        if not (root / 'main.py').is_file() or not (root / 'folder_paths.py').is_file():
-            raise ValueError('Select the ComfyUI folder, or the portable folder containing ComfyUI.')
+        if not _is_comfy_root(root):
+            found = nearby_comfy(selected)
+            raise ValueError('Select the ComfyUI folder, or the portable folder containing ComfyUI.'
+                             + (f' Found one at "{found}"; select that folder.' if found else ''))
         if not (root / 'comfy_api' / 'latest').is_dir():
             raise ValueError('This ComfyUI is too old for native VIDEO / V3 nodes. Update ComfyUI first; its files have not been changed.')
         candidates = []
