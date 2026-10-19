@@ -4,6 +4,7 @@ import {buildChainRequest} from './length_plan.js?v=20261011-length';
 export const CHAIN_PROPERTY = 'freevideo_chain';
 const activeStates = new Set(['queued', 'running', 'cancelling']);
 const MAX_WAITING = 5;
+const FPS = 24;
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const post = body => ({method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
 
@@ -35,10 +36,25 @@ export function chainSplit(chain) {
     const split = chain?.split;
     return {writing: ['pending', 'running'].includes(split?.state), reason: split?.state === 'failed' ? split.reason || 'failed' : null};
 }
+// Once the video has ended, each part offers one way on: a stopped video continues from its first unfinished part,
+// and a finished part, with every part before it done, can be made again as a new video.
+const STOPPED = new Set(['failed', 'cancelled', 'interrupted']);
 export function chainParts(chain) {
-    const writing = chainSplit(chain).writing;
-    return (chain?.blocks || []).map((block, index) => ({id: block.id, index, text: block.inputs?.text ?? '',
-        editable: !writing && block.state === 'pending' && block.prompt_id == null}));
+    const writing = chainSplit(chain).writing, blocks = chain?.blocks || [];
+    const idle = Boolean(chain) && !activeStates.has(chain.state) && chain.output_state !== 'joining' && !writing;
+    const unfinished = blocks.findIndex(block => block.state !== 'done' || !block.output);
+    // Where each part begins in the joined video: the parts are joined end to end, each without the opening it repeats.
+    const joined = readChainResult(chain)?.joined, kept = Number.isInteger(chain?.output_blocks) ? chain.output_blocks : blocks.length;
+    let start = 0;
+    const starts = blocks.map(block => { const at = start; start = Number.isInteger(block.new_frames) && start != null ? start + block.new_frames : null; return at; });
+    return blocks.map((block, index) => ({id: block.id, index, text: block.inputs?.text ?? '',
+        editable: !writing && block.state === 'pending' && block.prompt_id == null,
+        // The seconds this part adds to the video; a continuing part repeats the end of the one before it.
+        seconds: Math.max(1, Math.round((block.new_frames ?? block.inputs?.frames ?? 0) / FPS)),
+        continues: typeof block.after === 'string' ? 'part' : block.after ? 'video' : null,
+        seam: joined && index > 0 && index < kept && typeof block.after === 'string' && starts[index] != null ? starts[index] / FPS : null,
+        action: !idle ? null : index === unfinished ? (STOPPED.has(chain.state) ? 'resume' : null)
+            : unfinished < 0 || index < unfinished ? 'redo' : null}));
 }
 
 export function sumPartEstimates(plan, estimate) {
@@ -229,6 +245,18 @@ export function createStudioChain({api, node, onState = () => {}, onProgress = (
             const id = chain.id, version = epoch;
             const value = (await json(chainRoute(id, `blocks/${encodeURIComponent(block)}/text`), post({text})))?.chain;
             if (value?.id === id && version === epoch && !disposed) deliver(value);
+            return value;
+        },
+        // A new video from this part on; the finished one stays in Creations as it was.
+        async redo(block) {
+            if (!chain || active()) throw new Error('chain_busy');
+            const id = chain.id, version = epoch;
+            const value = (await json(chainRoute(id, `blocks/${encodeURIComponent(block)}/redo`),
+                post(api.clientId ? {client_id: api.clientId} : {})))?.chain;
+            if (!value?.id) throw new Error('chain_missing');
+            if (version !== epoch || disposed) return value;
+            const {id: _, ...metadata} = node.properties?.[CHAIN_PROPERTY] || {};
+            epoch++; adopt(value, metadata);
             return value;
         },
         async cancel() {

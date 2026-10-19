@@ -3,7 +3,8 @@ from copy import deepcopy
 import json
 import logging
 import math
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+import random
 import threading
 import time
 import uuid
@@ -68,8 +69,9 @@ def node_prompt(prompt, node):
 
 class ChainRunner:
     def __init__(self, store_dir, host, clock=time.monotonic, wall=time.time, estimate=None, poll=0.5, inputs=None,
-                 max_parts=None, min_part_frames=None):
+                 max_parts=None, min_part_frames=None, seeds=None):
         self.store_dir, self.host = store_dir, host
+        self.seeds = seeds or random.SystemRandom()
         self.max_parts = max_parts or store.MAX_PARTS
         self.min_part_frames = chain_plan.MIN_PART_FRAMES if min_part_frames is None else min_part_frames
         self.clock, self.wall, self.estimate, self.poll = clock, wall, estimate, poll
@@ -333,6 +335,81 @@ class ChainRunner:
             self.queue = [identity for identity in self.queue if identity != chain_id]
             self.queue.append(chain_id)
             self._save(record)
+            self.wake.set()
+            return self._view(record)
+
+    def redo(self, chain_id, block_id, text=None, client_id=None):
+        """A new chain that keeps the parts before `block_id` and makes that part and every later one
+        again with new seeds. Later parts continue the part before them, so redoing one part alone would
+        break the next seam. The original chain, its parts and its joined video stay as they are."""
+        if text is not None and (not isinstance(text, str) or not text.strip() or len(text) > 20000):
+            raise ValueError('Text must be a nonempty string of at most 20000 characters')
+        if client_id is not None and not isinstance(client_id, str):
+            raise ValueError('Client ID must be a string')
+        from .lora_triggers import apply_chain_triggers
+        with self.lock:
+            source = self.records[chain_id]
+            start = next((row for row in source['blocks'] if row['id'] == block_id), None)
+            if start is None:
+                raise KeyError(block_id)
+            if source['state'] in store.ACTIVE or source['output_state'] == 'joining':
+                raise ChainBusy('This chain is already active')
+            kept = [row for row in source['blocks'] if row['index'] < start['index']]
+            if any(row['state'] != 'done' or not row['output'] for row in kept):
+                raise ValueError('The parts before this one are not finished')
+            names = {row['id'] for row in kept}
+            if any(isinstance(row[key], str) and row[key] not in names for row in kept for key in ('after', 'before')):
+                raise ValueError('A kept part depends on a part that is made again')
+            record = deepcopy(source)
+            identity = source['id']
+            while identity in self.records or (Path(self.store_dir) / (identity + '.json')).exists():
+                identity = 'c-' + uuid.uuid4().hex[:12]
+            for key in ('last_report_id', 'last_heartbeat_at', 'output_seams', 'join_final_state'):
+                record.pop(key, None)
+            now = self.wall()
+            record.update(id=identity, created=now, state='queued', redo_of=dict(chain=chain_id, block=block_id),
+                          output=None, output_state='pending' if record['join'] else 'none',
+                          output_error=None, output_blocks=0)
+            if client_id is not None:
+                record['client_id'] = client_id
+            if record.get('split') is not None and record['split']['state'] == 'running':
+                record['split']['state'] = 'pending'
+            for block in record['blocks'][start['index']:]:
+                seed = block['inputs']['seed']
+                while seed == block['inputs']['seed']:
+                    seed = self.seeds.randrange(2 ** 31)
+                block['inputs']['seed'] = seed
+                block.update(state='pending', prompt_id=None, attempts=0, started=None, finished=None,
+                             seconds=None, output=None, report_id=None, error=None,
+                             fraction=0., remaining_seconds=None, continuation=None,
+                             skip_frames=0, skip_audio_samples=0)
+            if text is not None:
+                # Only the new words take the LoRA triggers; the other parts keep their texts as written.
+                probe = dict(node=record['node'], snapshot=deepcopy(record['snapshot']),
+                             blocks=[dict(inputs=dict(text=text))])
+                try:
+                    apply_chain_triggers(probe)
+                except Exception:
+                    raise ValueError('Text must be at most 20000 characters with LoRA triggers') from None
+                record['blocks'][start['index']]['inputs']['text'] = probe['blocks'][0]['inputs']['text']
+            short = [row['inputs']['frames'] for row in record['blocks']
+                     if (row['after'] is not None or row['before'] is not None)
+                     and row['inputs']['frames'] < self.min_part_frames]
+            if short:
+                raise ChainPartTooShort(min(short) / chain_plan.FPS, chain_plan.MIN_PART_SECONDS)
+            parts = max(self._depths(record).values())
+            if parts > self.max_parts:
+                raise ChainTooLong(parts, self.max_parts)
+            # The kept seams are repaired with the sound the original chain kept for them. Copies left by
+            # a failed save have no record, so the next start prunes them.
+            try:
+                for row in kept[1:]:
+                    chain_leads.copy(self.store_dir, chain_id, identity, row['index'])
+                self._save(record)
+            except OSError:
+                raise ValueError('The kept parts could not be copied') from None
+            self.records[identity] = record
+            self.queue.append(identity)
             self.wake.set()
             return self._view(record)
 

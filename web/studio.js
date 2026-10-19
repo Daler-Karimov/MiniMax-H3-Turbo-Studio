@@ -42,7 +42,7 @@ import { createFirstRunGuide } from './first_run_guide.js';
 import { SHOWCASE_SCENE } from './entry_showcase.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
-import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261014-parts';
+import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261018-redo';
 import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -75,7 +75,8 @@ const enhanceCss = document.createElement('link'); enhanceCss.rel = 'stylesheet'
 const el = (tag, label, cls) => { const e = document.createElement(tag); if (label != null) e.textContent = label; if (cls) e.className = cls; return e; };
 // One line per part of a long video, under the preview. A part that has not started opens in
 // place for editing and saves when it loses focus; the server's reply decides what stays.
-function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {}) {
+// After the video stops, an ended part can be made again from there on as a new video.
+function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, redo = async () => {}, resume = async () => {}, playSeam = null} = {}) {
     const element = el('div', null, 'fv-chain-parts'); element.hidden = true;
     const rows = new Map(), timers = new Map();
     let editing = null, showing = null;
@@ -93,8 +94,33 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
         if (!writing && row.editor) removeEditor(row);
         // A note about a lost edit stays on its line until that part is done.
         if (row.tag.dataset.kind === 'error' && part.state === 'done') row.tag.dataset.kind = '';
-        if (timers.has(part.id) || row.tag.dataset.kind === 'error') return;
-        tag(row, part.state === 'done' ? t('Done', '已完成') : part.editable || !['queued', 'running', 'pending'].includes(part.state) ? '' : t('Generating', '生成中'));
+        // In the joined video a continuing part plays its seam: two seconds either side.
+        const seam = playSeam && part.seam != null;
+        row.meta.disabled = !seam; row.meta.dataset.seam = String(seam);
+        if (seam) row.meta.setAttribute('aria-label', t(`Play the seam before part ${part.index + 1}`, `播放第 ${part.index + 1} 段的接缝`));
+        else row.meta.removeAttribute('aria-label');
+        // One way on per part: a stopped video continues from its first unfinished part; a finished part makes a new video.
+        const action = part.action, number = part.index + 1;
+        row.redo.hidden = !action;
+        if (action) {
+            row.redo.textContent = action === 'resume' ? t('Continue from here', '从这段继续') : t('Redo from here', '从这段重新生成');
+            row.redo.setAttribute('aria-label', action === 'resume' ? t(`Continue from part ${number}`, `从第 ${number} 段继续`)
+                : t(`Redo from part ${number}`, `从第 ${number} 段重新生成`));
+        }
+        if (timers.has(part.id) || row.tag.dataset.kind === 'error' || row.starting) return;
+        const ended = {done: t('Done', '已完成'), failed: t('Failed', '失败'), cancelled: t('Stopped', '已停止'), interrupted: t('Stopped', '已停止')}[part.state];
+        tag(row, ended ?? (part.live && !part.editable && ['queued', 'running', 'pending'].includes(part.state) ? t('Generating', '生成中') : ''),
+            part.state === 'failed' ? 'failed' : '');
+    }
+    async function remake(row) {
+        if (row.starting) return;
+        // The click answers at once; the new video replaces this list when the server takes it.
+        row.starting = true; row.redo.disabled = true; tag(row, t('Starting…', '正在开始…'));
+        try { await (row.part.action === 'resume' ? resume() : redo(row.part.id)); }
+        catch (error) {
+            if (rows.get(row.part.id) === row) flash(row, error.status === 409 ? t('Another video is generating. Try again when it finishes.', '正在生成别的视频，完成后再试。')
+                : t('Could not start. Try again.', '没能开始，请重试。'), 'error');
+        } finally { row.starting = false; row.redo.disabled = false; }
     }
     function flash(row, text, kind) {
         clearTimeout(timers.get(row.part.id)); tag(row, text, kind);
@@ -150,9 +176,10 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
         element.hidden = true; element.replaceChildren(); rows.clear(); showing = null;
         for (const id of timers.values()) clearTimeout(id); timers.clear();
     }
-    return {element, clear, update(chain, active) {
-        // The list belongs to one generation: it shows once the descriptions are written and closes when that ends.
-        if (!active || !chain?.split || chainSplit(chain).writing) { clear(); return; }
+    return {element, clear, resumes: () => !element.hidden && [...rows.values()].some(row => row.part.action === 'resume'), update(chain, active, shown = false) {
+        // The list belongs to one long video: it shows once the descriptions are written, and stays after the
+        // video stops while the preview still shows it.
+        if (!(active || shown) || !chain?.split || chainSplit(chain).writing) { clear(); return; }
         if (showing !== chain.id) clear();
         showing = chain.id;
         const first = element.hidden; element.hidden = false;
@@ -164,19 +191,26 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}} = {
         }
         parts.forEach((part, index) => {
             part.state = chain.blocks[index].state === 'pending' && chain.blocks[index].prompt_id != null ? 'queued' : chain.blocks[index].state;
+            part.live = active;
             let row = rows.get(part.id);
             if (!row) {
                 row = {element: el('div', null, 'fv-chain-part'), tag: el('span', null, 'fv-chain-part-tag')};
                 row.text = el('button', null, 'fv-chain-part-text'); row.text.type = 'button';
+                row.redo = el('button', null, 'fv-chain-part-redo'); row.redo.type = 'button';
+                row.redo.onclick = event => { event.stopPropagation(); remake(row); };
                 row.element.onclick = () => open(row);
-                row.element.append(el('span', t(`Part ${index + 1}`, `第 ${index + 1} 段`), 'fv-chain-part-name'), row.text, row.tag);
+                const joins = part.continues === 'part' ? t('After the previous part', '接上一段') : part.continues === 'video' ? t('After the video', '接原视频') : '';
+                row.meta = el('button', [joins, t(`${part.seconds} s`, `${part.seconds} 秒`)].filter(Boolean).join(' · '), 'fv-chain-part-meta');
+                row.meta.type = 'button';
+                row.meta.onclick = event => { event.stopPropagation(); if (row.part.seam != null) playSeam?.(row.part.seam); };
+                row.element.append(el('span', t(`Part ${index + 1}`, `第 ${index + 1} 段`), 'fv-chain-part-name'), row.meta, row.text, row.tag, row.redo);
                 rows.set(part.id, row); element.append(row.element);
             }
             if (editing === row && !part.editable) {
-                // The part began while it was open: the words typed so far cannot reach it.
+                // The part began while it was open: the words typed so far cannot reach it. A video that ended just closes it.
                 const changed = row.draft !== row.part.text;
                 editing = null; row.part = part; draw(row);
-                if (changed) flash(row, t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存'), 'error');
+                if (changed && active) flash(row, t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存'), 'error');
                 return;
             }
             if (editing === row) { row.part = {...part, text: row.part.text}; return; }
@@ -1091,13 +1125,43 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // The preview keeps the size it has once the list is in; an opened part grows the column, which scrolls.
     const partList = createChainPartList(t, (block, text) => chainController.setText(block, text), {
         onShow: () => { previewSpace.style.flex = `0 0 ${previewSpace.getBoundingClientRect().height}px`; },
-        onHide: () => { previewSpace.style.flex = ''; }});
+        onHide: () => { previewSpace.style.flex = ''; },
+        redo: block => { failure.clear(); return chainController.redo(block); },
+        resume: () => { failure.clear(); return chainController.resume(); },
+        playSeam: seconds => playAround(seconds)});
+    // Set once the queue buttons exist: "Continue generating" stays hidden while a listed part offers the same.
+    let syncResume = () => {};
+    // A stopped long video keeps its parts listed while the preview shows it.
+    const syncPartList = () => {
+        const chain = chainController?.state;
+        if (chain) partList.update(chain, chainController.active, Boolean(result?.request_id) && result.request_id === chain.id);
+        syncResume();
+    };
     output.append(partList.element);
     cleanup.push(() => partList.clear());
     const stage = el('div', null, 'fv-stage');
     stage.setAttribute('aria-label', t('Video preview', '视频预览'));
     const stageMedia = el('div', null, 'fv-stage-media');
     stage.append(stageMedia); previewSpace.append(stage);
+    // Plays two seconds either side of a seam and stops there; pausing or jumping elsewhere hands the video back.
+    let seamFrame = 0;
+    function playAround(seconds) {
+        const video = stageMedia.querySelector('video');
+        if (!video) return;
+        cancelAnimationFrame(seamFrame);
+        const end = seconds + 2;
+        let last = Math.max(0, seconds - 2);
+        video.currentTime = last;
+        video.play().catch(() => {});
+        const watch = () => {
+            const now = video.currentTime;
+            if (Math.abs(now - last) > 1 || (video.paused && !video.seeking)) return;
+            if (now >= end) { video.pause(); return; }
+            last = now; seamFrame = requestAnimationFrame(watch);
+        };
+        seamFrame = requestAnimationFrame(watch);
+    }
+    cleanup.push(() => cancelAnimationFrame(seamFrame));
     const progress = createGenerationProgress(t, undefined, {compact: true, api}); stage.append(progress.element);
     const chainLine = el('div', '', 'fv-muted fv-chain-position'); chainLine.hidden = true; progress.element.prepend(chainLine);
     // The queued count sits after the part number; a line too narrow for both keeps the part number only.
@@ -1221,7 +1285,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // chosen: a video picked from Recent videos. It only changes the picture; a run in progress keeps its progress.
     function showResult(r, {chosen = false} = {}) {
         if (!r?.video || disposed) return; result = r;
-        recent.setSelected(r.video);
+        recent.setSelected(r.video); syncPartList();
         refreshEffortEstimate(true);
         // The report belongs to the video that run made; a video picked from Recent videos
         // shows its own report, or none when this window never saw its run.
@@ -1330,7 +1394,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             // Parts download what they need while they run; the line above Generate is read again when they stop.
             if (chainWasActive && !active) requestAssets?.refresh(true);
             chainWasActive = active;
-            partList.update(chain, active);
+            partList.update(chain, active, Boolean(result?.request_id) && result.request_id === chain?.id);
             busy = active || Boolean(queueState?.running || queueState?.pending.length); queued = chain?.state === 'queued';
             chainLine.hidden = !active;
             setChainLine(outcome?.joining ? t('Joining the parts.', '正在接合各段。')
@@ -1341,8 +1405,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             if (chain?.state === 'cancelled') status.textContent = t('Cancelled', '已取消');
             // After a stop with videos queued the next one starts at once; its line says so until something else is done.
             if (stopNote) { status.dataset.error = 'false'; status.textContent = stopNote; }
-            resumeChain.hidden = !['cancelled', 'failed', 'interrupted'].includes(chain?.state);
-            queueActions.hidden = !active && !busy && resumeChain.hidden;
+            syncResume();
             updateRunButton();
         },
         onResult: (result, outcome) => { node.freevideoLastResult = result; showResult(result, {chosen: outcome.partial});
@@ -1408,6 +1471,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
         finally { stopLoop.disabled = false; }
     }, 'fv-quiet');
     queueActions.append(queueDetails, cancelCurrent, stopLoop, resumeChain);
+    syncResume = () => {
+        resumeChain.hidden = !['cancelled', 'failed', 'interrupted'].includes(chainController?.state?.state) || partList.resumes();
+        queueActions.hidden = !chainController?.active && !busy && !queueState?.looping && resumeChain.hidden;
+    };
     runbar.append(requestAssets.element, runrow, queueActions); controls.append(runbar);
     const queueError = error => ({
         queue_unavailable: t('Could not read the queue. The loop has stopped; videos already added stay queued.', '暂时读不到队列，循环已停止；已加入的视频还在队列中。'),
