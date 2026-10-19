@@ -44,7 +44,9 @@ fi
 # A new app that opens and then dies is as bad as one that does not open: it has to stay up for
 # STABLE ticks. This is judged from outside, so it also holds for an app that cannot run any code.
 tick="${FREEVIDEO_SWAP_TICK:-1}"; stable_need="${FREEVIDEO_SWAP_STABLE:-15}"; appear_max="${FREEVIDEO_SWAP_APPEAR:-60}"
-alive() { "${FREEVIDEO_PGREP:-/usr/bin/pgrep}" -f -- "$app/Contents/MacOS/" >/dev/null 2>&1; }
+# pgrep reads the pattern as a regular expression, so a folder named "Apps (old)" or "Apps+1" needs escaping.
+pattern=$(printf '%s\n' "$app/Contents/MacOS/" | /usr/bin/sed 's/[][\.*^$+?(){}|]/\\&/g')
+alive() { "${FREEVIDEO_PGREP:-/usr/bin/pgrep}" -f -- "$pattern" >/dev/null 2>&1; }
 stable=0; seen=0; tries=0
 while [ "$stable" -lt "$stable_need" ]; do
     if alive; then seen=1; stable=$((stable + 1)); elif [ "$seen" = 1 ]; then break; fi
