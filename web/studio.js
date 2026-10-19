@@ -1,3 +1,4 @@
+import {createLanAccess} from './lan_access.js';
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
 import {topDialog} from './dialog_keys.js';
 import {createExpandButton} from './editor_expand.js';
@@ -649,6 +650,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     brand.append(wordmark());
     const tools = el('div', null, 'fv-header-actions');
     const agents = createAgentActivity(t, api, dialog); tools.append(agents.element); cleanup.push(agents.dispose);
+    const phoneAccess = createLanAccess(t, api); tools.append(phoneAccess.element); cleanup.push(phoneAccess.dispose);
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
     tools.append(feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     // The Agent's page is the fourth tab, shown where the Agent interface is on; the guide's last step circles it.
@@ -1224,6 +1226,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const previewObserver = new ResizeObserver(fitPreview);
     previewObserver.observe(previewSpace); cleanup.push(() => previewObserver.disconnect());
     function showProgress(message) {
+        phoneAccess.observe(message);
         watchedRun = true; reportTipFor = null; clearTimeout(reportTipTimer);
         reuseRow.hidden = true;
         stats.hidden = true;

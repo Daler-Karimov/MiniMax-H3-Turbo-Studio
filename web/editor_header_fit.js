@@ -17,9 +17,9 @@ export function fitEditorHeader(header, brand, title, navigation, actions) {
         const own = getComputedStyle(title), chevron = span.nextElementSibling, text = document.createRange(); text.selectNodeContents(span);
         const frame = px(own.paddingLeft) + px(own.paddingRight) + px(own.borderLeftWidth) + px(own.borderRightWidth) + (chevron ? chevron.getBoundingClientRect().width + px(own.columnGap) : 0);
         const wanted = Math.min(READABLE, text.getBoundingClientRect().width) + frame;
-        // The actions' own width: the box itself may already be squeezed below its buttons.
+        // The actions' own width: the box itself, and the buttons in it, may already be squeezed below their content.
         const shown = [...actions.children].filter(child => child.offsetWidth > 0), apart = px(getComputedStyle(actions).columnGap);
-        const need = Math.max(actions.offsetWidth, shown.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0) + apart * Math.max(0, shown.length - 1));
+        const need = Math.max(actions.offsetWidth, shown.reduce((sum, child) => sum + Math.max(child.getBoundingClientRect().width, child.scrollWidth), 0) + apart * Math.max(0, shown.length - 1));
         const fits = markWidth => side >= need && side - markWidth - spacing >= wanted;
         const compact = Math.min(COMPACT_MARK, mark.offsetWidth);
         // On two rows the name shares the first row with the actions only; the logo shrinks too when that is still tight.
@@ -28,7 +28,11 @@ export function fitEditorHeader(header, brand, title, navigation, actions) {
         const feedback = actions.querySelector('.fv-feedback-entry'), spare = feedback ? feedback.offsetWidth + apart : 0;
         // From 681 px up the switch has one place in every view, so the logo, then the feedback entry, leave before the switch moves down.
         const wide = !matchMedia('(max-width:680px)').matches, bare = room => wide && side >= room && side >= wanted;
-        const fit = fits(mark.offsetWidth) ? '' : fits(compact) ? 'compact' : bare(need) ? 'bare' : spare && bare(need - spare) ? 'bare lean'
+        // Before the feedback entry, the phone entry steps aside.
+        const lan = actions.querySelector('.fv-lan'), away = lan ? lan.offsetWidth + apart : 0;
+        // The phone entry also steps aside rather than let the view switch drop to a second row.
+        const fitsWithout = markWidth => side >= need - away && side - markWidth - spacing >= wanted;
+        const fit = fits(mark.offsetWidth) ? '' : fits(compact) ? 'compact' : away && fitsWithout(mark.offsetWidth) ? 'tight' : away && fitsWithout(compact) ? 'compact tight' : bare(need) ? 'bare' : away && bare(need - away) ? 'bare tight' : away && spare && bare(need - away - spare) ? 'bare tight lean' : spare && bare(need - spare) ? 'bare lean'
             : row(mark.offsetWidth) >= wanted ? 'wrap' : row(compact) >= wanted || !spare ? 'wrap compact' : 'wrap compact lean';
         if (fit) header.dataset.fit = fit;
     }

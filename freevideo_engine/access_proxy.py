@@ -26,9 +26,14 @@ from . import proxy_identity, lan_password
 from .lan_auth import PasswordAuth, DEVICE_COOKIE, REMEMBER_SECONDS, LOGIN_DELAY
 
 PHONE_WEB = Path(__file__).resolve().parents[1] / 'web'
-PHONE_FILE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:js|css|html)')
+PHONE_FILE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:js|css)')
 PHONE_ASSETS = ('assets/freevideo.svg', 'assets/freevideo-light.svg')
-PHONE_TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'}
+PHONE_TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml'}
+# Inline like the password page: installed packages only carry .js/.css/.svg under web/.
+PHONE_PAGE = (
+    '<!doctype html>'
+    '<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="same-origin"><title>FreeVideo</title><link rel="stylesheet" href="./theme.css"><link rel="stylesheet" href="./phone.css"></head><body class="fv-phone"><div id="phone"></div><script type="module" src="./phone.js"></script></body></html>')
+
 COOKIE = 'freevideo_access'
 DAYS = 30
 LOGIN_PATH = '/m/login'
@@ -60,9 +65,9 @@ def password_page(*, error='', retry_after=0, status=401):
 
 
 def phone_file(path, root=None):
-    """The page file /m/<name> stands for: .js/.css/.html directly inside web/ and the two wordmark SVGs."""
+    """The page file /m/<name> stands for: .js/.css directly inside web/ and the two wordmark SVGs (/m/ itself is PHONE_PAGE)."""
     root = (root or PHONE_WEB).resolve()
-    name = 'phone.html' if path == '/m/' else path[len('/m/'):]
+    name = path[len('/m/'):]
     if not (PHONE_FILE.fullmatch(name) or name in PHONE_ASSETS):
         return None
     try:
@@ -303,6 +308,8 @@ def create(upstream, token, engine=None):
                 return web.Response(status=403)
             if request.path == '/m/csrf':
                 response = web.json_response(dict(csrf=proxy_identity.csrf(hop_secret, request['lan_device'])))
+            elif request.path == '/m/':
+                response = web.Response(text=PHONE_PAGE if request.method == 'GET' else '', content_type='text/html', charset='utf-8')
             else:
                 found = phone_file(request.path)
                 if found is None:

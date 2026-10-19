@@ -1,3 +1,4 @@
+import {createLanAccess} from './lan_access.js';
 import {createEditorText} from './editor_text.js';
 import {isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {createToolbarMore} from './editor_toolbar_more.js';
@@ -198,7 +199,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     }, 'fv-primary fv-ed-export-main');
     const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(error)); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
-    headerActions.append(exportBox, feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
+    const phoneAccess = createLanAccess(t, api);
+    listeners.push(phoneAccess.dispose);
+    headerActions.append(exportBox, phoneAccess.element, feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     top.append(brand, navigation, headerActions);
     const headerFit = fitEditorHeader(top, brand, title, navigation, headerActions);
     const menu = el('div', 'fv-ed-name-menu'); menu.hidden = true; menu.setAttribute('role', 'menu');
@@ -255,6 +258,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         }
     }
     function receiveProgress(message) {
+        phoneAccess.observe(message);
         if (disposed || !message.chain?.id || !message.chain.block) return false;
         const job = jobStatuses.get(message.chain.id);
         if (!job || String(job.node ?? panel.node?.id ?? panel.node ?? message.node) !== String(message.node)) return false;

@@ -1,3 +1,5 @@
+import {createLanAccess} from './lan_access.js';
+import {api} from '../../scripts/api.js';
 import { app } from '../../scripts/app.js';
 import { openSetup } from './setup.js';
 import { feedbackButton } from './feedback.js';
@@ -139,7 +141,7 @@ export function installNavigation(openStudio, agent = false, {openWorkflow = nul
         const handle = await openEditorView(node);
         if (created) handle?.notify(t('Created an editing project for you.', '已为你新建一个剪辑工程'));
         return handle;
-    }, true), () => choose(node => openAutopilot(node), true)), createVersionInfo(cn).element, feedbackButton(t, 'fv-view-settings'), settings); toolbar.append(row);
+    }, true), () => choose(node => openAutopilot(node), true)), createLanAccess(t, api).element, createVersionInfo(cn).element, feedbackButton(t, 'fv-view-settings'), settings); toolbar.append(row);
     toolbar.append(createUpdateNotice(cn).element);
     document.body.append(toolbar); refreshNavigation();
     makeMovable(toolbar);
