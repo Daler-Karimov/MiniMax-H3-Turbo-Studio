@@ -1,41 +1,68 @@
 {
   "schema": 1,
-  "product_version": "0.4.15",
+  "product_version": "0.4.16",
   "en": {
-    "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
+    "summary": "Any part of a long video can be generated again as a new video, phones on the same network can follow chats and generations behind an optional password, and the Mac app now updates itself.",
     "changes": [
-      "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
-      "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
-      "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
-      "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
-      "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
-      "Character sheets: in the back view, the head now turns away together with the body.",
-      "Mac: long videos can now be generated in parts.",
-      "Launcher and updates: Windows updates download faster in mainland China. When GitHub is slow, the launcher can fetch the update from a domestic mirror, and every file from the mirror is checked against the release signature before use. The install confirmation page now fits narrow windows: the sidebar collapses to icons and the buttons stay visible.",
-      "Workflows: workflows saved by older versions run again. Options added in later versions that are empty or invalid in an old file are set back to their defaults.",
-      "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920x1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
-      "LoRA: a LoRA trained for Wan 2.x now says so when it is selected for the int8 model, instead of only saying it cannot be used.",
-      "Linux: on computers with less memory, generating again right after a generation no longer runs out of memory near the end of sampling. On 6 GB graphics cards, Max no longer takes hours to finish."
+      "Long videos: the part list shows each part's length and what it follows, and marks failed parts. Any finished part can be generated again as a new video that keeps the parts before it, and the original video stays as it was. In the joined video, click a part's length to play two seconds either side of its seam. The list shows only each part's own events, and editing a part keeps the rest of its description unchanged.",
+      "Phone access: phones on the same network can open FreeVideo from the phone icon and QR code in the top bar, chat with AI Autopilot and follow generations. Phone access can be switched on or off and protected with a password that phones sign in with.",
+      "Mac: an update is downloaded in the background, and Restart & update replaces the app in place and opens the new version. Models and settings are kept, and if any step fails the previous version is restored.",
+      "Reference videos: a reference video can now be used without its own sound.",
+      "Editor: parts cut off when the engine stopped now show \"Interrupted\". A problem reported from a failure now includes the step that failed.",
+      "Linux: on graphics cards that can hold the whole video model, video generation no longer keeps a copy of the weights in system memory, which saves about 20 GB.",
+      "Reporting problems: memory readings in feedback record free physical memory and commit headroom separately."
     ]
   },
   "zh": {
-    "summary": "生图工具会保存所有生成过的图片，小显存和大显存的显卡生图都更省内存；所有错误提示旁都有“提交问题”按钮；Windows 版在中国大陆更新更快。",
+    "summary": "长视频的任何一段都可以重新生成为一条新视频；同一网络下的手机可以查看对话和生成进度，可设密码；Mac 版可以自动更新。",
     "changes": [
-      "生图：本机生成过的图片都保存在历史记录里，按时间从新到旧排列，可放到画布、用作参考图、删除或打开所在文件夹。空白画布可选“标准 / 高清”尺寸。",
-      "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存放得下整个模型的显卡，权重直接加载到显卡，不再在内存里留一份副本，加载后内存占用从约 15 GB 降到约 2 GB。",
-      "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点一下带上情况打开问题反馈。",
-      "AI 全自动：对话删不掉时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
-      "白模：现成场景只保留“橘猫跳上书架”，点一下直接开始。白模没做成时会说明原因和下一步，渲染中页面显示进度。问白模进度时会回答进度，不再当成新要求。",
-      "人物设定图：背面图里头和身体一起转向背后。",
-      "Mac：支持分段生成长视频。",
-      "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收成图标，按钮始终可见。",
-      "工作流：旧版本存的工作流可以直接运行。旧文件里后加的选项为空或不合法时，改回默认值。",
-      "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存差一点而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
-      "LoRA：为 Wan 2.x 训练的 LoRA 选进 int8 模型时，会说明这是给 Wan 2.x 训练的 LoRA，不再只说无法使用。",
-      "Linux：内存较小的电脑接着再生成一次时，不再在采样快结束时内存不足。6 GB 显存的显卡选“极致”时，不再要等好几个小时。"
+      "长视频：分段列表显示每段的时长和接在哪一段之后，并标出失败的段。任何已完成的段都可以从这里重新生成一条新视频，前面的段保持不变，原视频也不受影响。整条视频生成后，点某段的时长可播放它接缝前后各 2 秒。列表只显示每段自己的动作，编辑某一段时其余描述保持不变。",
+      "手机访问：同一网络下的手机可以通过顶栏的手机图标和二维码打开 FreeVideo，和 AI 全自动对话、查看生成进度。手机访问可以开关，也可以设置密码，手机登录后才能使用。",
+      "Mac：新版在后台下载，点“重启并更新”后原位替换应用并打开新版。模型和设置都会保留，任何一步失败都会还原旧版。",
+      "参考视频：参考视频可以只用画面、不使用它自己的声音。",
+      "剪辑视图：引擎中断而没做完的片段显示“上次中断”。从失败提示提交的问题会写明是哪一步出错。",
+      "Linux：显存放得下整个视频模型的显卡，生成视频时不再在系统内存里留一份权重副本，约省 20 GB 内存。",
+      "提交问题：反馈里的内存读数分开记录物理可用内存和提交余量。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.15",
+      "en": {
+        "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
+        "changes": [
+          "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
+          "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
+          "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
+          "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
+          "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
+          "Character sheets: in the back view, the head now turns away together with the body.",
+          "Mac: long videos can now be generated in parts.",
+          "Launcher and updates: Windows updates download faster in mainland China. When GitHub is slow, the launcher can fetch the update from a domestic mirror, and every file from the mirror is checked against the release signature before use. The install confirmation page now fits narrow windows: the sidebar collapses to icons and the buttons stay visible.",
+          "Workflows: workflows saved by older versions run again. Options added in later versions that are empty or invalid in an old file are set back to their defaults.",
+          "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920x1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
+          "LoRA: a LoRA trained for Wan 2.x now says so when it is selected for the int8 model, instead of only saying it cannot be used.",
+          "Linux: on computers with less memory, generating again right after a generation no longer runs out of memory near the end of sampling. On 6 GB graphics cards, Max no longer takes hours to finish."
+        ]
+      },
+      "zh": {
+        "summary": "生图工具会保存所有生成过的图片，小显存和大显存的显卡生图都更省内存；所有错误提示旁都有“提交问题”按钮；Windows 版在中国大陆更新更快。",
+        "changes": [
+          "生图：本机生成过的图片都保存在历史记录里，按时间从新到旧排列，可放到画布、用作参考图、删除或打开所在文件夹。空白画布可选“标准 / 高清”尺寸。",
+          "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存放得下整个模型的显卡，权重直接加载到显卡，不再在内存里留一份副本，加载后内存占用从约 15 GB 降到约 2 GB。",
+          "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点一下带上情况打开问题反馈。",
+          "AI 全自动：对话删不掉时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
+          "白模：现成场景只保留“橘猫跳上书架”，点一下直接开始。白模没做成时会说明原因和下一步，渲染中页面显示进度。问白模进度时会回答进度，不再当成新要求。",
+          "人物设定图：背面图里头和身体一起转向背后。",
+          "Mac：支持分段生成长视频。",
+          "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收成图标，按钮始终可见。",
+          "工作流：旧版本存的工作流可以直接运行。旧文件里后加的选项为空或不合法时，改回默认值。",
+          "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存差一点而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
+          "LoRA：为 Wan 2.x 训练的 LoRA 选进 int8 模型时，会说明这是给 Wan 2.x 训练的 LoRA，不再只说无法使用。",
+          "Linux：内存较小的电脑接着再生成一次时，不再在采样快结束时内存不足。6 GB 显存的显卡选“极致”时，不再要等好几个小时。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.14",
       "en": {
@@ -254,37 +281,6 @@
           "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
           "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
           "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理，顶栏仍保留“反馈”入口；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.7",
-      "en": {
-        "summary": "Your creations can now be selected and deleted several at a time with a short undo window, every view gets a Feedback button, and the launcher shows a QR code for opening FreeVideo from a phone. The description box in the editing view grows with its text, wording across the app is shorter and plainer, and long videos keep a steadier loudness from part to part.",
-        "changes": [
-          "Your creations: select several creations (click, Shift-click, a whole day, or all) and delete them in one step, with the size shown before you confirm and ten seconds to undo. Creations that are still in use are kept.",
-          "Feedback: every view has a Feedback button beside Settings. Write one sentence, optionally attach a screenshot of the page and a diagnostic summary (no prompts or images), and the GitHub suggestion page opens with the text filled in.",
-          "Launcher: local network access shows a QR code to open FreeVideo from a phone and offers an optional password for other devices; freevideo status prints the same QR code on Linux.",
-          "Your own ComfyUI: the FreeVideo toolbar appears only on FreeVideo workflows, no longer opens over your other workflows or adds nodes to them, and FreeVideo can be opened from the Extensions menu. Opening ComfyUI from the launcher keeps your other plugins; if a plugin stops FreeVideo from loading, the launcher starts again with FreeVideo only and says so.",
-          "Long videos: steadier loudness from part to part.",
-          "Editing view: the description box grows with its text and can be expanded into a larger window; errors and shortcut labels use plainer wording.",
-          "Studio: shorter hints. Generate no longer fails with \"missing node\" when the creation node was muted or bypassed in the workflow; the node is turned back on and a line says so. Two-pass sampling runs only with 8 first-pass steps; other step counts use a single pass, and the progress line, the ComfyUI node and Agent results say so.",
-          "Installation and launcher: install progress is steadier, with the total following the GPU acceleration build and the final start-up; sublines no longer show file names, and the terminal stays closed unless something goes wrong. Installation and update wording is plainer.",
-          "Progress and error messages: shorter, plainer wording."
-        ]
-      },
-      "zh": {
-        "summary": "作品库可以多选、一次删除，并在短时间内撤销；每个视图新增“反馈”按钮；启动器显示二维码，手机扫码即可打开。剪辑视图的描述框随内容长高，各处说法更短、更直白，长视频各段的声音响度也更稳定。",
-        "changes": [
-          "作品库：可多选作品（点选、Shift 连选、选择某一天或全选），确认前显示大小，一次删除，10 秒内可撤销；仍在使用的作品会保留。",
-          "反馈：每个视图的“设置”左边新增“反馈”按钮。写一句话，可选附上这一页的截图和诊断信息（不含提示词和画面），点一下即打开已填好文字的 GitHub 反馈页。",
-          "启动器：局域网访问显示二维码，手机扫码即可打开 FreeVideo，并可为其他设备设置密码；Linux 的 freevideo status 也会显示二维码。",
-          "自己的 ComfyUI：工具条只在 FreeVideo 工作流上出现，不再盖住其他工作流，也不往里面加节点；Extensions 菜单里可以打开 FreeVideo。从启动器打开时保留已装的其他插件；如有插件让 FreeVideo 载入失败，会自动只载入 FreeVideo 再启动一次，并提示一句。",
-          "长视频：各段声音响度更稳定。",
-          "剪辑视图：描述框随内容长高，可放大成大窗口编辑；出错和快捷键的说法更直白。",
-          "创作面板：提示更简短。创作节点在工作流里被静音或绕过时，点生成不再报“节点缺失”，会自动重新打开并提示一句。只有首轮为 8 步时才会使用二次采样，其他步数只生成一轮，进度、ComfyUI 节点和 Agent 接口的结果会说明。",
-          "安装和启动器：安装进度更平稳，总进度会跟随显卡加速编译和最后的启动步骤，副行不再显示文件名，终端只在出错时需要打开；安装和更新的说法更直白。",
-          "进度与出错提示：说法更短、更直白。"
         ]
       }
     }

@@ -2,6 +2,8 @@
 // cards at the place they happened. Reads and sends use the page session; the agent's token never enters the page.
 import {agentGet, agentPost, retryAgentPost} from './agent_session.js';
 import {SCENE_TEXT, sceneList, startScene, watchScene} from './whitebox_scenes.js';
+import {chatData, chatDelay, chatReadRequest, emptyChat, chatMerge, chatEntries, canSend, newId, SEND_ATTEMPTS, WAIT_FOR_AGENT, sendRefused, sendError} from './chat_data.js';
+export {emptyChat, chatMerge, chatEntries, canSend} from './chat_data.js';
 import {isolateDialogKeys, routeDialogKey} from './dialog_keys.js';
 import {closeDialog} from './motion.js';
 import { estimatedFraction, remainingAbove, remainingShown, createDiagnosticReportControl } from './generation_progress.js';
@@ -40,33 +42,7 @@ const WHITEBOX = {
     play: ['Play', '播放'], pause: ['Pause', '暂停'], seconds: ['s', '秒'],
     failure: ['Could not start: ', '无法开始生成：'],
 };
-const SEND_ATTEMPTS = 3, WAIT_FOR_AGENT = ['not_connected', 'not_listening'];
 const GENERIC_FAILURE_ZH = '没有完成';
-// A listening/connection race is queued; other 4xx refusals never repeat automatically.
-const sendRefused = (error, response) => error?.code === 'session_full' || error?.retryable === false
-    || response?.status >= 400 && response.status < 500 && !WAIT_FOR_AGENT.includes(error?.code);
-async function sendError(response) {
-    if (!response) return null;
-    try { return (await (response.clone?.() || response).json())?.error || null; }
-    catch { return null; }
-}
-// Only an explicit field-validation refusal is safe to resend without the optional field.
-// An older backend that ignores it already succeeds; unrelated errors keep the existing retry policy.
-async function previewUnsupported(response) {
-    if (![400, 422].includes(response?.status)) return false;
-    try {
-        const value = await response.clone().json(), error = value.error;
-        // The current server redacts unknown field names. The only boolean true we add is this flag.
-        const detail = error?.details?.[0];
-        if (error?.code === 'invalid_request' && error.details?.length === 1 && detail?.path === '/<unknown>'
-            && detail.allowed === 'absent (unknown field)' && detail.got === 'True') return true;
-        if (Array.isArray(value.detail) && value.detail.some(item => item.type === 'extra_forbidden'
-            && item.loc?.includes(WHITEBOX_PREVIEW.field))) return true;
-        const named = error?.field === WHITEBOX_PREVIEW.field || error?.message?.includes(WHITEBOX_PREVIEW.field);
-        return !!named && (['unknown_field', 'unsupported_field', 'unsupported_parameter', 'extra_forbidden'].includes(error?.code)
-            || /unknown|unsupported|unexpected|unrecognized|not supported|extra field/i.test(error?.message || ''));
-    } catch { return false; }
-}
 // Sends and failure cards use the same public reason, including the engine's Chinese mapping.
 function failureReason(value, t) {
     const error = value.error, reason = error?.error_zh || value.error_zh;
@@ -163,33 +139,6 @@ export function jobParts(job) {
     return Array.from({length: block.total}, (_, i) => i < (block.done || 0) ? 1 : i === block.index - 1 ? inside : 0);
 }
 
-export const emptyChat = () => ({session: undefined, items: new Map(), jobs: {}, failures: {}, confirms: {}, last: 0, read: 0, agent: {}, current: null, active: 0});
-// One answer from the server folded into what the page already has: entries add up by their number, jobs are
-// replaced by id (a card keeps its last state after the server stops listing its job), and so are the answers to its questions.
-export function chatMerge(state, data) {
-    const items = new Map(state.items);
-    for (const item of data.items || []) if (['message', 'job', 'confirm', 'production', 'cast'].includes(item.type) && Number.isFinite(item.seq)) items.set(item.seq, item);
-    const read = Math.max(state.read, Number(data.read_seq) || 0, ...(data.items || []).filter(item => item.read === true).map(item => item.seq));
-    return {session: data.session ?? null, items, jobs: {...state.jobs, ...(data.jobs || {})}, failures: data.failures || {}, confirms: {...state.confirms, ...(data.confirms || {})}, read,
-        last: Math.max(state.last, Number(data.last_seq) || 0, ...items.keys()), agent: data.agent || {},
-        current: data.current || null, active: Number(data.active) || 0};
-}
-// The entries in order. A user's sentence counts as taken once the agent has read it or has said or done anything after it.
-export function chatEntries(state) {
-    const list = [...state.items.values()].sort((a, b) => a.seq - b.seq);
-    let answered = 0;
-    for (const item of list) if (item.type !== 'message' || item.role !== 'user') answered = item.seq;
-    return list.map(item => item.type === 'message' && item.role === 'user'
-        ? {...item, taken: item.read === true || item.seq <= state.read || item.seq < answered} : item);
-}
-// Whether a sentence sent now reaches anyone: the agent is waiting for one, or is at work and will come back for it.
-export const canSend = state => state.agent?.connected === true && (state.agent.listening !== false || state.active > 0);
-
-function newId() {
-    const bytes = crypto.getRandomValues(new Uint8Array(12));
-    return 'm-' + [...bytes].map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 20);
-}
-
 // A picture is viewed here, independently of the video library. The image stays within reach while zoomed.
 function imageViewer(t, src, name, opener, failed) {
     const dialog = el('dialog', 'fv-studio fv-chat-image-viewer'), actions = el('div', 'fv-chat-actions');
@@ -267,6 +216,7 @@ function imageViewer(t, src, name, opener, failed) {
 // user can see the conversation; the page calls sync() whenever that may have changed. changed(view) follows every
 // answer: {known, agent, current, active, any}.
 export function agentChat(t, api, {open, edit, shown = () => true, changed = () => {}, interval = 1500, productVersion = () => null, initialPrompt = '', initialWhiteboxPreview = false, initialScene = '', hint = null} = {}) {
+    const dataLayer = chatData(api);
     const element = el('section', 'fv-chat'), main = el('div', 'fv-chat-main'), scroller = el('div', 'fv-chat-scroll'), log = el('ol', 'fv-chat-log');
     log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Conversation', '对话'));
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
@@ -537,7 +487,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // A disabled focused button can lose native focus. Keep it on the origin while awaiting the request.
         menuOrigin()?.focus({preventScroll: true}); updateMenu();
         try {
-            const response = await agentPost(api, '/freevideo/agent/chat/delete', stop ? {session, stop: true} : {session});
+            const response = await dataLayer.remove(session, stop);
             if (stopped) return;
             const data = await response.json().catch(() => ({}));
             if (stopped) return;
@@ -587,7 +537,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (creating || !active() || conversations.supported !== true) return;
         creating = true; newError.hidden = newIssue.hidden = true; renderConversations(); render();
         try {
-            const response = await agentPost(api, '/freevideo/agent/chat/new', {});
+            const response = await dataLayer.create();
             if (stopped) return;
             if (response.ok) {
                 const data = await response.json();
@@ -608,7 +558,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (!force && performance.now() - listAt < listInterval) return;
         listBusy = true; listAt = performance.now();
         try {
-            const response = await agentGet(api, '/freevideo/agent/chat/list', {signal: closed.signal});
+            const response = await dataLayer.list({signal: closed.signal});
             if (stopped) return;
             // The body is awaited first: a conversation chosen meanwhile must stay the current one.
             const data = response.ok ? await response.json() : null;
@@ -693,7 +643,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (!ids.length) return;
         say(t('Stopping…', '正在停止…'));
         ids.forEach(id => stopping.add(id)); render(); report();
-        const results = await Promise.all(ids.map(id => retryAgentPost(api, '/freevideo/agent/activity/cancel', {id})));
+        const results = await Promise.all(ids.map(id => dataLayer.cancel(id)));
         results.forEach((response, index) => { if (!response?.ok) stopping.delete(ids[index]); });
         if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '没能停止，请再点一次。'), true);
         else say('');
@@ -1005,7 +955,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 item.querySelectorAll('button').forEach(button => { button.disabled = true; });
                 confirming.add(key); confirmErrors.delete(key); render();
                 try {
-                    const response = await agentPost(api, '/freevideo/agent/chat/confirm', {id: entry.id, approve, session});
+                    const response = await dataLayer.confirm({id: entry.id, approve, session});
                     if (!response.ok) throw await requestError(response);
                     answers.set(key, (await response.json()).state || (approve ? 'approved' : 'declined'));
                 } catch (error) { confirmErrors.set(key, t('Could not start shooting: ', '没有开始拍摄：') + reason(error)); }
@@ -1110,8 +1060,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (!row) { away = null; return; }
         try {
             // Past the last message: only that conversation's jobs come back.
-            const query = new URLSearchParams({session: row.id, after: String(Number.MAX_SAFE_INTEGER)});
-            const response = await agentGet(api, `/freevideo/agent/chat?${query}`, {signal: closed.signal});
+            const response = await dataLayer.read({session: row.id, after: Number.MAX_SAFE_INTEGER, signal: closed.signal});
             if (!response.ok) { away = null; return; }
             const data = await response.json(), jobs = Object.values(data.jobs || {}).filter(job => WORKING.includes(job?.status));
             const job = data.jobs?.[data.current] || jobs[0];
@@ -1158,18 +1107,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const whiteboxes = [...state.items.values()].filter(card => card.type === 'confirm' && card.whitebox && whiteboxState(card) === 'asked');
         entry.sending = true; entry.retried = !!original; entry.error = null; entry.automatic = false; render(true); report();
         try {
-            const body = {id: entry.id, text: entry.text};
-            if (conversations.supported === true && entry.session) body.session = entry.session;
-            if (entry.whiteboxPreview) body[WHITEBOX_PREVIEW.field] = true;
-            entry.attempts++;
-            const response = await retryAgentPost(api, '/freevideo/agent/chat', body, {retry: async response => {
-                if (!stopped && !entry.acknowledged && entry.whiteboxPreview && entry.attempts < SEND_ATTEMPTS && await previewUnsupported(response)) {
-                    entry.whiteboxPreview = false; delete body[WHITEBOX_PREVIEW.field];
-                    entry.attempts++; return body;
-                }
-                if (stopped || entry.acknowledged || sendRefused(await sendError(response), response) || entry.attempts >= SEND_ATTEMPTS) return null;
-                entry.attempts++; return body;
-            }});
+            const response = await dataLayer.sendMessage(entry, {sessionSupported: conversations.supported === true, stopped: () => stopped, previewField: WHITEBOX_PREVIEW.field});
             if (entry.acknowledged) return true;
             if (response?.ok) {
                 const value = await response.json().catch(() => ({}));
@@ -1249,11 +1187,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const readSelection = selection, requested = selectedSession;
         let again = false;
         try {
-            const after = state.session && (!requested || requested === state.session) ? state.last : 0;
-            const query = new URLSearchParams();
-            if (requested) query.set('session', requested);
-            if (after) query.set('after', String(after));
-            const response = await agentGet(api, '/freevideo/agent/chat' + (query.size ? `?${query}` : ''), {signal: closed.signal});
+            const {after} = chatReadRequest(state, requested);
+            const response = await dataLayer.read({session: requested, after, signal: closed.signal});
             if (stopped) return;
             if (readSelection !== selection) again = true;
             else if (response.ok) {
@@ -1296,7 +1231,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         known = true;
         // The next read is booked before the page hears of this one, so the page's sync() does not start another.
         const idle = state.agent.connected !== true && !state.active;
-        timer = setTimeout(poll, (idle ? Math.max(interval, 3000) : interval) * Math.min(4, 1 + failures));
+        timer = setTimeout(poll, chatDelay({idle, interval, failures}));
         render(); report();
         if (sendingAllowed()) for (const entry of [...pending]) {
             if (entry.session !== state.session || !entry.automatic || entry.sending || entry.acknowledged) continue;

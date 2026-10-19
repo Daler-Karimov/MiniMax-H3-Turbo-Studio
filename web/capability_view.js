@@ -54,7 +54,7 @@ export function capabilityContext(node, state) {
         const source = assets[item.assetIndex] || {}, row = {kind: item.kind};
         if (item.kind !== 'audio') { row.width = source.width; row.height = source.height; }
         if (item.kind !== 'image') row.seconds = source.seconds;
-        if (item.kind === 'video' && positive(source.audio_seconds)) row.audio_seconds = source.audio_seconds;
+        if (item.kind === 'video' && item.sound !== false && positive(source.audio_seconds)) row.audio_seconds = source.audio_seconds;
         return row;
     });
     const audio = refs.some((r, i) => r.kind === 'audio' || positive(rows[i].audio_seconds));

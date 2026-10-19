@@ -198,6 +198,7 @@ def summary(record):
                  ('version', 'id', 'node', 'created', 'updated', 'state',
                   'join', 'output', 'output_state', 'output_error', 'output_blocks')},
                 output_seams=deepcopy(record.get('output_seams')), split=deepcopy(record.get('split')),
+                redo_of=deepcopy(record.get('redo_of')),
                 count=len(blocks), done=sum(row['state'] == 'done' for row in blocks),
                 current=current, elapsed_seconds=sum(row['seconds'] or 0 for row in blocks if row['state'] == 'done'),
                 last_report_id=record.get('last_report_id') or next((row['report_id'] for row in reversed(blocks)
@@ -205,9 +206,14 @@ def summary(record):
 
 
 def detail(record):
-    return dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']),
-                generation_size={key: record['snapshot']['prompt'][record['node']]['inputs'].get(key)
-                                 for key in ('width', 'height')})
+    value = dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']),
+                 generation_size={key: record['snapshot']['prompt'][record['node']]['inputs'].get(key)
+                                  for key in ('width', 'height')})
+    if (record.get('split') or {}).get('state') == 'done':
+        # Split parts repeat words put there by code; the page lists and edits only each part's own.
+        from .prompt_vlm.rules import own_words
+        value['part_words'] = own_words([str(row['inputs'].get('text', '')) for row in record['blocks']])
+    return value
 
 
 def save(directory, record):
@@ -268,6 +274,12 @@ def load_all(directory, limit=200, *, identity=None):
             if seams is not None and (not isinstance(seams, dict) or set(seams) != {'expected', 'kept'}
                                       or any(type(value) is not int or value < 0 for value in seams.values())):
                 raise ValueError('Invalid chain seam count')
+            redo = record.get('redo_of')
+            if redo is not None and (not isinstance(redo, dict) or set(redo) != {'chain', 'block'}
+                                     or not isinstance(redo['chain'], str)
+                                     or not re.fullmatch(r'c-[0-9a-f]{12}', redo['chain'])
+                                     or not isinstance(redo['block'], str) or not redo['block']):
+                raise ValueError('Invalid chain redo source')
             if record.get('join_final_state', 'done') not in ('done', 'cancelled', 'failed', 'interrupted'):
                 raise ValueError('Invalid chain join final state')
             if record['plan'] is not None:

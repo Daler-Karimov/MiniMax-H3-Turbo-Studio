@@ -38,7 +38,8 @@ export function referenceItems(node) {
             const kind = referenceKind(row.file);
             if (!kind) throw new Error('invalid_media');
             const item = {key: `file:${media.id}:${row.file}:${occurrence}`, kind, file: row.file,
-                name: row.cast?.name || row.file.split('/').pop(), assetIndex: rows.indexOf(row)};
+                name: row.cast?.name || row.file.split('/').pop(), assetIndex: rows.indexOf(row),
+                ...(row.sound === false && kind === 'video' ? {sound: false} : {})};
             if (row.role === 'reference') refs.push(item);
             else if (kind === 'image' && ['first','last'].includes(row.role) && !anchors[row.role]) anchors[row.role] = item;
             else throw new Error('invalid_media');

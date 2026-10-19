@@ -315,3 +315,4 @@ button.fv-ie-size:hover{background:var(--fv-hover);color:var(--fv-ink)}
   border-radius:var(--fv-r-sm);background:color-mix(in srgb,var(--fv-warning) 9%,transparent);color:var(--fv-ink);font-size:var(--fv-micro)}
 .fv-panel .fv-shape-note span{flex:1 1 180px}
 .fv-panel .fv-shape-note button{min-height:26px;padding:2px 10px}
+.fv-panel .fv-sound{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:var(--fv-micro);cursor:pointer}

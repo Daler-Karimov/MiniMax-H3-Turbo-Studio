@@ -536,7 +536,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 const failureText = visual === 'failed' ? actions.failureText?.(clip.id) || actions.reasonText?.(clip.reason) || clip.reason || t('Generation failed', '生成时出错') : '';
                 if (visual === 'failed') item.status.replaceChildren(icon('warning'), create('span', 'fv-ed-clip-failure-reason', failureText));
                 else item.status.replaceChildren();
-                const status = {planned: t('Not generated yet', '还没生成'), running: t('Generating', '正在生成'),
+                const status = {planned: actions.interrupted?.(clip) ? t('Interrupted', '上次中断') : t('Not generated yet', '还没生成'), running: t('Generating', '正在生成'),
                     done: t('Complete', '完成'), failed: failureText}[visual];
                 const seconds = Math.round(clip.frames / model.FPS);
                 item.element.title = '';

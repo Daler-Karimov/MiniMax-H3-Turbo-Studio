@@ -55,7 +55,7 @@ def read(path):
                 raise ValueError('Invalid ' + field + ' entry')
             if field != 'references' and 'early_steps' in entry:
                 raise ValueError('early_steps is only allowed on video references')
-            allowed = {'path', 'kind', 'early_steps'} if field == 'references' else {'path', 'strength', 'alpha'}
+            allowed = {'path', 'kind', 'early_steps', 'sound'} if field == 'references' else {'path', 'strength', 'alpha'}
             if set(entry) - allowed:
                 raise ValueError('Unknown ' + field + ' fields')
             row = file_info(entry.get('path'))
@@ -66,6 +66,10 @@ def read(path):
                 if 'early_steps' in entry:
                     validate_early_steps(entry)
                     row['early_steps'] = entry['early_steps']
+                if 'sound' in entry:
+                    validate_sound(entry)
+                    if not entry['sound']:
+                        row['sound'] = False
             else:
                 if Path(row['path']).suffix.lower() != '.safetensors':
                     raise ValueError('LoRA requires safetensors; pickle adapters are not loaded')
@@ -101,6 +105,13 @@ def validate_early_steps(row):
         raise ValueError('early_steps is only allowed on video references')
     if type(row['early_steps']) is not int or row['early_steps'] < 0:
         raise ValueError('Video reference early_steps must be an integer >= 0')
+
+
+def validate_sound(row):
+    if row.get('kind') != 'video':
+        raise ValueError('sound is only allowed on video references')
+    if type(row['sound']) is not bool:
+        raise ValueError('Video reference sound must be true or false')
 
 
 def reference_stages(media):

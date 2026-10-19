@@ -27,7 +27,7 @@ export function enabledLoras(start, {upstream, widget, value}) {
 // Reference files as `kind:file`, so generation's own rule can tell whether a video has audio.
 // A reference that is not a file in the input folder makes the task unknowable here: send none.
 export function referenceFiles(refs) {
-    return refs.length && refs.every(r => typeof r.file === 'string' && r.kind) ? refs.map(r => `${r.kind}:${r.file}`) : [];
+    return refs.length && refs.every(r => typeof r.file === 'string' && r.kind) ? refs.map(r => `${r.kind === 'video' && r.sound === false ? 'video-silent' : r.kind}:${r.file}`) : [];
 }
 
 // Keep the extension and the end of a long file name; shorten the middle.

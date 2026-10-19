@@ -18,9 +18,9 @@ export const stripText = clip => clip.note || firstLine(clip.text);
 export const describedTrack = track => track.kind === 'video' && track.clips.some(clip => !isText(clip) && stripText(clip));
 const agentWrote = record => record.tracks.some(track => track.clips.some(clip => clip.text_by === 'agent'));
 // Status words appear only in the hover tip and the panels (Iris 10-11).
-export function blockStatus(clip, t, fraction = 0) {
+export function blockStatus(clip, t, fraction = 0, interrupted = false) {
     if (clip.pending === 'running') return t(`Generating ${Math.round(fraction * 100)}%`, `生成中 ${Math.round(fraction * 100)}%`);
-    if (clip.pending === 'stopped') return t('Stopped', '已停止');
+    if (clip.pending === 'stopped') return interrupted ? t('Interrupted', '上次中断') : t('Stopped', '已停止');
     if (clip.pending === 'failed') return t('Unfinished', '未完成');
     if (clip.pending) return t('Not generated', '未生成');
     const current = model.takes(clip).find(take => take.index === -1);
@@ -103,7 +103,7 @@ export function createBlockNotes({state, t, actions}) {
     function showTip(item) {
         const view = item.element.closest('.fv-ed-track-view'), clip = item.clip; if (!view || !item.element.isConnected) return;
         const fraction = Number(item.element.style.getPropertyValue('--fv-ed-progress')) || 0;
-        const text = [clip.note || clip.text.trim(), blockStatus(clip, t, fraction)].filter(Boolean).join(' · ');
+        const text = [clip.note || clip.text.trim(), blockStatus(clip, t, fraction, !!actions.interrupted?.(clip))].filter(Boolean).join(' · ');
         if (!text) return;
         if (!tip) { tip = el('div', 'fv-ed-note-tip'); tip.setAttribute('role', 'tooltip'); }
         if (tip.parentElement !== view) view.append(tip);

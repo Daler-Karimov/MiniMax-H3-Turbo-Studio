@@ -1,3 +1,4 @@
+import {createLanAccess} from './lan_access.js';
 // The Agent's own page, beside the studio and the editing view: the card that connects one, then the conversation with it.
 import { api } from '../../scripts/api.js';
 import { agentConnectCard, connectionLabel } from './agent_connect.js';
@@ -35,7 +36,8 @@ export function openAutopilotView(node, {studio = null, initialPrompt = '', init
     go.type = halt.type = 'button'; go.append(ring, name, more, percent, eta); now.append(go, halt);
     halt.title = t('Stop all', '全部停止'); halt.setAttribute('aria-label', halt.title);
     const line = el('i', 'fv-autopilot-line');
-    tools.append(now, lamp, feedbackButton(t), settings);
+    const phoneAccess = createLanAccess(t, api);
+    tools.append(now, lamp, phoneAccess.element, feedbackButton(t), settings);
     // The view chosen next takes over once this page has closed; Escape goes back to what is underneath.
     let next = () => studio?.open ? viewChanged('studio', node) : viewChanged('nodes', node);
     const leave = action => { next = action; closeDialog(dialog); };
@@ -77,6 +79,7 @@ export function openAutopilotView(node, {studio = null, initialPrompt = '', init
         if (arrived) chat.input.focus();
         lamp.hidden = !ready; lamp.dataset.color = label.color; lampText.textContent = lamp.title = label.text; lamp.setAttribute('aria-label', label.text); lamp.disabled = connected || !last.any;
         const job = talking ? last.current : null;
+        phoneAccess.observe(job);
         now.hidden = !job; line.dataset.on = String(!!job);
         halt.disabled = !!last.stopping;
         halt.setAttribute('aria-busy', String(!!last.stopping));
@@ -100,7 +103,7 @@ export function openAutopilotView(node, {studio = null, initialPrompt = '', init
     dialog.append(header, body);
     dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(dialog); });
     dialog.onclose = () => {
-        card.stop(); chat.stop(); assets.dispose(); dialog.remove();
+        phoneAccess.dispose(); card.stop(); chat.stop(); assets.dispose(); dialog.remove();
         if (current === dialog) current = null;
         next();
     };

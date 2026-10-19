@@ -57,6 +57,7 @@ API = 'https://api.github.com/repos/' + REPOSITORY
 WEB = 'https://github.com/' + REPOSITORY
 RELEASE_PAGE = WEB + '/releases/latest'
 MAX_EXE_BYTES = 512 * 2**20
+MAX_DMG_BYTES = 2**30
 MAC_CHANNEL = 'macos-preview'
 # Linux has no release before combined releases, so no platform tag to fall back on.
 LINUX_CHANNEL = 'linux-preview'
@@ -167,6 +168,16 @@ def build_track(value):
     return value.get('track', 'stable')
 
 
+def manual_install(current, client=None):
+    """Whether the user installs the update themselves from the release page."""
+    if current.get('packaging') == 'app':
+        if client is not None and client.install_failed:
+            return True
+        from . import mac_app_update
+        return not mac_app_update.replaceable()
+    return current.get('packaging') == 'onedir'
+
+
 def release_page(current):
     if build_track(current) == 'nightly':
         return 'https://github.com/' + REPOSITORY + '/releases/tag/' + NIGHTLY_TAG
@@ -220,7 +231,7 @@ def manifest(value):
     result = build_identity(value)
     asset = value.get('asset', {})
     if (not isinstance(asset, dict) or type(asset.get('id')) is not int or asset['id'] <= 0
-            or type(asset.get('bytes')) is not int or not 2 <= asset['bytes'] <= MAX_EXE_BYTES
+            or type(asset.get('bytes')) is not int or not 2 <= asset['bytes'] <= (MAX_DMG_BYTES if result['channel'] == MAC_CHANNEL else MAX_EXE_BYTES)
             or not re.fullmatch(r'[0-9a-f]{64}', str(asset.get('sha256', '')))):
         raise ValueError('Invalid launcher update asset')
     result['asset'] = {k: asset[k] for k in ('id', 'bytes', 'sha256')}
@@ -672,11 +683,19 @@ def launch_download(candidate, root, *, token='', popen=None):
     overlay = source_update.prepared(candidate, root)
     if overlay is not None:
         return source_update.launch(candidate, root, overlay, token=token, popen=popen)
-    if build_target(candidate) == 'macos-arm64':
-        raise ValueError('Mac update activation is not available in this development build')
     path = executable_path(root, candidate)
     if not verified(path, candidate['asset']):
         raise DownloadedLauncherUnavailable('Downloaded launcher is missing or changed; download again')
+    if build_target(candidate) == 'macos-arm64':
+        from . import mac_app_update
+        staged = Path(path.parent) / 'staged.txt'
+        try:
+            location = Path(staged.read_text(encoding='utf-8').strip())
+            process = mac_app_update.activate(location, mac_app_update.current_app(), path.parent, popen=popen or subprocess.Popen)
+        except (OSError, ValueError, AttributeError):
+            raise DownloadedLauncherUnavailable('The prepared app is missing; download again')
+        save(Path(root) / 'updates' / 'active.json', dict(approved=True, candidate=candidate))
+        return process
     from .linux_bundle import child_environment
     env = dict(child_environment(), FREEVIDEO_LAUNCHER_HOME=plain(resolved(root)))
     if token:
@@ -778,6 +797,16 @@ class UpdateClient:
         self.cancelled = threading.Event()
         self.retry = None
         self.failures = 0
+        # The swap of an earlier run put the old app back: say so once, and
+        # leave the release page as the way to update this time.
+        self.install_failed = False
+        if self.current.get('packaging') == 'app':
+            marker = io_path(self.root) / 'updates' / 'mac-update-failed.json'
+            try:
+                self.install_failed = marker.is_file()
+                marker.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @property
     def busy(self):
@@ -806,7 +835,7 @@ class UpdateClient:
             return
         if operation not in ('check', 'download'):
             raise ValueError('Unknown update operation')
-        if operation == 'download' and self.current.get('packaging') in ('onedir', 'app'):
+        if operation == 'download' and manual_install(self.current):
             kind = 'application' if self.current.get('packaging') == 'app' else 'folder'
             raise ValueError('Download and extract the updated %s ZIP from the release page' % kind)
         self.cancelled.clear()
@@ -844,9 +873,19 @@ class UpdateClient:
                         found = check(self.current, self.token, language=self.language)
                         if found and newer(found, candidate):
                             selected = found
+                    def prepare_app(dmg):
+                        from . import mac_app_update
+                        app = mac_app_update.current_app()
+                        if app is None:
+                            raise ValueError('Not running from an app bundle')
+                        staged = mac_app_update.prepare(dmg, app, dmg.parent)
+                        (dmg.parent / 'staged.txt').write_text(str(staged), encoding='utf-8')
                     def progress(value):
                         self.state = dict(status='downloading', candidate=selected, progress=value)
-                    download(selected, self.root, self.token, progress=progress, cancel=self.cancelled, language=self.language)
+                    target = download(selected, self.root, self.token, progress=progress, cancel=self.cancelled, language=self.language)
+                    # An incremental overlay comes back instead of the DMG; only the DMG is mounted.
+                    if self.current.get('packaging') == 'app' and Path(target) == executable_path(self.root, selected):
+                        prepare_app(target)
                     self.state = dict(status='ready', candidate=selected)
                 self.failures = 0
             except Exception as error:

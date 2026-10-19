@@ -408,6 +408,32 @@ def register(host_factory=None):
         except ValueError as failure:
             return response({'error': str(failure)}, 400)
 
+    @server.routes.post('/freevideo/chain/{id}/blocks/{block}/redo')
+    async def redo(request):
+        # A new chain from this part on; the original chain and its video are kept.
+        try:
+            value = await body(request) if request.can_read_body else {}
+            identity, block = request.match_info['id'], request.match_info['block']
+            if not fake and os.environ.get('FREEVIDEO_CHAIN_INDEPENDENT') != '1':
+                missing = {key for row in runner.get(identity)['blocks'] for key in CONTINUE_INPUTS
+                           if row[key] is not None} - continuation_directions()
+                if missing:
+                    return response({'error': 'Continuing a video is not available in this version'}, 409)
+            return response({'chain': await asyncio.to_thread(runner.redo, identity, block,
+                                                              value.get('text'), value.get('client_id'))})
+        except KeyError:
+            return response({'error': 'Unknown chain or part'}, 404)
+        except ChainBusy as failure:
+            return response({'error': str(failure)}, 409)
+        except ChainTooLong as failure:
+            return response({'error': str(failure), 'error_zh': failure.message_zh, 'code': failure.code,
+                             'parts': failure.parts, 'max_parts': failure.limit}, 400)
+        except ChainPartTooShort as failure:
+            return response({'error': str(failure), 'error_zh': failure.message_zh, 'code': failure.code,
+                             'min_seconds': failure.limit}, 400)
+        except ValueError as failure:
+            return response({'error': str(failure)}, 400)
+
     @server.routes.post('/freevideo/chain/{id}/resume')
     async def resume(request):
         try:
