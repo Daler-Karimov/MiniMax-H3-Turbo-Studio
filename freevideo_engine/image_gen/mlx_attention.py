@@ -20,11 +20,22 @@ def available():
 
 
 def routed(fallback, *, min_queries=256):
-    """``attention`` for image-sized calls; short text segments, where the hand-over costs more, keep ``fallback``."""
+    """``attention`` for image-sized calls; short text segments, where the hand-over costs more, keep ``fallback``.
+
+    A call MLX cannot run goes to ``fallback`` instead of failing the picture, and so does
+    every later call of the process.
+    """
+    failed = []
+
     def run(query, key, value, attn_mask=None):
-        if query.shape[1] < min_queries:
+        if failed or query.shape[1] < min_queries:
             return fallback(query, key, value, attn_mask=attn_mask)
-        return attention(query, key, value, attn_mask=attn_mask)
+        try:
+            return attention(query, key, value, attn_mask=attn_mask)
+        except Exception as error:
+            failed.append(f'{type(error).__name__}: {error}'[:300])
+            return fallback(query, key, value, attn_mask=attn_mask)
+    run.failed = failed
     return run
 
 

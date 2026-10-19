@@ -169,8 +169,8 @@ export function imageGenError(code, info, t) {
         invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
         reload: ['Image generation was interrupted. Try again.', '图片生成中途被打断，请重试。'],
         generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
-        small_memory: ['This Mac does not have enough memory to generate pictures. It needs 16 GB or more.',
-            '这台 Mac 的内存不够生成图片，需要 16 GB 或以上的内存。'],
+        small_memory: ['This Mac has less than 16 GB of memory and cannot generate pictures.',
+            '这台 Mac 的内存不足 16 GB，无法生成图片。'],
     };
     const say = (en, zh) => t(...memoryWords([en, zh], info?.unified));
     if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);

@@ -21,7 +21,7 @@ STAGES = ('start', 'load', 'text', 'encode', 'denoise', 'decode')
 KINDS = ('generate', 'edit', 'cast', 'compose', 'download', 'install')
 MESSAGE_ZH = {
     'no_memory': '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。',
-    'small_memory': '这台 Mac 的内存不够生成图片，需要 16 GB 或以上的内存。',
+    'small_memory': '这台 Mac 的内存不足 16 GB，无法生成图片。',
     'busy_video': '视频正在生成，完成后再试。',
     'busy': '已有一张图在生成，请等它完成。',
     'pack_missing': '请先在启动器里下载“图像生成模型”。',
