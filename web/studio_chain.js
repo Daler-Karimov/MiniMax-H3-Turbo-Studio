@@ -36,6 +36,17 @@ export function chainSplit(chain) {
     const split = chain?.split;
     return {writing: ['pending', 'running'].includes(split?.state), reason: split?.state === 'failed' ? split.reason || 'failed' : null};
 }
+// A split part lists only its own events: the continuation sentence and the shared description the server
+// repeats in every part stay as they are around an edit (part_words: [start, end] of the part's own words).
+function ownWords(chain, index, text) {
+    const span = chain?.part_words?.[index];
+    return Array.isArray(span) && span.length === 2 && span.every(Number.isInteger)
+        && 0 <= span[0] && span[0] < span[1] && span[1] <= text.length ? span : null;
+}
+function ownText(chain, index, text) {
+    const span = ownWords(chain, index, text);
+    return span ? text.slice(...span) : text;
+}
 // Once the video has ended, each part offers one way on: a stopped video continues from its first unfinished part,
 // and a finished part, with every part before it done, can be made again as a new video.
 const STOPPED = new Set(['failed', 'cancelled', 'interrupted']);
@@ -47,7 +58,7 @@ export function chainParts(chain) {
     const joined = readChainResult(chain)?.joined, kept = Number.isInteger(chain?.output_blocks) ? chain.output_blocks : blocks.length;
     let start = 0;
     const starts = blocks.map(block => { const at = start; start = Number.isInteger(block.new_frames) && start != null ? start + block.new_frames : null; return at; });
-    return blocks.map((block, index) => ({id: block.id, index, text: block.inputs?.text ?? '',
+    return blocks.map((block, index) => ({id: block.id, index, text: ownText(chain, index, block.inputs?.text ?? ''),
         editable: !writing && block.state === 'pending' && block.prompt_id == null,
         // The seconds this part adds to the video; a continuing part repeats the end of the one before it.
         seconds: Math.max(1, Math.round((block.new_frames ?? block.inputs?.frames ?? 0) / FPS)),
@@ -55,6 +66,11 @@ export function chainParts(chain) {
         seam: joined && index > 0 && index < kept && typeof block.after === 'string' && starts[index] != null ? starts[index] / FPS : null,
         action: !idle ? null : index === unfinished ? (STOPPED.has(chain.state) ? 'resume' : null)
             : unfinished < 0 || index < unfinished ? 'redo' : null}));
+}
+export function composePartText(chain, block, words) {
+    const index = (chain?.blocks || []).findIndex(row => row.id === block);
+    const text = chain?.blocks?.[index]?.inputs?.text ?? '', span = index < 0 ? null : ownWords(chain, index, text);
+    return span ? text.slice(0, span[0]) + words + text.slice(span[1]) : words;
 }
 
 export function sumPartEstimates(plan, estimate) {

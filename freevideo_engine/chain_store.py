@@ -206,9 +206,14 @@ def summary(record):
 
 
 def detail(record):
-    return dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']),
-                generation_size={key: record['snapshot']['prompt'][record['node']]['inputs'].get(key)
-                                 for key in ('width', 'height')})
+    value = dict(summary(record), blocks=deepcopy(record['blocks']), plan=deepcopy(record['plan']),
+                 generation_size={key: record['snapshot']['prompt'][record['node']]['inputs'].get(key)
+                                  for key in ('width', 'height')})
+    if (record.get('split') or {}).get('state') == 'done':
+        # Split parts repeat words put there by code; the page lists and edits only each part's own.
+        from .prompt_vlm.rules import own_words
+        value['part_words'] = own_words([str(row['inputs'].get('text', '')) for row in record['blocks']])
+    return value
 
 
 def save(directory, record):

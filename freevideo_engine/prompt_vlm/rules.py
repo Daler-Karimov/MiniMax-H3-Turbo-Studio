@@ -616,6 +616,51 @@ def validate_split(text, value, *, strict=False):
     return parts
 
 
+SOUND_SECTIONS = re.compile(r'\n\n(?:overall_soundscape|non_diegetic_music):')
+SENTENCE_END = '.。!！?？'
+
+
+def own_words(texts):
+    """Where each split part's own events stand in its text: [start, end] in UTF-16 units, or None.
+
+    The continuation sentence, the shared description, subject definitions, LoRA trigger words and sound
+    sections are put there by code and are the same in every part; the page shows and edits only the rest.
+    The shared description is what the parts start with in common, up to a sentence end before a space.
+    """
+    starts, ends = [], []
+    for text in texts:
+        found = SOUND_SECTIONS.search(text)
+        ends.append(found.start() if found else len(text))
+        at = text.find(CONTINUE + ' ')
+        starts.append(at + len(CONTINUE) + 1 if at >= 0 else None)
+    # The opening part has no continuation sentence; what stands before it elsewhere comes first there too.
+    lead = next((texts[i][:at - len(CONTINUE) - 1] for i, at in enumerate(starts) if at is not None), None)
+    if lead is not None and starts and starts[0] is None and texts[0].startswith(lead):
+        starts[0] = len(lead)
+    known = [texts[i][at:ends[i]] for i, at in enumerate(starts) if at is not None and at <= ends[i]]
+    if len(known) < 2:
+        return [None] * len(texts)
+    common = known[0]
+    for words in known[1:]:
+        common = common[:next((i for i, (a, b) in enumerate(zip(common, words)) if a != b), min(len(common), len(words)))]
+    shared = next((k for k in range(len(common), 19, -1) if common[k - 1] in SENTENCE_END
+                   and all(len(words) == k or words[k] == ' ' for words in known)), None)
+    if shared is None:
+        return [None] * len(texts)
+    def units(text, index):
+        return len(text[:index].encode('utf-16-le')) // 2
+    spans = []
+    for text, at, end in zip(texts, starts, ends):
+        if at is None or at > end or not text[at:end].startswith(common[:shared]):
+            spans.append(None)
+            continue
+        begin = at + shared + 1
+        # A part with nothing of its own shows the shared description it repeats.
+        spans.append([units(text, at), units(text, end)] if begin >= end
+                     else [units(text, begin), units(text, end)])
+    return spans
+
+
 def validate_parts(parts, value):
     """Worker output shape for a split job: one non-empty text per part."""
     if (not isinstance(parts, list) or len(parts) != len(value['seconds'])

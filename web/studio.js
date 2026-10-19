@@ -42,7 +42,7 @@ import { createFirstRunGuide } from './first_run_guide.js';
 import { SHOWCASE_SCENE } from './entry_showcase.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
-import { createStudioChain, chainPosition, chainParts, chainSplit, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261018-redo';
+import { createStudioChain, chainPosition, chainParts, chainSplit, composePartText, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261019-words';
 import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -90,7 +90,8 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
         const {part} = row, writing = editing === row;
         row.element.dataset.state = part.editable ? 'pending' : part.state;
         row.text.textContent = part.text;
-        row.text.disabled = !part.editable;
+        // A part waits for its save to come back before it can be edited again, so two saves never cross.
+        row.text.disabled = !part.editable || row.saving != null;
         if (!writing && row.editor) removeEditor(row);
         // A note about a lost edit stays on its line until that part is done.
         if (row.tag.dataset.kind === 'error' && part.state === 'done') row.tag.dataset.kind = '';
@@ -136,7 +137,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
         try {
             await save(row.part.id, value);
             row.saving = null;
-            if (rows.get(row.part.id) === row) flash(row, t('Saved', '已保存'), 'saved');
+            if (rows.get(row.part.id) === row) { draw(row); flash(row, t('Saved', '已保存'), 'saved'); }
         } catch (error) {
             row.saving = null;
             if (rows.get(row.part.id) !== row) return;
@@ -146,7 +147,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
         }
     }
     function open(row) {
-        if (!row.part.editable || editing === row) return;
+        if (!row.part.editable || row.saving != null || editing === row) return;
         if (editing) finish(editing, true);
         editing = row; clearTimeout(timers.get(row.part.id)); timers.delete(row.part.id); tag(row, '');
         const editor = row.editor = el('textarea', null, 'fv-chain-part-editor');
@@ -1123,7 +1124,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     })); previewHead.append(previewTools); output.append(previewHead);
     const previewSpace = el('div', null, 'fv-preview-space'); output.append(previewSpace);
     // The preview keeps the size it has once the list is in; an opened part grows the column, which scrolls.
-    const partList = createChainPartList(t, (block, text) => chainController.setText(block, text), {
+    const partList = createChainPartList(t, (block, text) => chainController.setText(block, composePartText(chainController.state, block, text)), {
         onShow: () => { previewSpace.style.flex = `0 0 ${previewSpace.getBoundingClientRect().height}px`; },
         onHide: () => { previewSpace.style.flex = ''; },
         redo: block => { failure.clear(); return chainController.redo(block); },
