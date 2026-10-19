@@ -418,14 +418,26 @@ def lan_access_links(engine, port, *, password_set=None):
     return [address(host, port) + suffix for host in hosts]
 
 
+def reserved_port(error):
+    """Whether no program may listen on this port at all. Windows with WSL or Hyper-V reserves
+    whole blocks of ports (often 100 or more in a row), and binding one fails with WSAEACCES."""
+    return error.errno == errno.EACCES or getattr(error, 'winerror', None) == 10013
+
+
 def next_free_address(url, count=12):
-    """The next local address after this one that nothing listens or answers on, as setup.sh chooses."""
+    """The next local address after this one that nothing listens or answers on, as setup.sh chooses.
+    Reserved ports are skipped without counting, so a reserved block does not end the search."""
     parsed = urlsplit(url)
-    for port in range((parsed.port or 80) + 1, min((parsed.port or 80) + 1 + count, 65536)):
+    port = parsed.port or 80
+    while count > 0 and port < 65535:
+        port += 1
         try:
             bind_check(parsed.hostname, port)
-        except OSError:
+        except OSError as error:
+            if not reserved_port(error):
+                count -= 1
             continue
+        count -= 1
         candidate = address(parsed.hostname, port)
         if server_info(loopback_url(candidate))['status'] == 'offline':
             return candidate
