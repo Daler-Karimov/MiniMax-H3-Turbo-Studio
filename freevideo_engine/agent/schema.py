@@ -450,6 +450,7 @@ def contracts(*, local=False):
         routes['GET', suffix] = route('Read generation monitoring', auth=False, lan=True, external=True,
             query=obj({'client_id': string()}) if suffix != '/freevideo/progress' else EMPTY,
             **({'path': obj({'id': string()}, ('id',))} if '{id}' in suffix else {}))
+    routes['GET', '/freevideo/agent/activity']['query'] = obj({'cursor': string(80)})
     routes['GET', '/freevideo/agent/chat']['query'] = obj({'after': number(0, integer=True), 'session': SESSION})
     routes['GET', '/freevideo/agent/chat/video']['query'] = obj({'id': string(43, pattern=r'^[0-9]{4}-[0-9]{2}-[0-9]{2}/[0-9a-f]{32}$')}, ('id',))
     for method, suffix, summary, extra in (

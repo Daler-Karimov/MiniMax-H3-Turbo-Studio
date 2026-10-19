@@ -51,6 +51,10 @@ WHITEBOX_PENDING = ('The user started a white-model scene in this conversation (
                     'failed: say it was not made, and why) and start nothing. A question is never a prompt.')
 
 
+
+def _activity_cursor(row):
+    return '%r:%s' % (row['created_at'], row['id'])
+
 def local_address(request):
     """The backend's bound port, independent of page origins and forwarding headers."""
     socket = request.transport.get_extra_info('sockname') if request.transport else None
@@ -811,23 +815,26 @@ def register():
         if (view.get('result') or {}).get('library_id'):
             # The work this video became, for the page to show it in My works.
             value['work'] = view['result']['library_id']
+        from urllib.parse import quote
+        work = value.get('work')
+        # The saved work the page can play and picture without the agent's token.
+        value['play'] = '/freevideo/agent/chat/video?id=' + quote(work, safe='') if work else None
+        value['thumbnail'] = '/freevideo/library/thumbnail?id=' + quote(work, safe='') if work else None
+        picture = view.get('result') or {}
+        if row['kind'] == 'image' and picture.get('file'):
+            # ComfyUI's own view of the input file, which the page can show without the agent's token.
+            folder, _, leaf = picture['file'].rpartition('/')
+            value['thumbnail'] = '/view?filename=%s&subfolder=%s&type=input' % (quote(leaf, safe=''), quote(folder, safe=''))
         if card:
-            # A conversation card: the page plays and pictures the saved work itself, without the agent's token.
-            from urllib.parse import quote
+            # A conversation card: the page plays and pictures the saved work itself.
             value.pop('client')
-            work = value.setdefault('work', None)
+            value.setdefault('work', None)
             seconds = row['spec'].get('seconds')
             size = [row['spec'].get(k) if type(row['spec'].get(k)) is int else None for k in ('width', 'height')]
             value.update(seconds=seconds if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None,
-                         width=size[0], height=size[1],
-                         thumbnail='/freevideo/library/thumbnail?id=' + quote(work, safe='') if work else None,
-                         play='/freevideo/agent/chat/video?id=' + quote(work, safe='') if work else None)
-            picture = view.get('result') or {}
+                         width=size[0], height=size[1])
             if row['kind'] == 'image' and picture.get('file'):
-                # ComfyUI's own view of the input file, which the page can show without the agent's token.
-                folder, _, leaf = picture['file'].rpartition('/')
-                value.update(width=picture.get('width'), height=picture.get('height'),
-                             thumbnail='/view?filename=%s&subfolder=%s&type=input' % (quote(leaf, safe=''), quote(folder, safe='')))
+                value.update(width=picture.get('width'), height=picture.get('height'))
         return value
 
     def agent_state():
@@ -1166,10 +1173,30 @@ def register():
         def read():
             # For the studio: what agents are doing, as ComfyUI's own queue and history already show.
             now = time.time()
-            rows = sorted(jobs.rows(), key=lambda r: r['created_at'], reverse=True)
-            shown = [r for r in rows if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800][:12]
-            return dict(active=sum(1 for r in rows if r['status'] in ACTIVE), jobs=[activity_item(r) for r in shown])
-        return reply(await asyncio.to_thread(read))
+            rows = sorted(jobs.rows(), key=lambda r: (r['created_at'], r['id']), reverse=True)
+            active = sum(1 for r in rows if r['status'] in ACTIVE)
+            cursor = request.query.get('cursor')
+            if cursor is None:
+                shown = [r for r in rows if r['status'] in ACTIVE or (r.get('finished_at') or 0) > now - 1800][:12]
+                after = shown[-1] if shown else None
+                older = [r for r in rows if after is None or (r['created_at'], r['id']) < (after['created_at'], after['id'])]
+                if after is None and older:
+                    # Nothing recent: history starts from the newest job.
+                    return dict(active=active, jobs=[], next_cursor=_activity_cursor({'created_at': older[0]['created_at'] + 1, 'id': ''}))
+            else:
+                try:
+                    stamp, _, ident = cursor.partition(':')
+                    key = (float(stamp), ident)
+                    if not math.isfinite(key[0]) or len(cursor) > 80:
+                        raise ValueError
+                except ValueError:
+                    return None
+                page = [r for r in rows if (r['created_at'], r['id']) < key]
+                shown, older = page[:30], page[30:]
+            return dict(active=active, jobs=[activity_item(r) for r in shown],
+                        next_cursor=_activity_cursor(shown[-1]) if shown and older else None)
+        value = await asyncio.to_thread(read)
+        return problem('invalid_request', 'Invalid cursor') if value is None else reply(value)
 
     @routes.post('/freevideo/agent/activity/cancel')
     @guarded

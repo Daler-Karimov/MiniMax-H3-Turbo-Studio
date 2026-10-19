@@ -15,6 +15,7 @@ import math
 import time
 import ipaddress
 import os
+import re
 from pathlib import Path
 import ssl
 from urllib.parse import urlencode, urlsplit
@@ -24,13 +25,17 @@ from yarl import URL
 from . import proxy_identity, lan_password
 from .lan_auth import PasswordAuth, DEVICE_COOKIE, REMEMBER_SECONDS, LOGIN_DELAY
 
+PHONE_WEB = Path(__file__).resolve().parents[1] / 'web'
+PHONE_FILE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:js|css|html)')
+PHONE_ASSETS = ('assets/freevideo.svg', 'assets/freevideo-light.svg')
+PHONE_TYPES = {'.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'}
 COOKIE = 'freevideo_access'
 DAYS = 30
 LOGIN_PATH = '/m/login'
 # Temporary English copy; keep all password-page text here for Iris.
 PASSWORD_COPY = dict(title='FreeVideo', password='Password', remember='Keep me signed in',
                      submit='Sign in', incorrect='Incorrect password', retry='Try again later ({minutes} minutes).',
-                     phone='FreeVideo mobile', pending='Mobile pages are coming soon.')
+                     phone='FreeVideo mobile')
 
 
 def password_page(*, error='', retry_after=0, status=401):
@@ -45,12 +50,26 @@ def password_page(*, error='', retry_after=0, status=401):
         '<button type="submit">{submit}</button></form></body></html>').format(
             **{k: html.escape(v) for k, v in copy.items()}, message=html.escape(message), retry_after=retry_after, action=LOGIN_PATH))
     response.headers['Cache-Control'] = 'no-store'
-    response.headers['Referrer-Policy'] = 'no-referrer'
+    # Chromium sends Origin: null from a no-referrer page, which the login would refuse.
+    response.headers['Referrer-Policy'] = 'same-origin'
     response.headers['Content-Security-Policy'] = "default-src 'none'; form-action 'self'; frame-ancestors 'none'"
     if retry_after:
         response.headers['Retry-After'] = str(retry_after)
         response.headers['X-FreeVideo-Retry-After'] = str(retry_after)
     return response
+
+
+def phone_file(path, root=None):
+    """The page file /m/<name> stands for: .js/.css/.html directly inside web/ and the two wordmark SVGs."""
+    root = (root or PHONE_WEB).resolve()
+    name = 'phone.html' if path == '/m/' else path[len('/m/'):]
+    if not (PHONE_FILE.fullmatch(name) or name in PHONE_ASSETS):
+        return None
+    try:
+        found = (root / name).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return found if found.parent in (root, root / 'assets') and found.is_file() else None
 
 
 def same_origin(request):
@@ -279,14 +298,17 @@ def create(upstream, token, engine=None):
             rest = [(k, v) for k, v in request.rel_url.query.items() if k != 'token']
             location = request.path + ('?' + urlencode(rest) if rest else '')
             return browser_headers(web.Response(status=303, headers={'Location': location}), request)
-        if request.path in ('/m/', '/m/csrf') and request.method in ('GET', 'HEAD'):
+        if request.path.startswith('/m/') and request.path != LOGIN_PATH and request.method in ('GET', 'HEAD'):
             if not request.get('lan_device'):
                 return web.Response(status=403)
             if request.path == '/m/csrf':
                 response = web.json_response(dict(csrf=proxy_identity.csrf(hop_secret, request['lan_device'])))
             else:
-                response = web.Response(text='<!doctype html><title>%s</title><h1>%s</h1><p>%s</p>' % (
-                    PASSWORD_COPY['title'], PASSWORD_COPY['phone'], PASSWORD_COPY['pending']), content_type='text/html')
+                found = phone_file(request.path)
+                if found is None:
+                    return web.Response(status=404, headers={'Cache-Control': 'no-store'})
+                response = web.Response(body=found.read_bytes() if request.method == 'GET' else b'',
+                                        content_type=PHONE_TYPES[found.suffix], charset='utf-8')
             response.headers['Cache-Control'] = 'no-store'
             return browser_headers(response, request)
         if request.headers.get('Upgrade', '').lower() == 'websocket':
