@@ -191,6 +191,9 @@ RESIDENT_TARGET = 8
 # Above this the resident copies displace nothing useful, so it bounds the
 # VRAM-side arithmetic before host RAM narrows it further.
 RESIDENT_VRAM_CEILING = 44
+# Extra card memory the whole stack needs beyond the table's activations: the
+# 1280x704 run peaked 0.5 GiB above the plan, and one more GiB stays free.
+WHOLE_STACK_MARGIN = int(1.5 * GiB)
 
 # A streamed transformer uses one device transfer slot without prefetch.  The
 # read-ahead slot adds one prepared block (BLOCK_BYTES) and lets host staging
@@ -1366,11 +1369,18 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
             # The second transfer slot in place of one resident block.
             prefetch, resident = True, resident - 1
     pinned_like = None
+    whole_stack = False
     if not small:
         # One measured requirement for the group in use, so the block count is
         # continuous across the band edges rather than restarting at each.
-        resident = max(0, min(RESIDENT_VRAM_CEILING,
-                              int((gpu_budget - activation_bytes(head, effective_tokens)) / block_bytes)))
+        card_blocks = int((gpu_budget - activation_bytes(head, effective_tokens)) / block_bytes)
+        resident = max(0, min(RESIDENT_VRAM_CEILING, card_blocks))
+        # The card holds every block with the activations to spare: keeping them
+        # all there costs no host copy and no locked pages, and the sampling
+        # latents come out the same (measured at 1280x704, 96 GB).
+        # Windows keeps its own margin: the display can take card memory mid-run.
+        whole_stack = (hardware.system != 'Windows' and
+                       gpu_budget - activation_bytes(head, effective_tokens) - WHOLE_STACK_MARGIN >= 50 * block_bytes)
         # The pinned subset below keeps the size sixteen heads give it: a
         # wider group's activations come out of the same budget, and a lower
         # count here would only lock more host memory, which no run measured.
@@ -1502,6 +1512,8 @@ def _choose(hardware: Hardware, *, vram_gib=None, ram_gib=None, attention='auto'
     ram_wants = max(0, 50 - max(0, int(host_room // block_bytes)))
     if not small:
         resident = min(resident, max(RESIDENT_TARGET, ram_wants))
+        if whole_stack:
+            resident, pin = 50, 0.
     # Windows reads non-streamed offloaded blocks into private memory (pread;
     # a section view would be charged to commit in full). The RAM guard counts
     # it, it cannot be reclaimed, and pins planned after that load-all pass find
