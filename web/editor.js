@@ -197,7 +197,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (options && !disposed) await actions.export(options);
         } catch (value) { error(value, 'export'); }
     }, 'fv-primary fv-ed-export-main');
-    const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(error)); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
+    const exportCancel = button('', () => store.cancelExport(exportStatus.id).catch(value => error(value, null, undefined, 'cancel-export'))); exportCancel.hidden = true; exportCancel.append(icon('m4 4 8 8M12 4l-8 8')); exportCancel.setAttribute('aria-label', t('Cancel', '取消'));
     exportBox.append(exportHint, exportButton, exportCancel); brand.append(wordmark(), title);
     const phoneAccess = createLanAccess(t, api);
     listeners.push(phoneAccess.dispose);
@@ -276,17 +276,21 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return true;
     }
     const content = record => JSON.stringify({...record, id: null, revision: 0});
+    function failureKind(site, value) {
+        const code = value?.reason || value?.code || value?.name;
+        return site + ':' + (String(code || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 40) || 'unknown');
+    }
     // `where` marks a failure: the notice then carries the "Report a problem" button and stays longer to be reached.
-    function notify(text, where = null) {
+    function notify(text, where = null, kind = null) {
         if (disposed) return;
         if (!text) { clearTimeout(noticeTimer); notice.hidden = true; return; }
         notice.textContent = text;
-        if (where) notice.append(issueButton(t, () => ({where, message: text})));
+        if (where) notice.append(issueButton(t, () => ({where, message: text, kind})));
         notice.hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, where ? 20000 : 9000);
     }
     const EDITOR_ISSUE = ['Editor', '编辑器'], EXPORT_ISSUE = ['Export', '导出'];
     // `step` names what was being done, so a failure there says which step went wrong; `out` is where the line is said (the bar's own line for a reference picture).
-    function error(value, step = null, out = notify) {
+    function error(value, step = null, out = notify, site = step || 'editor') {
         const code = value?.reason || value?.code || value?.message;
         if (['missing_glyphs', 'MissingGlyphs', 'source_missing'].includes(code)) {
             out(code === 'source_missing' ? t('A source file is missing. Import it again from the library.', '有素材的原文件找不到了，请在素材库重新导入。')
@@ -311,7 +315,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return {ok: false, reason: code};
         }
         const text = step === 'generate' ? editorErrorText(value, t) : step === 'export' ? exportErrorText(value, t) : t('Could not complete. Try again.', '没有完成，请重试');
-        out(text, step === 'export' ? EXPORT_ISSUE : EDITOR_ISSUE); return {ok: false, reason: code, say: text};
+        out(text, step === 'export' ? EXPORT_ISSUE : EDITOR_ISSUE, failureKind(site, value)); return {ok: false, reason: code, say: text};
     }
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
         if (disposed) return;
@@ -484,7 +488,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await queue.flush();
         }
         if (disposed || closing || epoch !== projectEpoch) return false;
-        if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE); return false; }
+        if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE, failureKind('save', {reason: queue.failure?.reason})); return false; }
         return !!state.record.id;
     }
     function updateTop() {
@@ -547,7 +551,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 } catch (value) {
                     if (!(value instanceof model.EditError)) throw value;
                     state.settle(record => model.fail(record, block.id, 'result_mismatch', job.id));
-                    error(value);
+                    error(value, null, undefined, 'fill');
                 }
             } else if (block.state === 'failed') {
                 const cause = block.reason || block.error;
@@ -639,7 +643,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             forgetPointer();
         })); if (disposed) return;
         // A restored edit remains usable offline with its existing placeholders.
-        await completeSources().catch(error); if (disposed) return; recoverJobs();
+        await completeSources().catch(value => error(value, null, undefined, 'sources')); if (disposed) return; recoverJobs();
         state.restoreView(remembered);
         // Also when generating is confirmed only after the edit has opened.
         offerInitial = () => { if (epoch === projectEpoch && !state.selection && state.record.tracks.every(track => !track.clips.length)) selectInitial(); };
@@ -669,7 +673,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             }
         } catch (value) {
             const reason = deleteEditText(t)[value?.reason];
-            if (reason) notify(reason); else error(value);
+            if (reason) notify(reason); else error(value, null, undefined, 'open-load');
         } finally { switching = false; element.inert = false; updateTop(); }
     }
     const emptyEdit = () => discardEmptyEdit(state.record, initial(), {busy: jobActive(), hasMedia: store.uploading});
@@ -700,7 +704,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const words = deleteEditText(t);
             if (jobActive()) throw {reason: 'generation_active'};
             await queue.flush(); releaseStamp();
-            if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE); return; }
+            if (queue.dirty) { notify(saveErrorText(queue.failure, t), EDITOR_ISSUE, failureKind('save', {reason: queue.failure?.reason})); return; }
             // Load the replacement before deleting, so a read failure keeps the edit open.
             const rows = (await store.projects()).filter(row => row.id !== state.record.id);
             // Most recently used: the order the edits were opened, then the last save.
@@ -711,7 +715,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await discardProject();
             await replaceProject(record); menu.hidden = true; title.setAttribute('aria-expanded', 'false'); title.focus();
         } catch (value) {
-            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed, EDITOR_ISSUE);
+            const words = deleteEditText(t); notify(words[value?.reason] || words.delete_failed, EDITOR_ISSUE, failureKind('delete', {reason: value?.reason}));
         } finally { switching = false; element.inert = false; updateTop(); }
     }
     function confirmDelete() {
@@ -738,7 +742,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const rows = (await store.projects()).filter(row => row.id !== state.record.id && !hiddenEmptyEdit(row, initial())); if (disposed || menu.hidden || !menu.contains(name)) return;
             if (rows.length) { const line = el('div'); line.setAttribute('role', 'separator'); menu.append(line); }
             for (const row of rows) { const item = button(row.name || new Date(row.updated_at).toLocaleDateString(), () => switchProject(row.id), 'fv-ed-project'); item.setAttribute('role', 'menuitem'); item.title = item.textContent; menu.append(item); }
-        } catch (value) { error(value); }
+        } catch (value) { error(value, null, undefined, 'projects'); }
         name.focus(); name.select();
     }
     const actions = {
@@ -778,7 +782,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 return {ok: true};
             } catch (valueError) {
                 if (!(valueError instanceof model.EditError)) throw valueError;
-                valueError.displayFrame = value.at ?? model.duration(state.record); error(valueError);
+                valueError.displayFrame = value.at ?? model.duration(state.record); error(valueError, null, undefined, 'insert');
                 return {ok: false, reason: valueError.code};
             }
         },
@@ -1086,7 +1090,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     function exportLost() {
         if (disposed) return;
         exportStatus = null; exportCancel.hidden = true; updateTop();
-        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'), EXPORT_ISSUE);
+        notify(t('Lost the connection to FreeVideo, so the export progress cannot be read. Export again once it is back.', '与 FreeVideo 的连接已断开，无法读取导出进度。恢复后请重新导出。'), EXPORT_ISSUE, 'export:lost');
     }
     function updateExport(value) {
         if (!value) return false;
@@ -1096,11 +1100,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         exportCancel.hidden = !running; updateTop(); exportButton.classList.remove('fv-primary');
         if (!running) {
             if (value.state === 'failed') {
-                if (['source_missing', 'missing_glyphs', 'MissingGlyphs'].includes(value.reason || value.code)) error(value);
+                if (['source_missing', 'missing_glyphs', 'MissingGlyphs'].includes(value.reason || value.code)) error(value, null, undefined, 'export');
                 else notify(value.reason === 'not_writable' ? t('Export failed: the output folder cannot be written to. Check that the folder can be written to, then retry.', '导出时出错：输出目录不可写。请检查这个文件夹的写入权限后重试。')
                     : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
                     : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
-                    : t('Export failed. Try again.', '导出时出错，请再试一次。'), EXPORT_ISSUE);
+                    : t('Export failed. Try again.', '导出时出错，请再试一次。'), EXPORT_ISSUE, failureKind('export', value));
             }
             if (value.state === 'cancelled') notify(t('Export cancelled. No unfinished file is kept.', '已取消导出，没有留下不完整的文件。'));
             window.FreeVideoNotifyTaskDone?.({kind: 'export', id: value.id, ok: value.state === 'done'});
@@ -1136,7 +1140,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         () => selectionActions.run('gaps'), 'fv-ed-close-gap');
     const previous = toolButton(t('Previous version', '上一版'), 'M3 6V2M3 6h4M3 6a5 5 0 1 1-1 5M8 5v3l2 2', () => {
         const clip = selectedContent().find(clip => clip.versions.length);
-        if (clip) try { state.apply(t('Previous version', '上一版'), record => model.restoreVersion(record, clip.id, 0)); } catch (value) { error(value); }
+        if (clip) try { state.apply(t('Previous version', '上一版'), record => model.restoreVersion(record, clip.id, 0)); } catch (value) { error(value, null, undefined, 'restore'); }
     }, 'fv-ed-previous');
     historyTools.append(toolUndo, toolRedo); editTools.append(split, remove, closeGap, previous);
     const pictureTools = createPictureTools({state, sources: store.sources, t, capabilities: () => capability, error});
@@ -1209,7 +1213,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const next = content(state.record);
             if (!suppressSave && !initializing && next !== savedContent && exportStatus?.state === 'done') { exportStatus = null; exportButton.textContent = t('Export', '导出'); }
             if (!suppressSave && !initializing && next !== savedContent) { savedContent = next; queue.enqueue(state.record); }
-            completeSources().catch(error); recoverJobs();
+            completeSources().catch(value => error(value, null, undefined, 'sources')); recoverJobs();
         }
         if (event.type === 'selection') { if (state.selection !== initialSelection) initialSelection = null; }
         if (event.type === 'record' || event.type === 'selection') { updateTop(); updateTransport(); pictureTools.update(); }
@@ -1329,7 +1333,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (!queue.dirty && emptyEdit()) {
                     try { await discardProject({automatic: true}); }
                     catch (value) {
-                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed, EDITOR_ISSUE);
+                        notify(deleteEditText(t)[value?.reason] || deleteEditText(t).delete_failed, EDITOR_ISSUE, failureKind('delete', {reason: value?.reason}));
                         closing = false; element.inert = false; closePromise = null; return false;
                     }
                 }
@@ -1379,19 +1383,19 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (draft?.startsWith('draft:')) key = draft;
                 else if (id) { record = await store.load(id); if (record) key = id; }
             }
-        } catch (value) { error(value); }
+        } catch (value) { error(value, null, undefined, 'open-load'); }
         if (closing || disposed) return;
         try {
             await replaceProject(record || state.record, key);
             if (from?.work && !state.record.id) queue.enqueue(state.record);
-        } catch (value) { error(value); }
+        } catch (value) { error(value, null, undefined, 'open-session'); }
         if (closing || disposed) return;
         initializing = false; savedContent = content(state.record); player.refresh();
         loaded = true; settleGenbar();
         updateTop(); updateTransport();
         const [trackResult, componentResult] = await componentsReady; if (closing || disposed) return;
         // Optional progress components may fail without taking the tracks with them.
-        if (componentResult.status === 'rejected') error(componentResult.reason);
+        if (componentResult.status === 'rejected') error(componentResult.reason, null, undefined, 'components');
         if (trackResult.status === 'rejected') throw trackResult.reason;
         const module = trackResult.value, components = componentResult.status === 'fulfilled' ? componentResult.value : {};
         blockStates = components.blocks?.blockStates || null;
@@ -1454,7 +1458,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             await store.generationReady();
             if (!enter() && !closing && !disposed) extendEntry = () => { if (enter(false) || closing || disposed) extendEntry = null; };
         }
-    })().catch(error).finally(() => {
+    })().catch(value => error(value, null, undefined, 'init')).finally(() => {
         // Every exit (including close and partial failure) settles readiness.
         // After a completed start the saved baseline is already set; edits made since must stay unsaved.
         if (initializing) { initializing = false; savedContent = content(state.record); }
