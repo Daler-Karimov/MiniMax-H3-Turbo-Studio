@@ -29,6 +29,7 @@ from .runtime_alias import checked_real_path
 
 # Background launcher release checks while the window stays open.
 CHECK_SECONDS = 30 * 60
+SETTLE_SECONDS = 60
 # "Later" hides one reminder for this long; a newer release reminds at once.
 SNOOZE_SECONDS = 4 * 3600
 QUEUE_POLL_SECONDS = 3
@@ -73,6 +74,7 @@ class Session:
     bridge_pending = False
     bridge_written = (0., None)
     update_checked = 0.
+    settle_at = None
     page = 'comfy'
     selected = installed_versions = engine_identity = bundled_identity = None
     release_details = None
@@ -1188,10 +1190,10 @@ class Session:
         """A package the user installs themselves (macOS app, Windows folder): the release
         page opens and the reminder closes. True when this update was handled that way."""
         row = self.updater.state if self.updater else {}
+        from .launcher_update import manual_install, release_page
         if not (row.get('candidate') and row.get('status') != 'checking'
-                and self.updater.current.get('packaging') in ('onedir', 'app')):
+                and manual_install(self.updater.current, self.updater)):
             return False
-        from .launcher_update import release_page
         from .windows_ux import open_browser
         self.pending_update = None
         self.update_intent = None
@@ -1367,6 +1369,15 @@ class Session:
             updater.run('check', background=True)
         if self.resume_until:
             self._check_resumed(now)
+        if updater and updater.current.get('packaging') == 'app' and sys.platform == 'darwin':
+            # A new app has to run for a while before the old one beside it is deleted.
+            self.settle_at = self.settle_at or now + SETTLE_SECONDS
+            if now >= self.settle_at:
+                self.settle_at = float('inf')
+                from . import mac_app_update
+                app = mac_app_update.current_app()
+                if app is not None:
+                    mac_app_update.settle(app)
         if self.bridge and now - self.bridge_polled >= 1:
             self.bridge_polled = now
             from .launcher_bridge import take_request
@@ -1502,10 +1513,13 @@ class Session:
         row = dict(self.updater.state) if self.updater else dict(status='development')
         # Only display fields from the update manifest, never access tokens.
         view = {k: row[k] for k in ('status', 'error', 'progress', 'candidate') if k in row}
-        from .launcher_update import error_text, release_page
+        from .launcher_update import error_text, manual_install, release_page
         if row.get('error_code'):
             view['error'] = error_text(row, self.language.startswith('zh'))
         view['release_page'] = release_page(self.updater.current) if self.updater else ''
+        if self.updater and self.updater.install_failed and view.get('candidate'):
+            # The new app did not go in and the old one is back: the reminder says so.
+            view['status'], view['error'] = 'error', 'The update could not be installed.'
         key = self.update_key()
         view.update(engine=self.engine_update_pending(), current=__version__,
                     current_release=public_details(self.updater.current) if self.updater else self.release_details,
@@ -1513,7 +1527,7 @@ class Session:
                     installed=self.installed_version(), phase=self.update_phase(), key=key,
                     channel=self.updater.current.get('channel') if self.updater else None,
                     track=self.updater.current.get('track', 'stable') if self.updater else 'stable',
-                    manual=bool(self.updater and self.updater.current.get('packaging') in ('onedir', 'app')),
+                    manual=bool(self.updater and manual_install(self.updater.current, self.updater)),
                     check_requested=self.pending_check is not None or row.get('status') == 'checking',
                     check_text=self.t(*ACTION_COPY['checking_update']))
         # Versions between the one in use and the update, so skipped notes are not lost.
