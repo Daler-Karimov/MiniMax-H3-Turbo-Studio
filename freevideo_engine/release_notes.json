@@ -1,37 +1,74 @@
 {
   "schema": 1,
-  "product_version": "0.4.14",
+  "product_version": "0.4.15",
   "en": {
-    "summary": "Max is faster, a picture can now be changed only inside a region you select, agents can import their own clips into the timeline, and long videos can take more requests into the queue while they generate.",
+    "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
     "changes": [
-      "Quality levels: Max now uses 20 steps with a guarded step cache and finishes sooner; High uses 16 steps with the step cache. The level names stay the same.",
-      "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
-      "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
-      "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
-      "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
-      "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
-      "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
-      "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
-      "Feedback: feedback sent for a failed generation now includes the engine's error message.",
-      "Install: the Windows library checks also handle files in deeply nested folders."
+      "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
+      "Image generation: on 6–8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
+      "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
+      "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
+      "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
+      "Character sheets: in the back view, the head now turns away together with the body.",
+      "Mac: long videos can now be generated in parts.",
+      "Launcher and updates: Windows updates download faster in mainland China. When GitHub is slow, the launcher can fetch the update from a domestic mirror, and every file from the mirror is checked against the release signature before use. The install confirmation page now fits narrow windows: the sidebar collapses to icons and the buttons stay visible.",
+      "Workflows: workflows saved by older versions run again. Options added in later versions that are empty or invalid in an old file are set back to their defaults.",
+      "Video generation: the High quality level generates faster. On 8 GB graphics cards, 1920×1088 videos that were refused for falling just short of graphics memory now run. Changing the early steps setting of a video reference now produces a new result instead of reusing the earlier one.",
+      "LoRA: a LoRA trained for Wan 2.x now says so when it is selected for the int8 model, instead of only saying it cannot be used.",
+      "Linux: on computers with less memory, generating again right after a generation no longer runs out of memory near the end of sampling. On 6 GB graphics cards, Max no longer takes hours to finish."
     ]
   },
   "zh": {
-    "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
+    "summary": "生图工具会保存所有生成过的图片，小显存和大显存的显卡生图都更省内存；所有错误提示旁都有“提交问题”按钮；Windows 版在中国大陆更新更快。",
     "changes": [
-      "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
-      "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
-      "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
-      "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
-      "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
-      "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
-      "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
-      "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
-      "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
-      "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
+      "生图：本机生成过的图片都保存在历史记录里，按时间从新到旧排列，可放到画布、用作参考图、删除或打开所在文件夹。空白画布可选“标准 / 高清”尺寸。",
+      "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存放得下整个模型的显卡，权重直接加载到显卡，不再在内存里留一份副本，加载后内存占用从约 15 GB 降到约 2 GB。",
+      "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点一下带上情况打开问题反馈。",
+      "AI 全自动：对话删不掉时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
+      "白模：现成场景只保留“橘猫跳上书架”，点一下直接开始。白模没做成时会说明原因和下一步，渲染中页面显示进度。问白模进度时会回答进度，不再当成新要求。",
+      "人物设定图：背面图里头和身体一起转向背后。",
+      "Mac：支持分段生成长视频。",
+      "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收成图标，按钮始终可见。",
+      "工作流：旧版本存的工作流可以直接运行。旧文件里后加的选项为空或不合法时，改回默认值。",
+      "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存差一点而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
+      "LoRA：为 Wan 2.x 训练的 LoRA 选进 int8 模型时，会说明这是给 Wan 2.x 训练的 LoRA，不再只说无法使用。",
+      "Linux：内存较小的电脑接着再生成一次时，不再在采样快结束时内存不足。6 GB 显存的显卡选“极致”时，不再要等好几个小时。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.14",
+      "en": {
+        "summary": "Max is faster, a picture can now be changed only inside a region you select, agents can import their own clips into the timeline, and long videos can take more requests into the queue while they generate.",
+        "changes": [
+          "Quality levels: Max now uses 20 steps with a guarded step cache and finishes sooner; High uses 16 steps with the step cache. The level names stay the same.",
+          "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
+          "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
+          "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
+          "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
+          "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
+          "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
+          "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
+          "Feedback: feedback sent for a failed generation now includes the engine's error message.",
+          "Install: the Windows library checks also handle files in deeply nested folders."
+        ]
+      },
+      "zh": {
+        "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
+        "changes": [
+          "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
+          "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
+          "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
+          "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
+          "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
+          "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
+          "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
+          "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
+          "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
+          "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.13",
       "en": {
