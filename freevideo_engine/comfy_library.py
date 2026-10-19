@@ -1123,8 +1123,9 @@ def register():
             for item in query.getall('ref', [])[:32]:
                 kind, _, name = item.partition(':')
                 parts = Path(name).parts
-                if kind in ('image', 'video', 'audio') and parts and not Path(name).is_absolute() and '..' not in parts:
-                    refs.append(dict(kind=kind, path=name))
+                silent = kind == 'video-silent'
+                if (kind in ('image', 'video', 'audio') or silent) and parts and not Path(name).is_absolute() and '..' not in parts:
+                    refs.append(dict(kind='video', path=name, sound=False) if silent else dict(kind=kind, path=name))
             if refs:
                 # The generation path's own classification decides the tables (audio track in a video).
                 value.update(references=refs, media_base=folder_paths.get_input_directory())

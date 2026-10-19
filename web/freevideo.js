@@ -332,15 +332,23 @@ function mediaPanel(node, mount = null) {
                 preview.controls = true; preview.preload = "metadata"; if (kind === "video") { preview.muted = true; preview.playsInline = true; }
                 card.append(preview);
             }
+            let showLength = () => {};
+            if (kind === "video") {
+                const sound = el("label", undefined, "fv-sound"); const box = el("input"); box.type = "checkbox"; box.checked = row.sound !== false;
+                box.onchange = () => { if (box.checked) delete rows[index].sound; else rows[index].sound = false; showLength(); update(rows); };
+                sound.append(box, el("span", text("Use the video's sound", "使用视频声音"))); card.append(sound);
+            }
             if (kind !== "image") {
                 // References are cut to the generated length (at most 15 s); say so before the run.
+                // A video used without its sound has no audio to cut.
                 const length = el("div", "", "fv-note"); length.hidden = true; card.append(length);
-                preview.onloadedmetadata = () => {
-                    if (!(preview.duration > 15.05) || !Number.isFinite(preview.duration)) return;
-                    length.textContent = text(`Audio length: ${preview.duration.toFixed(1)} s; uses up to the first 15 s within the video length.`,
+                showLength = () => {
+                    const long = preview.duration > 15.05 && Number.isFinite(preview.duration);
+                    length.hidden = !long || row.sound === false || rows[index]?.sound === false;
+                    if (long) length.textContent = text(`Audio length: ${preview.duration.toFixed(1)} s; uses up to the first 15 s within the video length.`,
                         `音频长 ${preview.duration.toFixed(1)} 秒，最多取前 15 秒且不超过视频时长。`);
-                    length.hidden = false;
                 };
+                preview.onloadedmetadata = () => showLength();
             }
             const controls = el("div", undefined, "fv-row");
             const move = delta => { const target = index + delta; if (target < 0 || target >= rows.length) return; [rows[index], rows[target]] = [rows[target], rows[index]]; update(rows); };
@@ -357,7 +365,7 @@ function mediaPanel(node, mount = null) {
     serialized.serializeValue = () => {
         if (node.isUploading) throw new Error(text("Wait for media uploads to finish before running", "请等待素材上传完成后再生成"));
         // The run takes only what it uses (and which character a picture belongs to); the editing data of a picture stays in the workflow.
-        try { return JSON.stringify(read().map(({file, role, enabled, cast}) => ({file, role, enabled, ...(typeof cast?.id === 'string' && cast.id ? {cast: {id: cast.id}} : {})}))); } catch { return serialized.value; }
+        try { return JSON.stringify(read().map(({file, role, enabled, cast, sound}) => ({file, role, enabled, ...(sound === false && mediaKindOrNull(file) === 'video' ? {sound: false} : {}), ...(typeof cast?.id === 'string' && cast.id ? {cast: {id: cast.id}} : {})}))); } catch { return serialized.value; }
     };
     async function upload(files) {
         if (node.isUploading || !files.length) return;

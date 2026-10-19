@@ -182,7 +182,9 @@ def prepare(media, canvas, directory):
                 pixels.flush()
                 ref.update(pixels=str(target), frames=count, normalized_fps=24)
                 used = count / 24.
-                soundtrack, longer_audio, _ = _audio(path, directory / ('reference-%02d-audio.npy' % index), limit / 24.)
+                # The clip's own sound is a reference too, unless the request turned it off.
+                soundtrack, longer_audio, _ = (None, False, None) if row.get('sound') is False else \
+                    _audio(path, directory / ('reference-%02d-audio.npy' % index), limit / 24.)
                 longer = longer or longer_audio
                 if soundtrack:
                     ref['audio'] = soundtrack
