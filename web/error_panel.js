@@ -12,6 +12,10 @@ const record = value => value && typeof value === 'object' && !Array.isArray(val
 
 // The engine's own messages for errors people can fix themselves.
 const PLAIN_ERRORS = [
+    {key: 'engine-busy', message: 'Setup, testing or generation is already using this installation/GPU lock. Retry after it finishes.',
+        title: ['FreeVideo is busy with another task', 'FreeVideo 正在处理另一个任务'],
+        summary: ['Try again when it finishes. If nothing else is running, close duplicate FreeVideo instances, then try again.',
+            '请在它完成后重试。若没有其他任务在进行，请关闭重复运行的 FreeVideo 后重试。']},
     {key: 'continuation-missing', message: 'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.',
         title: ['This video cannot be continued', '这个视频暂时不能接续'],
         summary: ['Generate the previous video again, then continue it.', '请重新生成上一段视频，再接续。']},

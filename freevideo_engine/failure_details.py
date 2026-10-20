@@ -6,6 +6,7 @@ import re
 import sys
 
 from .long_paths import io_path, plain_text
+from .locking import ENGINE_BUSY
 from .diagnostics import Redactor
 from .tiers import STEP_CACHES, TIERS, on_mac, table_level
 from .two_pass import SCALES
@@ -13,6 +14,11 @@ from .two_pass import SCALES
 
 STEP_OUTPUT = '\n\nFull step output:\n'
 QUALITY_LEVELS = (('Light', '轻量'), ('Medium', '标准'), ('High', '精细'), ('Max', '极致'))  # tiers.TIERS order
+ENGINE_BUSY_TITLE = ('FreeVideo is busy with another task', 'FreeVideo 正在处理另一个任务')
+ENGINE_BUSY_DETAIL = (
+    'Try again when it finishes. If nothing else is running, close duplicate FreeVideo instances, then try again.',
+    '请在它完成后重试。若没有其他任务在进行，请关闭重复运行的 FreeVideo 后重试。',
+)
 
 
 IMAGE_PACK_FAILURES = {
@@ -354,6 +360,12 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
     if not value:
         return dict(title='', detail='', action='', kind='')
     text = _without_ready_curl_diagnostics(str(value))
+    # Match only the cause position, never an echoed input or a log line below it.
+    causes = [line.strip() for line in text.splitlines() if line.strip()]
+    index = 1 if causes and re.fullmatch(r'FreeVideo generation failed(?: \(exit -?\d+\))?', causes[0]) else 0
+    cause = re.sub(r'^(?:[A-Za-z_][\w.]*(?:Error|Exception)):\s*', '', causes[index]) if len(causes) > index else ''
+    if cause == ENGINE_BUSY:
+        return dict(title=ENGINE_BUSY_TITLE[zh], detail=ENGINE_BUSY_DETAIL[zh], action='', kind='engine-busy')
     from .offline_errors import alias_failure, guidance
     if alias_failure(text):
         return dict(title=guidance('title', zh), detail=guidance('runtime-alias', zh),
@@ -707,6 +719,11 @@ def generation_failure(run, exit_code=None, *, repair=None):
     lines = ['FreeVideo generation failed' + (' (exit %s)' % exit_code if exit_code is not None else '')]
     report = _report(run)
     redactor.structured(report)  # Collect prompt values without showing the request.
+    # Read the whole bounded log, not a tail that could hide other output.
+    # A legacy managed failure has exactly this one nonempty line and exit 1.
+    if exit_code == 1 and [line for line in _read(run / 'generate.log', 8192).splitlines()
+                           if line.strip()] == [ENGINE_BUSY]:
+        lines.append(ENGINE_BUSY)
     # What the worker found when cuDNN refused its own files, ahead of the trace.
     explained = _runtime_explanation(report, REPAIR_MARK)
     if explained:
