@@ -32,7 +32,7 @@ import {createFirstRunGuide} from './first_run_guide.js';
 import {SHOWCASE_SCENE} from './entry_showcase.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
-import {optionalText} from './optional_inputs.js';
+import {optionalText, clonePrompt} from './optional_inputs.js';
 import {outputNotWritable} from './error_panel.js';
 import {repairAction} from './repair_hint.js';
 import {expandCast} from './cast_mention.js';
@@ -504,7 +504,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         exportButton.disabled = false; exportButton.title = '';
     }
     async function snapshot() {
-        let value = panel.snapshot ? structuredClone(await panel.snapshot()) : structuredClone(await app.graphToPrompt());
+        let value = panel.snapshot ? clonePrompt(await panel.snapshot()) : clonePrompt(await app.graphToPrompt());
         if (value.output) {
             const node = String(panel.node?.id || panel.node || Object.keys(value.output).find(id => value.output[id].class_type === 'FreeVideoGenerate') || '');
             value = {node, prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};

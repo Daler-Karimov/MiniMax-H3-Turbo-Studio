@@ -2,7 +2,7 @@ import {createLanAccess} from './lan_access.js';
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
 import {topDialog} from './dialog_keys.js';
 import {createExpandButton} from './editor_expand.js';
-import {cleanOptionalPrompt} from './optional_inputs.js';
+import {cleanOptionalPrompt, clonePrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
 import { openSetup } from './setup.js';
@@ -1697,7 +1697,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             // and all GPU execution leave the next draft fully editable.
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = true;
             held = turnNodeOn(node);
-            const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(structuredClone(await app.graphToPrompt())), node.id, source,
+            const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(clonePrompt(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
             if (!snapshot) { fault(t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。')); return; }
             const seedIndex = node.widgets.findIndex(w => w.name === 'seed');
