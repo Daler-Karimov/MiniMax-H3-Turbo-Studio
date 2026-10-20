@@ -86,6 +86,13 @@ def setup_memory_status(row, verbose=False, *, system=None):
     return result
 
 
+# Windows setup downloads and unpacks prebuilt wheels: a real install peaked
+# near 0.93 GiB of tree private working set. The planned budget is the memory
+# free when planning minus the 2 GiB reserve, so on a machine with 2 GiB or
+# less free it was 0 and the first sample stopped the install.
+WINDOWS_SETUP_MIN_PROCESS_BUDGET = 2 * GiB
+
+
 def setup_memory_pressure(row, budget, system):
     """Keep Windows planning headroom separate from an exhaustion stop.
 
@@ -94,9 +101,18 @@ def setup_memory_pressure(row, budget, system):
     that same threshold prevented the low-memory path from continuing.
     Linux uses inference's clean-file-cache headroom, retaining the 1 GiB
     floor and the separate process budget. Raw cgroup charges remain recorded.
+    On Windows the process budget never falls below what setup itself needs;
+    a machine with little free RAM is stopped by the commit and system floors
+    when it truly runs out, not by a budget that was planned as zero.
     """
+    planned_budget = budget
+    raised = system == 'Windows' and budget < WINDOWS_SETUP_MIN_PROCESS_BUDGET
+    if raised:
+        budget = WINDOWS_SETUP_MIN_PROCESS_BUDGET
     reserve = (2 if system == 'Windows' else 1) * GiB
-    floor = min(256 * 2**20, int(budget * .05)) if system == 'Windows' else reserve
+    # A raised budget keeps the full 256 MiB stop point: 5% of the raised
+    # budget would stop a machine with little free RAM later than any other.
+    floor = (256 * 2**20 if raised else min(256 * 2**20, int(budget * .05))) if system == 'Windows' else reserve
     available = (inference_headroom(row) if system == 'Linux'
                  else row.get('effective_available_bytes', row['system_available_bytes']))
     commit = row.get('system_commit_available_bytes')
@@ -108,7 +124,7 @@ def setup_memory_pressure(row, budget, system):
         reasons.append('system_headroom')
     if used is not None and used > budget:
         reasons.append('process_budget')
-    return dict(reasons=reasons, working_bytes=used, budget_bytes=budget,
+    return dict(reasons=reasons, working_bytes=used, budget_bytes=budget, planned_budget_bytes=planned_budget,
                 guard_metric=row.get('guard_metric', 'process working memory'),
                 available_bytes=available, physical_available_bytes=row.get('system_physical_available_bytes'),
                 commit_available_bytes=commit, emergency_floor_bytes=floor,
