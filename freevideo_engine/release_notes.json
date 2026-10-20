@@ -1,31 +1,58 @@
 {
   "schema": 1,
-  "product_version": "0.4.16",
+  "product_version": "0.4.17",
   "en": {
-    "summary": "Any part of a long video can be generated again as a new video, phones on the same network can follow chats and generations behind an optional password, and the Mac app now updates itself.",
+    "summary": "Image generation and editing come to Apple silicon Macs, a Mac update that fails to open is rolled back, and phones on the same network connect more reliably.",
     "changes": [
-      "Long videos: the part list shows each part's length and what it follows, and marks failed parts. Any finished part can be generated again as a new video that keeps the parts before it, and the original video stays as it was. In the joined video, click a part's length to play two seconds either side of its seam. The list shows only each part's own events, and editing a part keeps the rest of its description unchanged.",
-      "Phone access: phones on the same network can open FreeVideo from the phone icon and QR code in the top bar, chat with AI Autopilot and follow generations. Phone access can be switched on or off and protected with a password that phones sign in with.",
-      "Mac: an update is downloaded in the background, and Restart & update replaces the app in place and opens the new version. Models and settings are kept, and if any step fails the previous version is restored.",
-      "Reference videos: a reference video can now be used without its own sound.",
-      "Editor: parts cut off when the engine stopped now show \"Interrupted\". A problem reported from a failure now includes the step that failed.",
-      "Linux: on graphics cards that can hold the whole video model, video generation no longer keeps a copy of the weights in system memory, which saves about 20 GB.",
-      "Reporting problems: memory readings in feedback record free physical memory and commit headroom separately."
+      "Mac: Macs with Apple silicon and at least 16 GB of memory can now generate and edit images.",
+      "Mac: in later updates, if the new version stops right after opening, the previous version is put back. The previous version is kept in a hidden folder so it no longer shows up in search or Launchpad. When an update fails, the reason and both buttons now appear right below the description.",
+      "Phone access: the phone page connects when phone access is switched on in the launcher, and also works on older phone browsers.",
+      "Queue: a single failed read of the queue no longer shows the connection lost card. The card appears after three failures in a row and goes away when the connection returns, and a running loop is kept through a short outage.",
+      "Launcher: when the chosen folder is not a ComfyUI folder, the launcher names a ComfyUI folder found nearby. Windows: the engine now starts when its usual port falls inside a range that Windows has reserved.",
+      "Installation: an installation with no generation on record now also compiles the standard size in the background.",
+      "Failures: when the model file changed during generation, the failure text names what changed."
     ]
   },
   "zh": {
-    "summary": "长视频的任何一段都可以重新生成为一条新视频；同一网络下的手机可以查看对话和生成进度，可设密码；Mac 版可以自动更新。",
+    "summary": "Apple 芯片的 Mac 可以生成和编辑图片；Mac 更新后打不开时会还原旧版；同一网络下的手机连接更稳定。",
     "changes": [
-      "长视频：分段列表显示每段的时长和接在哪一段之后，并标出失败的段。任何已完成的段都可以从这里重新生成一条新视频，前面的段保持不变，原视频也不受影响。整条视频生成后，点某段的时长可播放它接缝前后各 2 秒。列表只显示每段自己的动作，编辑某一段时其余描述保持不变。",
-      "手机访问：同一网络下的手机可以通过顶栏的手机图标和二维码打开 FreeVideo，和 AI 全自动对话、查看生成进度。手机访问可以开关，也可以设置密码，手机登录后才能使用。",
-      "Mac：新版在后台下载，点“重启并更新”后原位替换应用并打开新版。模型和设置都会保留，任何一步失败都会还原旧版。",
-      "参考视频：参考视频可以只用画面、不使用它自己的声音。",
-      "剪辑视图：引擎中断而没做完的片段显示“上次中断”。从失败提示提交的问题会写明是哪一步出错。",
-      "Linux：显存放得下整个视频模型的显卡，生成视频时不再在系统内存里留一份权重副本，约省 20 GB 内存。",
-      "提交问题：反馈里的内存读数分开记录物理可用内存和提交余量。"
+      "Mac：Apple 芯片、内存 16 GB 及以上的 Mac 可以生成和编辑图片。",
+      "Mac：以后的更新中，新版刚打开就停止时会自动换回旧版。旧版保存在隐藏文件夹里，不再出现在搜索和启动台中。更新失败时，失败原因和两个按钮紧跟在说明下方显示。",
+      "手机访问：在启动器中打开手机访问后，手机页面即可连接，较旧的手机浏览器也能使用。",
+      "队列：读取队列只失败一次时不再弹出“连接已断开”卡片；连续失败三次才出现，连接恢复后自动消失；短时间断线时，正在运行的循环会保留。",
+      "启动器：所选文件夹不是 ComfyUI 文件夹时，会指出附近找到的 ComfyUI 文件夹。Windows：引擎常用端口落在 Windows 保留的端口段里时，也能正常启动。",
+      "安装：没有任何生成记录的安装，后台也会预编译标准尺寸。",
+      "失败提示：生成过程中模型文件发生变化时，失败文字会写明变化的内容。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.16",
+      "en": {
+        "summary": "Any part of a long video can be generated again as a new video, phones on the same network can follow chats and generations behind an optional password, and the Mac app now updates itself.",
+        "changes": [
+          "Long videos: the part list shows each part's length and what it follows, and marks failed parts. Any finished part can be generated again as a new video that keeps the parts before it, and the original video stays as it was. In the joined video, click a part's length to play two seconds either side of its seam. The list shows only each part's own events, and editing a part keeps the rest of its description unchanged.",
+          "Phone access: phones on the same network can open FreeVideo from the phone icon and QR code in the top bar, chat with AI Autopilot and follow generations. Phone access can be switched on or off and protected with a password that phones sign in with.",
+          "Mac: an update is downloaded in the background, and Restart & update replaces the app in place and opens the new version. Models and settings are kept, and if any step fails the previous version is restored.",
+          "Reference videos: a reference video can now be used without its own sound.",
+          "Editor: parts cut off when the engine stopped now show \"Interrupted\". A problem reported from a failure now includes the step that failed.",
+          "Linux: on graphics cards that can hold the whole video model, video generation no longer keeps a copy of the weights in system memory, which saves about 20 GB.",
+          "Reporting problems: memory readings in feedback record free physical memory and commit headroom separately."
+        ]
+      },
+      "zh": {
+        "summary": "长视频的任何一段都可以重新生成为一条新视频；同一网络下的手机可以查看对话和生成进度，可设密码；Mac 版可以自动更新。",
+        "changes": [
+          "长视频：分段列表显示每段的时长和接在哪一段之后，并标出失败的段。任何已完成的段都可以从这里重新生成一条新视频，前面的段保持不变，原视频也不受影响。整条视频生成后，点某段的时长可播放它接缝前后各 2 秒。列表只显示每段自己的动作，编辑某一段时其余描述保持不变。",
+          "手机访问：同一网络下的手机可以通过顶栏的手机图标和二维码打开 FreeVideo，和 AI 全自动对话、查看生成进度。手机访问可以开关，也可以设置密码，手机登录后才能使用。",
+          "Mac：新版在后台下载，点“重启并更新”后原位替换应用并打开新版。模型和设置都会保留，任何一步失败都会还原旧版。",
+          "参考视频：参考视频可以只用画面、不使用它自己的声音。",
+          "剪辑视图：引擎中断而没做完的片段显示“上次中断”。从失败提示提交的问题会写明是哪一步出错。",
+          "Linux：显存放得下整个视频模型的显卡，生成视频时不再在系统内存里留一份权重副本，约省 20 GB 内存。",
+          "提交问题：反馈里的内存读数分开记录物理可用内存和提交余量。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.15",
       "en": {
@@ -244,43 +271,6 @@
           "导出：导出窗口里给出的尺寸和保存的作品用同样的方式取整。",
           "诊断报告记录每一步采样时其他程序占用显卡的比例。",
           "启动器：浏览器没能自动打开时，提示点“复制地址”到浏览器里打开，中文界面也显示中文。画布边距标签更清楚、对齐。节点：宽度、高度、时长和种子有中文标签。"
-        ]
-      }
-    },
-    {
-      "product_version": "0.4.8",
-      "en": {
-        "summary": "Long videos keep a steadier voice from part to part, and continuing a video keeps your reference pictures and characters. LoRA strength can be typed up to 100, large downloads move to a faster source on their own, and the second-pass button uses the earlier wording again, with smaller fixes to uploads, your creations, the waiting queue, diagnostic reports and the interface.",
-        "changes": [
-          "Second pass: the result button, preview badge, library and delete messages use the 0.4.6 wording again (Run second pass, First-pass preview).",
-          "Long videos: the voice keeps the same loudness and fullness from part to part, and with dialogue a continued part no longer opens with a second or two of unclear speech. Continuing a video from the creative panel keeps your reference pictures and characters, so the person stays the same; up to 3 pictures are used.",
-          "Characters: two character names typed back to back after the @ key are both recognised, the list no longer reopens after a finished name, and Save in the character library says what is still missing. A character mentioned with @ in the editing view's generation bar now carries that character's description and pictures, as it does in the creation panel.",
-          "LoRA: you can type a strength beyond -4 to 4, up to 100, and a note marks values outside the usual range; the slider and default strength are unchanged. A trigger word that only appears inside a longer word (sks in asks) is now added.",
-          "Image generation: an out-of-memory failure says where memory ran out and at which size, and the progress line shows the smaller size while retrying; if the background process exits right after starting, it is retried once. Clicking Update while the image model is downloading pauses the download (what is already downloaded is kept and can be resumed) and starts the update at once. The option to install the image model as well checks free space on the drive that holds the models and is not offered when there is not enough room.",
-          "Downloads: large model downloads check the other sources while a transfer is slow and move to a clearly faster one, resuming the same file; a transfer that stops moving for 30 seconds changes source as well. The missing-model hint names each download and its size, and is checked again after a generation ends.",
-          "Media uploads: the upload buttons list only the file types FreeVideo can use, and unsupported files in a multiple selection are skipped. Files over 2 GiB are turned away in the page, a failed or interrupted upload no longer leaves a partial file, and upload errors appear in your language.",
-          "Your creations: an interrupted share or export no longer blocks deleting the creation, and its leftover working copy is removed at the next start. Adding the workflow to earlier videos no longer moves them to the top or changes their date.",
-          "Waiting queue: each task shows the start of its prompt, and Move to front highlights the moved task and confirms it.",
-          "Diagnostic report: the prompt-rewrite report no longer replaces the video's, the same file is saved and sent, and a large report is saved as a zip.",
-          "Wording: Agent chat, Settings, image generation and editor messages are shorter and say what to do next; the character library uses \"character\" throughout and its view labels are clearer.",
-          "Interface details: advanced node settings show Chinese names in the Chinese interface; generation cards in chat show a single progress figure; the Downloads card in Settings is tidier; Export in the editor keeps the primary colour and the Text and Subtitles tools use line icons; narrow windows lay out the preview, generate buttons, library title and notices better and keep Feedback in the header; long prompts no longer run under the @ button; library times follow the interface language; a result video that fails to load no longer offers actions that cannot work."
-        ]
-      },
-      "zh": {
-        "summary": "长视频各段人声更一致，接着生成时保留参考图和角色。LoRA 强度可以手动输入到 100，大文件下载会自动换到更快的下载源，二次采样按钮恢复此前的说法；上传、作品库、等待队列、诊断报告和界面细节也有多处改进。",
-        "changes": [
-          "二次采样：结果卡按钮、预览角标、作品库和删除提示恢复 0.4.6 的说法（继续二采、一采预览）。",
-          "长视频：人声的音量和厚度在各段之间保持一致；有对话时，接续的段开头不再先冒出一两秒听不清的话。在创作面板接着生成视频时，会保留参考图和角色，人物前后保持一致，最多使用 3 张图片。",
-          "角色：紧挨着写的两个 @名字都能识别，写完名字后列表不再重新弹出，角色库保存按钮灰着时会说明还缺什么；剪辑视图的生成条里写 @角色，也会和创作面板一样带上该角色的描述和图片。",
-          "LoRA：强度可以手动输入超出 -4 到 4 的数，最大到 100，超出常用范围时有提示；滑块和默认强度不变。触发词只出现在更长的单词里（如 asks 里的 sks）时，现在也会自动加上。",
-          "图像生成：显存不够时写明在哪一步、哪个尺寸，自动缩小重试时显示新尺寸；后台进程刚启动就退出时自动重试一次。图像模型在后台下载时点“更新”，下载先停下（已下的部分保留，之后可以继续），更新马上开始；“同时安装图像模型”按模型所在的盘检查空间，空间不够时不再显示为可选。",
-          "下载：大文件下载变慢时会测试其他下载源，明显更快时自动换源并接着下载；停滞 30 秒也会换源。缺模型提示写明是哪几项、各多大，生成结束后重新检查。",
-          "素材上传：上传按钮只列出能用的文件格式，一次选多个时跳过不支持的；超过 2 GiB 的文件在页面上直接拦下；上传失败或中断不再留下残留文件，出错提示用当前界面语言。",
-          "作品库：分享或导出中断后留下的临时文件不再挡住删除，下次启动时清理；给早期视频添加工作流后，它们不再跳到最前，日期保持原样。",
-          "等待队列：每条任务显示提示词开头；“排到最前”后被移动的任务会高亮并提示。",
-          "诊断报告：提示词增强不再顶替视频的报告，保存和提交是同一份，较大的报告存成 zip。",
-          "文字：Agent 对话、设置、图像生成和编辑器里的提示更简短，并写明下一步该点哪个按钮；角色库统一称“角色”，视角标签更清楚。",
-          "界面细节：中文界面的生成节点高级参数显示中文名；对话里的生成卡只显示一个进度；设置“下载”卡更整齐；剪辑视图导出按钮保持主色，文字、字幕工具改用线性图标；窄窗口下预览、生成按钮、作品库标题和提示的排布更合理，顶栏仍保留“反馈”入口；长提示词不再被“@”按钮压住；作品卡片时间跟随界面语言；结果视频加载失败时不再显示无法使用的操作。"
         ]
       }
     }
