@@ -67,10 +67,22 @@ root.append(top, offline, main, warning, compose, viewer, toast, tabs, pw, sheet
 function notice(text = '') { warning.textContent = text; warning.hidden = !text; }
 function connection(ok) { offline.hidden = ok || locked; }
 function requirePassword() { if (locked) return; locked = true; document.querySelectorAll('dialog.phone-confirm').forEach(dialog => dialog.close()); viewer.querySelector('video')?.pause(); renderShell(); password.focus(); }
+// AbortSignal.any and .timeout are missing before iOS Safari 17.4 / 16 and Firefox 124 / 100, so the signals are joined by hand.
+function requestSignal(signals, ms) {
+    const control = new AbortController(), off = [];
+    const stop = reason => { off.splice(0).forEach(remove => remove()); if (!control.signal.aborted) control.abort(reason); };
+    for (const source of signals) {
+        if (source.aborted) { stop(source.reason); break; }
+        const on = () => stop(source.reason);
+        source.addEventListener('abort', on, {once: true}); off.push(() => source.removeEventListener('abort', on));
+    }
+    setTimeout(() => stop(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+    return control.signal;
+}
 const api = {apiURL: path => path, async fetchApi(path, options = {}) {
-    const signals = [closed.signal, options.signal, AbortSignal.timeout(10000)].filter(Boolean);
+    const signals = [closed.signal, options.signal].filter(Boolean);
     // The proxy hands each signed-in device its write proof at /m/csrf; the desktop page asks the agent route.
-    const response = await fetch(path === '/freevideo/agent/session' ? '/m/csrf' : path, {...options, signal: AbortSignal.any(signals), credentials: 'same-origin'});
+    const response = await fetch(path === '/freevideo/agent/session' ? '/m/csrf' : path, {...options, signal: requestSignal(signals, 10000), credentials: 'same-origin'});
     // Without a valid device cookie the proxy answers every request with its password page, never JSON.
     if ([401, 429].includes(response.status) && (response.headers.get('Content-Type') || '').startsWith('text/html')) {
         requirePassword(); const wait = Number(response.headers.get('X-FreeVideo-Retry-After')); if (wait > 0) lockFor(wait);

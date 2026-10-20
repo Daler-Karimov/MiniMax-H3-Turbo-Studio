@@ -1,7 +1,12 @@
 // ComfyUI owns execution. This controller only submits frozen workflows and
 // replenishes a loop after its previous request has actually completed.
-import {fetchQueueRead, detectBrowserExtension} from './browser_extension.js';
+import {fetchQueueRead, detectBrowserExtension, isNetworkTypeError} from './browser_extension.js';
 const clone = value => structuredClone(value);
+
+// One dropped read is usually a connection reset or an engine restart. Only this many
+// polls failing in a row are shown; the next successful read clears the notice.
+// While the outage lasts the polls back off, and a loop is stopped once it passes the limit.
+const OUTAGE_POLLS = 3, OUTAGE_LOOP_LIMIT_MS = 180000, OUTAGE_MAX_DELAY_MS = 8000;
 
 // ComfyUI leaves a muted (2) or bypassed (4) node out of the request. The creation panel is where
 // the node is used, so a request from it turns the node back on; true when it was off.
@@ -123,7 +128,7 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
     formatError = error => error} = {}) {
     nodeId = String(nodeId);
     let running = null, pending = [], submitting = false, loop = null, timer = null;
-    let refreshing = null, refreshAgain = false, lastError = null, disposed = false;
+    let refreshing = null, refreshAgain = false, lastError = null, disposed = false, outage = null;
     const listeners = new Set();
     const owned = new Set(), delivered = new Set();
     function remember(id) { owned.add(id); if (owned.size > 128) { const old = owned.values().next().value; owned.delete(old); delivered.delete(old); } }
@@ -136,7 +141,8 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
     const publish = () => { for (const listener of listeners) listener(state()); };
     function schedule() {
         clearTimeout(timer); timer = null;
-        if (!disposed && pollMs && (listeners.size || loop?.active)) timer = setTimeout(() => refresh().catch(() => {}), pollMs);
+        if (!disposed && pollMs && (listeners.size || loop?.active)) timer = setTimeout(() => refresh().catch(() => {}), outage && outage.failures > OUTAGE_POLLS
+            ? Math.min(pollMs * 2 ** (outage.failures - OUTAGE_POLLS), OUTAGE_MAX_DELAY_MS) : pollMs);
     }
     function fail(error) {
         if (loop) loop.active = false;
@@ -218,6 +224,8 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
         running = (queue.queue_running || []).filter(matches).map(entry)[0] || null;
         // Comfy returns its heap array; the queue number gives the real running order.
         pending = (queue.queue_pending || []).filter(matches).sort((a, b) => a[0] - b[0]).map(entry);
+        outage = null;
+        if (isNetworkTypeError(lastError) && !lastError.loopStopped) lastError = null;
         for (const row of [running, ...pending]) if (row) remember(row.id);
         await advanceLoop(); publish();
     }
@@ -226,7 +234,21 @@ export function createStudioQueue(api, nodeId, {random = randomSeed, pollMs = 20
         if (refreshing) { refreshAgain = true; return refreshing; }
         refreshing = (async () => {
             do { refreshAgain = false; await readQueue(); } while (refreshAgain && !disposed);
-        })().catch(error => { fail(error); throw error; }).finally(() => { refreshing = null; schedule(); });
+        })().catch(error => {
+            if (!isNetworkTypeError(error) || detectBrowserExtension(error)) { fail(error); throw error; }
+            // A lost connection does not stop a loop at first: it only continues after a successful read.
+            outage = {failures: (outage?.failures || 0) + 1, since: outage?.since ?? Date.now()};
+            if (outage.failures < OUTAGE_POLLS) return;
+            // The notice for a stopped loop stays as it is while the outage goes on.
+            if (lastError?.loopStopped) throw error;
+            const lasted = Date.now() - outage.since, giveUp = lasted >= OUTAGE_LOOP_LIMIT_MS && loop?.active;
+            const note = `Queue reads failed ${outage.failures} times in a row over ${Math.round(lasted / 1000)} s; `
+                + `online=${globalThis.navigator?.onLine}, page hidden=${globalThis.document?.hidden}.${giveUp ? ' The loop was stopped.' : ''}`;
+            if (typeof error === 'object' && !String(error.details || '').includes('Queue reads failed')) error.details = [error.details, note].filter(Boolean).join('\n');
+            // A stopped loop keeps its notice after the connection returns, so the user sees why it stopped.
+            if (giveUp) { if (typeof error === 'object') error.loopStopped = true; fail(error); throw error; }
+            lastError = error; publish(); throw error;
+        }).finally(() => { refreshing = null; schedule(); });
         return refreshing;
     }
     async function start(snapshot, {count = 1, repeat = false, seedIndex = -1, onAccepted = null} = {}) {

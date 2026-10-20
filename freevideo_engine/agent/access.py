@@ -20,9 +20,16 @@ def peer_address(request):
 
 def lan_enabled():
     from ..comfy_bridge import installation_root
-    from ..launcher_settings import Store
+    from ..desktop_runtime import launcher_root
+    from ..launcher_settings import Store, read
+    # The launcher's switch saves into the launcher folder, the page's switch into the installation. Access needs
+    # every copy of one of the two to say yes, and the most recently saved copy anywhere to say yes too, so a switch
+    # turned off in one place stays off even when another place still holds an older yes.
     try:
-        return Store(installation_root()).currently_allows('lan_access')
+        stores = [Store(root()) for root in (installation_root, launcher_root)]
+        copies = [read(path) for store in stores for path in store.paths]
+        newest = max(copies, key=lambda saved: saved.get('saved_at_ns', 0))
+        return newest.get('lan_access') is True and any(store.currently_allows('lan_access') for store in stores)
     except (OSError, ValueError):
         return False
 

@@ -18,8 +18,15 @@ export const IMAGE_GEN_POLL_MS = 500;
 export const IMAGE_GEN_INFO_POLL_MS = 10000;
 export const IMAGE_PACK_POLL_MS = 2000;
 export const BLANK_CANVAS_RATIOS = Object.freeze(['16:9', '9:16', '1:1', '4:3', '3:4']);
-export function imageGenerationSupported(platform = globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '') {
-    return !/Mac|iPhone|iPad/i.test(platform);
+// The one switch the editor, media panel and cast library consult. Every engine platform
+// generates pictures now; a Mac too small for it gets the service's small_memory reason.
+export function imageGenerationSupported() {
+    return true;
+}
+// On a Mac the GPU's memory is the machine's: the same notes without the graphics card.
+function memoryWords([en, zh], unified) {
+    return unified ? [en.replace('GPU memory', 'memory').replace(' using the GPU', ''),
+        zh.replace('显存', '内存').replace('占用显卡的程序', '程序')] : [en, zh];
 }
 export function blankCanvasRatio(target) {
     return BLANK_CANVAS_RATIOS.find(ratio => {
@@ -162,23 +169,26 @@ export function imageGenError(code, info, t) {
         invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
         reload: ['Image generation was interrupted. Try again.', '图片生成中途被打断，请重试。'],
         generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
+        small_memory: ['This Mac has less than 16 GB of memory and cannot generate pictures.',
+            '这台 Mac 的内存不足 16 GB，无法生成图片。'],
     };
+    const say = (en, zh) => t(...memoryWords([en, zh], info?.unified));
     if (code === 'pack_missing') return imagePackUnavailableMessage(info, t);
     if (code === 'no_memory') {
         // Where it ran out decides what helps: the reference pictures are read at a fixed size,
         // so a smaller canvas does not change that stage.
         const stage = info?.stage, size = info?.fitted;
         if (stage === 'encode')
-            return t('Not enough GPU memory to load the reference images. Use fewer reference images, or close other apps using the GPU, then try again.',
+            return say('Not enough GPU memory to load the reference images. Use fewer reference images, or close other apps using the GPU, then try again.',
                 '显存不够，参考图没能载入。少用几张参考图，或关掉其他占用显卡的程序后再试。');
         if (stage === 'load' || stage === 'text')
-            return t('Not enough GPU memory to load the model. Close other apps using the GPU, then try again.',
+            return say('Not enough GPU memory to load the model. Close other apps using the GPU, then try again.',
                 '显存不够，模型没能载入。关掉其他占用显卡的程序后再试。');
         if (size?.width && size?.height)
-            return t(`Not enough GPU memory, even at ${size.width}\u00a0×\u00a0${size.height}. Close other apps using the GPU, then try again.`,
+            return say(`Not enough GPU memory, even at ${size.width}\u00a0×\u00a0${size.height}. Close other apps using the GPU, then try again.`,
                 `显存不够，${size.width}\u00a0×\u00a0${size.height} 也没能生成。关掉其他占用显卡的程序后再试。`);
     }
-    return t(...(Object.hasOwn(reasons, code) ? reasons[code] : reasons.generation_failed));
+    return say(...(Object.hasOwn(reasons, code) ? reasons[code] : reasons.generation_failed));
 }
 
 // Keep image failure copy here for editorial review. The submit card and its
@@ -188,8 +198,8 @@ export const QUEUE_LABELS = Object.freeze({
     image: ['Added to the queue. It starts when the previous one finishes.', '已加入队列，前面的完成后自动开始。'],
     video: ['Queued. It starts when the video finishes.', '已排队，视频生成完后自动开始。'],
 });
-export const fittedNote = (size, t) => t(`Not enough GPU memory. Made at ${size.width}\u00a0×\u00a0${size.height} instead.`,
-    `显存不足，已改为 ${size.width}\u00a0×\u00a0${size.height} 生成。`);
+export const fittedNote = (size, t, unified = false) => t(...memoryWords([`Not enough GPU memory. Made at ${size.width}\u00a0×\u00a0${size.height} instead.`,
+    `显存不足，已改为 ${size.width}\u00a0×\u00a0${size.height} 生成。`], unified));
 export const REPORT_LABELS = Object.freeze({
     download: ['Diagnostic report', '诊断报告'],
     description: ['Diagnostic report: hardware, settings and timings', '诊断报告：硬件、设置和耗时'],
@@ -199,7 +209,7 @@ export const REPORT_LABELS = Object.freeze({
 
 // Shared by the editor and the other image entry points. Only the opaque report
 // ID goes in the request; raw service messages are never shown in the page.
-export function renderImageFailure(host, {error, report_id, stage, fitted} = {}, t,
+export function renderImageFailure(host, {error, report_id, stage, fitted, info} = {}, t,
     {productVersion = () => null, fetchApi = globalThis.fetch.bind(globalThis)} = {}) {
     host.replaceChildren();
     if (!error || error === 'cancelled') return null;
@@ -210,7 +220,7 @@ export function renderImageFailure(host, {error, report_id, stage, fitted} = {},
     }
     const card = doc.createElement('div'); card.className = 'fv-result-links';
     const reason = doc.createElement('div'); reason.className = 'fv-image-failure-reason';
-    reason.setAttribute('role', 'status'); reason.textContent = imageGenError(error, {stage, fitted}, t);
+    reason.setAttribute('role', 'status'); reason.textContent = imageGenError(error, {stage, fitted, unified: info?.unified_memory}, t);
     card.append(reason); host.append(card);
     if (!report_id) return card;
     const fetchReport = async () => {
@@ -723,10 +733,10 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
                 : missing ? imagePackUnavailableMessage(state.info, t)
                 : promptRequired ? t('Enter a prompt first.', '请先填写提示词。')
                 : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
-                : state.running && state.fitted ? t(`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
-                    `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`) + ' · ' + percent
+                : state.running && state.fitted ? t(...memoryWords([`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
+                    `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`], state.info?.unified_memory)) + ' · ' + percent
                 : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent
-                : state.fitted ? fittedNote(state.fitted, t) : '';
+                : state.fitted ? fittedNote(state.fitted, t, state.info?.unified_memory) : '';
         }
         note.hidden = !note.textContent;
         bar.dataset.running = String(state.running);

@@ -178,7 +178,7 @@ export function mountCastGenerate({container, api, text, t = text, viewURL, onSt
         });
         if (state.error) {
             const key = `${state.error}:${state.report_id || ''}:${state.stage || ''}`;
-            if (failureKey !== key) { renderImageFailure(note, state, tr, {fetchApi: fetcher}); failureKey = key; }
+            if (failureKey !== key) { renderImageFailure(note, {...state, info}, tr, {fetchApi: fetcher}); failureKey = key; }
         } else {
             failureKey = null;
             note.textContent = isMissing ? imagePackUnavailableMessage(info, tr)

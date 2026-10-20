@@ -400,6 +400,7 @@ class QwenImageGenerator:
         self.text_encoder = self.transformer = self.vae = None
         self._closed = True
         # Int8Linear keeps the last activation alive for Q/K/V sharing.
-        module = sys.modules.get("freevideo_engine.int8_ops")
-        if module is not None:
-            module.Int8Linear._last.clear()
+        for name in ("freevideo_engine.int8_ops", "freevideo_engine.image_gen.int8_linear"):
+            module = sys.modules.get(name)
+            if module is not None:
+                module.Int8Linear._last.clear()

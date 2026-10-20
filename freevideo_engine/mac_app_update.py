@@ -14,7 +14,8 @@ import time
 
 
 MARK = '.FreeVideo-update-'
-BACKUP = '.FreeVideo-backup-'
+BACKUP = '.FreeVideo-backup-'  # the name older versions used, still cleaned up
+BACKUPS = '.FreeVideo-backup.noindex'  # Spotlight and Launchpad skip folders ending in .noindex
 MARGIN_BYTES = 256 * 2**20
 HDIUTIL, DITTO, CODESIGN, XATTR = '/usr/bin/hdiutil', '/usr/bin/ditto', '/usr/bin/codesign', '/usr/bin/xattr'
 
@@ -32,14 +33,31 @@ done
 restore() {
     rm -rf "$app"
     if [ -d "$backup" ]; then /bin/mv "$backup" "$app"; fi
+    rmdir "$(dirname "$backup")" "$(dirname "$(dirname "$backup")")" 2>/dev/null
     rm -rf "$staged"
     "$opener" "$app"
 }
 [ "$inject" = "before_backup" ] && { note "injected failure"; rm -rf "$staged"; "$opener" "$app"; exit 1; }
-if ! /bin/mv "$app" "$backup"; then note "could not set the old app aside"; rm -rf "$staged"; "$opener" "$app"; exit 1; fi
+if ! { /bin/mkdir -p "$(dirname "$backup")" && /bin/mv "$app" "$backup"; }; then note "could not set the old app aside"; rm -rf "$staged"; "$opener" "$app"; exit 1; fi
 if [ "$inject" = "after_backup" ] || ! /bin/mv "$staged" "$app"; then note "could not put the new app in place"; restore; exit 1; fi
 if [ "$inject" = "after_swap" ] || ! "$opener" "$app"; then
     note "the new app did not open"; /bin/mv "$app" "$staged" && restore; exit 1
+fi
+# A new app that opens and then dies is as bad as one that does not open: it has to stay up for
+# STABLE ticks. This is judged from outside, so it also holds for an app that cannot run any code.
+tick="${FREEVIDEO_SWAP_TICK:-1}"; stable_need="${FREEVIDEO_SWAP_STABLE:-15}"; appear_max="${FREEVIDEO_SWAP_APPEAR:-60}"
+# pgrep reads the pattern as a regular expression, so a folder named "Apps (old)" or "Apps+1" needs escaping.
+pattern=$(printf '%s\n' "$app/Contents/MacOS/" | /usr/bin/sed 's/[][\.*^$+?(){}|]/\\&/g')
+alive() { "${FREEVIDEO_PGREP:-/usr/bin/pgrep}" -f -- "$pattern" >/dev/null 2>&1; }
+stable=0; seen=0; tries=0
+while [ "$stable" -lt "$stable_need" ]; do
+    if alive; then seen=1; stable=$((stable + 1)); elif [ "$seen" = 1 ]; then break; fi
+    tries=$((tries + 1))
+    if [ "$tries" -gt $((appear_max + stable_need)) ]; then break; fi
+    sleep "$tick"
+done
+if [ "$stable" -lt "$stable_need" ]; then
+    note "the new app did not stay open"; /bin/mv "$app" "$staged" && restore; exit 1
 fi
 # The old app stays until the new launcher has run well; it removes it (settle).
 '''
@@ -85,12 +103,14 @@ def _size(path):
 def clear_stale(app):
     for entry in app.parent.glob(MARK + '*.app'):
         shutil.rmtree(entry, ignore_errors=True)
+    settle(app)
 
 
 def settle(app):
     """Remove the old versions kept beside a running app; called once it has run well."""
     for entry in app.parent.glob(BACKUP + '*.app'):
         shutil.rmtree(entry, ignore_errors=True)
+    shutil.rmtree(app.parent / BACKUPS, ignore_errors=True)
 
 
 def prepare(dmg, app, directory, *, run=subprocess.run):
@@ -149,7 +169,7 @@ def activate(staged, app, directory, *, popen=subprocess.Popen, inject=''):
     script = directory / 'swap-app.sh'
     script.write_text(SWAP_SCRIPT, encoding='utf-8')
     script.chmod(0o755)
-    backup = app.parent / (BACKUP + '%d.app' % int(time.time()))
+    backup = app.parent / BACKUPS / str(int(time.time())) / app.name
     failure = directory.parent / 'mac-update-failed.json'
     failure.unlink(missing_ok=True)
     with (directory.parent / 'mac-update.log').open('ab') as log:

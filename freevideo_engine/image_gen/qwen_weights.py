@@ -92,15 +92,19 @@ def _quant_targets(model, name):
     return targets, modules
 
 
-def load_dit(path, device="cpu", *, config=None, progress=None):
+def load_dit(path, device="cpu", *, config=None, progress=None, mapped=False):
     """Load a Comfy Turbo int8_convrot DiT; CPU supports storage, CUDA execution.
 
     The optional config override is for small models/tests. Production files
     without JSON config metadata use the official 32-block Qwen-Image 2.1 config.
     An unknown marker, tensor layout, missing key, or extra key is an error.
     ``progress(done_bytes, total_bytes)`` reports completed source tensor batches.
+    ``mapped`` (CPU only) leaves tensors stored as they are on disk as views of the mapped file.
     """
     with _open_safetensors(path, framework="pt", device="cpu") as checkpoint:
+        if mapped:
+            from .mapped import MappedCheckpoint
+            checkpoint = MappedCheckpoint(checkpoint, path)
         reads = TensorProgress(checkpoint, progress) if progress is not None else None
         with torch.device("meta"):
             model = QwenImageDiT(**_config(checkpoint.metadata() or {}, QwenImageDiT, config))
@@ -159,7 +163,8 @@ def load_dit(path, device="cpu", *, config=None, progress=None):
         for key in ordinary:
             _check_tensor(checkpoint, keys[key], expected[key].shape, {"BF16", "F32"})
         # Reuse the engine's wrapper construction and exact runtime member names.
-        from ..int8_ops import install_cached_linears
+        from .int8_linear import ops
+        install_cached_linears = ops().install_cached_linears
         specs = {}
         for targets in quantized.values():
             for target in targets:

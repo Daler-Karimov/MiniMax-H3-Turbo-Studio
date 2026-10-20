@@ -394,6 +394,22 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         return dict(title='这块硬盘没有连接' if zh else 'The disk is not connected', kind='disk-missing', detail='',
                     action=('请接上“%s”后点击“重新检查”' % disk_name + ('，或者改装到其他硬盘。' if other_disk else '。') if zh else
                             'Connect "%s" and click Check again' % disk_name + (', or install on another disk.' if other_disk else '.')))
+    folder = 'Select the ComfyUI folder, or the portable folder containing ComfyUI.'
+    # A saved installation that vanished raises the same sentence after its own message; the
+    # user chose no folder then, so it keeps its own path.
+    if folder in summary and not re.search(r'Locate or repair this installation|重新定位或修复这份安装', summary):
+        # The retained error carries a traceback whose source lines quote the message
+        # (and its Found part) too; only the exception line itself names the folder.
+        named = list(re.finditer(re.escape(folder) + r'(?: Found one at "([^"\r\n]+)"; select that folder\.)?[ \t\r]*$',
+                                 summary, re.M))
+        found = named[-1].group(1) if named else None
+        if found:
+            action = ('请改选“%s”文件夹。' if zh else 'Select the "%s" folder instead.') % found
+        else:
+            action = ('请选择包含 main.py 的 ComfyUI 文件夹，或包含它的便携包文件夹。' if zh else
+                      'Select the ComfyUI folder (it contains main.py), or the portable folder that contains it.')
+        return dict(title='这不是 ComfyUI 文件夹' if zh else "This isn't a ComfyUI folder", detail='',
+                    action=action, kind='comfy-folder')
     for pattern, kind, title, action in PLACE_RULES:
         if re.search(pattern, summary):
             return dict(title=title[zh], detail='', action=action[zh], kind=kind)
@@ -631,6 +647,25 @@ def _report(run):
     return report if isinstance(report, dict) else {}
 
 
+def _checkpoint_change(report):
+    """The file-identity fields a streamed checkpoint check found changed, or ''.
+
+    Only the fixed names kept by the diagnostics: no paths or timestamp values.
+    """
+    from .diagnostic_resources import checkpoint_change
+    encoding, attempts = report.get('encoding_failure'), report.get('resource_attempts')
+    found = [report, encoding.get('failure') if isinstance(encoding, dict) else None]
+    found += [row.get('failure') for row in attempts if isinstance(row, dict)] if isinstance(attempts, list) else []
+    for holder in found:
+        rows = holder.get('exception') if isinstance(holder, dict) else None
+        for row in rows if isinstance(rows, list) else [rows]:
+            if isinstance(row, dict) and row.get('category') == 'checkpoint_changed':
+                change = checkpoint_change(row.get('checkpoint_change'))
+                if change.get('source') and change['fields']:
+                    return 'Checkpoint changed: %s (%s)' % (change['source'], ', '.join(change['fields']))
+    return ''
+
+
 # Stands in for the repair sentence until the report text is redacted: the
 # redactor reads "Install / repair" as a path.
 REPAIR_MARK = 'FREEVIDEO_REPAIR_SENTENCE'
@@ -669,6 +704,9 @@ def generation_failure(run, exit_code=None, *, repair=None):
     explained = _runtime_explanation(report, REPAIR_MARK)
     if explained:
         lines.append(explained)
+    changed = _checkpoint_change(report)
+    if changed:
+        lines.append(changed)
     error = report.get('error_message') or report.get('error')
     if isinstance(error, str):
         lines.append(error[:8192])

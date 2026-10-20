@@ -17,7 +17,8 @@ import uuid
 
 from . import image_pack
 from ..download_settings import observed_speed
-from .failure import Context, ERRORS, FailureError, MESSAGE_ZH, NO_REPORT, STAGES, classify_exception
+from .failure import (Context, ERRORS, FailureError, MESSAGE_ZH, NO_REPORT, STAGES, UNIFIED_MESSAGE_ZH,
+                      classify_exception)
 
 BODY_LIMIT = 64 * 1024
 CANCEL_GRACE = 5.
@@ -156,12 +157,28 @@ class Service:
                     segment=dict(ready=image_pack.ready(machine['model_root'], group='segment'),
                                  max_points=16, device='cpu',
                                  install=self.segment_installer.state() if self.segment_installer else None),
-                    bytes_per_second=None if ready else observed_speed(engine_root))
+                    bytes_per_second=None if ready else observed_speed(engine_root),
+                    **({'unified_memory': True} if machine.get('device_backend') == 'mps' else {}))
+
+    @staticmethod
+    def unified_total(machine):
+        """Total memory of a Mac whose Apple GPU shares it; None for a separate card."""
+        if machine.get('device_backend') != 'mps':
+            return None
+        from ..system import system_memory
+        try:
+            return int(system_memory()['total_bytes'])
+        except (OSError, KeyError, TypeError, ValueError):
+            return None
 
     def size_tiers(self, machine):
         """The sizes this card offers: the standard one always, the high one only with enough card memory."""
         total = None
-        if machine.get('device_backend', 'cuda') == 'cuda':
+        unified = self.unified_total(machine)
+        if unified is not None:
+            from .image_policy import unified_budget
+            total = unified_budget(unified)
+        elif machine.get('device_backend', 'cuda') == 'cuda':
             from ..background_room import Gpu
             from ..gpu_budget import open_bounded
 
@@ -495,6 +512,10 @@ class Service:
         try:
             if not image_pack.ready(machine['model_root']):
                 raise ValueError('pack_missing')
+            from .image_policy import UNIFIED_MIN_TOTAL
+            unified = self.unified_total(machine)
+            if unified is not None and unified < UNIFIED_MIN_TOTAL:
+                raise ValueError('small_memory')
             requested = {name: value.get(name) for name in ('width', 'height')} if isinstance(value, dict) else {}
             if action == 'compose':
                 from . import compose
@@ -598,6 +619,10 @@ class Service:
 
     def memory_budget(self, machine):
         """Bound the driver query, without importing Torch or starting a worker."""
+        unified = self.unified_total(machine)
+        if unified is not None:
+            from .image_policy import unified_budget
+            return unified_budget(unified)
         if machine.get('device_backend', 'cuda') != 'cuda':
             return None
         from ..background_room import Gpu, family
@@ -679,6 +704,8 @@ class Service:
         result = dict(phase='failed', error=code, report_id=None, stage=stage)
         if code in MESSAGE_ZH:
             result['message_zh'] = MESSAGE_ZH[code]
+            if context.machine.get('device_backend') == 'mps' and code in UNIFIED_MESSAGE_ZH:
+                result['message_zh'] = UNIFIED_MESSAGE_ZH[code]
         if code not in NO_REPORT:
             if video_busy is None:
                 try:
