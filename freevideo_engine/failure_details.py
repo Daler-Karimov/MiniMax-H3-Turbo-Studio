@@ -687,6 +687,13 @@ def runtime_explanation(run, repair=None):
     return _runtime_explanation(_report(run), repair)
 
 
+# A traceback's final line names the error at the start of the line; the one a parent
+# process raises about its failed child only repeats the exit code.
+CHILD_ERROR = re.compile(r'[\w.]*(?:Error|Exception|OutOfMemory\w*)\b')
+WRAPPING_ERROR = re.compile(r'(?:subprocess\.)?CalledProcessError\b')
+ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))')
+
+
 def generation_failure(run, exit_code=None, *, repair=None):
     """Surface the cause, including a child traceback, even without a report.
 
@@ -744,14 +751,25 @@ def generation_failure(run, exit_code=None, *, repair=None):
             lines.append('Idle cache release: ' + str(recovery.get('reason', recovery) if isinstance(recovery, dict) else recovery))
     # Child logs carry the actual CUDA/encoder error when the parent only knows
     # an exit code. Read bounded tails; do not read model data or entire logs.
+    causes, known = [], redactor.text('\n'.join(lines))[:300]
     for name in ('generate.log', 'video.engine.log', 'video.encoding.log'):
         value = _read(run / name, 8192, tail=True)
         if not value:
             continue
+        # Redact the whole tail first: a prompt or credential is only recognized in full.
+        value = redactor.text(value)
         rows = [line for line in value.splitlines() if line.strip() and not line.lstrip().startswith('{"event":')]
         trace = '\n'.join(rows[-45:])
+        causes += [line for line in (ANSI.sub('', row) for row in rows)
+                   if CHILD_ERROR.match(line) and not WRAPPING_ERROR.match(line)]
         if trace:
             lines.extend(['\n' + name + ':', trace])
+    # A long child traceback pushes its own last line out of a shortened copy of this text
+    # (the report's error already holds the log's end), so the error it ends with also
+    # stands near the top unless the text starts with it. It is taken from the redacted tails.
+    promoted = bool(causes) and causes[-1] not in known
+    if promoted:
+        lines.insert(1, 'Cause: ' + causes[-1][:300])
     if len(lines) == 1:
         lines.append('The worker ended without a readable error report.')
     lines.append('\nRetained outputs: ' + str(run))
@@ -769,7 +787,8 @@ def generation_failure(run, exit_code=None, *, repair=None):
         from .runtime_libraries import REINSTALL
         value = value.replace(REPAIR_MARK, repair or REINSTALL, 1)
     value = re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))', '', value)
-    return re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', value)
+    value = re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', value)
+    return value
 
 
 def startup_failure(message, log, *, exit_code=None, context=None):
