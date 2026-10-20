@@ -89,6 +89,7 @@ ERRORS.update({
     'needs_confirmation': (409, False, 'The user must approve this operation first.', 'Wait with freevideo_wait (no id) for the user\'s answer; once approved, repeat the same call unchanged.'),
     'declined_by_user': (409, False, 'The user declined this operation.', 'Do not repeat this call; change the plan or ask the user what they want instead.'),
     'stopped_by_user': (409, False, 'The user stopped this session.', 'Wait for the user to continue the session; do not retry or start a new one.'),
+    'turn_abandoned': (409, False, 'The user gave up on this turn.', 'Stop working on it. Wait for the next message from the user; do not retry.'),
     'reshoot_limit': (409, False, 'This shot reached its generation limit.', 'Choose the best existing take, rewrite the shot, or ask the user.'),
     'production_limit': (409, False, 'This film reached its child job limit.', 'Choose existing takes or ask the user how to reduce the film.'),
     'managed_by_production': (409, False, 'This job belongs to a film and cannot be resumed on its own.', 'This take belongs to a film; reshoot the shot or wait for the user to continue.'),

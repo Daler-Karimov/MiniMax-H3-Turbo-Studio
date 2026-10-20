@@ -32,6 +32,12 @@ export const WHITEBOX_PREVIEW = Object.freeze({
 });
 let chatNumber = 0;
 
+// What the agent is doing before it answers, by the key it reports. Words the page does not know are not shown.
+export const STAGE_TEXT = Object.freeze({
+    reading: ['Reading the request', '正在理解要求'], scripting: ['Writing the script', '正在写剧本'],
+    storyboarding: ['Planning the shots', '正在拆分镜头'], prompting: ['Writing the shot prompts', '正在写画面描述'],
+    checking: ['Checking the results', '正在检查结果'], assembling: ['Joining the shots', '正在拼接镜头'],
+});
 const WORKING = ['running', 'queued', 'waiting', 'cancelling'], VIDEOS = ['generate', 'assemble'];
 // What a job with no picture of its own is doing, in the reader's language.
 const QUIET = {vlm: ['Checking', '检查中'], enhance: ['Enhancing prompt', '增强提示词']};
@@ -224,6 +230,25 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     const form = el('form', 'fv-chat-input'), input = el('textarea'), sendButton = el('button', 'fv-chat-send');
     input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '对 Agent 说'));
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
+    // While the agent is thinking and has started nothing, the send key is the stop key: same place, a solid square.
+    let stopMode = false;
+    const SEND_GLYPH = 'M12 19V5M5 12l7-7 7 7', STOP_GLYPH = 'M7 7h10v10H7z';
+    function refreshSend() {
+        const label = stopMode ? t('Stop', '停止') : t('Send', '发送');
+        sendButton.classList.toggle('fv-chat-halt', stopMode);
+        sendButton.setAttribute('aria-label', label); sendButton.title = stopMode ? label : '';
+        sendButton.querySelector('path').setAttribute('d', stopMode ? STOP_GLYPH : SEND_GLYPH);
+        sendButton.disabled = stopMode ? false : !composeAllowed() || draftSending() || !input.value.trim();
+    }
+    async function abandon() {
+        const session = state.session;
+        if (!session || state.abandoned) return;
+        state = {...state, abandoned: true, stage: null}; render();
+        input.focus();
+        let done = false;
+        try { done = (await dataLayer.abandon(session)).ok; } catch {}
+        if (!done && state.session === session) { state = {...state, abandoned: false}; render(); say(t('Could not stop. Click again.', '没能停止，请再点一次。')); }
+    }
     let whiteboxPreview = false;
     try { whiteboxPreview = localStorage.getItem(WHITEBOX_PREVIEW.storageKey) === 'true'; } catch {}
     const whiteboxButton = press('fv-chat-whitebox', null, () => setWhiteboxPreview(!whiteboxPreview));
@@ -990,8 +1015,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     }
     function dots() {
         const item = el('li', 'fv-chat-thinking'), mark = el('span', 'fv-chat-dots'); mark.append(el('i'), el('i'), el('i'));
-        item.setAttribute('role', 'status'); item.setAttribute('aria-label', t('Thinking', '正在思考')); item.append(mark);
-        return {element: item, update() {}};
+        const activity = el('span', 'fv-chat-activity');
+        item.setAttribute('role', 'status'); item.setAttribute('aria-label', t('Thinking', '正在思考')); item.append(mark, activity);
+        return {element: item, update(text) { activity.textContent = text || ''; activity.hidden = !text; }};
     }
     const MAKE = {hello, examples, dots, user: () => message('user'), agent: () => message('agent'), job: jobCard, confirm: confirmCard};
 
@@ -1029,8 +1055,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         if (!said) wanted.push(['examples', 'examples', null]);
         // The agent has the sentence, or is waiting for one, and has not answered yet.
         const tail = localPending.at(-1) || entries.at(-1);
-        if (tail?.type !== 'job' && tail?.type !== 'confirm' && (localPending.some(entry => !entry.error) || !tail?.error && tail?.role === 'user') && state.agent.connected === true
-            && (state.agent.listening !== false || tail.taken === true)) wanted.push(['dots', 'dots', null]);
+        const thinking = tail?.type !== 'job' && tail?.type !== 'confirm' && (localPending.some(entry => !entry.error) || !tail?.error && tail?.role === 'user') && state.agent.connected === true
+            && (state.agent.listening !== false || tail.taken === true) && (localPending.length > 0 || !state.abandoned);
+        stopMode = thinking && localPending.length === 0;
+        if (thinking) wanted.push(['dots', 'dots', Object.hasOwn(STAGE_TEXT, state.stage) ? t(...STAGE_TEXT[state.stage]) : null]);
 
         const stick = follow || pinned;
         const before = log.children.length, keep = new Set(wanted.map(([key]) => key));
@@ -1044,7 +1072,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const sendable = sendingAllowed();
         input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
         input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to continue', '请在 Agent 里让它继续') : t('Message the agent…', '对 Agent 说…');
-        sendButton.disabled = !composeAllowed() || draftSending() || !input.value.trim();
+        refreshSend();
         if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
         else if (log.children.length > before) down.hidden = false;
@@ -1143,7 +1171,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         // At most five lines; the box scrolls after that.
         const line = (typeof getComputedStyle === 'function' && parseFloat(getComputedStyle(input).lineHeight)) || 22;
         input.style.height = `${Math.min(input.scrollHeight, Math.round(line * 5) + 14)}px`;
-        sendButton.disabled = !composeAllowed() || draftSending() || !input.value.trim();
+        refreshSend();
     }
     input.addEventListener('input', () => {
         if (entryDraft !== null) entryDraft = input.value;
@@ -1160,10 +1188,11 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     // Enter sends, Shift+Enter starts a new line; Enter that confirms an input-method candidate does neither.
     input.addEventListener('keydown', event => {
         if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
-        event.preventDefault(); form.requestSubmit();
+        event.preventDefault(); if (!stopMode) form.requestSubmit();
     });
     form.addEventListener('submit', event => {
         event.preventDefault();
+        if (stopMode) { void abandon(); return; }
         const text = input.value;
         const draft = saveDraft();
         if (!text.trim() || !composeAllowed() || draftSending()) return;

@@ -355,6 +355,7 @@ CAPABILITIES_ZH = {
     ('POST', '/sessions/{id}/events'): '向用户发送消息或计划；操作步骤由服务端记录',
     ('POST', '/sessions/{id}/stop'): '只有页面用户可以停止工作会话',
     ('POST', '/sessions/{id}/resume'): '只有页面用户可以继续工作会话',
+    ('POST', '/sessions/{id}/stage'): '说明你正在做回答的哪个阶段；页面用自己的话显示，你开口或开始任务后自动清除',
     ('GET', '/confirmations'): '查看哪些 Agent 操作需要等待用户确认',
     ('PUT', '/confirmations'): '只有页面用户可以修改需要确认的操作',
 }

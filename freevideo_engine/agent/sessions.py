@@ -47,6 +47,9 @@ def _line(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')
 
 
+STAGE_SECONDS = 120
+
+
 class Sessions:
     def __init__(self, root: Path, *, clock=time.time, max_events=20000):
         self.root = Path(root)
@@ -60,6 +63,8 @@ class Sessions:
         self._initial_seq = {}
         self._readers = {}
         self._user_seq = {}  # Last event the user wrote; unread() skips the file when nothing is newer.
+        self._turn = {}  # [last message the user wrote, the one they gave up on]: a turn is given up until they speak again.
+        self._stage = {}  # What the agent last said it was doing: (key, when). Not kept across restarts.
         # When each session began or its user last acted in it (spoke, answered), and the user's first words
         # there: the conversation the user is in, and what the page calls each one in its history.
         self._acted = {}
@@ -120,6 +125,11 @@ class Sessions:
     def _fold(self, sid, event):
         meta = self._meta[sid]
         meta.update(last_seq=event['seq'], updated_at=event['at'])
+        turn = self._turn.setdefault(sid, [0, 0])
+        if event['by'] == 'user' and event['type'] == 'message':
+            turn[0] = event['seq']
+        elif event['type'] == 'control' and event['action'] == 'abandoned':
+            turn[1] = turn[0]
         if event['by'] == 'user':
             self._user_seq[sid] = event['seq']
             # No counter here: the order must come out the same when the files are read again after a
@@ -195,7 +205,7 @@ class Sessions:
             self._path(sid).unlink(missing_ok=True)
             self._closing.discard(sid)
             waiters = self._waiters.pop(sid, ())
-            for kept in (self._meta, self._ids, self._clients, self._initial_seq, self._user_seq, self._acted, self._said):
+            for kept in (self._meta, self._ids, self._clients, self._initial_seq, self._user_seq, self._turn, self._stage, self._acted, self._said):
                 kept.pop(sid, None)
             self._chosen.discard(sid)
             self._partial.discard(sid)
@@ -265,6 +275,8 @@ class Sessions:
                 raise SessionError('session_full', 'Session event limit reached')
             self._write(sid, result)
             self._fold(sid, result)
+            if kind in ('message', 'plan', 'step'):
+                self._stage.pop(sid, None)
             for loop, signal in self._waiters.get(sid, ()):
                 try:
                     loop.call_soon_threadsafe(signal.set)
@@ -428,6 +440,32 @@ class Sessions:
         with self.lock:
             return self._get(sid)['stopped']
 
+    def abandoned(self, sid) -> bool:
+        """The user gave up on the turn they last spoke in, and has not spoken since."""
+        with self.lock:
+            self._get(sid)
+            said, gave_up = self._turn.get(sid, (0, 0))
+            return gave_up > 0 and gave_up == said
+
+    def report_stage(self, sid, key) -> None:
+        _check(schema.STAGE, key)
+        with self.lock:
+            self._get(sid)
+            self._stage[sid] = (key, self.clock())
+
+    def stage(self, sid, *, within=STAGE_SECONDS) -> str | None:
+        """The stage the agent reported, while it is recent and the turn it belongs to is still open."""
+        with self.lock:
+            self._get(sid)
+            known = self._stage.get(sid)
+            if known is None or self.clock() - known[1] > within:
+                return None
+            return known[0]
+
+    def clear_stage(self, sid) -> None:
+        with self.lock:
+            self._stage.pop(sid, None)
+
     def unread(self, sid, reader: str) -> list[dict]:
         _check(schema.string(80), reader)
         with self.lock:
@@ -439,7 +477,8 @@ class Sessions:
                 return []
             rows = self._events(sid, after, self.max_events)
             return [row for row in rows if row['by'] == 'user' and (row['type'] == 'message'
-                    or row['type'] == 'confirm' and row['state'] in ('approved', 'declined'))]
+                    or row['type'] == 'confirm' and row['state'] in ('approved', 'declined')
+                    or row['type'] == 'control' and row['action'] == 'abandoned')]
 
 
 class Confirmations:
