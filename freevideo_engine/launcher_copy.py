@@ -12,6 +12,8 @@ ACTION_COPY = {
     'installation_missing': ('There is no installation information yet. Complete installation first.',
                              '还没有安装信息，请先完成安装'),
     'checking_update': ('Checking for updates. Please wait.', '正在检查更新，请稍候'),
+    'update_install_failed': ('The update could not be installed. You can keep using the current version.',
+                              '无法安装更新。当前版本可以照常使用。'),
     'update_page_failed': ('Couldn\'t open the download page. Please try again later.', '无法打开下载页，请稍后再试。'),
     'busy': ('The background task is busy. You can do this when it finishes.',
              '后台正在忙，完成后可以操作'),

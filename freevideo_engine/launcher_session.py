@@ -1519,7 +1519,7 @@ class Session:
         view['release_page'] = release_page(self.updater.current) if self.updater else ''
         if self.updater and self.updater.install_failed and view.get('candidate'):
             # The new app did not go in and the old one is back: the reminder says so.
-            view['status'], view['error'] = 'error', 'The update could not be installed.'
+            view['status'], view['error'] = 'error', self.t(*ACTION_COPY['update_install_failed'])
         key = self.update_key()
         view.update(engine=self.engine_update_pending(), current=__version__,
                     current_release=public_details(self.updater.current) if self.updater else self.release_details,
