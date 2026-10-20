@@ -46,12 +46,12 @@ ARCHIVE_FAILURES = {
 
 
 
-@lru_cache(maxsize=4)
 def _lan_password():
     # Resolved per call: the access module is optional and may be absent.
     return importlib.import_module('.lan_password', __package__)
 
 
+@lru_cache(maxsize=4)
 def _qr_rows(text):
     from .qr_code import encode
     try:
