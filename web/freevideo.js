@@ -229,7 +229,8 @@ function mediaPanel(node, mount = null) {
         finally { node.isUploading = false; add.disabled = false; addAudio.disabled = false; }
     }
     async function newImage() {
-        if (node.isUploading || read().length >= 32) return;
+        if (node.isUploading) return;
+        if (read().length >= 32) { message(text('The media list is full (32 items, including disabled ones). Remove some to add more.', '素材已满 32 个（含未启用的），请先移除不用的素材。'), true); return; }
         const library = read().filter(row => mediaKind(row.file) === 'image')
             .map(row => ({file: row.file, label: (row.source || row.file).split('/').pop()}));
         let outcome;
@@ -237,7 +238,8 @@ function mediaPanel(node, mount = null) {
             outcome = await openImageEditor({target: videoSize(), role: role.value, t: text,
                 resolve: viewURL, upload: uploadOne, library});
         } catch { message(text('This image cannot be edited right now; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
-        if (!outcome?.blob || read().length >= 32) return;
+        if (!outcome?.blob) return;
+        if (read().length >= 32) { message(text('The media list is full (32 items, including disabled ones). Remove some to add more.', '素材已满 32 个（含未启用的），请先移除不用的素材。'), true); return; }
         node.isUploading = true; add.disabled = addAudio.disabled = generateImage.disabled = true;
         try {
             const result = await uploadOne(new File([outcome.blob], outcome.name, {type: outcome.blob.type}));
