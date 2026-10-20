@@ -1492,7 +1492,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
         chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
     }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || (isNetworkTypeError(error) ? connectionLostText(t) : error?.message) || String(error));
-    let lastQueueError = null;
+    let lastQueueError = null, connectionNotice = false;
     function showQueueError(error) {
         if (disposed) return;
         status.dataset.error = 'true';
@@ -1506,11 +1506,21 @@ export function openStudio(node, {extendFrom = null} = {}) {
             : queueError(error);
         // Recoverable chain actions need one visible sentence, not a second error card.
         if (error?.action) { status.scrollIntoView({block: 'nearest'}); return; }
-        const identity = error?.schema === 'freevideo.error-report' ? error : error?.message || error;
+        // A loop stopped by a long outage is a new state of the same notice: show its final details once.
+        const identity = error?.schema === 'freevideo.error-report' ? error : error?.loopStopped ? `${error.message} (loop stopped)` : error?.message || error;
         if (lastQueueError === identity) return;
         lastQueueError = identity;
         const report = failure.show(error, error?.schema === 'freevideo.error-report', {stage: 'queue', node, graph: app.graph});
         node.freevideoFailureReport = report; node.freevideoFailure = errorText(report);
+        connectionNotice = isNetworkTypeError(error) && !report.browser_extension;
+    }
+    // The queue read works again: take the lost-connection notice down. A failure card for anything else stays.
+    function clearConnectionNotice() {
+        if (!connectionNotice) return;
+        connectionNotice = false;
+        if (node.freevideoFailureReport?.stage !== 'queue') return;
+        lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
+        status.dataset.error = 'false'; status.textContent = '';
     }
     function updateRunButton() {
         const submitting = capturing || queueState?.submitting;
@@ -1620,7 +1630,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         }
         if (movedId && state.pending.some(row => row.id === movedId) && !queueList.querySelector('.fv-queue-moved')) showMoved();
         if (!busy) cancelling = false;
-        if (state.error) showQueueError(state.error);
+        if (state.error) showQueueError(state.error); else clearConnectionNotice();
         updateRunButton();
     }
     const syncQueue = () => queueController.refresh();
