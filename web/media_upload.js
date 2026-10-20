@@ -11,9 +11,9 @@ const failures = () => ({
     empty: text('This file is empty. Choose another file.', '这个文件是空的，请换一个文件。'),
     unsupported: text('Choose an image, video or audio file', '请选择图片、视频或音频文件'),
     multiple: text('Upload one file at a time.', '一次只能上传一个文件。'),
-    invalid: text('This file name cannot be used. Rename the file and try again.', '这个文件名不能使用，请改名后再试。'),
+    invalid: text('This file name cannot be used. Rename the file and try again.', '此文件名不可用，请重命名后重试。'),
 });
-const generic = () => text('The upload did not finish. Try again.', '上传没有完成，请再试一次。');
+const generic = () => text('The upload did not finish. Try again.', '上传未完成，请重试。');
 export async function uploadMedia(api, file) {
     const found = failures();
     if (file.size > MAX_UPLOAD_BYTES) throw new Error(found.too_large);

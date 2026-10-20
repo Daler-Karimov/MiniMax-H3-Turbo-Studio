@@ -65,6 +65,6 @@ freevideo server --listen 0.0.0.0
 
 ## 常见问题
 
-- **AppImage 打不开**：部分系统缺少 FUSE。可以加上 `--appimage-extract-and-run` 运行，或安装 `fuse3`。
+- **AppImage 无法打开**：部分系统缺少 FUSE。可以加上 `--appimage-extract-and-run` 运行，或安装 `fuse3`。
 - **ComfyUI 没有启动**：运行 `freevideo status` 查看上次的错误。日志在安装目录的 `launcher` 文件夹中（`service.log`，ComfyUI 本身的日志在 `comfy-runs`）。
 - **端口被占用**：有其他程序在使用该端口，可以用 `freevideo open --port 8190` 换一个端口。

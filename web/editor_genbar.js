@@ -149,7 +149,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             // A single part needs no number; with nothing else to say it reads "Preparing".
             // The creation panel's own time when it has one, so the bar and the panel never differ; the job's sum until the panel has one.
             const left = words?.over ? null : words?.left ?? remaining;
-            const time = finalization ? '' : words?.stall || (words?.over ? t('Taking longer than expected', '比预计久，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
+            const time = finalization ? '' : words?.stall || (words?.over ? t('Taking longer than expected', '耗时超出预计，仍在生成') : words?.time || (left != null ? timeEstimate(left, t) : ''));
             const stage = finalization ? t(...CLIP_FINALIZATION_COPY[finalization.key]) : words?.stage || (count === 1 && !time ? t('Preparing', '正在准备') : '');
             const spans = [['fv-ed-gen-part', count > 1 ? t(`Part ${number}/${count}`, `第 ${number}/${count} 段`) : ''],
                 ['fv-ed-gen-stage', stage], ['fv-ed-gen-time', time]];
@@ -214,7 +214,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         // A specific reason is said once; the planning limits are already shown above.
         catch (error) { const result = actions.error(error, 'generate'); reason = result?.say || '';
             if (result?.say && !['chain_too_long', 'chain_part_too_short'].includes(result.reason)) say(result.say, false, ['Editor generation', '剪辑器生成']);
-            else if (!result && !note.textContent) { reason = t('Could not start. Try again.', '没能开始，请重试。'); say(reason, false, ['Editor generation', '剪辑器生成']); } }
+            else if (!result && !note.textContent) { reason = t('Could not start. Try again.', '未能开始，请重试。'); say(reason, false, ['Editor generation', '剪辑器生成']); } }
         finally { pressing.delete(key); render(); }
         return reason;
     };

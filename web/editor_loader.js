@@ -12,7 +12,7 @@ export async function openEditorView(node, options) {
         console.warn('FreeVideo edit view:', error);
         const language = new URLSearchParams(location.search).get('freevideo_lang');
         const cn = language === 'zh' || (language !== 'en' && String(navigator.language || '').toLowerCase().startsWith('zh'));
-        const detail = cn ? '没有完成，请重试' : 'Could not complete. Try again.';
+        const detail = cn ? '未完成，请重试' : 'Could not complete. Try again.';
         // The native modal is above the host's toast layer. Also use the
         // workspace's existing failure status so the message stays visible.
         const status = options?.studio?.querySelector('.fv-status');

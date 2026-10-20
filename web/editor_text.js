@@ -39,7 +39,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     const marker=toolbar.querySelector('.fv-ed-marker, .fv-ed-add-marker');
     if(marker) marker.after(buttons); else toolbar.insertBefore(buttons,toolbar.querySelector('.fv-ed-zoom'));
     const notice=el('span');notice.setAttribute('role','button');notice.tabIndex=0;notice.onclick=()=>jumpMissing();notice.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();jumpMissing();}}; notice.classList.add('fv-ed-text-notice'); notice.hidden=true; exportBox.prepend(notice);
-    const fontFailure=()=>t('Text fonts could not be loaded','文字字体没能加载');
+    const fontFailure=()=>t('Text fonts could not be loaded','文字字体加载失败');
     let fontIssue=null;
     const menu=el('div','fv-ed-text-menu'); menu.hidden=true; menu.setAttribute('role','menu'); element.append(menu);
     const names={sans:t('Sans','黑体'),serif:t('Serif','宋体'),kai:t('Kai','楷体'),mono:t('Mono','等宽')};
@@ -68,7 +68,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
     const speech={buttons:new Set(),available:false,need:0,busy:false,loading:false,shown:null,job:null,stop:null,run:0};
     function speechLabel(fraction){speech.shown=fraction;const p=Math.round(Math.min(1,Math.max(0,Number(fraction)||0))*100),size=Math.max(1,Math.round(speech.need/1e6)),text=fraction==null?(speech.need?t(`Auto subtitles · Download ${size} MB`,`自动字幕 · 下载 ${size} MB`):t('Auto subtitles','自动字幕')):speech.loading?t(`Cancel · Downloading ${p}%`,`取消 · 下载 ${p}%`):t(`Cancel · ${p}%`,`取消 · ${p}%`);for(const b of speech.buttons){b.textContent=text;b.hidden=!(speech.available||speech.need);}}
     function speechEnd(text,where=null){speech.stop?.();speech.stop=null;speech.job=null;speech.busy=false;speech.loading=false;speechLabel(null);if(text)actions.notify?.(text,where);}
-    const speechFailed=()=>t('Could not create subtitles','没能生成字幕'),speechSilent=()=>t('No speech found','没有听到说话声');
+    const speechFailed=()=>t('Could not create subtitles','字幕生成失败'),speechSilent=()=>t('No speech found','未检测到语音');
     const speechReason=reason=>reason==='no_sound'?speechSilent():reason==='language'?t('Language not supported yet','暂不支持这种语言'):speechFailed();
     function speechResult(job){
         if(job.state==='running'){speechLabel(job.fraction);return true;}
@@ -91,7 +91,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
                 const ability=done?await actions.speech.ability():null;
                 if(run!==speech.run)return;
                 if(ability){speech.available=ability.available;speech.need=ability.need;}
-                if(!done||speech.need){speechEnd(t('Could not download. Try again.','没能下载，请再试一次。'),SPEECH_ISSUE);return;}
+                if(!done||speech.need){speechEnd(t('Could not download. Try again.','下载失败，请重试。'),SPEECH_ISSUE);return;}
                 if(!speech.available){speechEnd(speechFailed(),SPEECH_ISSUE);return;}
                 speech.loading=false;
             }
@@ -101,7 +101,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             if(!job){speechEnd(speechFailed(),SPEECH_ISSUE);return;}
             speech.job=job.id??null;
             if(speechResult(job))speech.stop=actions.speech.watch(job.id,value=>{if(run!==speech.run)return false;if(!value){speechEnd(speechFailed(),SPEECH_ISSUE);return false;}return speechResult(value);});
-        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download. Try again.','没能下载，请再试一次。'):speechFailed(),SPEECH_ISSUE);}
+        }catch{if(run===speech.run)speechEnd(speech.loading?t('Could not download. Try again.','下载失败，请重试。'):speechFailed(),SPEECH_ISSUE);}
     }
     function commitDraft(){if(draft){const change=draft.change;apply(t('Text','文字'),change);const c=selectedText();if(c?.text_kind==='text')lastStyle={...styleOf(state.record,c)};}}
     // Editing a text ended. One left without words is taken away; one that never had any leaves no step behind.
@@ -165,7 +165,7 @@ export function createEditorText({element,state,t,actions,adjust,player,toolbar,
             const file=el('input');file.type='file';file.accept='.srt';file.hidden=true;
             const importButton=button(t('Import subtitle file','导入字幕文件'),{onClick:()=>file.click()});importButton.classList.add('fv-ed-import-srt');
             // Only a file that cannot be read says so; a refused edit (a locked track) flashes red like any other.
-            file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;const result={};try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text,result);}catch{actions.notify?.(t('Could not read this subtitle file','读不出这个字幕文件'));return;}finally{file.value='';}
+            file.onchange=async()=>{const f=file.files?.[0];if(!f)return;let text;const result={};try{if(f.size>4*1024*1024)throw new Error();text=await f.text();parseSRT(text,result);}catch{actions.notify?.(t('Could not read this subtitle file','无法读取这个字幕文件'));return;}finally{file.value='';}
                 if(apply(t('Import subtitle file','导入字幕文件'),r=>importSRT(r,text))){const missing=projectMissing(state.record);if(missing.length)actions.notify?.(missingHint([...new Set(missing.flatMap(r=>r.chars))],t));if(result.truncated)actions.notify?.(t('Only the first 500 subtitles were imported.','只导入了前 500 条字幕。'));}};
             // Shown only where this computer can recognise speech.
             const hear=button(t('Auto subtitles','自动字幕'),{onClick:toggleSpeech});hear.classList.add('fv-ed-auto-subtitles');for(const b of speech.buttons)if(!b.isConnected)speech.buttons.delete(b);speech.buttons.add(hear);speechLabel(speech.busy?speech.shown:null);

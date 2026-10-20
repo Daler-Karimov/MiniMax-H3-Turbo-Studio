@@ -129,7 +129,7 @@ export function imagePackMessage(info, t) {
     // A non-breaking space keeps the number and its unit on one line.
     const size = (info?.pack_size || (bytes > 0 ? (bytes / 2 ** 30).toFixed(1) + ' GiB' : '17.3 GB'))
         .replace(/ (?=[KMGT]i?B$)/, '\u00a0');
-    return t(`Download "${name}" in the launcher first, ${size}.`, `先在启动器里下载“${name}”，${size}。`);
+    return t(`Download "${name}" in the launcher first, ${size}.`, `请先在启动器中下载“${name}”，${size}。`);
 }
 // What the page offers while the image models are missing: one button, one muted line, and the bar once loading.
 export function packView(info, t) {
@@ -156,19 +156,19 @@ export function packView(info, t) {
 export function imageGenError(code, info, t) {
     const reasons = {
         no_memory: ['Not enough GPU memory, even at the smallest size. Close other apps using the GPU, then try again.',
-            '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。'],
-        busy_video: ['A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。'],
-        busy: ['An image is already being generated. Try again when it finishes.', '已有一张图在生成，完成后再试。'],
+            '显存不足，最小尺寸也未能生成。请关闭其他占用显卡的程序后重试。'],
+        busy_video: ['A video is generating. Try again when it finishes.', '视频正在生成，请在完成后重试。'],
+        busy: ['An image is already being generated. Try again when it finishes.', '已有图片正在生成，请在完成后重试。'],
         model_unreadable: ['The image generation model files could not be read. Repair them in the launcher and try again.',
-            '图像生成模型的文件读不出来。在启动器里修复后再试。'],
-        device_unavailable: ['The graphics card is not available right now. Try again later.', '显卡暂时用不了，稍后再试。'],
-        worker_exit: ['Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'],
-        timeout: ['This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'],
+            '无法读取图像生成模型文件，请在启动器中修复后重试。'],
+        device_unavailable: ['The graphics card is temporarily unavailable. Try again later.', '显卡暂时不可用，请稍后重试。'],
+        worker_exit: ['Image generation stopped unexpectedly. Try again.', '图像生成意外停止，请重试。'],
+        timeout: ['This image exceeded the time limit and was stopped. Try again.', '此图片生成超时，已停止。请重试。'],
         cancelled: ['Image generation was cancelled.', '已取消图像生成。'],
         invalid_request: ['The image settings are invalid. Adjust them and try again.', '图片设置有误，请调整后重试。'],
-        invalid_media: ['The reference image cannot be read. Choose another image.', '参考图读不出来，请换一张图。'],
-        reload: ['Image generation was interrupted. Try again.', '图片生成中途被打断，请重试。'],
-        generation_failed: ['Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'],
+        invalid_media: ['The reference image cannot be read. Choose another image.', '无法读取参考图，请更换一张。'],
+        reload: ['Image generation was interrupted. Try again.', '图片生成被中断，请重试。'],
+        generation_failed: ['Image generation encountered an error. Try again.', '图像生成出错，请重试。'],
         small_memory: ['This Mac has less than 16 GB of memory and cannot generate pictures.',
             '这台 Mac 的内存不足 16 GB，无法生成图片。'],
     };
@@ -180,13 +180,13 @@ export function imageGenError(code, info, t) {
         const stage = info?.stage, size = info?.fitted;
         if (stage === 'encode')
             return say('Not enough GPU memory to load the reference images. Use fewer reference images, or close other apps using the GPU, then try again.',
-                '显存不够，参考图没能载入。少用几张参考图，或关掉其他占用显卡的程序后再试。');
+                '显存不足，参考图未能载入。请减少参考图数量，或关闭其他占用显卡的程序后重试。');
         if (stage === 'load' || stage === 'text')
             return say('Not enough GPU memory to load the model. Close other apps using the GPU, then try again.',
-                '显存不够，模型没能载入。关掉其他占用显卡的程序后再试。');
+                '显存不足，模型未能载入。请关闭其他占用显卡的程序后重试。');
         if (size?.width && size?.height)
             return say(`Not enough GPU memory, even at ${size.width}\u00a0×\u00a0${size.height}. Close other apps using the GPU, then try again.`,
-                `显存不够，${size.width}\u00a0×\u00a0${size.height} 也没能生成。关掉其他占用显卡的程序后再试。`);
+                `显存不足，${size.width}\u00a0×\u00a0${size.height} 也未能生成。请关闭其他占用显卡的程序后重试。`);
     }
     return say(...(Object.hasOwn(reasons, code) ? reasons[code] : reasons.generation_failed));
 }
@@ -648,7 +648,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
         menu.append(summary, list);
         const draw = () => {
             list.replaceChildren();
-            if (!past.length) { list.append(el('div', t('No images generated yet', '还没有生成过图片'), 'fv-ie-menu-label')); return; }
+            if (!past.length) { list.append(el('div', t('No images generated yet', '暂无已生成的图片'), 'fv-ie-menu-label')); return; }
             const grid = el('div', null, 'fv-ie-gen-history-grid');
             for (const item of past) {
                 const tile = el('div', null, 'fv-ie-gen-history-tile');
@@ -712,7 +712,7 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
             b.setAttribute('aria-pressed', String(b.dataset.value === mode));
         }); input.disabled = disabled;
         renderReferences(refs, disabled);
-        input.placeholder = mode === 'edit' ? getSelection() ? t('What to change in the selection', '要改选区里的什么') : t('What to change', '要改什么') : t('Describe the picture', '描述画面');
+        input.placeholder = mode === 'edit' ? getSelection() ? t('Describe the change in the selection', '描述选区内的修改') : t('Describe the change', '描述修改内容') : t('Describe the picture', '描述画面');
         input.setAttribute('aria-label', input.placeholder);
         const pack = missing ? packView(state.info, t) : null;
         action.textContent = pack ? pack.button : state.running ? t('Stop', '停止') : t('Generate', '生成');

@@ -74,7 +74,7 @@ export function secondPassAction(t, run) {
         try { await run(); label.textContent = button.title = t('Queued', '已加入队列'); }
         catch {
             button.disabled = false;
-            label.textContent = button.title = t('Second pass did not start · Retry', '二采没有开始 · 重试');
+            label.textContent = button.title = t('Second pass did not start · Retry', '二采未开始 · 重试');
             problem = issueButton(t, () => ({where: ['Second pass', '二采'], message: label.textContent}));
             button.after(problem);
         } finally { button.removeAttribute('aria-busy'); }

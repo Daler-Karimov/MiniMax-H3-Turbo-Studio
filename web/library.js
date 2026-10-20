@@ -93,7 +93,7 @@ export async function libraryPage(t, {limit = 24, before = null, signal} = {}) {
     const query = new URLSearchParams({limit: String(limit)});
     if (before) query.set('before', before);
     const response = await api.fetchApi('/freevideo/library?' + query, {signal});
-    if (response.status === 404) throw Object.assign(new Error(t('Restart ComfyUI to open your creations after updating.', '更新后重启 ComfyUI，即可打开作品。')), {restart: true});
+    if (response.status === 404) throw Object.assign(new Error(t('Restart ComfyUI to open your creations after updating.', '更新后需重启 ComfyUI 才能打开作品。')), {restart: true});
     if (!response.ok) throw new Error(t('Could not load your creations. Try Refresh.', '作品暂时无法读取，请点击刷新。'));
     return response.json();
 }
@@ -144,19 +144,19 @@ async function workflowBackfill(collection, t) {
         const result = value?.result || {};
         heading.textContent = result.embedded ? t(`Workflows added to ${result.embedded} videos`, `已为 ${result.embedded} 个视频补上工作流`) : t('No video was changed', '没有视频被改动');
         text.textContent = result.embedded
-            ? t('Drag them onto the canvas to restore their workflow. The originals are kept next to them as video.before-workflow.mp4.', '把它们拖到画布上即可还原工作流。原视频保留在各自目录，文件名为 video.before-workflow.mp4。')
+            ? t('Drag them onto the canvas to restore their workflow. The originals are kept next to them as video.before-workflow.mp4.', '把它们拖到画布上可还原工作流。原视频保留在各自目录，文件名为 video.before-workflow.mp4。')
             : t('Videos that could not be checked safely were left as they were.', '无法安全确认的视频都保持原样。');
         if (result.failed) text.textContent += ' ' + t(`${result.failed} videos were left unchanged and will be offered again.`, `另有 ${result.failed} 个视频未改动，之后会再次提示。`);
-        actions.replaceChildren(button(t('Done', '好的'), () => box.remove(), 'fv-quiet'));
+        actions.replaceChildren(button(t('Done', '完成'), () => box.remove(), 'fv-quiet'));
     }
     if (value.state === 'running') { follow(); return; }
     heading.textContent = t('Add workflows to earlier videos', '为之前的视频补上工作流');
     text.textContent = t(`${value.count} earlier videos can get the workflow they were made with, so dropping them on the canvas restores it. Nothing changes until you confirm, and each original is kept as a backup (about ${gb(value.bytes)} GB).`,
-        `有 ${value.count} 个之前生成的视频可以补上生成时的工作流，补写后拖到画布即可还原。确认前不会改动任何文件，每个原视频都会保留一份备份（约 ${gb(value.bytes)} GB）。`);
+        `有 ${value.count} 个之前生成的视频可以补上生成时的工作流，补写后拖到画布可还原。确认前不会改动任何文件，每个原视频都会保留一份备份（约 ${gb(value.bytes)} GB）。`);
     const run = button(t('Add workflows', '补写工作流'), async () => {
         run.disabled = later.disabled = true;
         try { if (!(await post('run')).ok) throw new Error(); follow(); }
-        catch { run.disabled = later.disabled = false; text.textContent = t('Could not start. Try again.', '没能开始，请重试。'); }
+        catch { run.disabled = later.disabled = false; text.textContent = t('Could not start. Try again.', '未能开始，请重试。'); }
     }, 'fv-primary');
     const later = button(t('Don\'t ask again', '不再提示'), async () => { box.remove(); try { await post('dismiss'); } catch {} }, 'fv-quiet');
     actions.append(run, later);
@@ -301,7 +301,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         notice.textContent = '';
         try {
             await upscale(row);
-            if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后在“作品”里。');
+            if (!disposed && selected === row.video) notice.textContent = t('Queued. It appears in "Creations" when done.', '已加入队列，完成后可在“作品”中查看。');
         } catch (error) {
             if (!disposed && selected === row.video) fault(notice, t('Could not start the second pass: ', '无法继续二采：') + error.message, ['Second pass', '二采']);
             throw error;
@@ -323,9 +323,9 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             throw Object.assign(new Error(error.message === 'foreign-files'
                 ? t('Not deleted: the folder also holds files FreeVideo did not write: ', '未删除：文件夹里还有不是 FreeVideo 生成的文件：') + (value.kept || []).join(', ')
                 : error.message === 'editor-in-use' ? t('Not deleted: these edits use it: ', '未删除：这些剪辑正在使用它：') + (value.kept || []).join(', ')
-                : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后再试。')
-                : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请等它完成后再试。')
-                : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它跑二采，或视频仍被占用，请稍后再试。')
+                : error.message === 'editor-unavailable' ? t('Not deleted: saved edits could not be checked. Try again in a moment.', '未删除：暂时无法检查已保存的剪辑，请稍后重试。')
+                : error.message === 'continuation-in-use' ? t('Not deleted: a video continuing from it is running or queued. Try again after it finishes.', '未删除：接在这条视频后面的生成正在运行或排队，请在其完成后重试。')
+                : error.message === 'in-use' ? t('Not deleted: its second pass is running, or the video is still open. Try again in a moment.', '未删除：正在用它进行二采，或视频仍被占用，请稍后重试。')
                 : t('Could not delete this creation.', '无法删除这条作品。')), {
                     reportable: !['foreign-files', 'editor-in-use', 'continuation-in-use', 'in-use'].includes(error.message),
                 });
@@ -501,14 +501,14 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             if (settled.length) window.dispatchEvent(new CustomEvent('freevideo-library-restored'));
             if (disposed) return;
             if (again.length) {
-                undoFailure = t('Could not undo. Try again.', '没能撤销，请重试。');
+                undoFailure = t('Could not undo. Try again.', '未能撤销，请重试。');
                 showUndo();
                 if (settled.length) load(false);
                 return;
             }
             undoFailure = '';
             undoBar.replaceChildren(el('span', expired ? t('The undo time has passed.', '已过了撤销时间。')
-                : lost ? t(`Restored, but ${lost} could not be brought back.`, `已恢复，其中 ${lost} 个没能恢复。`) : t('Restored.', '已恢复。')));
+                : lost ? t(`Restored, but ${lost} could not be restored.`, `已恢复，其中 ${lost} 个未能恢复。`) : t('Restored.', '已恢复。')));
             if (lost && !expired) {
                 const message = undoBar.firstElementChild.textContent;
                 undoBar.append(issueButton(t, () => ({where: ['Restore creations', '恢复作品'], message})));
@@ -522,9 +522,9 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     const skippedText = skipped => {
         const using = skipped.filter(row => row.reason !== 'foreign-files').length, other = skipped.length - using;
         const folders = (count, en) => count === 1 ? en.replace('folders have', 'folder has') : en;
-        if (using && other) return t(`${using + other} kept: ${using} in use, ${other} ${folders(other, 'folders have')} other files.`, `${using + other} 个已保留：${using} 个正在使用，${other} 个文件夹里有别的文件。`);
+        if (using && other) return t(`${using + other} kept: ${using} in use, ${other} ${folders(other, 'folders have')} other files.`, `${using + other} 个已保留：${using} 个正在使用，${other} 个文件夹中有其他文件。`);
         if (using) return t(`${using} in use, kept.`, `${using} 个正在使用，已保留。`);
-        return t(`${other} ${folders(other, 'folders have')} other files, kept.`, `${other} 个文件夹里有别的文件，已保留。`);
+        return t(`${other} ${folders(other, 'folders have')} other files, kept.`, `${other} 个文件夹中有其他文件，已保留。`);
     };
     async function removeSelected() {
         deleting = true; syncSelection();
@@ -600,8 +600,8 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
             for (const video of removed) picked.delete(video);
             confirming = false;
             undoFailure = removed.size
-                ? t(`${picked.size} could not be deleted. Try again.`, `还有 ${picked.size} 个没能删除，请重试。`)
-                : t('Could not delete. Try again.', '没能删除，请重试。');
+                ? t(`${picked.size} could not be deleted. Try again.`, `仍有 ${picked.size} 个未能删除，请重试。`)
+                : t('Could not delete. Try again.', '未能删除，请重试。');
             if (!picked.size) setSelecting(false); else regroup();
         } else { undoFailure = ''; setSelecting(false); }
         if (!selected && !narrow.matches && rows.size) select(rows.values().next().value, false);

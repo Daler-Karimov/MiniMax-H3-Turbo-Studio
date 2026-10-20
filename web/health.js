@@ -135,7 +135,7 @@ const ADVICE = {
     files: t('FreeVideo’s page files are missing or unreadable. In the FreeVideo launcher, open Settings and click Repair, then open FreeVideo again. Without the launcher, update the FreeVideo node and restart ComfyUI.',
         'FreeVideo 的网页文件缺失或无法读取。请在 FreeVideo 启动器的“设置”里点击“修复”，完成后重新打开。没有使用启动器时，请更新 FreeVideo 节点并重启 ComfyUI。'),
     type: t('ComfyUI sent the file with the wrong type, so the browser refused it. Restart ComfyUI. If it persists, use Report a problem.',
-        'ComfyUI 发给浏览器的文件类型不对，浏览器拒绝使用。请重启 ComfyUI；仍然出现时，请点“提交问题”。'),
+        'ComfyUI 返回的文件类型有误，浏览器已拒绝加载。请重启 ComfyUI；仍然出现时，请点“提交问题”。'),
     browser: t('This browser cannot run FreeVideo. Open the same address in a current Chrome or Edge.',
         '当前浏览器无法运行 FreeVideo。请用最新版 Chrome 或 Edge 打开同一个地址。'),
     mixed: t('The browser mixed files from two FreeVideo versions. Press Ctrl+F5 to reload without the cache.',
@@ -373,7 +373,7 @@ function workspaceProblem(app) {
     // The editor shares the studio shell; either view replaces the floating toolbar.
     const studio = document.querySelector('dialog.fv-editor[open]') || document.querySelector('dialog.fv-studio[open]');
     if (studio) return onScreen(studio) ? null
-        : {text: t('The creative workspace is open but cannot be seen on the page.', '创作面板已经打开，但页面上看不到。'), advice: 'reload'};
+        : {text: t('The creative workspace is open but cannot be seen on the page.', '创作面板已打开，但在页面上不可见。'), advice: 'reload'};
     const bar = document.querySelector('.fv-view-navigation');
     if (!bar) return {text: t('The FreeVideo toolbar that opens the creative workspace is missing from the page.', '页面上没有打开创作面板的 FreeVideo 工具栏。'), advice: 'reload'};
     if (onScreen(bar) && !covered(bar)) return null;
@@ -381,7 +381,7 @@ function workspaceProblem(app) {
     return sheetLoaded('view_navigation.css')
         ? {text: t('The FreeVideo toolbar that opens the creative workspace is hidden or covered by other page elements.', '打开创作面板的 FreeVideo 工具栏被页面上的其他元素隐藏或遮挡了。'), advice: 'plugin'}
         : {text: t('The FreeVideo toolbar that opens the creative workspace cannot be seen: its stylesheet view_navigation.css did not load.',
-            '看不到打开创作面板的 FreeVideo 工具栏：样式文件 view_navigation.css 没有加载。'), advice: 'reload', sheet: 'view_navigation.css'};
+            '打开创作面板的 FreeVideo 工具栏不可见：样式文件 view_navigation.css 没有加载。'), advice: 'reload', sheet: 'view_navigation.css'};
 }
 
 // Looks again as the page changes, such as another workflow coming to the
@@ -411,7 +411,7 @@ async function watchWorkspace(app) {
 }
 
 function reportText(item) {
-    const where = {studio: t('The creative workspace could not open', '创作面板打不开'),
+    const where = {studio: t('The creative workspace could not open', '创作面板无法打开'),
         navigation: t('The FreeVideo toolbar could not be added', 'FreeVideo 工具栏没有加载'),
         progress: t('Live progress could not start', '生成进度无法更新'),
         updates: t('Update checks could not start', '更新检查无法启动'),
@@ -646,7 +646,7 @@ async function check() {
     if (launchVisit && !problems.length) {
         if (!launched) problems.push({text: t('The FreeVideo workflow did not open: launcher.js did not report back.', 'FreeVideo 工作流没有打开：launcher.js 没有响应。'), advice: 'reload'});
         else if (launched.error) problems.push(reportText(launched));
-        else if (!studioWorkflow(app.graph)) problems.push({text: t('ComfyUI shows another workflow; the FreeVideo workflow is in another tab.', 'ComfyUI 显示的是另一个工作流，FreeVideo 工作流在别的标签页里。'), advice: 'relaunch'});
+        else if (!studioWorkflow(app.graph)) problems.push({text: t('ComfyUI shows another workflow; the FreeVideo workflow is in another tab.', 'ComfyUI 显示的是另一个工作流，FreeVideo 工作流在其他标签页中。'), advice: 'relaunch'});
         else checkStudio = true;
     }
     for (const item of reports) if (item.type === 'error') problems.push(reportText(item));

@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for submitting a diagnostic report. We'll use it to optimize FreeVideo specifically for your hardware configuration, and it helps other users too. The report contains hardware details, generation settings and timings only, with no prompts, reference images or videos.
+        Thank you for submitting a diagnostic report. We will use it to optimize FreeVideo specifically for your hardware configuration, and the report also helps other users. The report contains hardware details, generation settings and timings only, with no prompts, reference images or videos.
 
         感谢您提交诊断报告。我们会据此针对您的硬件配置进行专门优化，也能帮助其他用户。报告仅包含硬件信息、生成参数和耗时，不含提示词、参考图或视频。
   - type: textarea

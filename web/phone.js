@@ -14,7 +14,7 @@ let chat = emptyChat(), jobs = {}, selected, revision = 0, cursor = null, histor
 let lastSend = null, toastTimer = null, flash = null, toastJob = null, permissionAsked = false;
 try { permissionAsked = localStorage.getItem('freevideo.phone.notification-asked') === '1'; } catch {}
 const drafts = new Map(), rows = new Map(), scrollPositions = {chat: 0, jobs: 0};
-const top = el('header', 'phone-top'), offline = el('div', 'phone-offline', t('Connection lost. Reconnecting…', '连接断了，正在重新连接…'));
+const top = el('header', 'phone-top'), offline = el('div', 'phone-offline', t('Connection lost. Reconnecting…', '连接已断开，正在重新连接…'));
 offline.hidden = true; offline.setAttribute('role', 'status');
 const main = el('main', 'phone-main'), log = el('ol', 'phone-log'); log.setAttribute('role', 'log'); log.setAttribute('aria-label', t('Chat', '对话'));
 let convRows = [], convCurrent = '';
@@ -26,7 +26,7 @@ function renderSheet() {
     const fresh = button('phone-sheet-new', t('New chat', '新对话'), async () => {
         fresh.disabled = true;
         try { const data = await json(await dataLayer.create()); if (!data.session) throw new Error(); closeSheet(); choose(data.session); }
-        catch { closeSheet(); notice(t('Could not start a new chat. Try again.', '没有新建成功，请重试。')); }
+        catch { closeSheet(); notice(t('Could not start a new chat. Try again.', '新建失败，请重试。')); }
     });
     const list = el('ul', 'phone-sheet-list');
     for (const row of convRows.some(row => row.id === convCurrent) || !convCurrent ? convRows : [{id: convCurrent}, ...convRows]) {
@@ -49,7 +49,7 @@ sheet.addEventListener('keydown', event => { if (event.key === 'Escape') { event
 const generations = el('div', 'phone-generations');
 main.append(log, generations);
 const compose = el('form', 'phone-compose'), input = el('textarea'), send = button('phone-send', '', () => compose.requestSubmit());
-input.rows = 1; input.maxLength = 8000; input.placeholder = t('What would you like to make?', '想做什么视频？'); input.setAttribute('aria-label', input.placeholder);
+input.rows = 1; input.maxLength = 8000; input.placeholder = t('Describe the video to generate', '描述要生成的视频'); input.setAttribute('aria-label', input.placeholder);
 send.append(icon('M12 19V5M5 12l7-7 7 7')); send.setAttribute('aria-label', t('Send', '发送')); send.disabled = true; compose.append(input, send);
 const warning = el('p', 'phone-notice'); warning.hidden = true; warning.setAttribute('role', 'status');
 const tabs = el('nav', 'phone-tabs'); tabs.setAttribute('aria-label', t('Pages', '页面'));
@@ -107,9 +107,9 @@ pw.onsubmit = async event => {
         const wait = Number(response.headers.get('X-FreeVideo-Retry-After'));
         if (response.ok) { locked = false; password.value = ''; pwError.hidden = true; field.classList.remove('bad'); renderShell(); await poller.poll(); }
         else if (response.status === 429 && wait > 0) lockFor(wait);
-        else if (response.status === 401) { pwError.textContent = t('Wrong password. Please try again.', '密码不对，请再输一次。'); pwError.hidden = false; field.classList.add('bad'); password.focus(); password.select(); }
-        else { pwError.textContent = t('Connection lost. Reconnecting…', '连接断了，正在重新连接…'); pwError.hidden = false; }
-    } catch { pwError.textContent = t('Connection lost. Reconnecting…', '连接断了，正在重新连接…'); pwError.hidden = false; }
+        else if (response.status === 401) { pwError.textContent = t('Incorrect password. Please try again.', '密码错误，请重新输入。'); pwError.hidden = false; field.classList.add('bad'); password.focus(); password.select(); }
+        else { pwError.textContent = t('Connection lost. Reconnecting…', '连接已断开，正在重新连接…'); pwError.hidden = false; }
+    } catch { pwError.textContent = t('Connection lost. Reconnecting…', '连接已断开，正在重新连接…'); pwError.hidden = false; }
     finally { pw.dataset.busy = 'false'; tickPassword(); }
 };
 function renderShell() {
@@ -135,7 +135,7 @@ compose.onsubmit = async event => {
         if (!response?.ok) throw new Error();
         if (version === revision && input.value.trim() === text) { input.value = ''; lastSend = null; }
         await poller.poll();
-    } catch { notice(t('Could not send. Please try again.', '没有发送成功，请重试。')); }
+    } catch { notice(t('Could not send. Please try again.', '发送失败，请重试。')); }
     finally { sending = false; grow(); }
 };
 function picture(job, preview = false) {
@@ -202,7 +202,7 @@ function renderJobs() {
     const signature = JSON.stringify([Object.values(jobs).map(phoneJobKey), limit]); if (signature === jobsSignature) return; jobsSignature = signature;
     const active = document.activeElement?.dataset.action;
     const {running, queued, done} = jobGroups(jobs); generations.replaceChildren();
-    if (!running.length && !queued.length && !done.length) generations.append(el('p', 'phone-empty', t('Nothing yet. Tell the Agent what to make in Chat.', '还没有作品，在对话里说想做什么。')));
+    if (!running.length && !queued.length && !done.length) generations.append(el('p', 'phone-empty', t('No creations yet. Describe the video in Chat.', '暂无作品。请在对话中描述要生成的视频。')));
     if (running.length) generations.append(el('h2', 'phone-section', t('Generating', '正在生成')));
     for (const job of running) {
         const card = el('article', 'phone-running'), frame = el('div', 'phone-frame'), info = el('div', 'phone-info'); card.dataset.job = job.id;
@@ -249,13 +249,13 @@ function openResult(job) {
     actions.append(el('p', 'phone-prompt', job.label), download, error); viewer.append(stage, actions); renderShell();
 }
 function completed(job) {
-    toastJob = job; toast.replaceChildren(picture(job), el('span', '', t('Your video is ready', '生成好了')), button('phone-link', t('View', '查看'), () => { show('jobs'); openResult(job); }));
+    toastJob = job; toast.replaceChildren(picture(job), el('span', '', t('Your video is ready', '视频已生成')), button('phone-link', t('View', '查看'), () => { show('jobs'); openResult(job); }));
     main.classList.add('toast-space'); renderShell(); clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toastJob = null; toast.hidden = true; main.classList.remove('toast-space'); }, 6000);
-    clearInterval(flash); let lit = false; flash = setInterval(() => { document.title = (lit = !lit) ? t('Your video is ready', '生成好了') : 'FreeVideo'; }, 1000);
+    clearInterval(flash); let lit = false; flash = setInterval(() => { document.title = (lit = !lit) ? t('Your video is ready', '视频已生成') : 'FreeVideo'; }, 1000);
     setTimeout(() => { clearInterval(flash); document.title = 'FreeVideo'; }, 6000);
     if ('Notification' in window) {
-        if (document.hidden && Notification.permission === 'granted') { try { const n = new Notification(t('Your video is ready', '生成好了')); n.onclick = () => { window.focus(); show('jobs'); openResult(job); n.close(); }; } catch {} }
+        if (document.hidden && Notification.permission === 'granted') { try { const n = new Notification(t('Your video is ready', '视频已生成')); n.onclick = () => { window.focus(); show('jobs'); openResult(job); n.close(); }; } catch {} }
         if (!permissionAsked && Notification.permission === 'default') { permissionAsked = true; try { localStorage.setItem('freevideo.phone.notification-asked', '1'); } catch {} Notification.requestPermission().catch(() => {}); }
     }
 }

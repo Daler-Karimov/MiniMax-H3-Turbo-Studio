@@ -76,7 +76,7 @@ export function createRecentVideos(t, {body, onSelect}) {
             if (!disposed && !controller.signal.aborted) {
                 // The library's own messages are translated; a network or reply error is not, and this column has no Refresh.
                 message.textContent = error?.restart ? error.message
-                    : t('Recent videos could not be loaded. FreeVideo tries again when the next video finishes.', '暂时无法读取最近作品，下一个视频生成完成后会自动再试。');
+                    : t('Recent videos could not be loaded. FreeVideo tries again when the next video finishes.', '暂时无法读取最近作品，下一个视频生成完成后会自动重试。');
                 message.hidden = false; list.append(message);
             }
             return [];

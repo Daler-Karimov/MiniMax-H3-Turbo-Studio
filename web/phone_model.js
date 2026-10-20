@@ -25,8 +25,8 @@ export function mergePhoneJobs(previous, chat, activity, snapshots = []) {
 }
 export function retryWords(seconds, t) {
     const count = Math.ceil(Math.max(0, seconds));
-    return count > 90 ? t(`Too many tries. Please try again in ${Math.ceil(count / 60)} min.`, `试错次数太多，请 ${Math.ceil(count / 60)} 分钟后再试。`)
-        : t(`Too many tries. Please try again in ${count} s.`, `试错次数太多，请 ${count} 秒后再试。`);
+    return count > 90 ? t(`Too many attempts. Please try again in ${Math.ceil(count / 60)} min.`, `尝试次数过多，请 ${Math.ceil(count / 60)} 分钟后重试。`)
+        : t(`Too many attempts. Please try again in ${count} s.`, `尝试次数过多，请 ${count} 秒后重试。`);
 }
 export function queueWords(index, t) {
     const n = index + 1, mod = n % 100;
@@ -35,7 +35,7 @@ export function queueWords(index, t) {
 }
 export function remainingWords(seconds, t) {
     if (!(seconds > 0)) return '';
-    return seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min left`, `还要约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
+    return seconds >= 60 ? t(`About ${Math.ceil(seconds / 60)} min left`, `还需约 ${Math.ceil(seconds / 60)} 分钟`) : t('Under 1 min', '不到 1 分钟');
 }
 export function mediaPath(value, kind = 'video') {
     if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return '';

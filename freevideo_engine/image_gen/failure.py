@@ -20,16 +20,16 @@ NO_REPORT = frozenset(('small_memory', 'busy', 'invalid_request', 'invalid_media
 STAGES = ('start', 'load', 'text', 'encode', 'denoise', 'decode')
 KINDS = ('generate', 'edit', 'cast', 'compose', 'download', 'install')
 MESSAGE_ZH = {
-    'no_memory': '显存不够，最小尺寸也没能生成。关掉其他占用显卡的程序后再试。',
+    'no_memory': '显存不足，最小尺寸也未能生成。请关闭其他占用显卡的程序后重试。',
     'small_memory': '这台 Mac 的内存不足 16 GB，无法生成图片。',
-    'busy_video': '视频正在生成，完成后再试。',
-    'busy': '已有一张图在生成，请等它完成。',
-    'pack_missing': '请先在启动器里下载“图像生成模型”。',
-    'model_unreadable': '图像生成模型的文件读不出来。在启动器里修复后再试。',
-    'device_unavailable': '显卡暂时用不了，稍后再试。',
-    'worker_exit': '图像生成意外停止了，请再试一次。',
-    'timeout': '这一张用时太长，已停止。请再试一次。',
-    'generation_failed': '图像生成出错了，请再试一次。',
+    'busy_video': '视频正在生成，请在完成后重试。',
+    'busy': '已有图片正在生成，请在完成后重试。',
+    'pack_missing': '请先在启动器中下载“图像生成模型”。',
+    'model_unreadable': '无法读取图像生成模型文件，请在启动器中修复后重试。',
+    'device_unavailable': '显卡暂时不可用，请稍后重试。',
+    'worker_exit': '图像生成意外停止，请重试。',
+    'timeout': '此图片生成超时，已停止。请重试。',
+    'generation_failed': '图像生成出错，请重试。',
     'invalid_request': '图片设置有误，请调整后重试。',
     'invalid_media': '图片无效，请重新选择输入目录中的图片。点选支持不超过 4096×4096 像素总数的图片。',
     'invalid_points': '请选择 1–16 个图片范围内的点，且至少有一个选中点；1 为选中，0 为排除。',
@@ -51,7 +51,7 @@ _MODEL = re.compile(
 _MPS_MEMORY = re.compile(r'MPS backend out of memory', re.I)
 _LIMIT = 16 * 1024
 # On a Mac the GPU's memory is the machine's: the same failure, in its words.
-UNIFIED_MESSAGE_ZH = {'no_memory': '内存不够，最小尺寸也没能生成。关掉其他程序后再试。'}
+UNIFIED_MESSAGE_ZH = {'no_memory': '内存不足，最小尺寸也未能生成。请关闭其他程序后重试。'}
 
 
 class FailureError(ValueError):

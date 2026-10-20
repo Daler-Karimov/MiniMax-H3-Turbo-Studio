@@ -56,7 +56,7 @@ class DownloadSettings:
         self.speeds.pack(fill='both', expand=True)
         ttk.Label(body, text=self.t(
             'Switching takes effect at once. Downloads resume where possible; otherwise the file restarts. Testing speeds does not switch.',
-            '切换后马上生效，能续传的接着下载，不能的重新下载这个文件。只测速不会切换。'),
+            '切换后立即生效，支持续传的文件继续下载，其余文件重新下载。仅测速不会切换。'),
             wraplength=560, style='Muted.TLabel').pack(fill='x', pady=(12, 4))
         ttk.Label(body, text=str(self.root), wraplength=560, style='Muted.TLabel').pack(fill='x')
         ttk.Button(body, text=self.t('Done', '完成'), command=window.destroy).pack(anchor='e', pady=(8, 0))

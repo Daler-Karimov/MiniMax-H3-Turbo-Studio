@@ -120,8 +120,8 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
         row.starting = true; row.redo.disabled = true; tag(row, t('Starting…', '正在开始…'));
         try { await (row.part.action === 'resume' ? resume() : redo(row.part.id)); }
         catch (error) {
-            if (rows.get(row.part.id) === row) flash(row, error.status === 409 ? t('Another video is generating. Try again when it finishes.', '正在生成别的视频，完成后再试。')
-                : t('Could not start. Try again.', '没能开始，请重试。'), 'error');
+            if (rows.get(row.part.id) === row) flash(row, error.status === 409 ? t('Another video is generating. Try again when it finishes.', '正在生成其他视频，请在完成后重试。')
+                : t('Could not start. Try again.', '未能开始，请重试。'), 'error');
         } finally { row.starting = false; row.redo.disabled = false; }
     }
     function flash(row, text, kind) {
@@ -143,8 +143,8 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
             row.saving = null;
             if (rows.get(row.part.id) !== row) return;
             row.part = {...row.part, text: before}; draw(row);
-            flash(row, error.status === 409 ? t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存')
-                : t('Your edit was not saved.', '改动没有保存'), 'error');
+            flash(row, error.status === 409 ? t('This part is already generating. Your edit was not saved.', '此段已在生成，改动未保存')
+                : t('Your edit was not saved.', '改动未保存'), 'error');
         }
     }
     function open(row) {
@@ -212,7 +212,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
                 // The part began while it was open: the words typed so far cannot reach it. A video that ended just closes it.
                 const changed = row.draft !== row.part.text;
                 editing = null; row.part = part; draw(row);
-                if (changed && active) flash(row, t('This part is already generating. Your edit was not saved.', '这一段已在生成，改动没有保存'), 'error');
+                if (changed && active) flash(row, t('This part is already generating. Your edit was not saved.', '此段已在生成，改动未保存'), 'error');
                 return;
             }
             if (editing === row) { row.part = {...part, text: row.part.text}; return; }
@@ -251,7 +251,7 @@ function triggerEntry(name) {
 }
 // The server's own wording is technical; the panel always says the same plain sentence.
 const triggerReadError = () => new Error(t('Could not read trigger words.', '无法读取触发词。'));
-const triggerSaveError = () => new Error(t('Could not save. Try again.', '没有保存，请再试一次。'));
+const triggerSaveError = () => new Error(t('Could not save. Try again.', '保存失败，请重试。'));
 async function triggerResponse(response, fail) {
     let result = null;
     try { result = await response.json(); } catch { /* not JSON: same sentence */ }
@@ -624,7 +624,7 @@ export async function openExtendEditor(record, node = current?.node || app.graph
         node = app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate');
         if (!node) {
             node = globalThis.LiteGraph?.createNode('FreeVideoGenerate');
-            if (!node || !app.graph) throw new Error(t('Could not open the creative panel. Try again.', '没能打开创作面板，请重试。'));
+            if (!node || !app.graph) throw new Error(t('Could not open the creative panel. Try again.', '未能打开创作面板，请重试。'));
             app.graph.add(node); app.graph.change?.();
         }
     }
@@ -813,13 +813,13 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // Off, on, or on and paused after the first pass: a preview is one way to run two-pass.
     const passMode = el('div', null, 'fv-pass-mode'); passMode.setAttribute('role', 'radiogroup');
     passMode.setAttribute('aria-label', t('Two-pass sampling', '二次采样'));
-    const passOptions = [['off', t('Off', '关闭')], ['on', t('On', '开启')], ['preview', t('Preview first', '先出预览')]].map(([mode, label]) => {
+    const passOptions = [['off', t('Off', '关闭')], ['on', t('On', '开启')], ['preview', t('Preview first', '先生成预览')]].map(([mode, label]) => {
         const option = el('button', label); option.type = 'button'; option.dataset.mode = mode; option.setAttribute('role', 'radio');
         option.onclick = () => choosePassMode(mode);
         return option;
     });
     passOptions[2].title = t('Stops at a half-resolution preview. Choose "Run second pass" in the result when it looks right; the video matches a direct run.',
-        '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。');
+        '先生成半分辨率预览，满意后在结果中点击“继续二采”，成片与直接生成一致。');
     const previewPassHint = passOptions[2].title;
     passMode.append(...passOptions);
     passMode.addEventListener('keydown', event => {
@@ -902,7 +902,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     let releaseExtendThumbnail = () => {};
     cleanup.push(() => releaseExtendThumbnail());
     if (mediaNode?.freevideoCreateMediaEditor) { cleanup.push(mediaNode.freevideoCreateMediaEditor(mediaMount)); mediaDetails.open = mediaFilled(); }
-    else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板，即可在这里上传。'), 'fv-legacy'));
+    else mediaMount.append(el('p', t('Connect a FreeVideo Media panel in node view to upload here.', '在节点视图连接 FreeVideo 素材面板后，可在这里上传。'), 'fv-legacy'));
     paintMediaHint(); mediaDetails.addEventListener('toggle', paintMediaHint);
     controls.addEventListener('change', paintMediaHint, true); controls.addEventListener('input', paintMediaHint, true);
     const connectedLora = upstream(node, 'loras');
@@ -1027,7 +1027,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     // A continuation keeps a two-pass level (Light or Medium).
     function continuationReason() {
         const level = effortFor(8, true, 3, null, effort.levels(), upscaleNow());
-        return level?.name === 'Medium' ? t('A continuation uses the Medium level.', '接着生成使用标准档。') : t('A continuation uses the Light level.', '接着生成使用轻量档。');
+        return level?.name === 'Medium' ? t('A continuation uses the Medium level.', '继续生成使用标准档。') : t('A continuation uses the Light level.', '继续生成使用轻量档。');
     }
     function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow(), factor = upscaleNow()) {
         const parts = lengthControl.plan?.count > 1 ? t(`${lengthControl.plan.count} parts`, `分 ${lengthControl.plan.count} 段`) : '';
@@ -1132,7 +1132,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         redo: block => { failure.clear(); return chainController.redo(block); },
         resume: () => { failure.clear(); return chainController.resume(); },
         playSeam: seconds => playAround(seconds)});
-    // Set once the queue buttons exist: "Continue generating" stays hidden while a listed part offers the same.
+    // Set once the queue buttons exist: "Resume" stays hidden while a listed part offers the same.
     let syncResume = () => {};
     // A stopped long video keeps its parts listed while the preview shows it.
     const syncPartList = () => {
@@ -1270,7 +1270,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         try { await node.freevideoUpscaleResult(saved); await syncQueue(); }
         catch (error) { resultActionFailed(error); throw error; }
     };
-    const memoryNote = el('div', t('This run used the low-memory mode, so it was slower. A lower resolution or a shorter video is faster.', '这次用了省显存方式，所以较慢。降低分辨率或缩短时长会更快。'), 'fv-note'); memoryNote.hidden = true;
+    const memoryNote = el('div', t('This run used the low-memory mode, so it was slower. A lower resolution or a shorter video is faster.', '本次使用了省显存模式，因此较慢。降低分辨率或缩短时长可加快生成。'), 'fv-note'); memoryNote.hidden = true;
     const thermalNote = el('div', '', 'fv-note'); thermalNote.hidden = true;
     const sharedGpuNote = el('div', '', 'fv-note'); sharedGpuNote.hidden = true;
     const encoderNote = el('div', '', 'fv-note'); encoderNote.hidden = true;
@@ -1463,7 +1463,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const queueToggle = el('summary'), queueList = el('div', null, 'fv-queue-list');
     queueDetails.append(queueToggle, queueList);
     const cancelCurrent = button(t('Cancel current', '取消当前'), cancelGeneration, 'fv-quiet');
-    const resumeChain = button(t('Continue generating', '继续生成'), async () => {
+    const resumeChain = button(t('Resume', '恢复生成'), async () => {
         resumeChain.disabled = true; failure.clear();
         try { await chainController.resume(); } catch (error) { showQueueError(error); }
         finally { resumeChain.disabled = false; }
@@ -1482,15 +1482,15 @@ export function openStudio(node, {extendFrom = null} = {}) {
     runbar.append(requestAssets.element, runrow, queueActions); controls.append(runbar);
     const queueError = error => ({
         queue_unavailable: t('Could not read the queue. The loop has stopped; videos already added stay queued.', '暂时读不到队列，循环已停止；已加入的视频还在队列中。'),
-        cancel_failed: t('Could not cancel. Try again.', '没有取消成功，请重试。'),
-        move_failed: t('Could not move it. Try again.', '没有移动成功，请重试。'),
-        submit_failed: t('Could not add to the queue. Check the settings in node view.', '没能加入队列，请在节点视图检查设置。'),
+        cancel_failed: t('Could not cancel. Try again.', '取消失败，请重试。'),
+        move_failed: t('Could not move it. Try again.', '移动失败，请重试。'),
+        submit_failed: t('Could not add to the queue. Check the settings in node view.', '未能加入队列，请在节点视图检查设置。'),
         loop_active: t('Stop the current loop before starting another.', '请先停止当前循环。'),
-        loop_stopped: t('The last video did not finish. The loop has stopped.', '上一个视频没有生成完，循环已停止。'),
-        linked_seed: t('Batch and loop use the seed in this panel. Disconnect the seed link in node view.', '批量和循环要用面板里的种子，请在节点视图断开种子的连线。'),
+        loop_stopped: t('The last video did not finish. The loop has stopped.', '上一个视频未生成完成，循环已停止。'),
+        linked_seed: t('Batch and loop use the seed in this panel. Disconnect the seed link in node view.', '批量和循环需使用面板中的种子，请在节点视图断开种子的连线。'),
         missing_node: t('This node is disabled or no longer in the workflow.', '该节点已禁用或已从工作流移除。'),
-        chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '没有取消成功，请刷新页面后再试。'),
-        chain_resume_failed: t('Could not continue. Refresh the page and try again.', '没有继续生成，请刷新页面后再试。'),
+        chain_cancel_failed: t('Could not cancel. Refresh the page and try again.', '取消失败，请刷新页面后重试。'),
+        chain_resume_failed: t('Could not resume. Refresh the page and try again.', '未能恢复生成，请刷新页面后重试。'),
     }[error?.message] || (error?.said ? t(error.said[0], error.said[1]) : null) || (isNetworkTypeError(error) ? connectionLostText(t) : error?.message) || String(error));
     let lastQueueError = null, connectionNotice = false;
     function showQueueError(error) {
@@ -1501,7 +1501,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (['loop_stopped', 'queue_unavailable'].includes(error?.message)
             && node.freevideoFailureReport && node.freevideoFailureReport.stage !== 'queue') return;
         status.textContent = error?.schema === 'freevideo.error-report'
-            ? t('Could not start. See the details below.', '没能开始生成，原因见下方。')
+            ? t('Could not start. See the details below.', '未能开始生成，原因见下方。')
             : extensionCause(error) ? t('A browser extension is interfering with FreeVideo. See details below.', '浏览器扩展干扰了 FreeVideo，详见下方。')
             : queueError(error);
         // Recoverable chain actions need one visible sentence, not a second error card.
@@ -1699,7 +1699,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
             held = turnNodeOn(node);
             const snapshot = singleRunSnapshot(extendSnapshot(cleanOptionalPrompt(clonePrompt(await app.graphToPrompt())), node.id, source,
                 {multiple: lengthPlan?.count > 1}), node.id, lengthPlan);
-            if (!snapshot) { fault(t('Could not prepare this run. Try again.', '没能准备这次生成，请重试。')); return; }
+            if (!snapshot) { fault(t('Could not prepare this run. Try again.', '未能准备本次生成，请重试。')); return; }
             const seedIndex = node.widgets.findIndex(w => w.name === 'seed');
             capturing = false;
             for (const section of controls.querySelectorAll('.fv-section')) section.inert = false;

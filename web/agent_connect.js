@@ -37,7 +37,7 @@ export function agentConnectCard(t, api, shown = () => true) {
     const body = el('section', 'fv-agent-connect-body');
     const mark = el('span', 'fv-agent-connect-icon'); mark.append(icon('plug'));
     const title = el('h2', null, t('Connect an agent', '连接 Agent'));
-    const intro = el('p', 'fv-agent-connect-intro', t('Once connected, describe the video you want. It generates and edits it for you.', '连上后，说想做什么视频，它来生成和剪辑。'));
+    const intro = el('p', 'fv-agent-connect-intro', t('Once connected, describe the video you want. It generates and edits it for you.', '连接后，描述想要的视频，Agent 会生成并剪辑。'));
     const subtitle = el('p', 'fv-muted', t('Claude Code, Codex, FreeToken and others', 'Claude Code、Codex、FreeToken 等'));
     const actions = el('div', 'fv-agent-connect-actions');
     const button = el('button', 'fv-primary'); button.type = 'button'; button.disabled = true;

@@ -205,7 +205,7 @@ function mediaPanel(node, mount = null) {
         try {
             outcome = await openImageEditor({source, name: source, target: videoSize(), edit: original.edit || agent?.edit || null, role: original.role,
                 t: text, resolve: viewURL, upload: uploadOne, library, tool});
-        } catch (error) { message(text('This image cannot be edited right now; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
+        } catch (error) { message(text('This image cannot be edited at the moment; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
         if (!outcome) return;
         // The cards may have changed meanwhile; find this one again by its file.
         const rows = read(), at = rows.findIndex(row => row.file === file);
@@ -237,7 +237,7 @@ function mediaPanel(node, mount = null) {
         try {
             outcome = await openImageEditor({target: videoSize(), role: role.value, t: text,
                 resolve: viewURL, upload: uploadOne, library});
-        } catch { message(text('This image cannot be edited right now; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
+        } catch { message(text('This image cannot be edited at the moment; choose an image again.', '图片暂时无法编辑，可重新选择图片。'), true); return; }
         if (!outcome?.blob) return;
         if (read().length >= 32) { message(text('The media list is full (32 items, including disabled ones). Remove some to add more.', '素材已满 32 个（含未启用的），请先移除不用的素材。'), true); return; }
         node.isUploading = true; add.disabled = addAudio.disabled = generateImage.disabled = true;
@@ -574,7 +574,7 @@ function resultPanel(node) {
         }
         panel.append(stats, links, progress.stall, progress.report);
         for (const row of value.reference_trims || []) panel.append(el("div", referenceTrimText(row, text), "fv-note fv-trim-note"));
-        if (value.low_memory && !value.result_cache_hit) resultNotes.push(el("div", text('Generation was slow; try a lower resolution or shorter video.', '生成较慢，可降低分辨率或缩短时长后再试。'), "fv-note"));
+        if (value.low_memory && !value.result_cache_hit) resultNotes.push(el("div", text('Generation was slow; try a lower resolution or shorter video.', '生成较慢，可降低分辨率或缩短时长后重试。'), "fv-note"));
         if (value.thermal && !value.result_cache_hit) resultNotes.push(el("div", thermalText(value.thermal, text), "fv-note"));
         const shared = value.shared_gpu && !value.result_cache_hit ? sharedGpuText(value.shared_gpu, text) : '';
         if (shared) resultNotes.push(el("div", shared, "fv-note"));
@@ -678,7 +678,7 @@ async function openFromMenu() {
         showStudio(node);
     } catch (error) {
         console.warn('FreeVideo menu:', error);
-        const message = text('Could not complete. Try again.', '没有完成，请重试');
+        const message = text('Could not complete. Try again.', '未完成，请重试');
         const dialog = el('dialog', undefined, 'fv-panel fv-menu-failure'); menuFailure = dialog;
         dialog.setAttribute('aria-label', 'FreeVideo');
         const actions = el('div', undefined, 'fv-row');
@@ -773,9 +773,9 @@ app.registerExtension({
                         ['seconds', '时长（秒）'],
                         ['seed', '种子'],
                         ['force_regenerate', '重新生成', '跳过已保存结果的缓存。'],
-                        ['preview', '先出预览', '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。'],
+                        ['preview', '先生成预览', '先生成半分辨率预览，满意后在结果中点击“继续二采”，成片与直接生成一致。'],
                         ['refine_from', '继续二采', '从这个预览继续生成全分辨率视频。'],
-                        ['continue_from', '接着生成'],
+                        ['continue_from', '继续生成'],
                         ['frames', '帧数'],
                         ['first_frame_reference', '首帧参考', '减小漂移'],
                         ['step_cache', '步间缓存', '复用相近采样步之间的计算，更快完成，结果会有细微变化。'],
@@ -842,7 +842,7 @@ app.registerExtension({
                 else {
                     const studio = showStudio(node), status = studio?.querySelector?.('.fv-status');
                     if (status) {
-                        const message = text('Could not complete. Try again.', '没有完成，请重试');
+                        const message = text('Could not complete. Try again.', '未完成，请重试');
                         status.dataset.error = 'true'; status.textContent = message;
                         status.append(issueButton(text, () => ({where: ['Open editor', '打开剪辑'], message})));
                     }

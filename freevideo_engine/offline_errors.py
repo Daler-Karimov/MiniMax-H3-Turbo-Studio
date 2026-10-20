@@ -13,15 +13,15 @@ COPY = {
                       '安装文件夹的路径太长。请把 FreeVideo 安装到路径较短的文件夹，例如 D:\\FreeVideo。'),
     'permission': ('The offline package could not be imported: this account cannot write to the chosen folder. '
                    'Choose another folder and import again.',
-                   '离线包未能导入：当前账户没有所选文件夹的写入权限。请换一个文件夹再导入。'),
+                   '离线包未能导入：当前账户没有所选文件夹的写入权限。请选择其他文件夹后重新导入。'),
     'disk': ('The offline package could not be imported: the drive is full. '
              'Free up space or choose a folder on another drive, then import again.',
-             '离线包未能导入：磁盘空间不足。请腾出空间或换一个磁盘上的文件夹，再导入。'),
+             '离线包未能导入：磁盘空间不足。请释放磁盘空间或选择其他磁盘上的文件夹，然后重新导入。'),
     'path': ('The offline package could not be imported: the path of the chosen folder is too long to save some of '
              'the files. Choose a folder with a shorter path%s and import again.',
-             '离线包未能导入：所选文件夹的路径太长，部分文件无法保存。请换一个路径更短的文件夹再导入%s。'),
+             '离线包未能导入：所选文件夹的路径过长，部分文件无法保存。请选择路径更短的文件夹%s，然后重新导入。'),
     'other': ('The offline package could not be imported. Choose another folder and import again.',
-              '离线包未能导入。请换一个文件夹再导入。'),
+              '离线包未能导入。请选择其他文件夹后重新导入。'),
 }
 # The example folder is a Windows path; other systems leave it out.
 PATH_EXAMPLE = (', such as D:\\FreeVideo,', '，例如 D:\\FreeVideo')

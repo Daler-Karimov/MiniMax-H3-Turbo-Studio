@@ -536,7 +536,7 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
                 const failureText = visual === 'failed' ? actions.failureText?.(clip.id) || actions.reasonText?.(clip.reason) || clip.reason || t('Generation failed', '生成时出错') : '';
                 if (visual === 'failed') item.status.replaceChildren(icon('warning'), create('span', 'fv-ed-clip-failure-reason', failureText));
                 else item.status.replaceChildren();
-                const status = {planned: actions.interrupted?.(clip) ? t('Interrupted', '上次中断') : t('Not generated yet', '还没生成'), running: t('Generating', '正在生成'),
+                const status = {planned: actions.interrupted?.(clip) ? t('Interrupted', '上次中断') : t('Not generated yet', '尚未生成'), running: t('Generating', '正在生成'),
                     done: t('Complete', '完成'), failed: failureText}[visual];
                 const seconds = Math.round(clip.frames / model.FPS);
                 item.element.title = '';
@@ -939,11 +939,11 @@ export function createTracks(host, {state, sources = {}, t = en => en, actions =
             return model.move(record, finished.id, result.frame, {targetTrack: result.targetTrack});
         });
         else if (finished.type === 'plannedBoundary') attempt(t('Resize parts', '调整段长'), record => model.resizePlannedBoundary(record, finished.id, finished.neighbor.clip.id, result.frame, actions.generationLimits?.()));
-        else if (result.kind === 'planned') attempt(t('Resize', '改长短'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
+        else if (result.kind === 'planned') attempt(t('Resize', '调整时长'), record => model.resizePlanned(record, finished.id, finished.edge, result.frame, actions.generationLimits?.()));
         else if (result.kind === 'extend') {
             const frames = result.frame - finished.clip.start - finished.clip.frames + result.frames;
             if (extendClip(finished.id, frames) && result.raised) {
-                actions.notify?.(t(`Extended to ${result.frames / model.FPS} s.`, `已补到 ${result.frames / model.FPS} 秒。`));
+                actions.notify?.(t(`Extended to ${result.frames / model.FPS} s.`, `已延长到 ${result.frames / model.FPS} 秒。`));
             }
         } else attempt(t('Trim', '裁短'), record => model.trim(record, finished.id, finished.edge, result.frame));
         renderSelection();

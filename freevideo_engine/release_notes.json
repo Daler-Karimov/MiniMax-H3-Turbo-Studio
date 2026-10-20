@@ -47,8 +47,8 @@
           "手机访问：同一网络下的手机可以通过顶栏的手机图标和二维码打开 FreeVideo，和 AI 全自动对话、查看生成进度。手机访问可以开关，也可以设置密码，手机登录后才能使用。",
           "Mac：新版在后台下载，点“重启并更新”后原位替换应用并打开新版。模型和设置都会保留，任何一步失败都会还原旧版。",
           "参考视频：参考视频可以只用画面、不使用它自己的声音。",
-          "剪辑视图：引擎中断而没做完的片段显示“上次中断”。从失败提示提交的问题会写明是哪一步出错。",
-          "Linux：显存放得下整个视频模型的显卡，生成视频时不再在系统内存里留一份权重副本，约省 20 GB 内存。",
+          "剪辑视图：引擎中断而未完成的片段显示“上次中断”。从失败提示提交的问题会写明是哪一步出错。",
+          "Linux：显存能容纳整个视频模型的显卡，生成视频时不再在系统内存中保留权重副本，约节省 20 GB 内存。",
           "提交问题：反馈里的内存读数分开记录物理可用内存和提交余量。"
         ]
       }
@@ -59,7 +59,7 @@
         "summary": "Image generation keeps a history of every picture and needs less memory on both small and large graphics cards, error messages everywhere now come with a button to report the problem, and Windows updates download faster in mainland China.",
         "changes": [
           "Image generation: every image generated on this machine is kept in a history, newest first, and can be placed on the canvas, used as a reference, deleted, or opened in its folder. Blank canvases offer Standard and HD sizes.",
-          "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load straight to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
+          "Image generation: on 6-8 GB graphics cards, decoding uses less graphics memory and runs faster. On cards that can hold the whole model, the weights load directly to the card and no second copy stays in system memory, which cuts memory use after loading from about 15 GB to about 2 GB.",
           "Reporting problems: wherever an error or failure message appears, including generation, editing and export, models and environment, image generation, the agent connection, the library, prompt enhancement, sharing, updates, and the launcher, a Report a problem button next to it opens the feedback form with the context filled in.",
           "AI Autopilot: when a chat cannot be deleted, it now says why and offers Stop and delete; other failures are reported with a button to submit the problem.",
           "White models: only the cat ready-made scene remains, and one click starts it. A white model that was not made now says why and what to do next, and the page shows rendering progress. A question about progress is answered instead of being started as a new request.",
@@ -76,17 +76,17 @@
         "summary": "生图工具会保存所有生成过的图片，小显存和大显存的显卡生图都更省内存；所有错误提示旁都有“提交问题”按钮；Windows 版在中国大陆更新更快。",
         "changes": [
           "生图：本机生成过的图片都保存在历史记录里，按时间从新到旧排列，可放到画布、用作参考图、删除或打开所在文件夹。空白画布可选“标准 / 高清”尺寸。",
-          "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存放得下整个模型的显卡，权重直接加载到显卡，不再在内存里留一份副本，加载后内存占用从约 15 GB 降到约 2 GB。",
-          "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点一下带上情况打开问题反馈。",
-          "AI 全自动：对话删不掉时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
-          "白模：现成场景只保留“橘猫跳上书架”，点一下直接开始。白模没做成时会说明原因和下一步，渲染中页面显示进度。问白模进度时会回答进度，不再当成新要求。",
+          "生图：6–8 GB 显存的显卡解码时占用的显存更少，速度更快。显存能容纳整个模型的显卡，权重直接加载到显卡，不再在内存中保留副本，加载后内存占用从约 15 GB 降到约 2 GB。",
+          "提交问题：生成、剪辑与导出、环境与模型、生图、智能体连接、作品库、提示词优化、分享、更新和启动器里，出现错误或失败提示的地方旁边都有“提交问题”按钮，点击后附带详情打开问题反馈。",
+          "AI 全自动：对话无法删除时会说明原因，并提供“停止并删除”；其他失败也会提示，并带“提交问题”按钮。",
+          "白模：现成场景只保留“橘猫跳上书架”，点击即可开始。白模生成失败时会说明原因和下一步，渲染中页面显示进度。询问白模进度时会给出进度，不再视为新请求。",
           "人物设定图：背面图里头和身体一起转向背后。",
           "Mac：支持分段生成长视频。",
-          "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收成图标，按钮始终可见。",
-          "工作流：旧版本存的工作流可以直接运行。旧文件里后加的选项为空或不合法时，改回默认值。",
-          "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存差一点而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
+          "启动器与更新：Windows 版在中国大陆更新更快。GitHub 慢时，启动器可以从国内镜像下载更新，镜像上的每个文件都先按发布签名校验。“确认安装”页适配窄窗口：侧栏收为图标，按钮始终可见。",
+          "工作流：旧版本保存的工作流可以正常运行。旧文件中新版选项为空或不合法时，恢复为默认值。",
+          "视频生成：“精细”档生成更快。8 GB 显存的显卡上，以前因显存略有不足而被拒绝的 1920×1088 视频，现在可以生成。改动视频参考的前期步数设置后，会生成新的结果，不再沿用之前的结果。",
           "LoRA：为 Wan 2.x 训练的 LoRA 选进 int8 模型时，会说明这是给 Wan 2.x 训练的 LoRA，不再只说无法使用。",
-          "Linux：内存较小的电脑接着再生成一次时，不再在采样快结束时内存不足。6 GB 显存的显卡选“极致”时，不再要等好几个小时。"
+          "Linux：内存较小的电脑连续再次生成时，不再在采样即将结束时内存不足。6 GB 显存的显卡选“极致”时，不再耗时数小时。"
         ]
       }
     },
@@ -99,7 +99,7 @@
           "Picture editing: when changing a picture, drag a box, click an object, or draw a closed outline to select a region. Shift adds to the selection and Alt removes from it. Only the selected region changes, and everything outside it stays exactly the same. Click selection downloads a 184 MB model from ModelScope the first time it is used.",
           "Studio: while a long or multi-part video is generating, the button stays available as \"Add to queue\". Up to five requests can wait, and each starts when the current video finishes or is stopped.",
           "Agent: agents can import clips they rendered through HTTP, MCP and the command line, place them on the timeline by frame, and export. Before an agent is connected, the autopilot page says what connecting one is for.",
-          "Editing view: a reference picture that cannot be read is flagged right away so another one can be chosen.",
+          "Editing view: a reference picture that cannot be read is flagged immediately so another one can be chosen.",
           "Upgrade: when an old FreeVideo tab is replaced, two-pass sampling, first- and second-pass steps, the step cache and the upscale factor are carried over.",
           "Prompt enhancement: after the model folder is copied, an offline package is unpacked, or antivirus software scans the files, FreeVideo no longer asks to download 8.9 GB again when the files are unchanged. It now also works on 6 GB graphics cards, finishing in under a minute instead of timing out.",
           "Chinese interface: browser translation no longer changes FreeVideo's own labels, so the size menu keeps showing MP.",
@@ -111,12 +111,12 @@
         "summary": "极致档更快；改图时可以只改选中的区域；Agent 可以把自己渲染的片段导入时间线；长视频生成中可以继续加入队列。",
         "changes": [
           "质量档位：极致档改为 20 步加带检查的步缓存，更快完成；精细档改为 16 步加步缓存。档位名称不变。",
-          "改图：改一张图时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只改选区里的内容，选区外完全不变。点选第一次使用时从魔搭下载 184 MB 的模型。",
+          "改图：修改图片时，可以拖框、点选物体或画闭合曲线来选区；按住 Shift 添加，按住 Alt 减去。只修改选区内的内容，选区外完全不变。首次使用点选时从魔搭下载 184 MB 的模型。",
           "创作面板：长视频或分段视频生成中，按钮保持可用，显示“加入队列”。最多排 5 条，当前视频完成或停止后自动开始下一条。",
-          "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，自动页说明连上之后能做什么。",
-          "剪辑视图：参考图读不出来时会当场提示，可以换一张。",
-          "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会带过来。",
-          "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容没变，就不再要求重新下载 8.9 GB。6 GB 显卡上现在也能用，一分钟内完成，不再超时。",
+          "Agent：Agent 可以通过 HTTP、MCP 和命令行导入自己渲染的片段，按帧放上时间线并导出。未连接时，AI 全自动页面说明连接后的用途。",
+          "剪辑视图：参考图无法读取时会立即提示，以便更换。",
+          "升级：替换旧版本的 FreeVideo 标签页时，二次采样、第一遍和第二遍步数、步缓存和放大倍数都会沿用。",
+          "提示词增强：复制模型文件夹、解压离线包或被杀毒软件扫描之后，只要文件内容未变，便不再要求重新下载 8.9 GB。现在也支持 6 GB 显卡，一分钟内完成，不再超时。",
           "中文界面：浏览器翻译不再改动 FreeVideo 自己的文字，尺寸菜单保持显示 MP。",
           "反馈：为失败的生成发送反馈时，会附上引擎给出的报错信息。",
           "安装：Windows 上的库文件检查也支持层级很深的文件夹。"
@@ -139,11 +139,11 @@
         ]
       },
       "zh": {
-        "summary": "精细档重新比极致档快；同比例、不同尺寸的视频可以接着生成；int8 模型上的 LoRA 能用的部分照常生效；设置中新增分步演示和离线教程；安装包变小。",
+        "summary": "精细档重新比极致档快；同比例、不同尺寸的视频可以继续生成；int8 模型上的 LoRA 能用的部分照常生效；设置中新增分步演示和离线教程；安装包变小。",
         "changes": [
           "精细档：重新启用步缓存，并加上检查，精细档重新比极致档快。",
-          "长视频：长视频的分段和接着生成的分段统一使用 8 + 3 步，第二段不再被拒绝。",
-          "接着生成：同比例、不同尺寸的视频改为从它自己的结尾接着生成；太短或帧率太低的视频会给出明确提示。",
+          "长视频：长视频的分段和继续生成的分段统一使用 8 + 3 步，第二段不再被拒绝。",
+          "继续生成：同比例、不同尺寸的视频改为从它自己的结尾接续生成；过短或帧率过低的视频会给出明确提示。",
           "LoRA：在 int8 模型上，LoRA 中无法应用的部分会跳过，其余照常生效，不再整个拒绝。",
           "帮助：设置中的“使用说明”改为在真实界面上演示三项操作；新增“教程”，可打开中英文离线图文手册。",
           "升级：旧版本留在标签页中的 FreeVideo 工作流会换成当前版本，并保留提示词、尺寸、时长、种子、素材和 LoRA。",
@@ -174,14 +174,14 @@
       "zh": {
         "summary": "AI 全自动新增白模预览场景，LoRA 兼容性检查和拖动排序，失败提示更清楚，可以删除剪辑，繁忙的机器上启动更快，标准档改为两遍采样。",
         "changes": [
-          "AI 全自动：可选的白模预览和现成场景，在生成视频前先看到场景；入口展示里有示例。",
+          "AI 全自动：可选的白模预览和现成场景，在生成视频前预览场景；入口展示里有示例。",
           "LoRA：生成前做兼容性检查，LoRA 可以拖动排序。",
-          "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明下一步该做什么；失败的请求可以打包为导出报告或提交到 GitHub。",
-          "编辑器：可以删除剪辑，没改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
-          "角色：每个角色带有全部视角的角色图和脸部特写；读不出来的图片会被拒绝，并在对应的格子上给出提示。",
-          "标准档：从更大的第一遍起采样两遍；极致档跑满 20 步且不使用缓存。",
+          "失败提示：提交、排队和浏览器扩展的失败用同一种版式，并说明后续操作；失败的请求可以打包为导出报告或提交到 GitHub。",
+          "编辑器：可以删除剪辑，未改动的空剪辑自动丢弃；重新打开剪辑会恢复封面并显示收尾阶段；续接在服务端排队。",
+          "角色：每个角色带有全部视角的角色图和脸部特写；无法读取的图片会被拒绝，并在对应的格子上给出提示。",
+          "标准档：从更大的第一遍起采样两遍；极致档完整运行 20 步，不使用缓存。",
           "安装：GPU 加速组件的构建在进度中占有可见的份额，模型下载分组并行时进度行保持稳定，torch 显示为“运行组件”。",
-          "下载：开始下载前，启动器、页面和编辑器会说明这是什么下载、需要多久。",
+          "下载：开始下载前，启动器、页面和编辑器会说明下载内容和所需时间。",
           "指引：首次指引新增一步，说明在哪里添加参考图和首帧、尾帧；时长栏直接显示分段上限；中文界面在设置里可以打开使用说明。",
           "只改提示词时，参考图和片段不再重复编码；机器繁忙时，加载过程中的小型 CPU 表运算改为单线程。",
           "Mac：不能续接视频的设备会在一开始就拒绝超过一个分段的长度。",
@@ -201,7 +201,7 @@
       "zh": {
         "summary": "修复请求被帧数错误拒绝的问题，并让带额外部分的 LoRA 能在 int8 版本上正常生成。",
         "changes": [
-          "用 Total frames 里填的不是帧数的工作流或恢复的标签页生成时，不再被帧数错误拒绝，这个数会按时长读取。",
+          "用 Total frames 中填写的不是帧数的工作流或恢复的标签页生成时，不再被帧数错误拒绝，该数值会按时长读取。",
           "int8：带调制部分的 LoRA 不再让生成中断，这些部分会逐个跳过，跳过的数量写进报告。"
         ]
       }
@@ -223,13 +223,13 @@
         ]
       },
       "zh": {
-        "summary": "Mac 精细档使用步间缓存，快得多；编辑器里音频片段可以拖到另一条音频轨；几处提示和窄窗口布局更清楚；旧版本保存的工作流又能正常生成。",
+        "summary": "Mac 精细档使用步间缓存，快得多；编辑器里音频片段可以拖到另一条音频轨；几处提示和窄窗口布局更清楚；旧版本保存的工作流可以正常生成。",
         "changes": [
           "Mac：精细档第一遍使用步间缓存，快得多；开始时的预计时间按芯片给出，从第一步起就更接近实际。",
           "编辑器：从素材库把音频拖到第二条音频轨会放在该轨；时间线上单个音频片段可以拖到另一条音频轨。",
           "编辑器：播放头不在所选片段上时按切分或修剪，或在浏览器不允许全屏的地方点全屏，会用一行字说明原因。",
-          "连着写、名字之间没有空格的角色提及都能被识别，写完一个名字后接着输入也会弹出角色列表。",
-          "AI 全自动：有任务在跑时，窄窗口里顶栏的“AI 全自动”按钮也始终完整可点。",
+          "连续书写、名字之间没有空格的角色提及都能被识别，输入完一个名字后继续输入也会弹出角色列表。",
+          "AI 全自动：有任务运行时，窄窗口中顶栏的“AI 全自动”按钮也始终完整可点。",
           "对话：手机等窄窗口里，提示中引号内的按钮名不再被拆到两行。",
           "图像和视频失败请求的诊断报告现在记录请求开始和生成进程结束时的可用内存，并标明进程是否疑似被系统结束。",
           "节点：英文界面里 Width、Height、Seed 的大小写与其他项一致。",
@@ -265,12 +265,12 @@
           "进度估计把参考图计入，带参考图的请求一开始就显示更接近实际的总时间。",
           "编辑器：把区间左边拖到时间线开头，右边不再被往后推；切分加速或倒放的片段时，淡入只留在前半段，淡出只留在后半段。",
           "编辑器：片段很多时，框选重新变得流畅。",
-          "编辑器文字：按 T 后马上点侧边“内容”框，新文字轨会保留；把文字拖到已锁定的文字轨上会提示该轨已锁定。",
+          "编辑器文字：按 T 后立即点击侧边“内容”框，新文字轨会保留；把文字拖到已锁定的文字轨上会提示该轨已锁定。",
           "长视频：每段描述也能在放大窗口里编辑。",
           "对话：对话已满时，提示只在消息下出现一次，按钮换成“新对话”。",
           "导出：导出窗口里给出的尺寸和保存的作品用同样的方式取整。",
           "诊断报告记录每一步采样时其他程序占用显卡的比例。",
-          "启动器：浏览器没能自动打开时，提示点“复制地址”到浏览器里打开，中文界面也显示中文。画布边距标签更清楚、对齐。节点：宽度、高度、时长和种子有中文标签。"
+          "启动器：浏览器未能自动打开时，提示点“复制地址”并在浏览器中打开，中文界面也显示中文。画布边距标签更清楚、对齐。节点：宽度、高度、时长和种子有中文标签。"
         ]
       }
     }

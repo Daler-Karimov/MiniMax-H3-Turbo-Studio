@@ -25,12 +25,12 @@ IMAGE_PACK_FAILURES = {
     'disk_space': ('Not enough disk space to install the image model.', '磁盘空间不足，无法安装图像模型。'),
     'offline': ('The network is unavailable; the image model could not be downloaded.', '网络不通，无法下载图像模型。'),
     'source_failed': ("The image model download didn't finish. Check your network and try again.", '图像模型没有下载完成，请检查网络后重试。'),
-    'integrity_failed': ('The image model files are incomplete or damaged. Repair them in the launcher.', '图像模型文件不完整或已损坏，请在启动器里修复。'),
+    'integrity_failed': ('The image model files are incomplete or damaged. Repair them in the launcher.', '图像模型文件不完整或已损坏，请在启动器中修复。'),
     'write_failed': ('The image model files are in use or cannot be written or deleted.', '图像模型文件被占用，或无法写入／删除。'),
     'invalid_catalog': ('The image model package version is incompatible; update FreeVideo and try again.', '图像模型包版本不匹配，请更新 FreeVideo 后重试。'),
-    'busy': ('Another task is using the image model package; try again when it finishes.', '图像模型包被其他任务占用，完成后再试。'),
-    'busy_video': ('A video is using the graphics card; try again when it finishes.', '视频正在使用显卡，完成后再试。'),
-    'needs_repair': ('The image model files are incomplete or damaged; repair them in the launcher.', '图像模型文件不完整或已损坏，请在启动器里修复。'),
+    'busy': ('Another task is using the image model package; try again when it finishes.', '图像模型包被其他任务占用，请在其完成后重试。'),
+    'busy_video': ('A video is using the graphics card; try again when it finishes.', '视频正在使用显卡，请在完成后重试。'),
+    'needs_repair': ('The image model files are incomplete or damaged; repair them in the launcher.', '图像模型文件不完整或已损坏，请在启动器中修复。'),
     'changed': ('The image model files changed during the check; they were kept, so check again.', '图像模型文件在检查期间发生变化，已保留，请重新检查。'),
     'unsafe_path': ('The image model folder contains a link that cannot be safely changed.', '图像模型目录含有无法安全修改的链接。'),
     'failed': ('The image model operation stopped; see the diagnostic report for details.', '图像模型操作已停止，详情见诊断报告。'),
@@ -106,15 +106,15 @@ def sampling_table_failure(value, *, zh=False):
     # A custom step count is not a quality level (Iris): no "档" / "quality level" for it.
     if zh:
         if index is None:
-            title = '“自定义（%d 步）”还没有下载' % details['base_steps']
-            what = '这个步数需要的文件'
+            title = '“自定义（%d 步）”尚未下载' % details['base_steps']
+            what = '此步数所需的文件'
         else:
-            title = '“%s”还没有下载' % QUALITY_LEVELS[index][1]
-            what = '这一档需要的文件'
-        detail = ('这次生成要先下载%s（约 %s），但没能下载完。'
-                  '请确认网络连接后再生成一次，FreeVideo 会自动下载。') % (what, size)
+            title = '“%s”尚未下载' % QUALITY_LEVELS[index][1]
+            what = '该档所需的文件'
+        detail = ('本次生成需要先下载%s（约 %s），但下载未完成。'
+                  '请确认网络连接后重新生成，FreeVideo 会自动下载。') % (what, size)
         if available:
-            detail += '也可以改用已经可以使用的%s档。' % available
+            detail += '也可以改用已可使用的%s档。' % available
     else:
         if index is None:
             title = 'The sampling table for Custom (%d steps) is not downloaded yet' % details['base_steps']
@@ -122,7 +122,7 @@ def sampling_table_failure(value, *, zh=False):
         else:
             title = "The %s quality level's sampling table is not downloaded yet" % QUALITY_LEVELS[index][0]
             what = "that level's sampling table"
-        detail = ('This video first needs %s (about %s), and it could not be downloaded this time. '
+        detail = ('This video first needs %s (about %s), and the download did not finish. '
                   'Check the network connection and generate again; FreeVideo downloads it automatically.') % (what, size)
         if available:
             detail += ' You can also switch to a quality level that is already available: %s.' % available
@@ -212,23 +212,23 @@ def environment_python_removed(args, pythons):
 # Checked before free space: freeing space cannot fix a disk that cannot hold the installation.
 PLACE_RULES = (
     (r'The installation folder is on a FAT32 disk', 'disk-format',
-     ('This disk cannot hold the models', '这块硬盘放不下模型'),
+     ('This disk cannot hold the models', '这块硬盘无法存放模型'),
      ('It is formatted as FAT32, which stores files up to 4 GB; the prompt model alone is 15.7 GB. '
       'Choose a folder on an APFS or Mac OS Extended disk.',
       '它不能存放 4 GB 以上的文件。'
       '请选择其他硬盘上的文件夹。')),
     (r'The installation folder is on an exFAT disk', 'disk-format',
-     ('This disk cannot hold the FreeVideo environment', '这块硬盘装不了 FreeVideo 的运行环境'),
+     ('This disk cannot hold the FreeVideo environment', '这块硬盘无法安装 FreeVideo 的运行环境'),
      ("It is formatted as exFAT, where FreeVideo's Python environment does not work. "
       'Choose a folder on an APFS or Mac OS Extended disk.',
       '它不能安装 FreeVideo。'
       '请选择其他硬盘上的文件夹。')),
     (r'The installation folder is on a disk that is not connected', 'disk-missing',
-     ('The disk is not connected', '这块硬盘没有连接'),
+     ('The disk is not connected', '这块硬盘未连接'),
      ('Connect the disk that holds the installation folder, then check again, or choose another folder.',
-      '请接上安装位置所在的硬盘后重新检查，或者换一个位置。')),
+      '请连接安装位置所在的硬盘后重新检查，或选择其他位置。')),
     (r'The installation folder is on a read-only disk', 'disk-read-only',
-     ('This disk is read-only', '这块硬盘是只读的'),
+     ('This disk is read-only', '这块硬盘为只读'),
      ('This Mac can read the disk but not write to it, as with NTFS disks. Choose a folder on another disk.',
       '这块硬盘只能读取、不能写入，请选择其他硬盘上的文件夹。')),
 )
@@ -259,7 +259,7 @@ _IMPORT = ('On the Installation page in the sidebar, select Install ComfyUI, cha
            'then click Replace package… under Import environment package and choose the downloaded environment package; '
            'if you are online, you can instead choose Automatic as the install method there. '
            'The models and videos in the current folder are not deleted.',
-           '请在左侧“安装”页选择“帮我安装 ComfyUI”，把“安装位置”改为一个新文件夹，然后在“导入运行环境包”中点击“更换环境包…”'
+           '请在左侧“安装”页选择“安装 ComfyUI”，把“安装位置”改为一个新文件夹，然后在“导入运行环境包”中点击“更换环境包…”'
            '并选择下载的运行环境包；能联网时，也可以在那里把安装方式改为“自动安装”。原文件夹里的模型和作品不会被删除。')
 WITHOUT_REPAIR = {
     # A model file that differs from the tested one; FreeVideo leaves it in place.
@@ -275,7 +275,7 @@ WITHOUT_REPAIR = {
        for kind, why in (('plan-changed-files', 'files'), ('plan-changed', 'other'))},
     'dependencies': dict(
         busy=('When the current task ends, a Repair button appears here; it checks this installation and restores what is missing.',
-              '当前任务结束后，这里会出现“修复”按钮，点击后会补装缺失的组件。'),
+              '当前任务结束后，此处将显示“修复”按钮，点击后会补装缺失的组件。'),
         bundled=('The portable package is missing components it needs and cannot restore them in one step. ' + _EXTRACT[0],
                  '整合包缺少运行所需的组件，不能一键补齐。' + _EXTRACT[1]),
         offline=('An imported offline environment is missing components it needs and cannot restore them in one step. ' + _IMPORT[0],
@@ -283,7 +283,7 @@ WITHOUT_REPAIR = {
         none=WITHOUT_REPAIR_NONE),
     'runtime-libraries': dict(
         busy=('When the current task ends, a Repair button appears here; it reinstalls a complete copy of PyTorch and keeps your models and videos.',
-              '当前任务结束后，这里会出现“修复”按钮，点击后会重新安装运行组件，模型和视频都会保留。'),
+              '当前任务结束后，此处将显示“修复”按钮，点击后会重新安装运行组件，模型和视频都会保留。'),
         bundled=('The portable package cannot be repaired in one step. ' + _EXTRACT[0],
                  '整合包版不能一键修复。' + _EXTRACT[1]),
         offline=('An imported offline environment cannot be repaired in one step. ' + _IMPORT[0],
@@ -294,13 +294,13 @@ WITHOUT_REPAIR = {
     'update-unfinished': dict(
         busy=('FreeVideo is back on the previous version and works as before. When the current task ends, a Repair button appears here; '
               'clicking it reinstalls the engine environment and updates again. The details give the reason.',
-              'FreeVideo 已退回原来的版本，可以照常使用。当前任务结束后，点这里出现的“修复”可以再次更新。'),
+              'FreeVideo 已退回原来的版本，可以照常使用。当前任务结束后，点击此处显示的“修复”可再次更新。'),
         **dict.fromkeys(('bundled', 'offline'), (
             'FreeVideo is back on the previous version and works as before; the details give the reason.',
-            'FreeVideo 已退回原来的版本，可以照常使用；原因写在详情里。')),
+            'FreeVideo 已退回原来的版本，可以照常使用；原因见详情。')),
         none=('FreeVideo is back on the previous version and works as before. To update again, open Installation in the sidebar, keep the same folder, '
               'click Continue and then Check & continue, and finally click Install & launch on the confirmation page; the details give the reason.',
-              'FreeVideo 已退回原来的版本，可以照常使用。要再次更新，请在“安装”页保持同一个安装目录，依次点“继续”“检查并继续”和“安装并启动”。')),
+              'FreeVideo 已退回原来的版本，可以照常使用。如需再次更新，请在“安装”页保持同一安装目录，依次点击“继续”“检查并继续”和“安装并启动”。')),
 }
 
 
@@ -403,8 +403,8 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
             failure['path'] = paths[-1] if paths else mismatches[-1]
         return failure
     if disk_name and 'on a disk that is not connected' in summary:
-        return dict(title='这块硬盘没有连接' if zh else 'The disk is not connected', kind='disk-missing', detail='',
-                    action=('请接上“%s”后点击“重新检查”' % disk_name + ('，或者改装到其他硬盘。' if other_disk else '。') if zh else
+        return dict(title='这块硬盘未连接' if zh else 'The disk is not connected', kind='disk-missing', detail='',
+                    action=('请连接“%s”后点击“重新检查”' % disk_name + ('，或改为安装到其他硬盘。' if other_disk else '。') if zh else
                             'Connect "%s" and click Check again' % disk_name + (', or install on another disk.' if other_disk else '.')))
     folder = 'Select the ComfyUI folder, or the portable folder containing ComfyUI.'
     # A saved installation that vanished raises the same sentence after its own message; the
@@ -432,7 +432,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
             from .disk_space import size_text
             sizes = tuple(size_text(float(value) * 2**30) for value in disk.groups())
             # The figures and what to do go on their own lines, so a narrow window breaks between them.
-            detail = (('需要约 %s，可用 %s。\n再释放 %s 后点击“重新检查”' % sizes) + ('，或者改装到其他硬盘。' if other_disk else '。')
+            detail = (('需要约 %s，可用 %s。\n再释放 %s 后点击“重新检查”' % sizes) + ('，或改为安装到其他硬盘。' if other_disk else '。')
                       if zh else ('Needs about %s; %s available.\nFree up %s and click Check again' % sizes)
                       + (', or install on another disk.' if other_disk else '.'))
         else:
@@ -445,8 +445,8 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         if can_repair and repairs_comfy and (_stopped_on_missing_module(summary) or ENVIRONMENT_FILES in summary):
             return dict(title=DEPENDENCIES[0][zh], detail='', action=DEPENDENCIES[1][zh], kind='dependencies')
         return dict(title='ComfyUI 启动失败' if zh else 'ComfyUI could not start',
-                    detail='ComfyUI 启动时退出了。' if zh else 'ComfyUI quit while starting.',
-                    action='原因在详情里；使用已有的 ComfyUI 时，可以用原来的启动器检查。' if zh else
+                    detail='ComfyUI 在启动过程中退出。' if zh else 'ComfyUI quit while starting.',
+                    action='原因见详情；使用已有的 ComfyUI 时，可通过原来的启动器检查。' if zh else
                            'Open details for the exit code and plugin errors. For an existing ComfyUI, also check its original launcher.',
                     kind='comfy-startup')
     if 'Failed step: kernels (' in summary:
@@ -455,9 +455,9 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         if zh:
             detail = detail.replace('Failed step: kernels (exit code ', '失败步骤：GPU 检查（退出码 ').replace(')\n', '）\n', 1)
         detail = detail.replace('Required linear kernel did not pass.',
-                                '显卡必需的运算检查没有通过。' if zh else 'A required GPU check did not pass.')
+                                '显卡必需的运算检查未通过。' if zh else 'A required GPU check did not pass.')
         detail = detail.replace('No attention backend passed.',
-                                '显卡加速检查没有通过。' if zh else 'The GPU acceleration check did not pass.')
+                                '显卡加速检查未通过。' if zh else 'The GPU acceleration check did not pass.')
         detail = detail.replace('Required path missing',
                                 '缺少必需的文件夹' if zh else 'A required folder is missing')
         return dict(title='GPU 检查未通过' if zh else 'GPU validation failed', detail=detail,
@@ -488,13 +488,13 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
           '请使用 39、56、73、90 等每次增加 17 的帧数；接续时，这个数包含开头重复的 22 帧。')),
         (r'Continue from video cannot be used with these settings\. Continuing a video needs an NVIDIA', 'continuation-route',
          ("This computer can't continue a video", '这台电脑无法接续视频'),
-         ('Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡或 Mac。要生成新视频，请清空“接着生成”。')),
+         ('Continuing a video needs an NVIDIA GPU or a Mac. To make a new video, clear "Continue from video".', '接续视频需要 NVIDIA 显卡或 Mac。要生成新视频，请清空“继续生成”。')),
         (r'Continue from video cannot be used with these settings\. Turn on "Two-pass', 'continuation-passes',
          ('Continuing needs two-pass acceleration', '接续需要二次采样加速'),
-         ('Turn on "Two-pass acceleration" and turn off the first-pass preview.', '请打开“二次采样加速”，并关闭先出预览。')),
+         ('Turn on "Two-pass acceleration" and turn off the first-pass preview.', '请打开“二次采样加速”，并关闭“先生成预览”。')),
         (r'Continue from video cannot be used with these settings\. Clear either', 'continuation-refine',
          ('A continued part is made in full', '接续会完整生成这一段'),
-         ('Clear either "Second pass of preview" or "Continue from video".', '请清空“继续二采”或“接着生成”其中一项。')),
+         ('Clear either "Second pass of preview" or "Continue from video".', '请清空“继续二采”或“继续生成”其中一项。')),
         (r'Continue from video cannot be used with these settings\. Connect up to 3 pictures', 'continuation-media',
          ('A continued part takes picture references only', '接续段只能用图片参考'),
          ('Connect up to 3 pictures as references, and remove video, audio and pre-encoded inputs.', '最多接 3 张图片作为参考图，并移除视频、音频参考和预编码输入。')),
@@ -504,14 +504,14 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
           '请选择 FreeVideo 生成且仍存在的 MP4 视频；在 ComfyUI 中，请把它放在输出或输入文件夹内。')),
         # An engine update waits for a video being generated, whoever started this installation's ComfyUI.
         (r'ComfyUI is running a job, so the engine update waits', 'update-busy',
-         ('A video is still generating', '还有视频正在生成'),
+         ('A video is still generating', '仍有视频正在生成'),
          ('Click Update now again when this video has finished. The video being generated is not interrupted.',
-          '这个视频生成完成后，再点击“立即更新”。正在生成的视频不会被打断。')),
+          '请在该视频生成完成后再点击“立即更新”。正在生成的视频不会被中断。')),
         # Moving the engine's editable install to the new source failed and was undone (engine_binding).
         (r'Editable install failed for|Editable verification failed for|The engine.s uv is missing', 'update-unfinished',
-         ('The update did not finish', '这次更新没有完成'),
+         ('The update did not finish', '本次更新未完成'),
          ('FreeVideo is back on the previous version and works as before. Click Repair to reinstall the engine environment and update again; the details give the reason.',
-          'FreeVideo 已退回原来的版本，可以照常使用。点“修复”可以再次更新，原因在详情里。')),
+          'FreeVideo 已退回原来的版本，可以照常使用。点击“修复”可再次更新，原因见详情。')),
         (r'Git \d+\.\d+ is too old to download the pinned sources', 'git-version',
          ('Git is too old', 'Git 版本过旧'),
          ('Click Retry installation; FreeVideo then installs its own Git. On macOS, update the Command Line Tools.',
@@ -520,22 +520,22 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          r'Existing dependency is not a Git checkout of the pinned source', 'offline-installation',
          ('This folder holds an offline installation', '这个位置是离线包安装'),
          ('Open it from the launcher. For an automatic installation, go back to Setup and choose another folder.',
-          '请在启动页直接打开这份安装。如需自动安装，请回到安装设置，换一个安装位置。')),
+          '请在启动页直接打开这份安装。如需自动安装，请返回安装设置，选择其他安装位置。')),
         # Both carry ComfyUI's log, whose unrelated lines must not pick the card.
         (r'ComfyUI is still starting or could not load FreeVideo', 'comfy-nodes',
-         ('ComfyUI did not load FreeVideo', 'ComfyUI 没有加载 FreeVideo'),
+         ('ComfyUI did not load FreeVideo', 'ComfyUI 未加载 FreeVideo'),
          ('Click Retry. If it stops here again, the ComfyUI log in the details shows why the FreeVideo nodes did not load; export the report to send it.',
-          '请点“重试”。仍然停在这里时，可以导出报告。')),
+          '请点击“重试”。如仍停在此处，可导出报告。')),
         (r'ComfyUI is already running\. Restart it once', 'comfy-restart',
          ('Restart ComfyUI to load FreeVideo', '需要重启 ComfyUI 才能加载 FreeVideo'),
          ('Close the ComfyUI that is running now, then click Retry.', '请关闭正在运行的 ComfyUI，然后点击重试。')),
         # web/health.js lists the failed files and what to do on the page itself.
-        (r'The browser page did not load FreeVideo completely|浏览器页面没有完整加载 FreeVideo', 'page',
-         ('FreeVideo did not load completely in the browser', '浏览器里的 FreeVideo 没有完整加载'),
+        (r'The browser page did not load FreeVideo completely|浏览器页面(?:没有|未)完整加载 FreeVideo', 'page',
+         ('FreeVideo did not load completely in the browser', '浏览器中的 FreeVideo 未完整加载'),
          ('The browser page names the files that failed and what to do. Follow it, then reload the page; if it happens again, export the report.',
-          '请按浏览器页面上的提示处理后刷新；仍然出现时，可以导出报告。')),
-        (r'The browser has not opened FreeVideo yet|浏览器还没有打开 FreeVideo', 'page-silent',
-         ('The browser has not opened FreeVideo', '浏览器还没有打开 FreeVideo'),
+          '请按浏览器页面上的提示处理后刷新；如仍出现，可导出报告。')),
+        (r'The browser has not opened FreeVideo yet|浏览器(?:还没有|尚未)打开 FreeVideo', 'page-silent',
+         ('The browser has not opened FreeVideo', '浏览器尚未打开 FreeVideo'),
          ('Click “Open FreeVideo”. If the page stays blank or keeps loading, open it in a current Chrome or Edge.',
           '请点击“打开 FreeVideo”。如果页面空白或一直在加载，请用最新版 Chrome 或 Edge 打开。')),
         (r'NVIDIA driver/nvidia-smi is missing\.', 'gpu-driver-missing',
@@ -550,7 +550,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         (r'CUDA_CAPABILITY_UNKNOWN', 'gpu-detection',
          ('GPU information could not be read', '未能读取显卡信息'),
          ('Retry hardware detection. If it still fails, export the report; it includes the GPU identity and the raw driver query.',
-          '请点“重新检查”。仍然失败时，可以导出报告。')),
+          '请点击“重新检查”。如仍失败，可导出报告。')),
         (r'CURL_REPAIR_(?:TIMEOUT|HTTP|TLS|DNS|FAILED|PROXY_UNSUPPORTED|PROXY_MISSING|REDIRECT|SIZE|INTEGRITY)', 'download-tool-network',
          ('The download tool could not be prepared', '下载工具自动补齐失败'),
          ('Check the connection mode in Downloads and retry. Export the report for the source, route and failure code.',
@@ -562,11 +562,11 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         (r'CURL_[A-Z_]+|Windows curl\.exe was not found', 'download-tool',
          ('The download tool is unavailable', '下载工具不可用'),
          ('Retry installation to repair the tool automatically. If it still fails, export the report for the complete tool diagnostics.',
-          '请点“重试安装”，启动器会自动修复下载工具。仍然失败时，可以导出报告。')),
+          '请点击“重试安装”，启动器会自动修复下载工具。如仍失败，可导出报告。')),
         (r'ComfyUI is still running a job', 'busy',
-         ('A video is still generating', '还有视频正在生成'),
+         ('A video is still generating', '仍有视频正在生成'),
          ('The update is installed. Click Connect again after the job finishes to restart ComfyUI with it.',
-          '更新已装好。等当前任务完成后点“重新连接”，ComfyUI 会重启并使用新版。')),
+          '更新已安装。请在当前任务完成后点击“重新连接”，ComfyUI 会重启并使用新版。')),
         (r'Installation paused: Windows commit headroom', 'memory-commit',
          ('Windows is low on available memory', 'Windows 可用内存不足'),
          ('Close memory-heavy applications, then retry. Downloaded files are retained.',
@@ -578,19 +578,19 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         (r'Installation RAM monitoring failed|Cannot read process-tree memory', 'memory-monitor',
          ('Memory usage could not be read', '暂时无法读取内存用量'),
          ('Download progress is saved. Retry installation; copy the details if it happens again.',
-          '下载进度已保留，请点“重试安装”。')),
+          '下载进度已保留，请点击“重试安装”。')),
         (r'No space left on device|WinError 112|disk (?:is )?full|Not enough disk space|Insufficient disk space', 'disk',
          ('Not enough disk space', '磁盘空间不足'),
          ('Free up space on the installation drive, then retry.', '清理安装盘空间后，点击重试。')),
         (r'Model download paused|unexpected-transfer-size|ConnectionError|ConnectTimeout|ReadTimeout|HTTP probe failed|Could not resolve host|SSL certificate|Every download source failed|All Git sources failed|All package sources failed|Python download failed on every route', 'download',
-         ('Download interrupted', '下载中断了'),
+         ('Download interrupted', '下载已中断'),
          ('Check your network or change the source or connection mode in Settings → Downloads, then retry.', '检查网络，或在“设置 → 下载”中切换下载源、连接模式后重试。')),
         (r'FreeVideo cannot read its program files', 'unreadable-files',
-         ('FreeVideo cannot read its own files', 'FreeVideo 读不到自己的程序文件'),
+         ('FreeVideo cannot read its program files', 'FreeVideo 无法读取程序文件'),
          ('Windows denies this account access to them, usually because they were created while FreeVideo ran as administrator. '
           'Open FreeVideo normally and import the offline packages again; the files already there are reused.',
           'Windows 不允许当前账户读取它们，通常是因为这些文件是在“以管理员身份运行”时创建的。'
-          '请正常打开 FreeVideo，重新导入一次离线包，已有的文件会直接复用。')),
+          '请以普通方式打开 FreeVideo，重新导入离线包，已有的文件会直接复用。')),
         (r'A file in the installation folder changed after the review', 'plan-changed-files', CHANGED_TITLE,
          _joined(CHANGED_WHY['files'], CHANGED_REPAIR)),
         (r'The installation plan changed\. Detect configuration again', 'plan-changed', CHANGED_TITLE,
@@ -599,10 +599,10 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('A program file is missing', '缺少一个程序文件'),
          ('It may have been quarantined by security software. Restore the file or allow the FreeVideo folder, '
           'then click Retry installation.',
-          '可能被安全软件隔离了。恢复这个文件或允许 FreeVideo 所在的文件夹后，点“重试安装”。')),
+          '该文件可能已被安全软件隔离。请恢复该文件或允许 FreeVideo 所在的文件夹，然后点击“重试安装”。')),
         # Windows refuses PyTorch's unsigned DLLs under Smart App Control; reinstalling changes nothing.
         (r'WinError 4551|Application Control policy has blocked', 'app-control',
-         ('Windows blocked some runtime files', 'Windows 拦截了运行组件'),
+         ('Windows blocked some runtime files', 'Windows 已拦截部分运行组件'),
          ('Smart App Control in Windows blocked these files. Search Windows for "Smart App Control", or open Windows Security → App & browser control → Smart App Control settings.',
           'Windows 的“智能应用控制”拦截了这些文件。在 Windows 中搜索“智能应用控制”，或打开“Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置”。')),
         (r'PermissionError|Access is denied|Permission denied|WinError 5\b', 'permission',
@@ -612,7 +612,7 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         (r"FreeVideo's PyTorch library files do not match", 'runtime-libraries',
          ('Runtime files have been changed', '运行组件已被更改'),
          ('Click Repair to reinstall a complete copy of PyTorch. Models and videos are kept.',
-          '请点“修复”，FreeVideo 会重新安装运行组件，模型和视频都会保留。')),
+          '请点击“修复”，FreeVideo 会重新安装运行组件，模型和视频都会保留。')),
         (r'ModuleNotFoundError|No module named|DLL load failed', 'dependencies', *DEPENDENCIES),
         (r'CUDA (?:error: )?out of memory|torch\.OutOfMemoryError|Insufficient currently available memory|crossed its RAM budget|paging file is too small|WinError 1455|os error 1455', 'memory',
          ('Memory is unavailable for this step', '这一步可用内存不足'),

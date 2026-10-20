@@ -257,8 +257,8 @@ def build(app):
     choices.columnconfigure((0, 1), weight=1, uniform='choices')
     app.mode_buttons = []
     for index, (value, title, detail) in enumerate((
-        ('existing', ('I have ComfyUI', '我已安装 ComfyUI'), ('Connect your installation.', '接入现有安装。')),
-        ('new', ('Install ComfyUI for me', '帮我安装 ComfyUI'), ('ComfyUI, Python and FreeVideo together.', '一并准备 ComfyUI、Python 和 FreeVideo。')))):
+        ('existing', ('Use existing ComfyUI', '使用已有 ComfyUI'), ('Connect your installation.', '接入现有安装。')),
+        ('new', ('Install ComfyUI', '安装 ComfyUI'), ('ComfyUI, Python and FreeVideo together.', '一并准备 ComfyUI、Python 和 FreeVideo。')))):
         choice = Choice(choices, app, value, title, detail)
         choice.grid(row=0, column=index, sticky='nsew', padx=(0, b.space(2)) if index == 0 else (b.space(2), 0))
         app.mode_buttons.append(choice)
@@ -275,7 +275,7 @@ def build(app):
     methods = ttk.Frame(models.body, style='Card.TFrame'); methods.pack(fill='x')
     app.model_method_buttons = []
     for value, en, zh in (('auto', 'Automatic download', '自动下载'),
-                          ('manual', 'Download myself', '手动下载'), ('reuse', 'Use existing models', '复用已有模型')):
+                          ('manual', 'Download manually', '手动下载'), ('reuse', 'Use existing models', '复用已有模型')):
         button = ttk.Radiobutton(methods, text=app.t(en, zh), value=value, variable=app.model_method)
         button.pack(side='left', padx=(0, b.space(3)))
         app.labels.append((button, en, zh)); app.model_method_buttons.append(button)
@@ -358,8 +358,8 @@ def build(app):
     app.label(launch.body, 'Ready to launch', '安装已就绪', style='Hero.Card.TLabel', anchor='center').pack(fill='x', pady=(0, b.space(4)))
     app.launch_paths = ttk.Label(launch.body, style='Meta.Card.TLabel', anchor='center', justify='center', wraplength=680)
     app.launch_paths.pack(fill='x', pady=(0, b.space(3)))
-    app.label(launch.body, 'Already running ComfyUI? FreeVideo connects automatically.',
-        'ComfyUI 已在运行？会自动连接。', style='Meta.Card.TLabel', anchor='center', justify='center', wraplength=680).pack(fill='x')
+    app.label(launch.body, 'If ComfyUI is already running, FreeVideo connects to it automatically.',
+        '如果 ComfyUI 已在运行，将自动连接。', style='Meta.Card.TLabel', anchor='center', justify='center', wraplength=680).pack(fill='x')
     app.browser_controls = ttk.Frame(launch.body, style='Card.TFrame')
     ttk.Entry(app.browser_controls, textvariable=app.browser_address, state='readonly', justify='center').pack(fill='x')
     browser_buttons = ttk.Frame(app.browser_controls, style='Card.TFrame'); browser_buttons.pack(pady=(8, 0))

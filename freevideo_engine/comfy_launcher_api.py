@@ -29,13 +29,13 @@ PAGE_SCRIPTS_MISSING = (
     'Press Ctrl+F5 to reload the page. If it stays missing, open the FreeVideo launcher, '
     'click Settings › Repair, and open FreeVideo again. '
     '浏览器没有运行 FreeVideo 的页面脚本，所以看不到创作面板。请按 Ctrl+F5 强制刷新页面；'
-    '仍然没有时，请在 FreeVideo 启动器的“设置”里点击“修复”，然后重新打开 FreeVideo。')
+    '如仍未显示，请在 FreeVideo 启动器的“设置”中点击“修复”，然后重新打开 FreeVideo。')
 # Without the launcher, the page's own Settings cannot open either.
 PAGE_SCRIPTS_MISSING_NODE = (
     'FreeVideo’s page scripts have not run in this browser, so the creative workspace is missing. '
     'Press Ctrl+F5 to reload the page. If it stays missing, update the FreeVideo node and restart ComfyUI. '
     '浏览器没有运行 FreeVideo 的页面脚本，所以看不到创作面板。请按 Ctrl+F5 强制刷新页面；'
-    '仍然没有时，请更新 FreeVideo 节点并重启 ComfyUI。')
+    '如仍未显示，请更新 FreeVideo 节点并重启 ComfyUI。')
 
 # Where a node message sends the user to repair. The launcher has its own
 # Repair; a ComfyUI started without it has the page's Settings › Install / repair.

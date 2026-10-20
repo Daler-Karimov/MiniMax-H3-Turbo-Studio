@@ -177,13 +177,13 @@ export function showReportTip(bar, anchor, t, {mode = 'invite', submit, onHide =
         title.textContent = t('Last step', '最后一步');
         lead.textContent = savedName?.endsWith('.zip')
             ? t(`The report is large, so it was saved as ${savedName}. Please drag it into "Diagnostic report", then select Submit new issue.`,
-                `报告较大，已保存为 ${savedName}。请将它拖入「诊断报告」，再点击 Submit new issue 即可。`)
+                `报告较大，已保存为 ${savedName}。请将它拖入“诊断报告”，再点击 Submit new issue。`)
             : savedName
             ? t(`Please drag ${savedName} into "Diagnostic report", then select Submit new issue.`,
-                `请将 ${savedName} 拖入「诊断报告」，再点击 Submit new issue 即可。`)
+                `请将 ${savedName} 拖入“诊断报告”，再点击 Submit new issue。`)
             : t('Please drag the downloaded report into "Diagnostic report", then select Submit new issue.',
-                '请将下载的诊断报告拖入「诊断报告」，再点击 Submit new issue 即可。');
-        const link = el('a', null, t("Page didn't open? Go to GitHub", '页面没有打开？点此前往 GitHub'));
+                '请将下载的诊断报告拖入“诊断报告”，再点击 Submit new issue。');
+        const link = el('a', null, t('If the page did not open, go to GitHub', '如页面未打开，请点此前往 GitHub'));
         link.href = address; link.target = '_blank'; link.rel = 'noopener';
         note.replaceChildren(link);
         const done = el('button', 'fv-action fv-action-secondary', t('Done', '完成')); done.type = 'button';
@@ -196,9 +196,9 @@ export function showReportTip(bar, anchor, t, {mode = 'invite', submit, onHide =
     if (mode === 'downloaded') {
         title.textContent = t('Diagnostic report downloaded', '诊断报告已下载');
     } else {
-        title.textContent = t('Share a diagnostic report?', '欢迎提交诊断报告');
+        title.textContent = t('Submit a diagnostic report', '欢迎提交诊断报告');
     }
-    lead.textContent = t("We'll optimize specifically for your setup, and it helps other users too.",
+    lead.textContent = t('We will optimize specifically for your hardware, and the report also helps other users.',
         '我们会针对您的硬件配置进行专门优化，也能帮助其他用户。');
     note.append(glyph('lock', 'fv-report-tip-lock'), t('Hardware, settings and timings only. No prompts, images or videos.',
         '仅包含硬件信息、生成参数和耗时，不含提示词、参考图或视频。'));

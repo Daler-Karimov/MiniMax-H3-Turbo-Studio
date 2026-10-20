@@ -14,7 +14,7 @@ const languageOverride = typeof location !== 'undefined'
 const cn = languageOverride === 'zh' || (languageOverride !== 'en'
     && String(navigator.language || '').toLowerCase().startsWith('zh'));
 const t = (en, zh) => cn ? zh : en;
-const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已装好。要重装，请先点“检测并预览”。'};
+const INSTALLED_HINT = {en: 'Already installed. To reinstall, click Detect & review first.', zh: '已安装。如需重新安装，请先点击“检测并预览”。'};
 const gib = n => Number.isFinite(n) ? (n / 2 ** 30).toFixed(1) + " GiB" : "—";
 const SPEED_TEST_FAILED = 'The speed test did not finish. Click "Test source speeds".';
 const reportable = value => !/The installation plan changed\. Detect configuration again|MODEL_MISMATCH_REPAIR:/.test(String(value || ''));
@@ -28,11 +28,11 @@ const failureText = value => {
             : t('The settings, GPU or free disk space changed after you confirmed, so installation stopped. Click Detect & review, then Install / repair.',
                 '确认之后设置、显卡或磁盘空间有变化，已停止。请先点“检测并预览”，再点“安装／修复”。');
     }
-    if (text === SPEED_TEST_FAILED) return t('The speed test did not finish. Click "Test source speeds".', '测速没有完成，请点“重新测速”。');
+    if (text === SPEED_TEST_FAILED) return t('The speed test did not finish. Click "Test source speeds".', '测速未完成，请点击“重新测速”。');
     if (!matches.length) return text;
     const file = matches.at(-1)[1];
     return t(`${file} differs from the tested version and was left unchanged. Click Detect & review, then Install / repair. After you confirm, the original is renamed and kept, and the tested version is downloaded.`,
-        `${file} 和测试过的版本不同，这次没有改动。请先点“检测并预览”，再点“安装／修复”，确认后原文件改名保留，再下载测试过的版本。`);
+        `${file} 与测试过的版本不同，本次未作改动。请先点“检测并预览”，再点“安装／修复”，确认后原文件改名保留，再下载测试过的版本。`);
 };
 let current;
 
@@ -256,7 +256,7 @@ export async function openSetup() {
             if (family.startsWith('torch-')) names[family] = t('GPU packages','GPU 依赖');
             const rate = row.bytes_per_second / 2**20;
             const speed = !row.ok ? t('Unavailable','未连通') : row.speed_measured === false || !Number.isFinite(rate) || rate <= 0 ?
-                t('Connected; speed not measured yet','已连通，速度还没测出') : rate < .005 ? '<0.01 MiB/s' : `${rate.toFixed(rate < 1 ? 2 : 1)} MiB/s`;
+                t('Connected; speed not measured yet','已连通，尚未测速') : rate < .005 ? '<0.01 MiB/s' : `${rate.toFixed(rate < 1 ? 2 : 1)} MiB/s`;
             for (const text of [names[family] || family, `${row.id} · ${row.route === 'direct' ? t('Direct','直连') : t('Current connection','当前连接')}`,speed]) tr.append(node('td',text));
             if (!row.ok) tr.lastChild.className = 'fv-off';
             table.append(tr);
@@ -284,10 +284,10 @@ export async function openSetup() {
         for (const e of [root, extra, copy, samplingCaches, saveFolders, inspect, use, hfToken, applyToken, clearToken]) e.disabled = busy;
         cancel.hidden = !busy; install.disabled = busy || !planId || !accept.checked; accept.disabled = busy; inspect.classList.toggle("fv-primary", !planId); install.classList.toggle("fv-primary", Boolean(planId));
         const why = busy ? "" : planStale ? t("Settings changed. Click Detect & review again.", "设置已更改，请重新点“检测并预览”。")
-            : planErrors ? t("Fix the problems marked in red above, then click Detect & review again.", "上面有标红的问题，处理后请重新点“检测并预览”。")
+            : planErrors ? t("Fix the problems marked in red above, then click Detect & review again.", "请先处理上方标红的问题，再点击“检测并预览”。")
             : ready && !planId ? t(INSTALLED_HINT.en, INSTALLED_HINT.zh)
             : !planId ? ""
-            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，即可点击“安装／修复”。") : "";
+            : !accept.checked ? t("Tick the agreement above to enable Install / repair.", "勾选上方的同意选项后，可点击“安装／修复”。") : "";
         blocked.textContent = why; blocked.hidden = !why;
     };
     // A changed setting makes a shown plan outdated: clear it rather than leave it beside a disabled button.

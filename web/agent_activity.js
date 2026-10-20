@@ -15,9 +15,9 @@ const NAMES = {generate: ['Video', '视频'], assemble: ['Sequence', '成片'], 
 // Short reasons for the failures people can act on; the engine's own message stays in the tooltip.
 const REASONS = {
     out_of_memory: ['Out of memory', '显存或内存不足'],
-    insufficient_memory: ['Not enough memory for this video', '显存或内存不够生成这段视频'],
+    insufficient_memory: ['Not enough memory for this video', '显存或内存不足，无法生成这段视频'],
     interrupted: ['ComfyUI restarted during this job', 'ComfyUI 中途重启'],
-    lost: ['Ended without a result', '没有返回结果'],
+    lost: ['Ended without a result', '未返回结果'],
     dependency_failed: ['An earlier step did not succeed', '前序任务未成功'],
 };
 
@@ -77,7 +77,7 @@ function row(job, t, api, refresh, open, cancellationErrors) {
     if (job.status === 'running' && p.remaining_seconds > 0) meta.push(left(p.remaining_seconds, t));
     const reason = job.status === 'failed' && REASONS[job.error?.code];
     if (reason) meta.push(t(...reason));
-    else if (job.status === 'failed') meta.push(t(job.error?.message || 'Did not finish', job.error?.error_zh || '没有完成'));
+    else if (job.status === 'failed') meta.push(t(job.error?.message || 'Did not finish', job.error?.error_zh || '未完成'));
     if (job.project) meta.push(job.project);
     const foot = el('div', 'fv-agent-foot');
     const details = el('p', 'fv-agent-meta', meta.join(' · '));
@@ -93,7 +93,7 @@ function row(job, t, api, refresh, open, cancellationErrors) {
             try {
                 const response = await retryAgentPost(api, '/freevideo/agent/activity/cancel', {id: job.id});
                 if (!response?.ok) {
-                    const message = t('Could not stop. Click again.', '没能停止，请再点一次。');
+                    const message = t('Could not stop. Click again.', '停止失败，请再次点击。');
                     details.textContent = message;
                     cancellationErrors.set(job.id, message);
                     issue.hidden = false;

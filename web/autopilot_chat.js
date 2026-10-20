@@ -48,7 +48,7 @@ const WHITEBOX = {
     play: ['Play', '播放'], pause: ['Pause', '暂停'], seconds: ['s', '秒'],
     failure: ['Could not start: ', '无法开始生成：'],
 };
-const GENERIC_FAILURE_ZH = '没有完成';
+const GENERIC_FAILURE_ZH = '未完成';
 // Sends and failure cards use the same public reason, including the engine's Chinese mapping.
 function failureReason(value, t) {
     const error = value.error, reason = error?.error_zh || value.error_zh;
@@ -228,7 +228,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
     const down = press('fv-chat-down', null, () => { scroller.scrollTo({top: scroller.scrollHeight, behavior: 'smooth'}); });
     down.append(glyph('M12 5v14M5 12l7 7 7-7')); down.setAttribute('aria-label', t('Latest', '最新')); down.hidden = true;
     const form = el('form', 'fv-chat-input'), input = el('textarea'), sendButton = el('button', 'fv-chat-send');
-    input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '对 Agent 说'));
+    input.rows = 1; input.maxLength = 8000; input.setAttribute('aria-label', t('Message the agent', '向 Agent 发送消息'));
     sendButton.type = 'submit'; sendButton.setAttribute('aria-label', t('Send', '发送')); sendButton.append(glyph('M12 19V5M5 12l7-7 7 7'));
     // While the agent is thinking and has started nothing, the send key is the stop key: same place, a solid square.
     let stopMode = false;
@@ -247,7 +247,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         input.focus();
         let done = false;
         try { done = (await dataLayer.abandon(session)).ok; } catch {}
-        if (!done && state.session === session) { state = {...state, abandoned: false}; render(); say(t('Could not stop. Click again.', '没能停止，请再点一次。')); }
+        if (!done && state.session === session) { state = {...state, abandoned: false}; render(); say(t('Could not stop. Click again.', '停止失败，请再次点击。')); }
     }
     let whiteboxPreview = false;
     try { whiteboxPreview = localStorage.getItem(WHITEBOX_PREVIEW.storageKey) === 'true'; } catch {}
@@ -536,10 +536,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 else {
                     void readConversations(true);
                     if (stop) deleteFailed(session, t('Still stopping. Try deleting again in a moment.', '正在停止，请稍后再删除。'), false, false);
-                    else deleteFailed(session, t('This chat still has work in progress, so it was not deleted.', '这段对话里还有在生成的内容，没有删除。'), true);
+                    else deleteFailed(session, t('This chat still has work in progress, so it was not deleted.', '此对话中仍有正在生成的内容，未删除。'), true);
                 }
-            } else deleteFailed(session, t('Could not delete: ', '没有删除成功：') + (data.error?.message || data.error?.code || `HTTP ${response.status}`));
-        } catch (error) { if (!stopped) deleteFailed(session, t('Could not delete: ', '没有删除成功：') + reason(error)); }
+            } else deleteFailed(session, t('Could not delete: ', '删除失败：') + (data.error?.message || data.error?.code || `HTTP ${response.status}`));
+        } catch (error) { if (!stopped) deleteFailed(session, t('Could not delete: ', '删除失败：') + reason(error)); }
         finally {
             deleting.delete(session);
             if (menuState?.session === session) closeMenu();
@@ -571,7 +571,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             } else throw await requestError(response);
         } catch (error) {
             if (!stopped) {
-                newError.textContent = t('Could not start a new chat: ', '没有新建成功：') + reason(error); newError.hidden = newIssue.hidden = false;
+                newError.textContent = t('Could not start a new chat: ', '新建对话失败：') + reason(error); newError.hidden = newIssue.hidden = false;
                 if (from) from.error = newError.textContent;
             }
         }
@@ -670,7 +670,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         ids.forEach(id => stopping.add(id)); render(); report();
         const results = await Promise.all(ids.map(id => dataLayer.cancel(id)));
         results.forEach((response, index) => { if (!response?.ok) stopping.delete(ids[index]); });
-        if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '没能停止，请再点一次。'), true);
+        if (results.some(response => !response?.ok)) say(t('Could not stop. Click again.', '停止失败，请再次点击。'), true);
         else say('');
         if (!stopped) { render(); report(); void poll(); }
     }
@@ -788,7 +788,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                 let playing = false, loadRetried = false;
                 const playbackFailure = () => {
                     if (item.dataset.mode !== 'done') return;
-                    playback.textContent = t('Cannot play right now. Open it in Creations.', '暂时播放不了，可在作品库中打开'); playback.hidden = false;
+                    playback.textContent = t('Playback is unavailable. Open it in Creations.', '暂时无法播放，可在作品库中打开'); playback.hidden = false;
                     show.textContent = t('Open in Creations', '在作品库打开'); if (!show.parentNode) foot.append(show);
                     if (!foot.parentNode) info.append(foot);
                 };
@@ -974,7 +974,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const signature = JSON.stringify([value, disabled, error]);
             if (signature === shownState) return;
             shownState = signature; item.dataset.state = value === 'asked' ? 'asked' : 'answered';
-            if (value !== 'asked') { item.replaceChildren(el('span', null, value === 'approved' ? t('Started', '已开始') : t('Not now', '先不拍'))); return; }
+            if (value !== 'asked') { item.replaceChildren(el('span', null, value === 'approved' ? t('Started', '已开始') : t('Not now', '暂不拍摄'))); return; }
             const answer = approve => async () => {
                 if (confirming.has(key) || !inSelectedChat() || state.agent.connected !== true || state.session !== session) return;
                 item.querySelectorAll('button').forEach(button => { button.disabled = true; });
@@ -983,12 +983,12 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                     const response = await dataLayer.confirm({id: entry.id, approve, session});
                     if (!response.ok) throw await requestError(response);
                     answers.set(key, (await response.json()).state || (approve ? 'approved' : 'declined'));
-                } catch (error) { confirmErrors.set(key, t('Could not start shooting: ', '没有开始拍摄：') + reason(error)); }
+                } catch (error) { confirmErrors.set(key, t('Could not start shooting: ', '未能开始拍摄：') + reason(error)); }
                 finally { confirming.delete(key); }
                 if (!stopped) { render(); void poll(); }
             };
             const buttons = el('div', 'fv-chat-actions');
-            buttons.append(press('fv-chat-yes fv-primary', t('Start', '开始'), answer(true)), press('fv-chat-no', t('Not now', '先不'), answer(false)));
+            buttons.append(press('fv-chat-yes fv-primary', t('Start', '开始'), answer(true)), press('fv-chat-no', t('Not now', '暂不'), answer(false)));
             buttons.querySelectorAll('button').forEach(button => { button.disabled = disabled; });
             const question = el('p', null, entry.question);
             const estimate = el('p', 'fv-chat-meta', entry.estimate_seconds > 0 ? about(entry.estimate_seconds, t) : ''); estimate.hidden = !estimate.textContent;
@@ -1010,7 +1010,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const lines = [t('Make a 10-second video: a rainy night, a girl squeezes onto the last bus', '生成一段 10 秒的视频：雨夜，女孩挤上末班车'),
             t('Make a 1-minute vertical short film: a day in a coffee shop', '做一条 1 分钟的竖屏短片：咖啡店的一天')];
         list.append(...lines.map(line => press(null, line, () => send(line))));
-        item.append(el('p', 'fv-chat-meta', t('Try saying:', '可以这样说：')), list);
+        item.append(el('p', 'fv-chat-meta', t('Examples:', '示例：')), list);
         return {element: item, update() { list.querySelectorAll('button').forEach(button => { button.disabled = !sendingAllowed(); }); }};
     }
     function dots() {
@@ -1071,7 +1071,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         });
         const sendable = sendingAllowed();
         input.disabled = state.agent.connected !== true || creating || !!selectedSession && selectedSession !== state.session;
-        input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to continue', '请在 Agent 里让它继续') : t('Message the agent…', '对 Agent 说…');
+        input.placeholder = state.agent.connected === true && !sendable ? t('Ask your agent to continue', '请在 Agent 窗口中指示其继续') : t('Message the agent…', '向 Agent 发送消息…');
         refreshSend();
         if (focusSession === state.session && focusSession && !input.disabled && active()) { focusSession = null; input.focus(); }
         if (stick) { pinned = true; scroller.scrollTop = scroller.scrollHeight; down.hidden = true; }
@@ -1113,14 +1113,14 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         }
     }
     const waitingNotice = code => (code ? code === 'not_listening' : state.agent.connected === true)
-        ? t('Will send when Agent is back', '等 Agent 回来后自动发送')
-        : t('Will send when Agent connects', '等 Agent 连上后自动发送');
+        ? t('Will send when Agent reconnects', 'Agent 重新连接后自动发送')
+        : t('Will send when Agent connects', 'Agent 连接后自动发送');
     async function send(text, original = null, draft = null, automatic = false) {
         text = String(text).trim();
         original ||= pending.find(entry => entry.session === (state.session ?? null) && entry.text === text && (entry.error || entry.sending || entry.automatic));
         if (!text || original?.sending || original && original.session !== state.session) return false;
         if (!inSelectedChat()) {
-            say(creating ? t('Creating a new chat…', '正在新建对话…') : t('Loading this chat. Please send again shortly.', '正在读取对话，请稍后再发一次'));
+            say(creating ? t('Creating a new chat…', '正在新建对话…') : t('Loading this chat. Please send again shortly.', '正在读取对话，请稍后重新发送'));
             return false;
         }
         const entry = original || {id: newId(), text, session: state.session ?? null, draft, whiteboxPreview: whiteboxPreview && state.agent?.builtin !== true};
@@ -1151,10 +1151,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const waiting = !refused && (WAIT_FOR_AGENT.includes(error?.code) || !error && state.agent.connected !== true);
             const exhausted = entry.attempts >= SEND_ATTEMPTS;
             entry.automatic = waiting && !exhausted;
-            const explanation = refused || error && !waiting ? t('Not sent: ', '没发出去：') + failureReason({error}, t)
-                : exhausted ? t('Not sent. Click "Retry".', '没有发出，请点“重试”。')
-                : waiting ? waitingNotice(error?.code) : t('The connection is unstable. Click "Retry".', '网络不稳，请点“重试”。');
-            entry.error = waiting || /^(Not sent|没发出|没有发出)/.test(explanation) ? explanation : t('Could not send: ', '没有发送成功：') + explanation;
+            const explanation = refused || error && !waiting ? t('Not sent: ', '未发送：') + failureReason({error}, t)
+                : exhausted ? t('Not sent. Click "Retry".', '未发送，请点击“重试”。')
+                : waiting ? waitingNotice(error?.code) : t('The connection is unstable. Click "Retry".', '网络连接不稳定，请点击“重试”。');
+            entry.error = waiting || /^(Not sent|未发送)/.test(explanation) ? explanation : t('Could not send: ', '发送失败：') + explanation;
             if (entry.session === state.session) {
                 if (waiting && error?.code === 'not_connected') state = {...state, agent: {connected: false, name: null}};
                 if (waiting && error?.code === 'not_listening') state = {...state, agent: {...state.agent, listening: false}};

@@ -46,7 +46,7 @@ export function createCastLibrary({api, text, viewURL, uploadOne, onChange = () 
             // The dialog only sends pictures, so unreadable media here is always one of them.
             const unreadable = data?.error?.code === 'invalid_media' && text('Could not read this picture. Please choose another one.', '无法读取这张图片，请换一张。');
             const error = new Error(unreadable || data?.error?.message || (typeof data?.error === 'string' && data.error)
-                || data?.message || response.statusText || text('Did not finish. Try again.', '没有完成，请重试。'));
+                || data?.message || response.statusText || text('Did not finish. Try again.', '未完成，请重试。'));
             error.status = response.status;
             // Which picture it was, as /images/<n>/media of the request.
             if (unreadable) error.field = data.error.details?.find(detail => typeof detail?.field === 'string')?.field;

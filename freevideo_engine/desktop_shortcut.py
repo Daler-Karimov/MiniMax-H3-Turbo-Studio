@@ -322,7 +322,7 @@ def _failure(error, menu_ready):
     text = str(error)
     denied = isinstance(error, PermissionError) or '0x80070005' in text.lower() or 'access is denied' in text.lower()
     en = ['The desktop shortcut could not be created:']
-    zh = ['桌面快捷方式没有创建成功：']
+    zh = ['未能创建桌面快捷方式：']
     if denied:
         # Controlled folder access (Windows Security) refuses unknown programs on the desktop.
         en.append('Windows did not allow FreeVideo to write to the desktop. If Controlled folder access is on in '
@@ -332,7 +332,7 @@ def _failure(error, menu_ready):
     else:
         en.append(text); zh.append(text)
     if menu_ready:
-        en.append('FreeVideo is in the Start menu.'); zh.append('开始菜单里可以找到 FreeVideo。')
+        en.append('FreeVideo is in the Start menu.'); zh.append('可在开始菜单中找到 FreeVideo。')
     return ' '.join(en), ''.join(zh)
 
 
@@ -542,4 +542,4 @@ def create_after_install(engine, source, portable_root=None):
         return create(engine, source, portable_root)
     except (OSError, ValueError) as error:
         return dict(status='failed', error='Installed successfully, but the desktop shortcut could not be created: ' + str(error),
-                    error_zh='安装已完成，但桌面快捷方式没有创建成功：' + str(error))
+                    error_zh='安装已完成，但未能创建桌面快捷方式：' + str(error))

@@ -29,18 +29,18 @@ export const TUTORIAL_CHAPTERS = [
             alt: {zh: '创作面板：时长输入框和“可生成范围”入口已用红框标出。', en: 'The creation panel, with the duration field and "Available sizes and lengths" control outlined in red.'},
         },
         steps: {
-            zh: ['填写更长的时长，会自动分段生成；“可生成范围”中可查看各尺寸的最长时长和预计用时。', '点“生成视频”。', '在生成好的视频上点“接着生成”，继续下一段。', '也可在“剪辑视图”中逐段接续。'],
+            zh: ['填写更长的时长，会自动分段生成；“可生成范围”中可查看各尺寸的最长时长和预计用时。', '点“生成视频”。', '在已生成的视频上点击“继续生成”，继续下一段。', '也可在“剪辑视图”中逐段接续。'],
             en: ['Enter a longer duration. It is made in parts automatically. "Available sizes and lengths" shows how long each size can be and about how long it takes.', 'Choose "Generate video".', 'Choose "Extend" on a finished video to continue it.', 'Parts can also be added one by one in "Edit".'],
         },
         limits: {
-            zh: ['一条视频最多 5 段，创作面板中时长最长 60 秒。', '分段生成和接着生成需要 NVIDIA 显卡或 Mac。', '段数越多，衔接处越容易出现变化；适合切换镜头处，可直接开始新的一段。'],
+            zh: ['一条视频最多 5 段，创作面板中时长最长 60 秒。', '分段生成和继续生成需要 NVIDIA 显卡或 Mac。', '段数越多，衔接处越容易出现变化；适合切换镜头处，可直接开始新的一段。'],
             en: ['A video has at most 5 parts, and the creation panel accepts up to 60 seconds.', 'Generating in parts and Extend need an NVIDIA graphics card or a Mac.', 'The more parts are joined, the more the joins may change. Where a cut fits, cut to a new shot and start a fresh part.'],
         },
     },
     {
         id: 'editor-extend-refs',
         title: {zh: '在剪辑视图延长时加参考图', en: 'Add reference images when extending in Edit'},
-        summary: {zh: '用参考图引导接着生成的那一段。', en: 'Use reference images to guide the next part.'},
+        summary: {zh: '用参考图引导继续生成的那一段。', en: 'Use reference images to guide the next part.'},
         media: {
             type: 'image',
             src: {zh: 'editor-extend-refs-1.webp', en: 'editor-extend-refs-2.webp'},

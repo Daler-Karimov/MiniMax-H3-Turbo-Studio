@@ -1,11 +1,11 @@
 name: Feedback / 反馈
-description: Tell us what could be better / 说说哪里可以做得更好
+description: Describe what could be improved / 请说明哪些方面可以改进
 labels: ["feedback"]
 body:
   - type: textarea
     id: feedback
     attributes:
-      label: What could be better? / 哪里可以做得更好？
+      label: Suggested improvements / 改进建议
     validations:
       required: true
   - type: input
