@@ -395,7 +395,9 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
                     action=('请接上“%s”后点击“重新检查”' % disk_name + ('，或者改装到其他硬盘。' if other_disk else '。') if zh else
                             'Connect "%s" and click Check again' % disk_name + (', or install on another disk.' if other_disk else '.')))
     folder = 'Select the ComfyUI folder, or the portable folder containing ComfyUI.'
-    if folder in summary:
+    # A saved installation that vanished raises the same sentence after its own message; the
+    # user chose no folder then, so it keeps its own path.
+    if folder in summary and not re.search(r'Locate or repair this installation|重新定位或修复这份安装', summary):
         # The retained error carries a traceback whose source lines quote the message
         # (and its Found part) too; only the exception line itself names the folder.
         named = list(re.finditer(re.escape(folder) + r'(?: Found one at "([^"\r\n]+)"; select that folder\.)?[ \t\r]*$',
