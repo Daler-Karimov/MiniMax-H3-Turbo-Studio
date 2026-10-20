@@ -678,6 +678,20 @@ def _checkpoint_change(report):
     return ''
 
 
+# Labels of the resource-planning snapshots (generate.py), never stages of the run.
+SNAPSHOT_LABEL = re.compile(r'(?:before|after)-encoding|retry-\d+')
+
+
+def _attempt_phase(report):
+    """The stage the last failed video attempt stopped in, or ''."""
+    attempts = report.get('resource_attempts')
+    for row in reversed(attempts) if isinstance(attempts, list) else ():
+        phase = row.get('phase') if isinstance(row, dict) and row.get('failure') else None
+        if isinstance(phase, str) and re.fullmatch(r'[a-z_]{1,32}', phase) and phase not in ('unknown', 'complete'):
+            return phase
+    return ''
+
+
 # Stands in for the repair sentence until the report text is redacted: the
 # redactor reads "Install / repair" as a path.
 REPAIR_MARK = 'FREEVIDEO_REPAIR_SENTENCE'
@@ -738,13 +752,21 @@ def generation_failure(run, exit_code=None, *, repair=None):
     encoding_failure = report.get('encoding_failure')
     phase = encoding_failure.get('phase') if isinstance(encoding_failure, dict) else None
     phase = phase or report.get('phase')
+    snapshot = None
+    if isinstance(planning, list) and planning and isinstance(planning[-1], dict):
+        snapshot = planning[-1].get('stage')
+    if isinstance(phase, str) and SNAPSHOT_LABEL.fullmatch(phase):
+        # A planning label is where the resources were last read, not where the run stopped.
+        snapshot, phase = snapshot or phase, None
+    phase = phase or _attempt_phase(report)
+    if not phase and (snapshot or report.get('resource_attempts')):
+        phase = 'generation'
     if phase:
         lines.append('Stage: ' + str(phase))
     if isinstance(planning, list) and planning and isinstance(planning[-1], dict):
         last = planning[-1]
-        if not phase:
-            lines.append('Stage: ' + str(last.get('stage', 'unknown')))
-        lines.append('\nLast resource-planning snapshot (before this failure; not the stopping sample):')
+        lines.append('\nLast resource-planning snapshot (%s, before this failure; not the stopping sample):'
+                     % (re.sub(r'[^a-z0-9-]', '', str(snapshot))[:32] or 'unlabeled'))
         state = last.get('idle_cache') or {}
         accounting = state.get('ram_accounting', {}) if isinstance(state, dict) else {}
         if not isinstance(accounting, dict):
