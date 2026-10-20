@@ -92,9 +92,22 @@ def sections(text, fields):
     return re.sub(r'\n+(?=(?:%s):)' % names, '\n\n', text).strip()
 
 
+class InvalidOutput(ValueError):
+    """Stable rejection metadata; never retain the prompt or rejected draft."""
+    def __init__(self, condition, text, value):
+        super().__init__('invalid_output')
+        draft = text if isinstance(text, str) else ''
+        indices = {int(i) for i in re.findall(r'<Picture (\d+)>', draft)}
+        self.details = dict(condition=condition, output_characters=len(draft),
+                            missing_pictures=[i for i in range(1, len(value['media']) + 1)
+                                              if f'<Picture {i}>' not in draft],
+                            out_of_range_pictures=sorted(i for i in indices if not 1 <= i <= len(value['media'])),
+                            retried=False)
+
+
 def validate_output(text, value):
     if not isinstance(text, str) or not 100 <= len(text.strip()) <= 20000:
-        raise ValueError('invalid_output')
+        raise InvalidOutput('type_or_length', text, value)
     text = text.strip()
     if text.startswith('```') and text.endswith('```'):
         text = '\n'.join(text.splitlines()[1:-1]).strip()
@@ -102,27 +115,27 @@ def validate_output(text, value):
     text = sections(text, fields)
     found = re.findall(r'(?m)^([a-z_]+):', text)
     if found != list(fields) or not text.startswith(fields[0] + ':'):
-        raise ValueError('invalid_output')
+        raise InvalidOutput('headings', text, value)
     if not re.search(r'\[Shot \d+\]', text):
         name = 'detailed_description' if value['mode'] == 'ref2va' else fields[0]
         text = text.replace(name + ':', name + ': [Shot 1]', 1)
     if '[Shot 1]' not in text:
-        raise ValueError('invalid_output')
+        raise InvalidOutput('missing_shot_1', text, value)
     for marker in fields:
         section = text.split(marker + ':', 1)[1].split('\n\n', 1)[0].strip()
         if not section:
-            raise ValueError('invalid_output')
+            raise InvalidOutput('empty_section', text, value)
     for minutes, seconds in re.findall(r'\bAt (\d{2}):(\d{2}\.\d{3})', text):
         if int(minutes) * 60 + float(seconds) >= value['seconds']:
-            raise ValueError('invalid_output')
+            raise InvalidOutput('timestamp_not_before_duration', text, value)
     for index in re.findall(r'<Picture (\d+)>', text):
         if not 1 <= int(index) <= len(value['media']):
-            raise ValueError('invalid_output')
+            raise InvalidOutput('picture_index_out_of_range', text, value)
     if re.search(r'<(?:Audio|Video) \d+>', text):
-        raise ValueError('invalid_output')
+        raise InvalidOutput('unsupported_audio_video_reference', text, value)
     for i in range(1, len(value['media']) + 1):
         if f'<Picture {i}>' not in text:
-            raise ValueError('invalid_output')
+            raise InvalidOutput('missing_picture_reference', text, value)
     return dialogue(text, value['text'])
 
 

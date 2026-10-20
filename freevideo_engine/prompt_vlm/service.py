@@ -401,11 +401,13 @@ class Service:
             self.progress(dict(phase='failed', error='busy'))
         except Exception as error:
             known = {'disk_space', 'ram_space', 'rewrite_failed', 'split_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
-            self.progress(dict(phase='failed', error=str(error) if str(error) in known
+            self.progress(dict(phase='failed', error='invalid_output' if isinstance(error, rules.InvalidOutput)
+                               else str(error) if str(error) in known
                                else 'download_failed' if action == 'install'
                                else 'ask_failed' if action == 'ask' else 'split_failed' if action == 'split'
                                else 'rewrite_failed',
-                               exception=type(error).__name__))
+                               exception=type(error).__name__,
+                               **({'output_rejection': error.details} if isinstance(error, rules.InvalidOutput) else {})))
         finally:
             if action != 'install':
                 self.stop_prestart(self.prewarm_state.get('reason', 'none'))
@@ -413,9 +415,10 @@ class Service:
                 self.progress(dict(phase='cancelled'))
             self.result_expires = time.monotonic() + 600
             # Allowlisted metadata only, never original/rewritten text or input paths.
+            # Output rejections contain condition IDs, character counts, picture numbers and retry flags only.
             report = {key: item for key, item in self.state.items()
                       if key in ('phase', 'error', 'exception', 'error_details', 'timings', 'diagnostics',
-                                 'resources', 'cleanup', 'worker_returncode')}
+                                 'resources', 'cleanup', 'worker_returncode', 'output_rejection')}
             spec = assets.catalog()
             report.update(schema='freevideo.prompt-vlm', schema_version=2, action=action,
                           created_epoch=time.time(), report_id=uuid.uuid4().hex,
@@ -580,7 +583,13 @@ class Service:
                 elif value.get('mode') == 'split':
                     rules.validate_parts(result.get('parts'), value)
                 else:
-                    rules.validate_output(result.get('text'), value)
+                    try:
+                        rules.validate_output(result.get('text'), value)
+                    except rules.InvalidOutput as error:
+                        stats = result.get('diagnostics') or {}
+                        error.details['retried'] = bool(stats.get('picture_retry') or stats.get('dialogue_retry'))
+                        self.progress(dict(diagnostics=stats))
+                        raise
             self.progress(dict(result, worker_returncode=child.returncode))
         finally:
             releasing = result_received_at[0] if result_received_at else time.monotonic()

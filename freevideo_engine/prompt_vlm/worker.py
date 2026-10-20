@@ -156,7 +156,11 @@ def failure(error, mode='rewrite'):
     code = message if message in allowed else 'out_of_memory' if 'out of memory' in message.lower() else fallback
     frames = [dict(module=Path(f.filename).name, function=f.name, line=f.lineno)
               for f in traceback.extract_tb(error.__traceback__)]
-    return dict(error=code, exception=type(error).__name__, error_details=frames)
+    result = dict(error=code, exception=type(error).__name__, error_details=frames)
+    from .rules import InvalidOutput
+    if isinstance(error, InvalidOutput):
+        result['output_rejection'] = error.details
+    return result
 
 
 def begin(stats):
@@ -217,7 +221,7 @@ OUTPUT_TOKENS = 1800
 
 def kv_positions(input_tokens):
     """Cache positions reserved for a request: the input and its rewrite, then a
-    dialogue retry that resends both with a short correction and writes another.
+    correction retry that resends both with a short instruction and writes another.
     A retry that would need more is skipped when the model is held on the GPU."""
     return input_tokens + 2 * OUTPUT_TOKENS + 256
 
@@ -237,7 +241,7 @@ def kv_bytes(stored, input_tokens):
 
 
 def retry_allowed(tokens, stats):
-    """A dialogue retry must fit the context limit and, on the GPU, the reserved cache."""
+    """A correction retry must fit the context limit and, on the GPU, the reserved cache."""
     if tokens + OUTPUT_TOKENS > stats.get('kv_positions', tokens + OUTPUT_TOKENS):
         stats['dialogue_retry_skipped'] = 'gpu_space'
         return False
@@ -363,6 +367,16 @@ def run(folder, value, *, stats=None):
     return rewrite(folder, value, stats)
 
 
+def validate_rewrite(text, value, stats, retried=False):
+    from .rules import InvalidOutput, validate_output
+    try:
+        return validate_output(text, value)
+    except InvalidOutput as error:
+        error.details['retried'] = retried
+        stats.setdefault('output_rejections', []).append(error.details)
+        raise
+
+
 def rewrite(folder, value, stats):
     stats.update(stage='imports', pid=os.getpid(), image_count=len(value['media']),
                  mode=value['mode'], dtype='bfloat16', attention='sdpa', kv_cache='dynamic',
@@ -370,7 +384,7 @@ def rewrite(folder, value, stats):
                  persistent_model=False)
     torch, checkpoint = begin(stats)
     from transformers import AutoProcessor
-    from .rules import DIALOGUE_RETRY, instruction, language, missing_lines, user_text, validate_output
+    from .rules import DIALOGUE_RETRY, InvalidOutput, instruction, language, missing_lines, user_text
     checkpoint('preprocess')
     preparing = time.monotonic()
     processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
@@ -405,23 +419,51 @@ def rewrite(folder, value, stats):
         raise ValueError('context_length')
     text = processor.decode(ids, skip_special_tokens=True)
     missing = missing_lines(text, value['text'])
-    if missing:
-        # One correction turn when the user's dialogue was dropped; keep the better draft.
-        retry = messages + [{'role': 'assistant', 'content': text}, {'role': 'user', 'content': DIALOGUE_RETRY + '\n'.join(
-            '- [%s] %s' % (language(line), line) for line in missing)}]
+    rewritten, rejected = None, None
+    pictures = []
+    try:
+        rewritten = validate_rewrite(text, value, stats)
+    except InvalidOutput as error:
+        rejected = error
+        if error.details['condition'] == 'missing_picture_reference':
+            pictures = error.details['missing_pictures']
+    if missing or pictures:
+        # Both corrections share one turn and the existing context/cache allowance.
+        correction = ''
+        if pictures:
+            labels = ', '.join(f'<Picture {i}>' for i in pictures)
+            correction = (f'Your rewrite omitted these required image references: {labels}. '
+                          'Preserve all existing content and add each missing reference where it belongs. '
+                          'Return the complete prompt in the same required section format.\n')
+        if missing:
+            correction += DIALOGUE_RETRY + '\n'.join('- [%s] %s' % (language(line), line) for line in missing)
+        retry = messages + [{'role': 'assistant', 'content': text}, {'role': 'user', 'content': correction}]
         retry_inputs = tokenize(processor, retry)
         if retry_allowed(retry_inputs.input_ids.shape[-1], stats):
             again, _ = generate(torch, model, retry_inputs.to(device), 1800, time.monotonic(), lambda timing: None)
             second = processor.decode(again, skip_special_tokens=True)
-            stats.update(dialogue_retry=True, retry_output_tokens=len(again),
-                         rewrite_seconds=time.monotonic() - loaded)
+            stats.update(retry_output_tokens=len(again), rewrite_seconds=time.monotonic() - loaded)
+            if missing:
+                stats['dialogue_retry'] = True
+            if pictures:
+                stats['picture_retry'] = True
             try:
-                validate_output(second, value)
-                if len(again) < 1800 and len(missing_lines(second, value['text'])) < len(missing):
-                    text = second
-            except ValueError:
-                pass
-    rewritten = validate_output(text, value)
+                candidate = validate_rewrite(second, value, stats, retried=True)
+                if pictures and len(again) >= 1800:
+                    error = InvalidOutput('output_token_limit', second, value)
+                    error.details['retried'] = True
+                    stats['output_rejections'].append(error.details)
+                    raise error
+                if len(again) < 1800 and (pictures or len(missing_lines(second, value['text'])) < len(missing)):
+                    rewritten = candidate
+            except InvalidOutput:
+                if pictures:
+                    raise
+        elif pictures:
+            stats['picture_retry_skipped'] = stats.get('dialogue_retry_skipped', 'context_length')
+    if rewritten is None:
+        rejected.details = dict(rejected.details, retried=bool(stats.get('picture_retry') or stats.get('dialogue_retry')))
+        raise rejected
     stats['stage'] = 'complete'
     emit(phase='complete', text=rewritten, diagnostics=dict(stats))
 
