@@ -391,7 +391,7 @@ export function createEditorStore(api, {t = en => en, notify = () => {}, onGener
                 xhr.upload.onprogress = event => { if (event.lengthComputable) progress(event.loaded / event.total); };
                 xhr.onload = () => {
                     release();
-                    if (xhr.status === 404) { notice('import', 'Import is unavailable until you restart after updating.', '更新后重启即可导入素材。'); resolve(null); return; }
+                    if (xhr.status === 404) { notice('import', 'Import is unavailable until you restart after updating.', '更新后重启可导入素材。'); resolve(null); return; }
                     if (xhr.status < 200 || xhr.status >= 300) { reject(errorFor(xhr)); return; }
                     try { resolve(JSON.parse(xhr.responseText).import); } catch (error) { reject(error); }
                 };

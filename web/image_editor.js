@@ -538,7 +538,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         let text = '';
         if (['eraser', 'heal', 'clone', 'blur'].includes(tool) && !rasterKinds.has(layer.kind)) text = t('Pick an image or paint layer to work on its pixels.', '请选择图片图层或绘画图层再处理像素。');
         else if (tool === 'clone' && !opts.clone.source) text = t('Alt-click to set the source, then paint.', '先按住 Alt 点击设置取样点，再涂抹。');
-        else if (tool === 'move' && layer.locked && doc.layers.length > 1) text = t('The original image is locked. Click another layer to move it.', '原图图层已锁定；点击其他图层即可移动。');
+        else if (tool === 'move' && layer.locked && doc.layers.length > 1) text = t('The original image is locked. Click another layer to move it.', '原图图层已锁定；点击其他图层可移动。');
         else if (tool === 'lasso' && opts.lasso.type === 'polygon') text = t('Click to add corners; double-click or press Enter to close.', '单击添加顶点；双击或按 Enter 闭合。');
         hint.textContent = text; hint.hidden = !text;
     }

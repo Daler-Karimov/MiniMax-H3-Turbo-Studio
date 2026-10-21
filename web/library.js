@@ -93,7 +93,7 @@ export async function libraryPage(t, {limit = 24, before = null, signal} = {}) {
     const query = new URLSearchParams({limit: String(limit)});
     if (before) query.set('before', before);
     const response = await api.fetchApi('/freevideo/library?' + query, {signal});
-    if (response.status === 404) throw Object.assign(new Error(t('Restart ComfyUI to open your creations after updating.', '更新后重启 ComfyUI，即可打开作品。')), {restart: true});
+    if (response.status === 404) throw Object.assign(new Error(t('Restart ComfyUI to open your creations after updating.', '更新后重启 ComfyUI，可打开作品。')), {restart: true});
     if (!response.ok) throw new Error(t('Could not load your creations. Try Refresh.', '作品暂时无法读取，请点击刷新。'));
     return response.json();
 }
@@ -144,15 +144,15 @@ async function workflowBackfill(collection, t) {
         const result = value?.result || {};
         heading.textContent = result.embedded ? t(`Workflows added to ${result.embedded} videos`, `已为 ${result.embedded} 个视频补上工作流`) : t('No video was changed', '没有视频被改动');
         text.textContent = result.embedded
-            ? t('Drag them onto the canvas to restore their workflow. The originals are kept next to them as video.before-workflow.mp4.', '把它们拖到画布上即可还原工作流。原视频保留在各自目录，文件名为 video.before-workflow.mp4。')
+            ? t('Drag them onto the canvas to restore their workflow. The originals are kept next to them as video.before-workflow.mp4.', '把它们拖到画布上可还原工作流。原视频保留在各自目录，文件名为 video.before-workflow.mp4。')
             : t('Videos that could not be checked safely were left as they were.', '无法安全确认的视频都保持原样。');
         if (result.failed) text.textContent += ' ' + t(`${result.failed} videos were left unchanged and will be offered again.`, `另有 ${result.failed} 个视频未改动，之后会再次提示。`);
-        actions.replaceChildren(button(t('Done', '好的'), () => box.remove(), 'fv-quiet'));
+        actions.replaceChildren(button(t('Got it', '知道了'), () => box.remove(), 'fv-quiet'));
     }
     if (value.state === 'running') { follow(); return; }
     heading.textContent = t('Add workflows to earlier videos', '为之前的视频补上工作流');
     text.textContent = t(`${value.count} earlier videos can get the workflow they were made with, so dropping them on the canvas restores it. Nothing changes until you confirm, and each original is kept as a backup (about ${gb(value.bytes)} GB).`,
-        `有 ${value.count} 个之前生成的视频可以补上生成时的工作流，补写后拖到画布即可还原。确认前不会改动任何文件，每个原视频都会保留一份备份（约 ${gb(value.bytes)} GB）。`);
+        `有 ${value.count} 个之前生成的视频可以补上生成时的工作流，补写后拖到画布可还原。确认前不会改动任何文件，每个原视频都会保留一份备份（约 ${gb(value.bytes)} GB）。`);
     const run = button(t('Add workflows', '补写工作流'), async () => {
         run.disabled = later.disabled = true;
         try { if (!(await post('run')).ok) throw new Error(); follow(); }

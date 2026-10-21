@@ -139,7 +139,7 @@ export function installNavigation(openStudio, agent = false, {openWorkflow = nul
     settings.textContent = t('Settings', '设置'); settings.className = 'fv-view-settings'; settings.onclick = openSetup;
     row.append(grip, brand, viewSwitch('nodes', () => choose(node => { open?.(node); }, true), () => {}, () => choose(async (node, created) => {
         const handle = await openEditorView(node);
-        if (created) handle?.notify(t('Created an editing project for you.', '已为你新建一个剪辑工程'));
+        if (created) handle?.notify(t('Created an editing project for you.', '已新建一个剪辑工程'));
         return handle;
     }, true), () => choose(node => openAutopilot(node), true)), createLanAccess(t, api).element, createVersionInfo(cn).element, feedbackButton(t, 'fv-view-settings'), settings); toolbar.append(row);
     toolbar.append(createUpdateNotice(cn).element);
