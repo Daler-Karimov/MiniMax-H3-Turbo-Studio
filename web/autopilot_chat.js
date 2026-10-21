@@ -1326,7 +1326,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             titleBase = titleShown = null; return;
         }
         if (titleBase === null) titleBase = document.title;
-        document.title = titleShown = t(...TAB_PREFIX[notice]) + titleBase;
+        // The browser trims and collapses spaces in a title; what it shows is what the next look compares with.
+        document.title = t(...TAB_PREFIX[notice]) + titleBase; titleShown = document.title;
     }
     const visible = () => { if (document.hidden) { seen = finished(); tab(); } else { tab(); if (reading()) void poll(); } };
     document.addEventListener('visibilitychange', visible);
