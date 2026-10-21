@@ -10,7 +10,7 @@ import { feedbackButton, feedbackIssueURL } from './feedback.js';
 import { wordmark } from './wordmark.js';
 import { createGenerationProgress, referenceTrimText, thermalText, sharedGpuText, encoderFileText, encoderFilePath } from './generation_progress.js';
 import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_navigation.js';
-import { agentInterfaceEnabled } from './agent_connect.js';
+import { agentInterfaceState } from './agent_connect.js';
 import { createUpdateNotice, createVersionInfo, productVersion } from './updates.js';
 import { createPortNotice } from './port_notice.js';
 import { reportIssue, reportTipClosed, showReportTip } from './report_issue.js';
@@ -655,7 +655,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const versionInfo = createVersionInfo(cn); tools.append(versionInfo.element); cleanup.push(versionInfo.dispose);
     tools.append(feedbackButton(t), button(t('Settings', '设置'), openSetup, 'fv-quiet'));
     // The Agent's page is the fourth tab, shown where the Agent interface is on; the guide's last step circles it.
-    agentTabReady(agentInterfaceEnabled(api));
+    agentTabReady(agentInterfaceState(api), () => agentInterfaceState(api));
     const navigation = viewSwitch('studio', () => {}, () => showNodes(node, dialog),
         () => openEditorView(node, {studio: dialog}), () => openAutopilot(node, {studio: dialog}));
     // The guide starts after the tab settles: it fixes its steps from the anchors present at that moment.
