@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import secrets
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -287,12 +288,13 @@ class Service:
                 raise ValueError('model_missing')
             value = rules.request(value)
             from ..comfy_assets import resolve_assets
-            resolved = resolve_assets(json.dumps(value['media']), self.input_directory())
+            resolved = resolve_assets(json.dumps([dict(file=row['file'], role=row['role']) for row in value['media']]),
+                                      self.input_directory())
             for i, row in enumerate(value['media']):
                 path = (resolved['references'][i]['path'] if row['role'] == 'reference'
                         else resolved[row['role']])
                 from ..comfy_assets import media_kind
-                if media_kind(path) != 'image':
+                if media_kind(path) != row['kind']:
                     raise ValueError('unsupported_media')
                 row['path'] = path
         with self.mutex:
@@ -370,6 +372,18 @@ class Service:
         except Exception:
             pass
 
+    def video_frames(self, value, folder):
+        """The model reads pictures: a reference video is shown as its middle frame."""
+        for row in value.get('media', ()):
+            if row.get('kind') != 'video':
+                continue
+            self.check()
+            try:
+                from ..agent.media import sample_frames
+                row['path'] = sample_frames(row['path'], Path(folder) / str(row['number']), count=1)[0]['path']
+            except Exception:
+                raise ValueError('unreadable_video') from None
+
     def work(self, root, machine, action, value):
         from ..locking import runtime_lock
         from ..monitoring import save
@@ -394,13 +408,15 @@ class Service:
                     self.check()
                     self.progress(dict(phase='complete'))
                 else:
-                    self.infer(root, machine, descriptor, value)
+                    with tempfile.TemporaryDirectory(prefix='freevideo-prompt-', ignore_cleanup_errors=True) as frames:
+                        self.video_frames(value, frames)
+                        self.infer(root, machine, descriptor, value)
         except InterruptedError:
             self.progress(dict(phase='cancelled'))
         except BlockingIOError:
             self.progress(dict(phase='failed', error='busy'))
         except Exception as error:
-            known = {'disk_space', 'ram_space', 'rewrite_failed', 'split_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
+            known = {'disk_space', 'ram_space', 'unreadable_video', 'rewrite_failed', 'split_failed', 'worker_exit', 'timeout', 'worker_cleanup_failed'}
             self.progress(dict(phase='failed', error='invalid_output' if isinstance(error, rules.InvalidOutput)
                                else str(error) if str(error) in known
                                else 'download_failed' if action == 'install'

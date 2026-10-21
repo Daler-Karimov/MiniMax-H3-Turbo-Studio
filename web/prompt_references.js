@@ -73,6 +73,17 @@ export function referenceItems(node) {
         token: `<${titles[item.kind]} ${counters[item.kind]}>`}));
 }
 
+// What the prompt model can read: pictures and, as one still frame, videos added in Media. Audio and connected
+// nodes are left out, and keep their labels in the scene; the error names why only when nothing is left.
+export function enhancementMedia(items, conditioningLinked = false) {
+    const media = items.filter(row => row.file && ['image', 'video'].includes(row.kind))
+        .map(row => ({file: row.file, role: row.role || 'reference', kind: row.kind, number: row.number}));
+    if (media.length) return media;
+    const connected = conditioningLinked || items.some(row => !row.file);
+    if (connected || items.length) throw new Error(connected ? 'connected_media' : 'audio_media');
+    return media;
+}
+
 export function remapReferences(text, previous, current, removed = '[Removed reference]') {
     const byKey = new Map(current.map(item => [item.key, item.token]));
     const replacement = new Map(previous.map(item => [item.token, byKey.get(item.key) || removed]));

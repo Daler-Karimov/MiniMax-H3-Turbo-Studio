@@ -23,8 +23,13 @@ def request(value):
         raise ValueError('too_many_images')
     roles = []
     for row in media:
-        if (not isinstance(row, dict) or set(row) != {'file', 'role'} or
-                not isinstance(row['file'], str) or row['role'] not in ('first', 'last', 'reference')):
+        # kind and number say which <Picture N> / <Video N> label the scene uses for the row; connected
+        # nodes and audio are left out of the list, so the numbers can skip.
+        if (not isinstance(row, dict) or not {'file', 'role'} <= set(row) <= {'file', 'role', 'kind', 'number'} or
+                not isinstance(row['file'], str) or row['role'] not in ('first', 'last', 'reference') or
+                row.get('kind', 'image') not in ('image', 'video') or
+                (row.get('kind') == 'video' and row['role'] != 'reference') or
+                (type(row.get('number', 1)) is not int or not 1 <= row.get('number', 1) <= 99)):
             raise ValueError('unsupported_media')
         roles.append(row['role'])
     if 'reference' in roles and any(r in roles for r in ('first', 'last')):
@@ -36,7 +41,38 @@ def request(value):
     # Anchor numbering must match the encoder even when the UI added last first.
     if mode != 'ref2va':
         media = sorted(media, key=lambda r: r['role'] != 'first')
+    if len({'number' in row for row in media}) > 1:
+        raise ValueError('unsupported_media')
+    counters, rows = {}, []
+    for row in media:
+        kind = row.get('kind', 'image')
+        counters[kind] = counters.get(kind, 0) + 1
+        rows.append(dict(file=row['file'], role=row['role'], kind=kind, number=row.get('number', counters[kind])))
+    media = rows
+    if len({label(row) for row in media}) != len(media):
+        raise ValueError('unsupported_media')
     return dict(text=prompt, seconds=float(seconds), media=media, mode=mode)
+
+
+LABEL = re.compile(r'<(Picture|Video|Audio) (\d+)>')
+
+
+def label(row):
+    return '<%s %d>' % ('Video' if row['kind'] == 'video' else 'Picture', row['number'])
+
+
+def unseen_labels(value):
+    """Labels the scene uses for media the model cannot look at (audio, connected nodes)."""
+    shown = {label(row) for row in value['media']}
+    found = []
+    for match in LABEL.finditer(value['text']):
+        if match.group(0) not in shown and match.group(0) not in found:
+            found.append(match.group(0))
+    return found
+
+
+def required_labels(value):
+    return [label(row) for row in value['media']] + unseen_labels(value)
 
 
 def instruction(value):
@@ -57,7 +93,8 @@ Dialogue belongs only in the first section, not in the sound sections.
 """
     if value['mode'] == 'ref2va':
         rule += """subject_definitions: Name each visible subject literally <Subject 1>, <Subject 2>, etc.,
-with its appearance and source <Picture N>. Preserve the supplied picture numbering.
+with its appearance and source <Picture N> or <Video N>. Preserve the supplied numbering.
+A video is shown as one still frame.
 summary: [reference generation] State what happens in the requested video.
 retention_analysis: Mark each subject fully_preserved, partially_preserved, attribute_transfer,
 or weak_reference. This describes retained visual attributes, not motion restrictions.
@@ -65,14 +102,18 @@ detailed_description: [Shot 1] Describe the target video, using <Subject N> iden
 """
     else:
         rule += 'integrated_multimodal_description: [Shot 1] Describe the target video.\n'
-        for i, row in enumerate(value['media'], 1):
+        for row in value['media']:
             timestamp = '0.00' if row['role'] == 'first' else f'{value["seconds"]:.2f}'
-            rule += (f'Anchor <Picture {i}> to the {row["role"]} frame at {timestamp} seconds; '
+            rule += (f'Anchor {label(row)} to the {row["role"]} frame at {timestamp} seconds; '
                      'keep its pictured layout at that anchor.\n')
     rule += """overall_soundscape: Environmental sounds, or N/A.
 non_diegetic_music: Music only if requested, otherwise N/A.
 Use only supplied media labels; do not invent audio or video references.
 """
+    unseen = unseen_labels(value)
+    if unseen:
+        rule += ('The scene also uses ' + ', '.join(unseen) + ', which you cannot see. '
+                 'Keep each of those labels exactly as written, where the scene uses it.\n')
     fields = REF_FIELDS if value['mode'] == 'ref2va' else BASE_FIELDS
     return (rule + f'Cover {value["seconds"]:.3f} seconds. All sections are required, in this order: '
             + ', '.join(fields) + f'. Begin with "{fields[0]}:".')
@@ -97,11 +138,12 @@ class InvalidOutput(ValueError):
     def __init__(self, condition, text, value):
         super().__init__('invalid_output')
         draft = text if isinstance(text, str) else ''
+        required = required_labels(value)
+        pictures = [int(each[len('<Picture '):-1]) for each in required if each.startswith('<Picture ')]
         indices = {int(i) for i in re.findall(r'<Picture (\d+)>', draft)}
         self.details = dict(condition=condition, output_characters=len(draft),
-                            missing_pictures=[i for i in range(1, len(value['media']) + 1)
-                                              if f'<Picture {i}>' not in draft],
-                            out_of_range_pictures=sorted(i for i in indices if not 1 <= i <= len(value['media'])),
+                            missing_pictures=sorted(i for i in pictures if f'<Picture {i}>' not in draft),
+                            out_of_range_pictures=sorted(i for i in indices if i not in pictures),
                             retried=False)
 
 
@@ -128,13 +170,14 @@ def validate_output(text, value):
     for minutes, seconds in re.findall(r'\bAt (\d{2}):(\d{2}\.\d{3})', text):
         if int(minutes) * 60 + float(seconds) >= value['seconds']:
             raise InvalidOutput('timestamp_not_before_duration', text, value)
-    for index in re.findall(r'<Picture (\d+)>', text):
-        if not 1 <= int(index) <= len(value['media']):
-            raise InvalidOutput('picture_index_out_of_range', text, value)
-    if re.search(r'<(?:Audio|Video) \d+>', text):
-        raise InvalidOutput('unsupported_audio_video_reference', text, value)
-    for i in range(1, len(value['media']) + 1):
-        if f'<Picture {i}>' not in text:
+    # Only the labels the scene itself uses: the media given, plus audio and connected media it cannot see.
+    required = required_labels(value)
+    for found in LABEL.finditer(text):
+        if found.group(0) not in required:
+            raise InvalidOutput('picture_index_out_of_range' if found.group(1) == 'Picture'
+                                else 'unsupported_audio_video_reference', text, value)
+    for each in required:
+        if each not in text:
             raise InvalidOutput('missing_picture_reference', text, value)
     return dialogue(text, value['text'])
 

@@ -384,14 +384,14 @@ def rewrite(folder, value, stats):
                  persistent_model=False)
     torch, checkpoint = begin(stats)
     from transformers import AutoProcessor
-    from .rules import DIALOGUE_RETRY, InvalidOutput, instruction, language, missing_lines, user_text
+    from .rules import DIALOGUE_RETRY, InvalidOutput, instruction, label, language, missing_lines, user_text
     checkpoint('preprocess')
     preparing = time.monotonic()
     processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
     messages = [{'role': 'system', 'content': instruction(value)}]
     content = []
-    for index, row in enumerate(value['media'], 1):
-        content.extend([{'type': 'text', 'text': f'<Picture {index}> ({row["role"]})'},
+    for row in value['media']:
+        content.extend([{'type': 'text', 'text': f'{label(row)} ({row["role"]})'},
                         {'type': 'image', 'image': open_image(row['path'])}])
     content.append({'type': 'text', 'text': user_text(value)})
     messages.append({'role': 'user', 'content': content})

@@ -22,7 +22,7 @@ import { createRecentVideos } from './studio_recent.js';
 import { createAgentActivity } from './agent_activity.js';
 import { createStudioQueue, randomSeed, turnNodeOn } from './studio_queue.js';
 import { isNetworkTypeError, connectionLostText } from './browser_extension.js';
-import { attachReferencePicker, referenceItems, syncReferencePrompt, referenceInputs, mentionAt, handleNames, mediaRows } from './prompt_references.js';
+import { attachReferencePicker, referenceItems, enhancementMedia, syncReferencePrompt, referenceInputs, mentionAt, handleNames, mediaRows } from './prompt_references.js';
 import { attachTermSuggest } from './prompt_terms.js';
 import { castInRows, expandCast, mentionHandle, mentionState, mentionedIds, withCharacter, MAX_PICTURES_EACH } from './cast_mention.js';
 import { attachMentionOverlay } from './cast_overlay.js';
@@ -749,9 +749,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
         onReport: row => { node.freevideoPromptReportId = row.rewrite_report_id || row.report_id; },
         onChange: () => { rememberPromptDraft(api, node); requestAssets?.refresh(); },
         setText: text => { set(node, 'text', text || (untouched() ? starter : '')); placeholder(); }, context: () => {
-        const items = referenceItems(node);
-        if (linked(node, 'conditioning') || items.some(row => !row.file || row.kind !== 'image')) throw new Error('unsupported_media');
-        return {seconds: Number(value(node, 'seconds')), media: items.map(row => ({file: row.file, role: row.role || 'reference'}))};
+        const media = enhancementMedia(referenceItems(node), linked(node, 'conditioning'));
+        return {seconds: Number(value(node, 'seconds')), media};
     }});
     cleanup.push(() => enhancer.dispose());
     requestAssets = createRequestAssets({t, api, request: () => requestAssetsQuery?.()});
