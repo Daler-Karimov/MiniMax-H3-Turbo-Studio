@@ -511,7 +511,7 @@ class Confirmations:
             os.replace(temporary, self.path)
         return value
 
-    def gate(self, action, *, by, estimate_seconds, refs, question):
+    def gate(self, action, *, by, estimate_seconds, refs, question, shape=None):
         sid, digest = errors.SESSION.get(), errors.CONFIRM.get()
         if by != 'agent' or sid is None or digest is None:
             return
@@ -532,6 +532,8 @@ class Confirmations:
                              refs=refs, digest=digest, state='asked')
                 if estimate_seconds is not None:
                     event['estimate_seconds'] = round(estimate_seconds)
+                # What is about to be made, for the card the user answers; only what is known is written.
+                event.update({key: shape[key] for key in ('width', 'height', 'seconds') if shape and shape.get(key) is not None})
                 row = self.sessions.append(sid, event, by='system')
         raise SessionError('needs_confirmation', 'Waiting for the user',
                            details=[dict(confirm=row['id'], seconds=row.get('estimate_seconds'))])

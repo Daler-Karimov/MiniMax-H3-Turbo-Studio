@@ -133,6 +133,18 @@ export function cardLine(said, job, t) {
     if (job.status === 'running' && (stepped(p) || SAVING.includes(p.phase))) said.last = job;
     return jobLine(said.last || job, t);
 }
+// The generation page's rule: three minutes without a new step or stage and the card says it is still going.
+export const STALL_MS = 180000;
+export const progressKey = job => { const p = job.progress || {}; return JSON.stringify([job.status, p.phase, p.step, p.block, p.fraction]); };
+// The one thing a hidden tab announces in its title, most pressing first: a question, a failure, a finished job.
+// `seen` holds the finished jobs the user already had in front of them when the tab was hidden.
+export function tabNotice(jobs, asked, seen) {
+    if (asked) return 'ask';
+    const fresh = Object.values(jobs).filter(job => !QUIET[job.kind] && !WORKING.includes(job.status) && !seen.has(job.id));
+    if (fresh.some(job => jobMode(job) === 'failed')) return 'failed';
+    return fresh.some(job => jobMode(job) === 'done') ? 'done' : null;
+}
+const TAB_PREFIX = {ask: ['Needs your OK · ', '要确认 · '], failed: ['Failed · ', '出错了 · '], done: ['Done · ', '已完成 · ']};
 export function jobMeta(job, t) {
     const parts = [];
     if (job.width > 0 && job.height > 0) parts.push(`${job.width} × ${job.height}`);
@@ -659,6 +671,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         return row ? row.seconds : null;
     }
     const active = () => !stopped && element.isConnected && !document.hidden && shown();
+    // A hidden page keeps reading, slowly, so that its title can tell what happened.
+    const reading = () => !stopped && element.isConnected && shown();
     const inSelectedChat = () => !creating && (!selectedSession || selectedSession === state.session);
     const composeAllowed = () => inSelectedChat() && state.agent.connected === true;
     const sendingAllowed = () => inSelectedChat() && canSend(state);
@@ -732,6 +746,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         const stop = press('fv-chat-stop', null, () => void cancelJobs([job.id]));
         foot.append(left, stop); info.append(head, middle, foot); item.replaceChildren(box, info);
         const said = {};
+        // Three minutes without a new step or stage: the card says so, once, in the line that names the stage.
+        let signature = null, changed = performance.now(), quiet = false;
+        const stalled = next => {
+            const key = progressKey(next);
+            if (key !== signature) { signature = key; changed = performance.now(); }
+            return next.status === 'running' && performance.now() - changed >= STALL_MS;
+        };
         // The number rides on the water, and goes under the line once there is no room left above it.
         const level = next => {
             const fraction = fractionOf(next);
@@ -742,8 +763,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             const seconds = leftOf(next);
             left.textContent = seconds === null ? '' : about(seconds, t);
         };
-        item.tick = () => level(state.jobs[job.id] || job);
-        return next => {
+        let current = job, draw = null;
+        item.tick = () => { current = state.jobs[job.id] || job; level(current); if (stalled(current) !== quiet) draw?.(current); };
+        return draw = next => {
             const cells = jobParts(next);
             level(next);
             name.textContent = jobName(next, t); meta.textContent = jobMeta(next, t); meta.hidden = !meta.textContent;
@@ -753,8 +775,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             parts.hidden = !cells.length;
             const block = next.progress?.block;
             const where = cardLine(said, next, t);
-            part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : where;
-            step.textContent = cells.length ? where : '';
+            quiet = stalled(next);
+            const waiting = t('Progress has not updated recently; generation is still running.', '进度暂未更新，仍在生成中。');
+            part.textContent = cells.length ? t(`Part ${block.index} / ${block.total}`, `第 ${block.index} / ${block.total} 段`) : quiet ? waiting : where;
+            step.textContent = cells.length ? quiet ? waiting : where : '';
             const going = stopping.has(next.id) || next.status === 'cancelling';
             stop.disabled = going; stop.textContent = going ? t('Stopping…', '正在停止…') : t('Stop', '停止');
             stop.setAttribute('aria-busy', String(going));
@@ -935,7 +959,13 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         };
         buttons.append(press('fv-chat-yes fv-primary', t(...WHITEBOX.generate), answer(true)),
             press('fv-whitebox-edit', t(...WHITEBOX.edit), () => {
-                if (!disabled && whiteboxState(entry) === 'asked') input.focus();
+                if (disabled || whiteboxState(entry) !== 'asked') return;
+                // The summary goes into an empty box with the cursor after it; what the user has already typed stays.
+                const text = entry.whitebox.summary || entry.whitebox.scene_summary || '';
+                if (text && !input.value.trim()) { input.value = text; input.dispatchEvent(new Event('input')); }
+                input.focus();
+                input.setSelectionRange(input.value.length, input.value.length);
+                input.scrollTop = input.scrollHeight;
             }), press('fv-chat-no fv-quiet', t(...WHITEBOX.decline), answer(false)));
         item.replaceChildren(preview, summary, seconds, buttons, status, error);
         return {update(next) {
@@ -994,7 +1024,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             buttons.querySelectorAll('button').forEach(button => { button.disabled = disabled; });
             const question = el('p', null, entry.question);
             const estimate = el('p', 'fv-chat-meta', entry.estimate_seconds > 0 ? about(entry.estimate_seconds, t) : ''); estimate.hidden = !estimate.textContent;
-            item.replaceChildren(question, estimate, buttons);
+            // What is about to be made, written as on the job card; a question that carries no size or length shows only the time.
+            const shape = el('p', 'fv-chat-meta', jobMeta(entry, t)); shape.hidden = !shape.textContent;
+            item.replaceChildren(question, shape, estimate, buttons);
             if (error) {
                 const notice = el('p', 'fv-chat-error', error); notice.setAttribute('role', 'alert');
                 item.append(notice, issueButton(t, () => ({where: CHAT_ISSUE, message: error})));
@@ -1212,9 +1244,9 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         clearTimeout(timer); timer = null;
         if (stopped) return;
         if (busy) { reread = true; return; }
-        if (!active()) return;
+        if (!reading()) return;
         busy = true; reread = false;
-        void readConversations();
+        if (!document.hidden) void readConversations();
         const readSelection = selection, requested = selectedSession;
         let again = false;
         try {
@@ -1262,8 +1294,8 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         known = true;
         // The next read is booked before the page hears of this one, so the page's sync() does not start another.
         const idle = state.agent.connected !== true && !state.active;
-        timer = setTimeout(poll, chatDelay({idle, interval, failures}));
-        render(); report();
+        timer = setTimeout(poll, chatDelay({hidden: document.hidden, idle, interval, failures}));
+        render(); report(); tab();
         if (sendingAllowed()) for (const entry of [...pending]) {
             if (entry.session !== state.session || !entry.automatic || entry.sending || entry.acknowledged) continue;
             await send(entry.text, entry, entry.draft, true);
@@ -1276,7 +1308,27 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         for (const item of log.children) item.tick?.();
         report();
     }, 250);
-    const visible = () => { if (!document.hidden) sync(); };
+    // The title of a hidden tab carries one fixed prefix: no flashing, no counts. It is the page's own title again when the user returns.
+    let titleBase = null, titleShown = null, seen = null;
+    const finished = () => new Set(Object.values(state.jobs).filter(job => !WORKING.includes(job.status)).map(job => job.id));
+    const asking = () => [...state.items.values()].some(entry => entry.type === 'confirm'
+        && (entry.whitebox ? whiteboxState(entry) : answers.get(cardKey(state.session, entry.id)) || state.confirms[entry.id] || entry.state || 'asked') === 'asked');
+    function tab() {
+        if (titleShown !== null && document.title !== titleShown) titleBase = titleShown = null;
+        if (stopped || !document.hidden || !known) {
+            if (titleShown !== null && document.title === titleShown) document.title = titleBase;
+            titleBase = titleShown = null; seen = null; return;
+        }
+        seen ||= finished();
+        const notice = tabNotice(state.jobs, asking(), seen);
+        if (!notice) {
+            if (titleShown !== null) document.title = titleBase;
+            titleBase = titleShown = null; return;
+        }
+        if (titleBase === null) titleBase = document.title;
+        document.title = titleShown = t(...TAB_PREFIX[notice]) + titleBase;
+    }
+    const visible = () => { if (document.hidden) { seen = finished(); tab(); } else { tab(); if (reading()) void poll(); } };
     document.addEventListener('visibilitychange', visible);
     function sync() {
         if (pinned) scroller.scrollTop = scroller.scrollHeight;
@@ -1296,7 +1348,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
             try { await cancelJobs(ids); }
             finally { bulkStopping = false; if (!stopped) { report(); void poll(); } }
         },
-        stop() { closeMenu(); stopped = true; dismissImage?.(); closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
+        stop() { closeMenu(); stopped = true; tab(); dismissImage?.(); closed.abort(); clearInterval(moving); clearTimeout(timer); timer = null;
             document.removeEventListener('visibilitychange', visible); document.removeEventListener('pointerdown', outside, true);
             document.removeEventListener('keydown', keys, true); window.removeEventListener('resize', resize); list.removeEventListener('scroll', listScroll);
             log.querySelectorAll('video').forEach(video => video.pause()); }};

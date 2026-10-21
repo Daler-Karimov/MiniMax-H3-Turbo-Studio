@@ -101,7 +101,9 @@ export function chatData(api) {
     };
 }
 export function chatDelay({hidden = false, phone = false, idle = false, interval = 1500, failures = 0} = {}) {
-    return phone ? (hidden ? 10000 : 2000) : (idle ? Math.max(interval, 3000) : interval) * Math.min(4, 1 + failures);
+    // A page nobody is looking at asks less often; it only has to notice what the tab title announces.
+    if (phone) return hidden ? 10000 : 2000;
+    return Math.max(hidden ? 10000 : 0, idle ? Math.max(interval, 3000) : interval) * Math.min(4, 1 + failures);
 }
 // Serial polling, visibility rescheduling and disposal work without a browser.
 export function chatPoller(read, {delay = () => 2000, error = () => {}, clock = globalThis} = {}) {

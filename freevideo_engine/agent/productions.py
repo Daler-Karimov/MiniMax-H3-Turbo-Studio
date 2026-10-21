@@ -404,6 +404,24 @@ class Productions:
         except Exception:  # Timing is optional; a forecast failure must not reject a film or job.
             return dict(seconds=None, basis=None, reason='unavailable')
 
+    def _shape(self, state, only=None):
+        """Size and length of what a confirmation asks to make: the first shot's canvas, every shot's seconds added up."""
+        try:
+            rows = []
+            for shot in state['shots']:
+                take = next((t for s, t in self._takes(state) if s is shot and not t['stale'] and t['state'] != 'cancelled'), None)
+                if take is None or only not in (None, shot['id']):
+                    continue
+                item = deepcopy(take['spec'])
+                if shot['continues']:
+                    item['continue_from'] = dict(from_job='j000000000000')
+                rows.append(spec.normalize(item, port=self.jobs.port))
+            if not rows:
+                return {}
+            return dict(width=rows[0]['width'], height=rows[0]['height'], seconds=round(sum(row['seconds'] for row in rows), 3))
+        except Exception:  # The card is complete without it; a failure here must not reject a film.
+            return {}
+
     def _join_estimate(self, state, previous=None):
         """Use only successful local joins with the same input geometry and transition."""
         shapes = []
@@ -580,6 +598,7 @@ class Productions:
             self._prepare_estimates(record)
             if self.gate is not None:
                 self.gate('start', by=by, estimate_seconds=self._progress(record)['estimate_seconds'],
+                          shape=self._shape(state),
                           refs={},  # the film gets its ID only when the approved call repeats
                           question='Start shooting %s (%d shots)?' % (_quoted(state['title']), len(state['shots'])))
             result = self._view(record)
@@ -734,7 +753,7 @@ class Productions:
                 if self.gate is not None:
                     shot = next(s for s in state['shots'] if s['id'] == values['shot'])
                     self.gate('reshoot', by=by, estimate_seconds=sum(estimates) if known else None,
-                              refs=dict(drama=identity, shot=shot['id']),
+                              refs=dict(drama=identity, shot=shot['id']), shape=self._shape(state, shot['id']),
                               question='Reshoot shot %d of %s?' % (shot['index'], _quoted(state['title'])))
             if ref:
                 draft['receipts'].append(dict(key=ref, digest=digest, result=result,

@@ -851,6 +851,7 @@ def session_event(*, stored=False, agent_only=False):
             why=text, error=enum(ERRORS)), ('type', 'tool', 'summary', 'state', *(['id'] if stored else []))),
             obj(dict(type={'const': 'confirm'}, id=string(12, pattern=r'^cf[0-9a-f]{10}$'),
                 question=text, estimate_seconds=number(0), state=enum(('asked', 'approved', 'declined')),
+                width=number(0, integer=True), height=number(0, integer=True), seconds=number(0),
                 action=enum(('start', 'reshoot')), refs=obj(dict(drama=PRODUCTION, shot=SLUG)),
                 whitebox=obj(dict(work=SAVED, seconds=number(0), summary=text), ('work',),
                              description='The rendered white-model preview the user is asked to approve.'),

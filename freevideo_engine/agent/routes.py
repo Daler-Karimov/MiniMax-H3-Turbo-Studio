@@ -912,7 +912,8 @@ def register():
                 elif row['type'] == 'confirm':
                     if row['state'] == 'asked':
                         item = dict(base, id=row['id'], question=row.get('question'),
-                                    estimate_seconds=row.get('estimate_seconds'), state='asked')
+                                    estimate_seconds=row.get('estimate_seconds'), state='asked',
+                                    **{key: row[key] for key in ('width', 'height', 'seconds') if row.get(key) is not None})
                         fold['asked'][row['id']] = item
                         fold['items'].append(item)
                     elif row['id'] in fold['asked']:
