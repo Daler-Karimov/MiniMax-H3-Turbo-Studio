@@ -1311,11 +1311,36 @@ def repository_state(path, git, env, revision='HEAD', **options):
         head = subprocess_output.output_external([*prefix, git_dir, 'rev-parse', revision], cwd=folder, env=env, **hidden).strip()
         dirty = subprocess_output.output_external([*prefix, git_dir, 'diff-index', '--cached', '--name-only', 'HEAD'], cwd=folder, env=env, **hidden)
     except (subprocess.CalledProcessError, OSError):
-        if revision != 'HEAD':
+        # Git also refuses a --git-dir this long, so read what is asked from the files.
+        head = stored_head(path)
+        if revision == 'HEAD':
+            return head, ''
+        tree = stored_tree(path, head) if revision == 'HEAD^{tree}' else None
+        if tree is None:
             raise
-        head = io_path(path / '.git' / 'HEAD').read_text(encoding='utf-8').strip()
-        dirty = ''
+        return tree, ''
     return head, dirty
+
+
+def stored_head(path):
+    return io_path(path / '.git' / 'HEAD').read_text(encoding='utf-8').strip()
+
+
+def stored_tree(path, commit):
+    """The tree named by a loose commit object, or None (packed or missing objects)."""
+    import zlib
+    try:
+        if commit.startswith('ref:'):
+            name = commit.split(None, 1)[1]
+            commit = io_path(path / '.git' / name).read_text(encoding='utf-8').strip()
+        raw = zlib.decompress(io_path(path / '.git' / 'objects' / commit[:2] / commit[2:]).read_bytes())
+    except (OSError, ValueError, IndexError, zlib.error):
+        return None
+    header, _, body = raw.partition(b'\0')
+    first = body.split(b'\n', 1)[0]
+    if header.startswith(b'commit ') and first.startswith(b'tree ') and len(first) == 45:
+        return first[5:].decode('ascii')
+    return None
 
 
 def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None):
