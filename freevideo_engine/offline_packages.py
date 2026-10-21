@@ -577,7 +577,7 @@ def download(runtime, source, sampling_caches, progress=lambda **kw: None, cance
                 tail = (tail + line)[-4000:]
                 if cancelled():
                     processes.stop(child)
-                    raise InterruptedError('下载已暂停，已下载的文件已保留，再次开始时将继续下载。')
+                    raise InterruptedError('已暂停下载，已下载的文件保留，再次开始会接着下载。')
                 try:
                     event = json.loads(line)
                 except ValueError:

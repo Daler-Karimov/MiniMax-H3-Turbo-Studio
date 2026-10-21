@@ -1,7 +1,7 @@
 import {continuationUpscale} from './sampling_effort.js';
 export const EXTEND_PROPERTY = 'freevideo_extend';
 export const EXTEND_TEXT = Object.freeze({
-    action: ['Extend', '继续生成'],
+    action: ['Extend', '接着生成'],
     source: ['Continues this video', '接在这条视频后面'],
     remove: ['Remove', '移除'],
     prompt: ['Prompt', '描述'],
@@ -40,7 +40,7 @@ export async function extendSourceExists(api, record) {
 }
 
 export const videoUnavailableText = t => t('This video cannot be opened. If you moved the file, refresh the page.',
-    '无法打开视频。如已移动文件，请刷新页面。');
+    '视频打不开，如果移动过文件，请刷新页面。');
 
 export async function readExtendRecord(api, record) {
     if (record.geometry?.width && record.geometry?.height && (record.geometry.seconds || record.geometry.frames)) return record;

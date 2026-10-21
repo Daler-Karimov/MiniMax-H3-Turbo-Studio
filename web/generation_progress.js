@@ -22,7 +22,7 @@ const SUBACTIVITY = {
     reference: ['Processing reference images and videos', '正在处理参考图片和视频'],
     load: ['Loading the video model', '正在载入视频模型'],
     first: ['Running the first step (it takes longer the first time a size is used or after an update)',
-        '正在进行第一步（首次使用此尺寸或更新后，第一步耗时较长）'],
+        '正在进行第一步（首次使用这个尺寸或更新后，第一步要多花一些时间）'],
     upscale: ['Upscaling the video', '正在放大画面'],
     decoder: ['Preparing video output', '正在准备输出视频'],
     decode: ['Rendering the video', '正在输出视频'],
@@ -105,7 +105,7 @@ const STALL_SECONDS_BY_PHASE = Object.freeze({
 // Stage words the product already uses: settings say 一采 / 二采, results say 解码.
 const ACTIVITY = {
     prepare: ['Preparing', '正在准备'],
-    describe: ['Writing part descriptions', '正在生成各段描述'],
+    describe: ['Writing part descriptions', '正在写各段描述'],
     prompt: ['Processing the prompt', '正在处理提示词'],
     combined: ['Processing the prompt and references', '正在处理提示词和参考素材'],
     load: ['Loading the video model', '正在载入视频模型'],
@@ -230,8 +230,8 @@ function activityLabel(message, t, plan = {}, secondPass = false, references = f
 
 function retryText(retry, t) {
     const reason = {gpu_oom: ['Out of GPU memory', '显存不足'], ram_pressure: ['Out of RAM', '内存不足'],
-        unified_memory: ['Not enough memory', '内存不足']}[retry.kind]
-        || ['Previous attempt did not finish', '上一次尝试未完成'];
+        unified_memory: ['Not enough memory', '内存不够']}[retry.kind]
+        || ['Previous attempt did not finish', '上一次尝试没有完成'];
     if (retry.reuse_sampling === true) return t(`${reason[0]}; the generated result is kept, and a retry is in progress.`,
         `${reason[1]}，已保留生成结果，正在重试。`);
     return t(`${reason[0]}; adjusting settings and retrying.`, `${reason[1]}，正在调整设置后重试。`);
@@ -868,7 +868,7 @@ export function createGenerationProgress(t, now = () => Date.now(), {compact = f
         eta.hidden = remainingSeconds === null;
         // Past the shown time the line says so once, instead of a number that only shrinks.
         late.hidden = !(remainingSeconds === null && remainingRetired && !ended);
-        late.textContent = late.hidden ? '' : t('Taking longer than expected', '耗时超出预计，仍在生成');
+        late.textContent = late.hidden ? '' : t('Taking longer than expected', '比预计久，仍在生成');
         const etaText = remainingSeconds === null ? '' : remainingSeconds >= 60
             ? t(`About ${Math.ceil(remainingSeconds / 60)}\u00a0min left`, `预计还需约 ${Math.ceil(remainingSeconds / 60)}\u00a0分钟`)
             : t('Less than a minute left', '预计还需不到 1\u00a0分钟');

@@ -124,7 +124,7 @@ export function openFeedback(t, { open = openPage, version = productVersion,
     head.append(el('h2', null, t('Feedback', '反馈')), close);
 
     const field = el('textarea'); field.rows = 5; field.maxLength = MAX_TEXT;
-    field.placeholder = t('Describe what could be improved', '请填写改进建议');
+    field.placeholder = t('What could be better?', '哪里可以做得更好？');
     field.setAttribute('aria-label', t('Feedback', '反馈'));
     field.value = readDraft();
 
@@ -132,7 +132,7 @@ export function openFeedback(t, { open = openPage, version = productVersion,
         const row = el('label', 'fv-check'), box = el('input'); box.type = 'checkbox';
         row.append(box, el('span', null, label)); return { row, box };
     };
-    const shotCheck = check(t('Attach a screenshot of this page', '附上本页截图'));
+    const shotCheck = check(t('Attach a screenshot of this page', '附上这一页的截图'));
     const diagCheck = check(t('Include diagnostic info (no prompts or images)', '附上诊断信息（不含提示词和画面）'));
 
     const preview = el('div', 'fv-feedback-shot'); preview.hidden = true;
@@ -164,7 +164,7 @@ export function openFeedback(t, { open = openPage, version = productVersion,
             setPicture(null);
             console.warn('FreeVideo feedback screenshot:', error);
             // Declining the browser's prompt is the user's own answer; anything else is said once.
-            if (error?.name !== 'NotAllowedError') status.textContent = t("Couldn't capture this page. You can submit without it.", '未能截取本页，可不附截图提交。');
+            if (error?.name !== 'NotAllowedError') status.textContent = t("Couldn't capture this page. You can submit without it.", '没能截取这一页，可以不带截图提交。');
         } finally { shotCheck.box.disabled = false; }
     });
     // Read while the box is ticked, so the page can open in the same click as Send.
@@ -174,7 +174,7 @@ export function openFeedback(t, { open = openPage, version = productVersion,
         status.replaceChildren(); diagCheck.box.disabled = true;
         diagnostics = await readDiagnostics(fetchApi);
         diagCheck.box.disabled = false;
-        if (!diagnostics) { diagCheck.box.checked = false; status.textContent = t("Couldn't read the diagnostic info. You can submit without it.", '未能读取诊断信息，可不附诊断信息提交。'); }
+        if (!diagnostics) { diagCheck.box.checked = false; status.textContent = t("Couldn't read the diagnostic info. You can submit without it.", '没能读取诊断信息，可以不带它提交。'); }
     });
     send.onclick = async () => {
         const text = field.value.trim();
@@ -190,16 +190,16 @@ export function openFeedback(t, { open = openPage, version = productVersion,
         const done = await copied;
         status.textContent = reached && truncated
             ? (hadPicture || !done
-                ? t('GitHub is open, but the text was too long and was truncated on GitHub. The full text remains here.', '已打开 GitHub，但文字过长，GitHub 页面中的内容已被截断，完整文字仍保留在此处。')
-                : t('GitHub is open, but the text was too long and was truncated on GitHub. The full text is copied; paste it there to complete it.', '已打开 GitHub，但文字过长，GitHub 页面中的内容已被截断，完整文字已复制，请粘贴补全。'))
+                ? t('GitHub is open, but the text was too long and was cut short there. Your full text stays here.', '已打开 GitHub，但文字过长，那边被截短了，完整文字仍留在这里。')
+                : t('GitHub is open, but the text was too long and was cut short there. The full text is copied; paste it in.', '已打开 GitHub，但文字过长，那边被截短了，完整文字已复制，请粘贴补全。'))
             : !reached
-            ? (done ? t("Couldn't open GitHub. The link is copied; paste it into your browser.", '未能打开 GitHub，链接已复制，请粘贴到浏览器。')
-                : t("Couldn't open GitHub. Please try again later.", '未能打开 GitHub，请稍后重试。'))
+            ? (done ? t("Couldn't open GitHub. The link is copied; paste it into your browser.", '没能打开 GitHub，链接已复制，请粘贴到浏览器。')
+                : t("Couldn't open GitHub. Please try again later.", '没能打开 GitHub，请稍后再试。'))
             : hadPicture && done
-                ? t('GitHub is open and the screenshot is copied. Paste it there, then submit.', '已打开 GitHub，截图已复制，请粘贴后提交。')
+                ? t('GitHub is open and the screenshot is copied. Paste it in, then submit.', '已打开 GitHub，截图已复制，粘贴后提交。')
                 : hadPicture
-                ? t("GitHub is open with the text filled in, but the screenshot couldn't be copied. It can be submitted without the screenshot.", '已打开 GitHub，文字已填好，但截图未能复制，可不附截图提交。')
-                : t('GitHub is open with the text filled in. Review it, then submit.', '已打开 GitHub，文字已填好，请确认后提交。');
+                ? t("GitHub is open with your text filled in, but the screenshot couldn't be copied. Submit it there without it.", '已打开 GitHub，文字已填好，但截图没能复制，可不带截图提交。')
+                : t('GitHub is open with your text filled in. Submit it there.', '已打开 GitHub，文字已填好，确认后提交。');
     };
 
     const stopKeys = isolateDialogKeys(dialog, event => routeDialogKey(event, dialog));

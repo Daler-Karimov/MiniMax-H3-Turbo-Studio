@@ -132,7 +132,7 @@ def error_text(row, zh=False):
     """Product copy stays separate from raw exceptions, URLs and credentials."""
     messages = {
         'rate_limited': ('The update service is busy.', '更新服务繁忙。'),
-        'missing': ('The files for the new version are still being published.', '新版本的文件仍在发布中。'),
+        'missing': ('The files for the new version are still being published.', '新版本的文件还在发布中。'),
         'blocked': ('The update service could not be reached.', '无法访问更新服务。'),
         'connection': ('Could not connect to the download server.', '无法连接下载服务器。'),
         'invalid': ('The downloaded update files are incomplete or damaged.', '下载的更新文件不完整或已损坏。'),
@@ -145,7 +145,7 @@ def error_text(row, zh=False):
     if row.get('retry_at'):
         return text + ('稍后会自动重试，当前版本可以照常使用。' if zh else
                        ' FreeVideo will try again later. You can keep using the current version.')
-    return text + ('请重试，或前往发布页手动下载。' if zh else
+    return text + ('请重试，或去发布页手动下载。' if zh else
                    ' Try again, or download it from the release page.')
 
 

@@ -1,9 +1,9 @@
 name: Suggestion / 建议
-description: Describe the improvement you would like / 请说明希望改进的内容
+description: Tell us what would help / 说说你希望改进什么
 body:
   - type: textarea
     id: idea
     attributes:
-      label: Desired feature / 希望实现的功能
+      label: What would you like to do? / 你希望实现什么？
     validations:
       required: true

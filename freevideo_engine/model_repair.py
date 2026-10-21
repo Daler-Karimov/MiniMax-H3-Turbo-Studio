@@ -27,8 +27,8 @@ FAILURE = (
     '{file} differs from the version FreeVideo tests and was left unchanged. Click {entry} again: '
     'the confirmation page will list this file, and after you confirm, it will be renamed and kept, '
     'and the tested version will be downloaded.',
-    '{file} 与 FreeVideo 测试过的版本不同，本次未作改动。请再次点击“{entry}”：'
-    '确认页会列出该文件，确认后将其改名保留，再下载测试过的版本。',
+    '{file} 与 FreeVideo 测试过的版本不同，这次没有改动它。请再次点击“{entry}”：'
+    '确认页会列出这个文件，确认后将它改名保留，再下载测试过的版本。',
 )
 CLI_FAILURE = FAILURE[0].replace('Click {entry} again', 'Run setup again (./setup.sh, or setup.cmd on Windows)')
 MISMATCH = 'MODEL_MISMATCH_REPAIR'
@@ -36,19 +36,19 @@ MISMATCH_PATH = 'MODEL_MISMATCH_PATH'
 # Where the launcher offers no Repair: the first sentence of FAILURE, then one way out
 # for each reason (failure_details.WITHOUT_REPAIR).
 UNCHANGED = ('{file} differs from the version FreeVideo tests and was left unchanged.',
-             '{file} 与 FreeVideo 测试过的版本不同，本次未作改动。')
+             '{file} 与 FreeVideo 测试过的版本不同，这次没有改动它。')
 BUSY = ('When the current task ends, a Repair button appears here; after you click it and confirm, '
         'FreeVideo renames and keeps this file, then downloads the tested version.',
-        '当前任务结束后，此处将显示“修复”按钮；点击并确认后，FreeVideo 会将该文件改名保留，再下载测试过的版本。')
+        '当前任务结束后，这里会出现“修复”按钮；点击并确认后，FreeVideo 会把这个文件改名保留，再下载测试过的版本。')
 OFFLINE = ('This offline-package installation cannot switch back in one step yet. Move or rename the file below, '
            'then import the Prompt model package (FreeVideo-文本编码器.zip) again on the Installation page.',
-           '离线包安装暂不支持一键换回。请将下方文件移动或重命名，再在“安装”页重新导入“提示词模型（FreeVideo-文本编码器.zip）”包。')
+           '离线包安装暂时不能一键换回。请把下面这个文件移走或改名，再在“安装”页重新导入“提示词模型（FreeVideo-文本编码器.zip）”包。')
 FIRST_INSTALL = (
     '{file} differs from the version FreeVideo tests and was left unchanged. Click Retry installation below: '
     'the confirmation page will list this file, and after you confirm, it is renamed and kept, '
     'and the tested version is downloaded.',
-    '{file} 与 FreeVideo 测试过的版本不同，本次未作改动。请点击下方的“重试安装”：'
-    '确认页会列出该文件，确认后会将其改名保留，再下载测试过的版本。',
+    '{file} 与 FreeVideo 测试过的版本不同，这次没有改动它。请点击下方的“重试安装”：'
+    '确认页会列出这个文件，确认后会将它改名保留，再下载测试过的版本。',
 )
 CHANGED = 'The installation plan changed. Detect configuration again and review the new plan before installing.'
 # A file the review listed changed before setup reached it (the confirmed plan
@@ -60,11 +60,11 @@ CHANGED_WHY = dict(
     other=('The settings, GPU or free disk space changed after you confirmed.',
            '确认之后设置、显卡或磁盘空间有变化。'),
 )
-CHANGED_REPAIR = ('Click Repair again.', '请再次点击“修复”。')
+CHANGED_REPAIR = ('Click Repair again.', '请再点一次“修复”。')
 CHANGED_WAYS = dict(
     busy=('A Repair button appears here when the current task ends. Click it.',
-          '当前任务结束后，此处将显示“修复”按钮，请点击该按钮。'),
-    none=('Click Retry installation below.', '请点击下方的“重试安装”。'),
+          '当前任务结束后，这里会出现“修复”按钮，请点它。'),
+    none=('Click Retry installation below.', '请点下方的“重试安装”。'),
 )
 IDENTITY = ('bytes', 'mtime_ns', 'st_dev', 'st_ino', 'parent_realpath')
 

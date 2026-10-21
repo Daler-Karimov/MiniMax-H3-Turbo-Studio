@@ -20,7 +20,7 @@ from .setup_progress import number, progress_text
 
 
 FIREWALL_HINT = ('Windows will ask for permission. Check "Private networks", then click "Allow access".', 'Windows 会弹出确认框，请勾选“专用网络”，再点“允许访问”。')
-BROWSER_STARTING = ('Still starting. Your browser will open automatically when ready.', '正在启动，就绪后将自动打开浏览器')
+BROWSER_STARTING = ('Still starting. Your browser will open automatically when ready.', '还在启动，好了会自动打开')
 
 
 class Launcher:
@@ -242,7 +242,7 @@ class Launcher:
             if name == 'url':
                 self.listen_entry = entry
                 self.label(body, "With 0.0.0.0 or this computer's LAN IP, devices on the same network can open FreeVideo without the access link.",
-                           '填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备无需访问链接也可打开 FreeVideo。',
+                           '填 0.0.0.0 或本机的局域网 IP 后，同一网络中的设备不需要访问链接就能打开 FreeVideo。',
                            style='Muted.TLabel', wraplength=580).pack(fill='x')
                 if sys.platform == 'win32':
                     self.label(body, FIREWALL_HINT[0], FIREWALL_HINT[1], style='Muted.TLabel', wraplength=580).pack(fill='x')
@@ -258,7 +258,7 @@ class Launcher:
             if variable is self.lan_access:
                 self.ttk.Label(body, textvariable=self.lan_message, style='Muted.TLabel').pack(fill='x')
         self.label(body, 'When on, other devices on the same network can open FreeVideo with the link below. Anyone with the link can use it, so keep it private.',
-                   '开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。持有链接的人均可使用，请勿公开。',
+                   '开启后，同一网络中的其他设备可以用下面的链接打开 FreeVideo。拿到链接的人都能使用，请勿公开。',
                    style='Muted.TLabel', wraplength=580).pack(fill='x')
         if sys.platform == 'win32':
             self.label(body, FIREWALL_HINT[0], FIREWALL_HINT[1], style='Muted.TLabel', wraplength=580).pack(fill='x')
@@ -546,7 +546,7 @@ class Launcher:
                     ('Ready to install', '准备安装'), ('FreeVideo', 'FreeVideo')]
         # One line each. What a control does is stated once, next to the control.
         descriptions = [('Choose how you want to use ComfyUI.', '选择 ComfyUI 的使用方式。'),
-                        ('Download automatically, download manually, or reuse existing models.', '自动下载、手动下载，或复用已有模型。'),
+                        ('Download automatically, download yourself, or reuse existing models.', '自动下载、手动下载，或复用已有模型。'),
                         ('Review, then install.', '确认后开始安装。'),
                         ('Start ComfyUI and open the FreeVideo workflow.', '启动 ComfyUI 并打开 FreeVideo 工作流。')]
         if self.wizard_step == 3:
@@ -565,8 +565,8 @@ class Launcher:
                            (('Installing FreeVideo', '正在安装 FreeVideo'), ('Preparing models and dependencies.', '正在准备模型和运行环境。')),
                 'failed': (('Installation paused', '安装已暂停'), ('Files retained. Details below.', '文件已保留，原因见下方。')),
                 'cancelled': (('Installation paused', '安装已暂停'), ('Downloaded files are reused.', '已下载文件会复用。')),
-                'open': (('Ready', '准备完成'), ('ComfyUI is ready. Open FreeVideo in your browser.', 'ComfyUI 已就绪，可在浏览器中打开 FreeVideo。')),
-                'restart-required': (('Restart required', '需要重启'), ('Restart ComfyUI, then connect below.', '请重启 ComfyUI，然后点击下方连接。')),
+                'open': (('You’re ready', '准备完成'), ('ComfyUI is ready. Open FreeVideo in your browser.', 'ComfyUI 已就绪，可在浏览器中打开 FreeVideo。')),
+                'restart-required': (('One last step', '最后一步'), ('Restart ComfyUI, then connect below.', '请重启 ComfyUI，然后点击下方连接。')),
             }.get(state, (headings[2], descriptions[2]))
         self.heading.configure(text=self.t(*headings[self.wizard_step]))
         self.status.set(self.t(*descriptions[self.wizard_step]))

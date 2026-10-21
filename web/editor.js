@@ -63,36 +63,36 @@ export function editorErrorText(value, t = en => en) {
     const known = {
         chain_part_too_short: t('Each continued part needs at least 10 seconds.', '接续的每段至少 10 秒。'),
         chain_too_long: t('A video can have up to 5 parts.', '一条视频最多 5 段。'),
-        too_long: t('This part is longer than the maximum length. Shorten it and try again.', '这一段超过最长时长，请缩短后重试。'),
-        missing_node: t('Generation is not ready. Restart FreeVideo.', '生成功能尚未就绪，请重新启动 FreeVideo。'),
-        chain_missing: t('Generation could not start. Choose "Generate" again.', '生成未能开始，请再次点击“生成”。'),
-        result_mismatch: t('Could not read the result. Choose "Generate" again.', '未能读取结果，请再次点击“生成”。'),
+        too_long: t('This part is longer than the maximum length. Shorten it and try again.', '这一段超过了最长时长，请缩短后再试。'),
+        missing_node: t('Generation is not ready. Restart FreeVideo.', '生成功能没有就绪，请重新启动 FreeVideo。'),
+        chain_missing: t('Generation could not start. Choose "Generate" again.', '生成没能开始，请再点“生成”。'),
+        result_mismatch: t('Could not read the result. Choose "Generate" again.', '没能读取结果，请再点“生成”。'),
         no_material: t('The media this part uses is missing. Import it again from the library.', '找不到这一段用到的素材，请在素材库重新导入。'),
     };
     if (known[code]) return known[code];
     if (outputNotWritable(whole))
-        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', '输出目录不可写，视频未能保存。请检查这个文件夹的写入权限后重试。');
+        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', '输出目录不可写，视频没能保存。请检查这个文件夹的写入权限后重试。');
     if (/manifest\.json/i.test(whole) && /No such file|not found|Errno 2\b|FileNotFoundError/i.test(whole))
-        return t('The model is not fully installed. ', '模型未完整安装。') + t(...repairAction());
+        return t('The model is not fully installed. ', '模型没有装全。') + t(...repairAction());
     if (['model_missing', 'missing_model', 'model_not_found'].includes(code) || /(?:model|checkpoint|模型).*(?:not found|missing|不存在|缺失)/i.test(raw))
         return t(`Loading the model failed: ${raw || code}`, `加载模型时出错：${raw || code}`);
     if (['timeout', 'timed_out', 'generation_timeout'].includes(code) || /timed?\s*out|timeout|超时/i.test(raw))
-        return t(`${stage} timed out. Try again.`, `${stage}时等待超时，请重试。`);
+        return t(`${stage} timed out. Try again.`, `${stage}时等待超时，请再试一次。`);
     const received = raw || (/^[a-z_]+$/.test(code) ? '' : code);
     return received ? t(`${generating} failed: ${received}`, `${generating}时出错：${received}`)
-        : t(`${generating} failed. Try again.`, `${generating}时出错，请重试。`);
+        : t(`${generating} failed. Try again.`, `${generating}时出错，请再试一次。`);
 }
 function exportErrorText(value, t) {
     if (isNetworkTypeError(value)) return connectionLostText(t);
     const message = [value?.response?.error?.message, value?.response?.error, value?.response?.message, value?.message]
         .find(text => typeof text === 'string' && text.trim() && text !== 'editor_request')?.trim().split(/[\r\n]+/)[0];
     // A bare status code means nothing to the user; the server's own words do.
-    return message ? t(`Export failed: ${message}`, `导出时出错：${message}`) : t('Export failed. Try again.', '导出时出错，请重试。');
+    return message ? t(`Export failed: ${message}`, `导出时出错：${message}`) : t('Export failed. Try again.', '导出时出错，请再试一次。');
 }
 // The save route's own messages are internal English, so only a full disk is named.
 function saveErrorText(value, t) {
-    return value?.reason === 'disk_full' ? t('Saving changes failed: the disk is full. Free some space, then export again.', '保存改动时出错：磁盘空间不足，请释放空间后重新导出。')
-        : t('Saving changes failed. Please export again.', '保存改动时出错，请重新导出。');
+    return value?.reason === 'disk_full' ? t('Saving changes failed: the disk is full. Free some space, then export again.', '保存改动时出错：磁盘空间不够，空出空间后再导出。')
+        : t('Saving changes failed. Please export again.', '保存改动时出错，请再导出一次。');
 }
 function restoreGeneration(record, before, prepared) {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -293,7 +293,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
     function error(value, step = null, out = notify, site = step || 'editor') {
         const code = value?.reason || value?.code || value?.message;
         if (['missing_glyphs', 'MissingGlyphs', 'source_missing'].includes(code)) {
-            out(code === 'source_missing' ? t('A source file is missing. Import it again from the library.', '部分素材的原文件缺失，请在素材库重新导入。')
+            out(code === 'source_missing' ? t('A source file is missing. Import it again from the library.', '有素材的原文件找不到了，请在素材库重新导入。')
                 : t('The chosen font is missing some characters. Choose another font.', '所选字体缺少部分字符，请换一种字体。'));
             return {ok: false, reason: code};
         }
@@ -301,20 +301,20 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (code === 'unsupported') { genbar?.update(null); return; }
         if (['chain_too_long', 'chain_part_too_short'].includes(code)) {
             const [en, zh] = (value.said || []).map(text => typeof text === 'string' && text ? text.slice(0, 200) : null);
-            const text = code === 'chain_too_long' ? t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短。')
-                : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接续生成的每一段至少 10 秒，请延长。');
+            const text = code === 'chain_too_long' ? t(en || 'This video can have up to 5 parts. Make it shorter.', zh || '这条视频最多 5 段，请缩短一些。')
+                : t(en || 'Each continued part must be at least 10 seconds. Make it longer.', zh || '接着生成的每一段至少 10 秒，请加长一些。');
             out(text); return {ok: false, reason: code, say: text};
         }
         if (['busy', 'locked', 'text', 'audio_full', 'overlap', 'range', 'no_audio'].includes(code)) {
             if (['locked', 'audio_full', 'overlap', 'range'].includes(code)) tracks?.flashBlocked?.(value.displayFrame);
             const said = {busy: t('This part is generating.', '这一段正在生成。'), locked: t('This track is locked.', '这条轨道已锁定。'),
-                text: t('Write a description first.', '请先填写描述。'), overlap: t('This position is occupied. Use an empty position.', '此处已有片段，请放到空白处。'),
-                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '此处两条声音轨均已占满，请先移开一段声音。'),
-                no_audio: t('This clip has no sound. Please choose one with sound.', '这个素材没有声音，请选择有声音的素材。')}[code];
+                text: t('Write a description first.', '先写一句描述。'), overlap: t('That spot is taken. Use an empty spot.', '这里已经有片段了，请放到空白处。'),
+                audio_full: t('Both audio tracks are full here. Move an audio clip first.', '这里两条声音轨都满了，请先挪开一段声音。'),
+                no_audio: t('This clip has no sound. Please choose one with sound.', '这个素材没有声音，请选一段有声音的。')}[code];
             if (said) out(said);
             return {ok: false, reason: code};
         }
-        const text = step === 'generate' ? editorErrorText(value, t) : step === 'export' ? exportErrorText(value, t) : t('Could not complete. Try again.', '未完成，请重试');
+        const text = step === 'generate' ? editorErrorText(value, t) : step === 'export' ? exportErrorText(value, t) : t('Could not complete. Try again.', '没有完成，请重试');
         out(text, step === 'export' ? EXPORT_ISSUE : EDITOR_ISSUE, failureKind(site, value)); return {ok: false, reason: code, say: text};
     }
     const store = createEditorStore(api, {t, notify, standIn: given?.generationStandIn, onGenerationReady: ready => {
@@ -461,7 +461,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (!clips.length) { held.shift(); markHeld(entry.ids, false); rememberView(); continue; }
                 const selection = {kind: 'clip', ids: clips.map(clip => clip.id)}, before = partBefore(Math.min(...clips.map(clip => clip.start)));
                 held.shift(); markHeld(entry.ids, false); rememberView();
-                if (before && !before.source && before.pending && !before.job) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段未完成，这一段未开始。')); continue; }
+                if (before && !before.source && before.pending && !before.job) { genbar?.say(t('The part before did not finish, so this one did not start.', '上一段没有完成，这一段没有开始。')); continue; }
                 try { await actions.generate({text: entry.text, selection}); }
                 catch (value) { const reason = error(value, 'generate'); if (reason && !['chain_too_long', 'chain_part_too_short'].includes(reason.reason)) genbar?.say(reason.say); }
             }
@@ -956,12 +956,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             else if (!actions.supportedSelection(selection)) {
                 const moved = emptySpot(selection);
                 if (!moved) return {say: t('Choose an empty spot on the timeline.', '请在时间线上选一段空白。')};
-                selection = state.select(moved); said = t('Moved to the next empty spot.', '已移到后面的空位。'); genbar?.say(said);
+                selection = state.select(moved); said = t('Moved to the next empty spot.', '已挪到后面的空位。'); genbar?.say(said);
             }
             let used = null;
             if (!text.trim() && actions.needsText(selection)) {
                 const found = nearbyText(selectionRange(selection).start);
-                if (!found) return {say: [said, t('Write a description first.', '请先填写描述。')].filter(Boolean).join(' '), focus: true};
+                if (!found) return {say: [said, t('Write a description first.', '先写一句描述。')].filter(Boolean).join(' '), focus: true};
                 text = found.text; used = found.before ? t('Used the description of the part before.', '沿用了上一段的描述。')
                     : t('Used the latest description.', '沿用了最近一次的描述。');
                 state.setRangeText(text); genbar?.setText(text);
@@ -1102,9 +1102,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (value.state === 'failed') {
                 if (['source_missing', 'missing_glyphs', 'MissingGlyphs'].includes(value.reason || value.code)) error(value, null, undefined, 'export');
                 else notify(value.reason === 'not_writable' ? t('Export failed: the output folder cannot be written to. Check that the folder can be written to, then retry.', '导出时出错：输出目录不可写。请检查这个文件夹的写入权限后重试。')
-                    : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不足，请释放空间后重新导出。')
-                    : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：部分素材无法读取，请在素材库重新导入。')
-                    : t('Export failed. Try again.', '导出时出错，请重试。'), EXPORT_ISSUE, failureKind('export', value));
+                    : value.reason === 'disk_full' ? t('Export failed: the disk is full. Free some space, then export again.', '导出时出错：磁盘空间不够，空出空间后再导出。')
+                    : value.reason === 'unreadable' ? t('Export failed: a source file cannot be read. Import it again from the library.', '导出时出错：有素材读不出来，请在素材库重新导入。')
+                    : t('Export failed. Try again.', '导出时出错，请再试一次。'), EXPORT_ISSUE, failureKind('export', value));
             }
             if (value.state === 'cancelled') notify(t('Export cancelled. No unfinished file is kept.', '已取消导出，没有留下不完整的文件。'));
             window.FreeVideoNotifyTaskDone?.({kind: 'export', id: value.id, ok: value.state === 'done'});
@@ -1327,7 +1327,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 releaseStamp(); await queue.flush();
                 if (queue.dirty && !queue.locallyRetained && !discardOnSwitch) {
                     discardOnSwitch = true; closing = false; element.inert = false; closePromise = null;
-                    saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '尚未保存，再次切换将丢失最近的改动');
+                    saveWarning.textContent = t('Not saved yet. Switching again will lose recent changes.', '还没保存好，再切换会丢掉最近的改动');
                     saveWarning.hidden = false; return false;
                 }
                 if (!queue.dirty && emptyEdit()) {

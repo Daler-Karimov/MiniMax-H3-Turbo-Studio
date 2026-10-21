@@ -113,8 +113,8 @@ export async function openExportDialog({parent, state, sources, t = en => en, on
         size.short == null ? t('Same as the edit', '与剪辑相同') : `${size.width} × ${size.height}`]));
     group('quality', t('Quality', '画质'), [['high', t('High', '高')], ['standard', t('Standard', '标准')], ['small', t('Small file', '省空间')]]);
     group('range', t('Range', '范围'), [['whole', t('Whole edit', '整条')], ['selected', t('Selected range', '选中的范围')]]);
-    const contentRow = group('only', t('Content', '内容'), [[null, t('Video and audio', '画面和声音')], ['sound', t('Audio only', '仅声音')]]);
-    const formatRow = group('sound_format', t('Audio only', '仅声音'), [['m4a', 'M4A'], ['wav', 'WAV']], contentRow);
+    const contentRow = group('only', t('Content', '内容'), [[null, t('Video and audio', '画面和声音')], ['sound', t('Audio only', '只声音')]]);
+    const formatRow = group('sound_format', t('Audio only', '只声音'), [['m4a', 'M4A'], ['wav', 'WAV']], contentRow);
     formatRow.classList.add('fv-ed-export-format'); formatRow.querySelector('.fv-ed-export-label').hidden = true;
     const chosenRange = () => value.range === 'selected' ? exportRange(state.record, state.selection) : null;
     const affected = () => croppedParts(state.record, sources, chosenRange());

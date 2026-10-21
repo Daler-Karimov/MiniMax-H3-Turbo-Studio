@@ -125,8 +125,8 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
         busy: t('Finish the current queue before enhancing this prompt.', '请等待当前队列完成后再改写。'),
         prompt_required: t('Type a prompt first; enhancement rewrites it before generating.', '请先输入提示词，生成前会自动改写。'),
         setup_required: t('Complete FreeVideo installation first.', '请先完成 FreeVideo 安装。'),
-        model_missing: t('Download the optional model to enable enhancement.', '下载可选模型后可启用。'),
-        download_failed: t('Download paused. Retry to resume.', '下载已暂停，点击“重试”可继续。'),
+        model_missing: t('Download the optional model to enable enhancement.', '下载可选模型后即可启用。'),
+        download_failed: t('Download paused. Retry to resume.', '下载已暂停，重试即可继续。'),
         disk_space: t('Not enough disk space for the optional model.', '可选模型的磁盘空间不足，请清理后重试。'),
         ram_space: t(`This model needs about ${gib(error?.ramBytes || ramBytes)} GiB of available RAM to load. You can keep using the original.`, `此模型加载需约 ${gib(error?.ramBytes || ramBytes)} GiB 可用内存，可先使用原文生成。`),
         unsupported_media: t('Use images added in Media for enhancement; connected nodes, video and audio are not supported yet.', '增强暂支持在素材中添加的图片；连接节点、视频和音频暂不支持。'),
@@ -275,7 +275,7 @@ export function createPromptEnhancer({node, input, editor, api, context, setText
     function useOriginal(error) {
         console.warn('FreeVideo prompt rewrite failed; using the original prompt.', error?.message);
         versions.value.selected = 'original'; apply();
-        show(t('Could not enhance; generated with the original.', '未能改写，已使用原文生成。'), 'note');
+        show(t('Could not enhance; generated with the original.', '没能改写，已用原文生成。'), 'note');
     }
     return {element, async beforeGenerate() {
         if (running) {

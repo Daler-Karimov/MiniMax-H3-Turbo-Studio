@@ -24,7 +24,7 @@ class ChainTooLong(ValueError):
     def __init__(self, parts, limit):
         super().__init__('This video can have up to %d parts. Make it shorter.' % limit)
         self.parts, self.limit = parts, limit
-        self.message_zh = '这条视频最多 %d 段，请缩短。' % limit
+        self.message_zh = '这条视频最多 %d 段，请缩短一些。' % limit
 
 
 class ChainPartTooShort(ValueError):
@@ -34,7 +34,7 @@ class ChainPartTooShort(ValueError):
     def __init__(self, seconds, limit):
         super().__init__('Each continued part must be at least %d seconds. Make it longer.' % limit)
         self.seconds, self.limit = seconds, limit
-        self.message_zh = '接续生成的每一段至少 %d 秒，请延长。' % limit
+        self.message_zh = '接着生成的每一段至少 %d 秒，请加长一些。' % limit
 
 
 def _work_key(path):

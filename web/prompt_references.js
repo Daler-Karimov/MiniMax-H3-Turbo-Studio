@@ -203,7 +203,7 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
         if (!matches.length) {
             const empty = document.createElement('div'); empty.className = 'fv-reference-empty';
             empty.textContent = invalid ? t('Check your media selection.', '请检查素材用途是否冲突。')
-                : available.length || everyone.length ? t('No matching characters or media', '没有匹配的角色或素材') : t('Add reference media to use @', '添加参考素材后可使用 @');
+                : available.length || everyone.length ? t('No matching characters or media', '没有匹配的角色或素材') : t('Add reference media to use @', '添加参考素材后即可使用 @');
             list.append(empty);
             if (!available.length && !everyone.length && !invalid && addMedia) {
                 const add = document.createElement('button'); add.type = 'button'; add.textContent = t('Add media', '添加素材');

@@ -5,12 +5,12 @@ import { agentGet, agentPost } from './agent_session.js';
 export const SCENE_TEXT = Object.freeze({
     icon: 'M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z',
     label: ['Ready-made', '现成场景'], name: ['Start from a ready-made white-model scene', '用现成的白模场景开始'],
-    preparing: ['Preparing the white model…', '正在准备白模…'], failed: ['The white model could not be made: ', '白模生成失败：'],
+    preparing: ['Preparing the white model…', '正在准备白模…'], failed: ['The white model could not be made: ', '白模没有做成：'],
     rendering: ['Rendering the white model…', '正在渲染白模…'], retry: ['. Try again.', '。请重试。'],
-    bare: ['The white model could not be made. Try again.', '白模生成失败，请重试。'],
-    noPage: ['The white model could not be made: the renderer is not running in this page. Reload the page and try again.', '白模生成失败：此页面中的渲染未运行。请刷新页面后重试。'],
-    notStarted: ['The white model could not be made: rendering did not start within 3 minutes. Try again.', '白模生成失败：渲染未在 3 分钟内开始。请重试。'],
-    timeout: ['The white model could not be made: rendering did not finish within 3 minutes. Try again.', '白模生成失败：渲染未在 3 分钟内完成。请重试。'],
+    bare: ['The white model could not be made. Try again.', '白模没有做成。请重试。'],
+    noPage: ['The white model could not be made: the renderer is not running in this page. Reload the page and try again.', '白模没有做成：这个页面里的渲染没有运行。请刷新页面后重试。'],
+    notStarted: ['The white model could not be made: rendering did not start within 3 minutes. Try again.', '白模没有做成：三分钟内渲染没有开始。请重试。'],
+    timeout: ['The white model could not be made: rendering did not finish within 3 minutes. Try again.', '白模没有做成：渲染三分钟内没有完成。请重试。'],
 });
 
 export async function sceneList(api) {

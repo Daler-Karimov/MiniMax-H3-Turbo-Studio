@@ -241,7 +241,7 @@ class Desktop:
 
     def generate_page(self, page):
         _, page = self.scrolled(page, 1)
-        self.label(page, 'Describe your video', '描述要生成的视频').pack(anchor='w', pady=(0, 10))
+        self.label(page, 'Describe your video', '描述你想生成的视频').pack(anchor='w', pady=(0, 10))
         prompt_card = Card(page, padding=branding.space(3), radius=branding.RADIUS_MD)
         prompt_card.pack(fill='x')
         self.prompt = self.tk.Text(prompt_card.body, height=6, font=(branding.FAMILY, branding.STRONG),
@@ -516,7 +516,7 @@ class Desktop:
         if path and io_path(path).exists():
             os.startfile(plain(path))
         else:
-            messagebox.showinfo('FreeVideo', self.t('No result yet.', '暂无结果。'), parent=self.window)
+            messagebox.showinfo('FreeVideo', self.t('No result yet.', '目前还没有结果。'), parent=self.window)
 
     @plain_errors
     def open_report(self):
@@ -618,7 +618,7 @@ class Desktop:
             if finished:
                 pieces.append(self.t('Complete', '完成') if value['state'] == 'complete' else self.t('Stopped', '已停止'))
             elif remaining == 0:
-                pieces.append(self.t('Finalizing', '正在完成'))
+                pieces.append(self.t('Finalizing', '正在收尾'))
             elif remaining is not None:
                 pieces.append(self.t('ETA ~', '预计剩余约 ') + duration(remaining))
             else:

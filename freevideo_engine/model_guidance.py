@@ -46,10 +46,10 @@ DOWNLOAD_COPY = {
     'error_write': ('The download list could not be saved in this folder: {reason}', '下载清单未能保存到这个文件夹：{reason}'),
     'error_read': ('FreeVideo does not have permission to read some files in the selected folder. Choose another folder, or download the files again without administrator rights.',
                    'FreeVideo 没有权限读取所选文件夹里的部分文件。请选择其他文件夹，或不使用管理员身份重新下载。'),
-    'write_permission': ('this account cannot write to it. Choose another folder.', '当前账户没有写入权限，请选择其他文件夹。'),
+    'write_permission': ('this account cannot write to it. Choose another folder.', '当前账户没有写入权限，请换一个文件夹。'),
     'write_disk_full': ('the drive is full.', '磁盘空间不足。'),
     'write_path_long': ('the path is too long. Choose a folder closer to the top of the drive.', '路径太长，请选择层级更浅的文件夹。'),
-    'write_other': ('Choose another folder and try again.', '请更换文件夹后重试。'),
+    'write_other': ('Choose another folder and try again.', '请换一个文件夹再试一次。'),
     'video': NAMES['video'], 'text': NAMES['text'], 'decoder': NAMES['decoder'], 'sampling': NAMES['sampling'],
     'readme': (
         'FreeVideo download list\n'
@@ -71,7 +71,7 @@ DOWNLOAD_COPY = {
         '\n'
         '也可以把 urls.txt 导入其他下载工具。urls.txt 用的是设置里选中的下载源（选“自动”时用 Hugging Face）；个别文件只能从 Hugging Face 下载。请把下载的文件都放在这个文件夹或它的子文件夹里。\n'
         '\n'
-        '下载完成后，回到启动器点“使用已下载的文件夹”，再点“检查并继续”。FreeVideo 按文件大小和完整校验值识别文件，文件名不同不影响识别；缺少或损坏的文件会照常下载。\n'
+        '下载完成后，回到启动器点“使用已下载的文件夹”，再点“检查并继续”。FreeVideo 按文件大小和完整校验值识别文件，文件名不同也可以；缺少或损坏的文件会照常下载。\n'
         '\n'
         'SHA256SUMS 里的路径是 aria2 的存放路径。用 urls.txt 下载时文件名可能不同，不影响使用。\n'
         '\n'

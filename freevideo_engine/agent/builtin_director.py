@@ -317,7 +317,7 @@ def plan(story, *, ask, shots=(3, 8)):
     """Try at most three screenplay candidates, never inventing a fallback."""
     if (not isinstance(story, str) or not story.strip() or not isinstance(shots, (tuple, list)) or len(shots) != 2
             or any(type(n) is not int for n in shots) or not 1 <= shots[0] <= shots[1] <= 40):
-        return Problem('plan_failed', '故事或镜头数量不合适，请补充后重试。')
+        return Problem('plan_failed', '故事或镜头数量不合适，请补充后再试。')
     schema = deepcopy(_PLAY)
     schema['properties']['shots'].update(minItems=shots[0], maxItems=shots[1])
     prompt = ('把下面的故事写成可拍摄的分镜剧本，保持人物和故事事实。镜头数 %d–%d。'
@@ -337,7 +337,7 @@ def plan(story, *, ask, shots=(3, 8)):
             prompt += '\ndrama.check problems: ' + _dump(error.problems)
             continue
         return candidate
-    return Problem('plan_failed', '未能将故事整理为合格的剧本，请补充镜头内容后重试。')
+    return Problem('plan_failed', '没能把故事排成合格剧本，请补充镜头内容后再试。')
 
 
 def _selectable(shot):
@@ -369,7 +369,7 @@ def judge(shot_view, sheets, *, ask):
         return Decision('keep', shot['id'], '保留已选定的版本。')
     if shot.get('state') in ('waiting', 'shooting'):
         return Decision('wait', shot['id'], '等待这一镜的各版完成。')
-    uncertain = Decision('ask_user', shot['id'], '无法确定，请选择一个版本。')
+    uncertain = Decision('ask_user', shot['id'], '拿不准，请你挑一版。')
     takes = _selectable(shot)
     if not takes:
         return uncertain
@@ -416,7 +416,7 @@ def judge(shot_view, sheets, *, ask):
 
 def revise(view, sentence, *, ask):
     """Translate one request into one checked reshoot, or ask for clarification."""
-    unclear = Problem('unclear', '请说明要修改哪一镜，以及画面或时长的修改方式。')
+    unclear = Problem('unclear', '请说明要改哪一镜，以及画面或时长要怎样改？')
     if not isinstance(sentence, str) or not sentence.strip():
         return unclear
     ids = [s['id'] for s in view['shots']]
@@ -427,7 +427,7 @@ def revise(view, sentence, *, ask):
     prompt = ('把用户的修改意见变成一条 reshoot 操作。只能修改一镜的 action/lines/camera/framing/prompt/seconds，'
               '或用 note 补充生成意见；不能增删或重排镜头，不能改接续关系，不能声称完成音频编辑。'
               '序号按 shots 顺序，结尾指最后一镜。目标不唯一、要求不支持或时长没有可确定的数值时，'
-              '返回 unclear 并用一句中文提问，不猜。\n拍摄记录：' + _dump(view['screenplay'])
+              '返回 unclear 并用一句中文反问，不猜。\n拍摄记录：' + _dump(view['screenplay'])
               + '\n镜头编号：' + _dump(ids) + '\n用户意见：' + sentence)
     reply = _ask(ask, prompt, [], schema)
     if reply is None:
@@ -493,7 +493,7 @@ def run(tools, production_id, *, ask, stop, wait=25):
                         continue
                     snapshot = [(s['id'], s['chosen']) for s in view['shots']]
                     tools.finish(production_id, by='builtin', ref=_ref(production_id, 'finish', snapshot))
-                    yield dict(shot=None, action='finish', reason='每一镜均已选定，开始拼接成片。')
+                    yield dict(shot=None, action='finish', reason='每镜已选定，开始接成影片。')
                     return
                 if action not in ('choose', 'reshoot'):
                     continue
@@ -542,7 +542,7 @@ def run(tools, production_id, *, ask, stop, wait=25):
                 conflicts += 1
                 errors, since = 0, None
                 if conflicts >= 5:
-                    yield dict(shot=None, action='error', reason='多次与已有选择冲突，已停止：' + code)
+                    yield dict(shot=None, action='error', reason='多次和已有的选择冲突，已停止：' + code)
                     return
                 continue
             errors += 1

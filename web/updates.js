@@ -5,7 +5,7 @@ import { issueButton } from './issue_button.js';
 // Every platform downloads from one release: the latest vX.Y.Z.
 const releasePage = 'https://github.com/FlashML-org/FreeVideo/releases/latest';
 const storageKey = 'freevideo.dismissed-update';
-const CANCEL_FAILURE = {en: 'Cancellation failed. Please use the launcher.', zh: '取消失败，请在启动器中操作'};
+const CANCEL_FAILURE = {en: 'Cancellation failed. Please use the launcher.', zh: '取消没成功，请在启动器里操作'};
 const listeners = new Set();
 // Launcher phases during which the server may disappear and come back updated.
 const working = new Set(['checking', 'downloading', 'waiting', 'restarting', 'engine']);
@@ -160,10 +160,10 @@ export function createUpdateNotice(cn) {
             text = t(CANCEL_FAILURE.en, CANCEL_FAILURE.zh);
         } else if (busy) {
             text = model === 'switching' || (model && offline)
-                ? t('Switching to the faster model. This page reconnects automatically.', '正在切换到更快的模型，页面会自动恢复。')
-                : model === 'waiting' ? t('The faster model is ready. FreeVideo switches after the current video.', '更快的模型已下载完成，当前视频完成后自动切换。')
+                ? t('Switching to the faster model. This page reconnects by itself.', '正在切换到更快的模型，页面会自动恢复。')
+                : model === 'waiting' ? t('The faster model is ready. FreeVideo switches after the current video.', '更快的模型已下载好，当前视频完成后自动切换。')
                 : offline || phase === 'restarting' || phase === 'engine'
-                ? t('Restarting FreeVideo to finish the update. The page refreshes automatically.', '正在重启 FreeVideo 完成更新，页面会自动刷新。')
+                ? t('Restarting FreeVideo to finish the update. The page refreshes by itself.', '正在重启 FreeVideo 完成更新，页面会自动刷新。')
                 : phase === 'downloading' ? t('Downloading the update', '正在下载更新') + percent
                 : phase === 'waiting' ? t('The update installs as soon as the current video finishes.', '当前视频生成完成后会自动更新。')
                 : t('Checking for updates…', '正在检查更新…');

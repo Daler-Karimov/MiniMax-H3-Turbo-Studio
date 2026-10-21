@@ -158,14 +158,14 @@ export async function openShare(record,t){
             if(!exported){
                 const response=await api.fetchApi('/freevideo/share/video',{method:'POST',headers:{'Content-Type':'application/json'},signal:exportRequest.signal,
                     body:JSON.stringify({id,template,rect:shape.rect})});
-                if(response.status===409)throw Object.assign(new Error(t('Another export is running. Try again shortly.','已有分享视频正在导出，请稍后重试。')),{reportable:false});
+                if(response.status===409)throw Object.assign(new Error(t('Another export is running. Try again shortly.','已有分享视频正在导出，请稍后再试。')),{reportable:false});
                 if(!response.ok)throw new Error(t('Export could not complete. Try again.','分享视频导出未完成，请重试。'));
                 exported=await response.json();
             }
             if(disposed)return;
             const a=el('a');a.href=api.apiURL('/freevideo/share/video?'+new URLSearchParams(exported));a.download='';a.click();say('');
         }catch(error){if(!disposed){
-            say(error.name==='AbortError'?'':kind==='image'?t('Could not save the share image. Try again.','分享图保存失败，请重试。'):error.message,error.reportable!==false);
+            say(error.name==='AbortError'?'':kind==='image'?t('Could not save the share image. Try again.','分享图没有保存成功，请重试。'):error.message,error.reportable!==false);
         }}
         finally{busy=false;if(!disposed){save.disabled=false;cancel.hidden=true;delete dialog.dataset.busy;tabs.querySelectorAll('button').forEach(b=>b.disabled=false);}}
     }

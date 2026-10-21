@@ -221,7 +221,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     panel.append(props, layersBox);
     main.append(toolbar, workspace, panel);
     const confirmBar = el('div', null, 'fv-ie-confirm'); confirmBar.hidden = true;
-    confirmBar.append(el('span', t('Leave without saving? Your changes to this image will be lost.', '确定不保存并离开？对这张图片的修改将丢失。')),
+    confirmBar.append(el('span', t('Leave without saving? Your changes to this image will be lost.', '不保存就离开？对这张图的修改会丢失。')),
         button(t('Discard', '放弃修改'), null, () => close(null), 'fv-ie-button fv-ie-danger'),
         button(t('Keep editing', '继续编辑'), null, () => { confirmBar.hidden = true; save.focus(); }));
     const status = el('div', '', 'fv-ie-status'); status.setAttribute('role', 'status');
@@ -538,7 +538,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         let text = '';
         if (['eraser', 'heal', 'clone', 'blur'].includes(tool) && !rasterKinds.has(layer.kind)) text = t('Pick an image or paint layer to work on its pixels.', '请选择图片图层或绘画图层再处理像素。');
         else if (tool === 'clone' && !opts.clone.source) text = t('Alt-click to set the source, then paint.', '先按住 Alt 点击设置取样点，再涂抹。');
-        else if (tool === 'move' && layer.locked && doc.layers.length > 1) text = t('The original image is locked. Click another layer to move it.', '原图图层已锁定；点击其他图层后可移动。');
+        else if (tool === 'move' && layer.locked && doc.layers.length > 1) text = t('The original image is locked. Click another layer to move it.', '原图图层已锁定；点击其他图层即可移动。');
         else if (tool === 'lasso' && opts.lasso.type === 'polygon') text = t('Click to add corners; double-click or press Enter to close.', '单击添加顶点；双击或按 Enter 闭合。');
         hint.textContent = text; hint.hidden = !text;
     }
@@ -922,7 +922,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             commitInserted(commands.addImageLayer(doc, {src: file, nw: img.naturalWidth, nh: img.naturalHeight,
                 name: label || file.split('/').pop()}));
             select('move');
-        } catch { message(t('The image could not be added. Choose another one.', '无法添加图片，请更换图片。'), ['Image editor', '图片编辑器']); }
+        } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。'), ['Image editor', '图片编辑器']); }
     }
     filePicker.onchange = async () => {
         const file = filePicker.files?.[0]; filePicker.value = '';
@@ -1031,7 +1031,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         // [id, label, size or null when it would not make the picture smaller, why not]
         const presets = [
             ...(target ? [['video', t('Video size', '视频尺寸'), video < 1 ? sized(video) : null,
-                t('The picture is no larger than the video', '图片尺寸已不大于视频')]] : []),
+                t('The picture is no larger than the video', '图片已经不比视频大')]] : []),
             ['half', '50%', sized(.5), ''],
             ['long', t('Long side 2048', '长边 2048'), long > 2048 ? sized(2048 / long) : null,
                 t('The long side is already 2048 px or less', '长边已经不超过 2048 像素')],
@@ -1083,7 +1083,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             if (reason === 'dimensions') { text = t('Enter whole numbers from 1 to 20000.', '请输入 1 到 20000 的整数。'); warn = true; }
             else if (reason === 'enlargement') { text = t('You can enlarge up to 200% of the original.', '最多放大到原来的 200%。'); warn = true; }
             else if (reason === 'pixels') { text = t('Up to 64 megapixels; reduce the width or height.', '最多 6400 万像素，请减小宽或高。'); warn = true; }
-            else if (reason === 'unchanged') { text = t('Same as the current size.', '与当前尺寸相同。'); }
+            else if (reason === 'unchanged') { text = t('The same size as now.', '和现在一样大。'); }
             else if (kx > 1 + 1e-9 || ky > 1 + 1e-9) {
                 text = t(`${share()}; enlarging makes the picture softer.`, `${share('放大到')}，画面会变模糊。`); warn = true;
             } else if (target && presets[0][2] && w === presets[0][2][0] && h === presets[0][2][1]) {
@@ -1149,7 +1149,7 @@ export async function openImageEditor({source = null, name = source || '', targe
         if (layer) commit(pixelCommand(doc, layer.id, d => commands.fillSelection(d, layer.id, color, selection)));
     }
     function clearSelection() {
-        if (!selection) { message(t('Nothing is selected.', '尚无选区。')); return; }
+        if (!selection) { message(t('Nothing is selected.', '还没有选区。')); return; }
         const layer = pixelLayer();
         if (layer && selection) commit(pixelCommand(doc, layer.id, d => commands.clearSelection(d, layer.id, selection)));
     }
@@ -1249,13 +1249,13 @@ export async function openImageEditor({source = null, name = source || '', targe
             if (!pointInfo?.ready) { flashPointDownload(); return null; }
             if (pointBusy) return null;
             const how = mode || opts.point.mode;
-            pointBusy = true; message(t('Finding the object…', '正在识别物体…'));
+            pointBusy = true; message(t('Finding the object…', '正在找出物体……'));
             segmentAt(renderer, genClient, doc, src, [u, v]).then(file => {
                 if (doc.layers.indexOf(src) < 0) return;
                 addPart({shape: 'mask', layer: src.id, file, upto: src.ops.length}, how); message('');
             }).catch(error => {
-                message(error?.code === 'busy_video' ? t('A video is generating. Try again when it finishes.', '视频正在生成，请在完成后重试。')
-                    : t('Could not find an object here. Try again.', '未能在此处识别出物体，请重试。'), error?.code === 'busy_video' ? null : ['Image object selection', '图片智能抠图']);
+                message(error?.code === 'busy_video' ? t('A video is generating. Try again when it finishes.', '视频正在生成，完成后再试。')
+                    : t('Could not find an object here. Try again.', '没能在这里找出物体，请再试一次。'), error?.code === 'busy_video' ? null : ['Image object selection', '图片智能抠图']);
             }).finally(() => { pointBusy = false; });
             return null;
         }
@@ -1635,7 +1635,7 @@ export async function openImageEditor({source = null, name = source || '', targe
             const {blob, width, height} = await renderer.export(doc, extension === 'jpg' ? 'image/jpeg' : 'image/png');
             close({blob, name: name ? `${stem}-edit.${extension}` : `${stem}.${extension}`, edit: doc, width, height});
         } catch {
-            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片未能保存，请缩小画布或刷新页面后重试。'), ['Image editor save', '图片编辑器保存']);
+            message(t('The image could not be saved. Try a smaller canvas or reload the page.', '图片没能保存，请缩小画布或刷新页面后重试。'), ['Image editor save', '图片编辑器保存']);
             save.disabled = cancel.disabled = false;
         }
     }

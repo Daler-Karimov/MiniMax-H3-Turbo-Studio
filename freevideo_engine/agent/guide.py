@@ -268,7 +268,7 @@ RULES_ZH = [
     '先用 people（角色图和各自的位置）做出首帧，再用它生成视频。',
     '默认切镜头。能切镜头的地方就切：新镜头直接用对应的参考图（人物卡、场景图）生成，不接上一段视频。'
     '只有不能切镜的长镜头、必须连贯的动作、必须连贯的声音，才接着上一段生成，而且不建议一段接一段地连续接。'
-    '一条视频最多 5 段（第一段加 4 次继续生成），接续生成的每一段至少 10 秒，总长约 70 秒；不建议接满，超过就切镜头。',
+    '一条视频最多 5 段（第一段加 4 次接着生成），接着生成的每一段至少 10 秒，总长约 70 秒；不建议接满，超过就切镜头。',
     '问话不是要求。用户问进度或状态（“在做吗”“怎么了”）时，用一句话照实回答，依据是你所知道的、任务和白模的状态，'
     '什么都不要开始；不要把问句当提示词。某条 inbox 带有 whitebox 时，说明用户刚启动了白模场景，'
     '它还在准备或已经失败：照实说是哪一种，再等用户回话。',
@@ -288,7 +288,7 @@ CAPABILITIES_ZH = {
     ('GET', '/jobs/{id}'): '查看任务进度和结果',
     ('GET', '/jobs/{id}/events'): '持续接收任务进度',
     ('POST', '/jobs/{id}/cancel'): '取消任务',
-    ('POST', '/jobs/{id}/resume'): '继续生成一条视频中尚未完成的部分',
+    ('POST', '/jobs/{id}/resume'): '接着生成一条视频里还没完成的部分',
     ('POST', '/media'): '上传图片、视频或音频内容',
     ('POST', '/imports'): '导入视频或音频到剪辑时间线；轮询 GET /imports 等待就绪',
     ('GET', '/imports'): '列出已导入素材和准备进度',
@@ -481,16 +481,16 @@ def connection_guide(root, base, lang=None, offers=None, resumed=False):
                      '连接后先调一次等待接口 GET ' + base + PREFIX + '/inbox?wait=50（MCP 用不带 id 的 freevideo_wait），'
                      '回应里的 session 就是用户现在所在的对话（用户新开或换到另一段对话时它会变，话总是发到最近一次等待给的那个 session）；往 POST ' + base + PREFIX + '/sessions/{session}/events 发 '
                      '{"type":"message","text":"…"}（MCP 用 freevideo_session_post）。在这里先只说一句话，不超过 20 个字，'
-                     '不列条目、不举例（页面上已经有例句），例如“已连接。请描述想要生成的视频。”'
+                     '不列条目、不举例（页面上已经有例句），例如“连上了。告诉我想做什么视频。”'
                      '你自己窗口里的那段介绍照常说，但它不是这一轮的结尾：说完紧接着去调等待接口。'
                      '然后守在这段对话里：再调等待接口，它最多约 50 秒返回；"again": true 表示用户还没说话，'
                      '马上再调下一次，一次接一次，不限次数。没有消息不是结束的理由：不要结束这一轮回复，'
                      '不要停下来问用户——你一停，用户在 FreeVideo 里说的话就没人听了。'
                      '用命令行调接口时，每次等待单独发一条命令（一条命令里不写循环，超时设到 60 秒以上），'
                      '返回后接着发下一条。'
-                     '收到要求（inbox 里每条的 text）先回一句再动手，例如“开始生成。”：只一句，不复述尺寸、'
-                     '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“已完成。”，'
-                     '或者一句用户需要知道的话，发回同一个 session，再接着等。先把话发出去，再调等待接口；不要写成“等待返回后才发话”，那样这句话会晚到将近一分钟。中文用全角标点。对用户称“您”，回复用书面语。'
+                     '收到要求（inbox 里每条的 text）先回一句再动手，例如“好的，开始生成。”：只一句，不复述尺寸、'
+                     '时长这些参数，也不说预计时间（任务卡上都有）。做完再说一句短的，例如“好了。”，'
+                     '或者一句用户需要知道的话，发回同一个 session，再接着等。先把话发出去，再调等待接口；不要写成“等待返回后才发话”，那样这句话会晚到将近一分钟。中文用全角标点。'
                      '做完一条视频也不是结尾：这句话就是汇报，不要再在自己窗口里写总结（一写总结这一轮就结束了，'
                      '用户的下一句话没人听），紧接着再调等待接口，空等多少轮都接着等。'
                      '这段对话里不要新建会话。只有用户明确让你停，才停。' if zh else
@@ -499,7 +499,7 @@ def connection_guide(root, base, lang=None, offers=None, resumed=False):
                      'without id). Its "session" is the conversation the user is in (it changes when the user opens or returns to another one; always post to the session the latest wait named); POST ' + base + PREFIX + '/sessions/{session}/events '
                      'with {"type":"message","text":"..."} (MCP: freevideo_session_post). Say only one short sentence '
                      'there first, at most 12 words, no list and no examples (the page already shows examples), for example '
-                     '"Connected. Describe the video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '
+                     '"Connected. Tell me what video you want.", in the language the user writes to you in. Give the introduction in your own window as usual, but it '
                      'does not end your turn: right after it, call the wait. Then stay in this conversation: call the wait again; it answers within about 50 seconds, and '
                      '"again": true means the user has not spoken yet, so call it again at once, time after time, with no '
                      'limit. Nothing new is not a reason to finish: do not end your reply and do not stop to ask the '
@@ -507,16 +507,16 @@ def connection_guide(root, base, lang=None, offers=None, resumed=False):
                      'each wait is its own command (no loop inside one command, timeout above 60 seconds); when it '
                      'returns, run the next one. '
                      'When a request arrives (text of each inbox row; a question about progress is answered, not started), answer with one sentence before you start, for example '
-                     '"Starting generation.": one sentence only, without repeating size or length and without an estimate (the '
+                     '"OK, starting.": one sentence only, without repeating size or length and without an estimate (the '
                      'job card shows them). When it is done say one short sentence, for example "Done.", or one thing the '
-                     'user needs to know, to the same session, and wait again. Post your words first and call the wait after; never wait and then post, or they reach the user up to a minute late. Chinese text takes full-width punctuation. Address the user formally (您 in Chinese) and reply in a formal written register. '
+                     'user needs to know, to the same session, and wait again. Post your words first and call the wait after; never wait and then post, or they reach the user up to a minute late. Chinese text takes full-width punctuation. '
                      'A finished video is not the end either: that sentence is the report, so write no summary in your own '
                      'window (a summary ends your turn, and then nobody hears the next thing the user says); call the wait '
                      'again right away, and keep waiting however many waits come back empty. Do not create another session for this conversation. '
                      'Stop only when the user clearly tells you to.',
         rules=RULES_ZH if zh else RULES,
         fallback='如果你无法执行命令、读取本地文件或连接到这台电脑，请如实告诉用户：'
-                 '“无法连接到您电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
+                 '“我连接不到你电脑上的 FreeVideo，请改用安装在这台电脑上的 AI 助手。”'
                  '用中文说明；如果用户改用其他语言，就跟随用户。不要另装程序来绕过这个限制。' if zh else
                  'If you cannot run commands, read local files, or reach this computer, tell the user honestly '
                  'in their language: I cannot connect to FreeVideo on your computer; please use an AI assistant '

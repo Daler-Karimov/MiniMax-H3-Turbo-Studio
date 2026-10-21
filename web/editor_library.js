@@ -23,7 +23,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
     const expectedOutputs = new Set();
     const uploading = new Map(), recentImports = new Map(), pendingAdds = new Map();
     const preparing = () => t('Preparing this clip. It goes on the timeline when ready.', '素材准备好后会自动放到时间线上。');
-    const cannotOpen = () => t('This file cannot be opened. Supported formats: ', '无法打开这个文件。支持的格式：') + FORMATS;
+    const cannotOpen = () => t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS;
     function metadata(row, kind) {
         const g = row.geometry || row, cached = store.sources.get(`${kind}:${row.id}`);
         return {frames: cached?.frames || Math.round(g.frames || (g.seconds || 0) * (g.fps || 24)), hasVideo: cached?.has_video ?? (kind === 'work' || row.kind === 'video'),
@@ -74,7 +74,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         else if (row.kind === 'audio') picture.append(el('span', 'fv-ed-audio-icon', '♫'));
         if (ready) picture.append(el('span', 'fv-ed-source-time', stamp(metadata(row, kind).frames)));
         else if (row.state === 'failed') {
-            picture.append(el('span', 'fv-ed-source-preparing', t('Cannot open', '无法打开')));
+            picture.append(el('span', 'fv-ed-source-preparing', t('Cannot open', '打不开')));
         } else picture.append(el('span', 'fv-ed-source-preparing', t('Preparing', '准备中')
             + (Number.isFinite(row.fraction) ? ` ${Math.round(Math.max(0, Math.min(1, row.fraction)) * 100)}%` : '')));
         button.append(picture);
@@ -97,7 +97,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         plus.ondblclick = event => { event.preventDefault(); event.stopPropagation(); };
         plus.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') insert(event); };
         container.append(button, plus);
-        if (kind !== 'work' && row.state === 'failed') container.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: t('Cannot open', '无法打开')})));
+        if (kind !== 'work' && row.state === 'failed') container.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: t('Cannot open', '打不开')})));
         return container;
     }
     function updateUsed() {
@@ -122,7 +122,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         for (const row of shown) grid.append(card(row, tab));
         updateUsed();
         message.textContent = ''; // Empty states stay silent.
-        for (const row of shown) if (row.state === 'failed') message.textContent = t('This file cannot be opened. Supported formats: ', '无法打开这个文件。支持的格式：') + FORMATS;
+        for (const row of shown) if (row.state === 'failed') message.textContent = t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS;
         if (message.textContent) message.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: cannotOpen()})));
         if (scroll > 0) {
             const replacement = anchor && [...grid.querySelectorAll('.fv-ed-source')].find(node => node.dataset.key === anchor.dataset.key);

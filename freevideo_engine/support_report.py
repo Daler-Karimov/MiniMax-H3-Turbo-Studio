@@ -109,7 +109,7 @@ def summarize(report, engine, encoding):
         hints.append(dict(kind='configuration',
             message='The text encoder file used is %s GiB, not the %s GiB file with the same name that FreeVideo installs and tests. '
                     'Results and speed are not guaranteed to match the tested version.' % (actual, expected),
-            message_zh='本次使用的文本编码器文件为 %s GiB，不是 FreeVideo 安装并测试的同名文件（%s GiB）。'
+            message_zh='这次使用的文本编码器文件为 %s GiB，不是 FreeVideo 安装并测试的同名文件（%s GiB）。'
                        '生成结果和速度都不保证与测试过的版本一致。' % (actual, expected)))
     if (mapping(engine.get('config')).get('resident_blocks') == 50
             and number(offload.get('transfers')) == 0 and number(offload.get('h2d_bytes')) == 0):
@@ -163,7 +163,7 @@ def summarize(report, engine, encoding):
         hints.append(dict(kind='measured', message='The GPU was in thermal slowdown for %d%% of its busy time: %d of %d MHz on '
             'average%s. Cooling limited this request, not the plan.' % (round(100 * thermal['share']), thermal['sm_clock_mean_mhz'],
             thermal['sm_clock_max_mhz'], ' at %.0f °C' % thermal['temperature_mean_c'] if thermal['temperature_mean_c'] else ''),
-            message_zh='显卡在 %d%% 的计算时间里处于温控降频，平均 %d／%d MHz%s。本次用时受散热限制，不是规划问题。' % (
+            message_zh='显卡在 %d%% 的计算时间里处于温控降频，平均 %d／%d MHz%s。这次用时受散热限制，不是规划问题。' % (
             round(100 * thermal['share']), thermal['sm_clock_mean_mhz'], thermal['sm_clock_max_mhz'],
             '，%.0f °C' % thermal['temperature_mean_c'] if thermal['temperature_mean_c'] else '')))
     shared = shared_gpu(gpu)
@@ -171,7 +171,7 @@ def summarize(report, engine, encoding):
         hints.append(dict(kind='measured', message='Other programs used about %d%% of the GPU while this request was computing, '
             'and at least %d%% of it for %d%% of that time, so it ran slower than with the GPU to itself.' % (
             shared['other_mean_percent'], OtherPrograms.share_percent, round(100 * shared['share'])),
-            message_zh='本次请求计算期间，其他程序占用了约 %d%% 的显卡，其中 %d%% 的时间里不低于 %d%%，因此比独占显卡时慢。' % (
+            message_zh='这次请求计算期间，其他程序占用了约 %d%% 的显卡，其中 %d%% 的时间里不低于 %d%%，所以比独占显卡时慢。' % (
             shared['other_mean_percent'], round(100 * shared['share']), OtherPrograms.share_percent)))
     attempts = report.get('resource_attempts', [])
     failures = [dict(state=r.get('state'), failure=r.get('failure')) for r in attempts

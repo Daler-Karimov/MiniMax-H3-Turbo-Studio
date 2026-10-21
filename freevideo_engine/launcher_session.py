@@ -854,8 +854,8 @@ class Session:
         failure = ''
         if active.get('state') == 'failed':
             failure = {'disk_space': self.t('Not enough disk space.', '磁盘空间不足。'),
-                       'busy': self.t('Another download of this model is running.', '该模型正在由其他任务下载。')}.get(
-                active.get('reason'), self.t('The download stopped. Resume to continue.', '下载已中断，点击“继续”可恢复下载。'))
+                       'busy': self.t('Another download of this model is running.', '这个模型正在被另一处下载。')}.get(
+                active.get('reason'), self.t('The download stopped. Resume to continue.', '下载中断了，点继续可接着下载。'))
         return dict(ready=ready, checking=checking, total_bytes=total, enough_disk=enough, busy=busy, install=active, failure=failure,
                     downloaded_bytes=active.get('done', 0), title=self.t(*NAMES['text']),
                     suggest=bool(engine) and not ready and not checking and not busy and enough and not self.form['prompt_hint_dismissed']
@@ -1024,7 +1024,7 @@ class Session:
         try:
             if not open_browser(address):
                 raise OSError(self.t("Couldn't open the browser. Click Copy address and open it in your browser.",
-                                     '未能自动打开浏览器，请点击“复制地址”后在浏览器中打开。'))
+                                     '没能自动打开浏览器，请点“复制地址”，在浏览器里打开。'))
             if moved_from:
                 self.port_notice_url = self.browser_url
             self.browser_error = ''
@@ -1663,7 +1663,7 @@ class Session:
                     body=self.t('This frees %s of disk space. If the files are needed later, they will be downloaded again automatically.',
                                 '可释放 %s 磁盘空间。以后如需要，会自动重新下载。') % size,
                     delete_text=(self.t('Deleting…', '正在删除…') if thread is not None else
-                                 self.t('Try again', '重试') if self.adaln_retry else self.t('Delete', '删除')),
+                                 self.t('Try again', '再试一次') if self.adaln_retry else self.t('Delete', '删除')),
                     later_text=self.t('Not now', '暂不删除'))
 
     def sync_lan_from_store(self):
@@ -1840,10 +1840,10 @@ class Session:
             return ''
         if value.get('copied_model_reason') == 'exfat':
             return self.t('This disk uses exFAT, so %s of models had to be copied instead of shared with your model library.',
-                          '该硬盘为 exFAT 格式，%s 的模型只能复制，无法与模型库共用。') % size_text(copied)
+                          '这块硬盘是 exFAT 格式，有 %s 的模型只能复制，不能和模型库共用。') % size_text(copied)
         return self.t('%s of models were copied from another disk. Keep your model library on the same disk as FreeVideo '
                       'to avoid this.',
-                      '%s 的模型从其他硬盘复制而来。将模型库与 FreeVideo 放在同一硬盘上，可避免占用这部分额外空间。') % size_text(copied)
+                      '有 %s 的模型是从另一块硬盘复制来的。把模型库和 FreeVideo 放在同一块硬盘上，就不会多占这部分空间。') % size_text(copied)
 
     def archive_offer(self):
         """The imported ZIPs whose contents the running installation holds, verified."""
@@ -1978,7 +1978,7 @@ class Session:
                         'Deleting them does not affect models, the runtime or your videos.',
                         '导入过的离线包压缩包仍保留在磁盘上，FreeVideo 已不再需要。删除后，模型、运行环境和作品都不受影响。'),
                     delete_text=(self.t('Deleting…', '正在删除…') if self.archives_busy else
-                                 self.t('Try again', '重试') if retry else
+                                 self.t('Try again', '再试一次') if retry else
                                  self.t('Delete and free %s', '删除并释放 %s') % size),
                     keep_text=self.t('Keep for now', '暂时保留'),
                     footnote=self.t('You can also delete them later in Settings › Preferences › Storage.',
