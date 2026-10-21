@@ -1049,6 +1049,7 @@ def register():
         if done is None:
             # Nothing is kept: no agent has connected since FreeVideo started, so nobody would read it.
             return reply({'error': dict(code='not_connected', message='No agent is connected.', retryable=True,
+                                        error_zh='尚未连接 Agent', error_en='No agent is connected.',
                                         details=[], next='Connect an agent in the Autopilot view, then say it again.',
                                         request_id=errors.request_id())}, 409)
         return reply(done[1], done[0])
@@ -1132,6 +1133,7 @@ def register():
         done = await asyncio.to_thread(write)
         if done is None:
             return reply({'error': dict(code='not_connected', message='No agent is connected.', retryable=True,
+                                        error_zh='尚未连接 Agent', error_en='No agent is connected.',
                                         details=[], next='Connect an agent in the Autopilot view, then try again.',
                                         request_id=errors.request_id())}, 409)
         return reply(done[1], done[0])

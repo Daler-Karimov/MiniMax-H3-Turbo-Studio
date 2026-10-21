@@ -145,7 +145,7 @@ def _safe_error(error):
     rows = [_safe_row(row) for row in details] if isinstance(details, list) and details else []
     if rows and all(rows):
         result.update(details=rows, message='; '.join(row['message'] for row in rows))
-    return dict(result, error_zh=errors.failure_reason(error))
+    return dict(result, **errors.reasons(error))
 
 
 def failure(view):
@@ -628,7 +628,7 @@ class Productions:
         value['progress'] = self._progress(record)
         value['over_budget'] = self._elapsed_budget(value['progress'])
         error, _ = failure(value)
-        value['error_zh'] = errors.failure_reason(error) if error else None
+        value['error_zh'], value['error_en'] = (errors.failure_reason(error), errors.failure_reason_en(error)) if error else (None, None)
         return value
 
     def get(self, identity, *, since=None, wait=0, compact=True):
@@ -654,7 +654,7 @@ class Productions:
             join = next((j for j in state['joins'] if j['ref'] == state['current_join']), None)
             error, _ = failure(dict(stalled=record.get('stalled'), join=join, shots=state['shots']))
             if error:
-                value['error_zh'] = errors.failure_reason(error)
+                value.update(errors.reasons(error))
             return value
         return dict(self._view(record), changed=changed)
 
@@ -704,7 +704,7 @@ class Productions:
                 shot = next((s for s in view['shots'] if s['chosen'] is None), view['shots'][-1])
                 result.append(dict(id=view['id'], title=view['title'], status=view['status'], revision=view['revision'],
                     shot=shot['index'], shots=len(view['shots']), next=view['todo'][0] if view['todo'] else None,
-                    paused=view['paused'], stalled=view['stalled'], session=record.get('session'), error_zh=view['error_zh']))
+                    paused=view['paused'], stalled=view['stalled'], session=record.get('session'), error_zh=view['error_zh'], error_en=view['error_en']))
             return result
 
     def _mutate(self, action, identity, *, by, ref=None, client=None, **values):

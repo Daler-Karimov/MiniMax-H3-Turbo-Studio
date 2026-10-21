@@ -51,10 +51,12 @@ const WHITEBOX = {
 const GENERIC_FAILURE_ZH = '没有完成';
 // Sends and failure cards use the same public reason, including the engine's Chinese mapping.
 function failureReason(value, t) {
-    const error = value.error, reason = error?.error_zh || value.error_zh;
+    const error = value.error, reason = error?.error_zh || value.error_zh, reasonEn = error?.error_en || value.error_en;
     if (error?.code === 'session_full' && (!reason || reason === GENERIC_FAILURE_ZH))
         return t('This chat is full. Click "New chat".', '这个对话已满，请点“新对话”。');
-    return t(error?.message || 'Did not finish', reason || GENERIC_FAILURE_ZH);
+    // `message` is written for programs; people read the engine's own English reason. A refusal the engine
+    // did not classify keeps its sentence, as before.
+    return t(reasonEn || error?.message || 'Did not finish', reason || GENERIC_FAILURE_ZH);
 }
 
 export {about};

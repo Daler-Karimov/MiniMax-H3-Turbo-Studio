@@ -306,6 +306,53 @@ FAILURE_REASONS_ZH = {
     'generation_failed': '生成没有完成',
     'internal_error': '没有完成',
 }
+FAILURE_REASONS_EN = {
+    'lan_unavailable': 'Phone access requires FreeVideo installed with the launcher',
+    'out_of_memory': 'Graphics or system memory ran out during generation',
+    'insufficient_memory': 'There is not enough free graphics or system memory for this generation',
+    'no_memory': 'There is not enough free graphics or system memory for this picture',
+    'ram_space': 'System memory ran out while loading the model',
+    'model_missing': 'A required model is not installed yet',
+    'pack_missing': 'The image model is not installed yet',
+    'not_ready': 'The generation environment is not installed yet',
+    'cancelled': 'Generation was stopped',
+    'stopped_by_user': 'Generation was stopped',
+    'interrupted': 'Generation was interrupted',
+    'worker_exit': 'Picture generation was interrupted',
+    'closed': 'The picture generation service has closed',
+    'image_unavailable': 'The picture generation service has not started yet',
+    'vlm_unavailable': 'The model that reads pictures has not started yet',
+    'vlm_failed': 'The picture could not be read',
+    'vlm_invalid_json': 'The reply could not be read',
+    'context_length': 'The description and reference pictures are too long',
+    'dependency_failed': 'A task this one depends on did not finish',
+    'lost': 'The generation service no longer has the result of this task',
+    'unknown_job': 'The picture generation service cannot find this task',
+    'not_found': 'This task or media file cannot be found',
+    'source_missing': 'The previous video needed to continue is no longer available',
+    'chain_missing': 'The generation record needed to continue is no longer available',
+    'chain_unavailable': 'The part-by-part generation service has not started yet',
+    'continuation_unavailable': 'The current generation mode cannot continue a video',
+    'join_failed': 'The parts were generated, but joining them into one video failed',
+    'invalid_output': 'The result could not be read or saved',
+    'storage_unavailable': 'The task record or media could not be written to disk',
+    'submit_interrupted': 'The service stopped during submission, so it is not confirmed whether the task started',
+    'timeout': 'Generation took too long without a result',
+    'invalid_media': 'The reference media could not be read',
+    'clip_unreadable': 'The generated character reference video could not be read',
+    'invalid_request': 'The generation settings are outside the supported range',
+    'invalid_drama': 'The short film settings are invalid',
+    'reshoot_limit': 'This shot has reached its generation limit',
+    'production_limit': 'This short film has reached its task limit',
+    'export_failed': 'Exporting the video failed',
+    'invalid_prompt': 'The picture description is empty or too long',
+    'invalid_dimensions': 'The picture size is outside the supported range',
+    'too_many_images': 'There are more reference pictures than supported',
+    'chain_too_long': 'The continued video has more parts than supported',
+    'chain_rejected': 'The generation service cannot use these settings',
+    'generation_failed': 'Generation did not finish',
+    'internal_error': 'Did not finish',
+}
 FAILURE_MESSAGES_ZH = {
     'The previous video is too short to continue; it needs to be at least 1.7 s long.': '接续的上一段视频太短，至少需要 1.7 秒',
     'The previous video has no usable continuation data. Generate it again with this version of FreeVideo.': '上一段视频缺少可用的接续数据',
@@ -316,14 +363,18 @@ FAILURE_MESSAGES_ZH = {
 }
 
 
-def failure_reason(error):
-    if isinstance(error.get('error_zh'), str) and error['error_zh'].strip():
-        return error['error_zh']
+def _failure_line(error):
     lines = str(error.get('message') or '').strip().splitlines()
     line = lines[0] if lines else ''
     if line.startswith('FreeVideo generation failed') and len(lines) > 1:
         line = lines[1].strip()
-    line = re.sub(r'^(?:[\w.]*Error|[\w.]*Exception):\s*', '', line)
+    return re.sub(r'^(?:[\w.]*Error|[\w.]*Exception):\s*', '', line)
+
+
+def failure_reason(error):
+    if isinstance(error.get('error_zh'), str) and error['error_zh'].strip():
+        return error['error_zh']
+    line = _failure_line(error)
     if line in FAILURE_MESSAGES_ZH:
         return FAILURE_MESSAGES_ZH[line]
     if line.startswith(('CUDA out of memory', 'MPS backend out of memory')):
@@ -331,8 +382,24 @@ def failure_reason(error):
     return FAILURE_REASONS_ZH.get(error.get('code'), '没有完成')
 
 
+# The same lookup in English for the page: the specific sentences are already written for people.
+def failure_reason_en(error):
+    if isinstance(error.get('error_en'), str) and error['error_en'].strip():
+        return error['error_en']
+    line = _failure_line(error)
+    if line in FAILURE_MESSAGES_ZH:
+        return line
+    if line.startswith(('CUDA out of memory', 'MPS backend out of memory')):
+        return FAILURE_REASONS_EN['out_of_memory']
+    return FAILURE_REASONS_EN.get(error.get('code'), 'Did not finish')
+
+
+def reasons(error):
+    return dict(error_zh=failure_reason(error), error_en=failure_reason_en(error))
+
+
 def with_reason(error):
-    return dict(error, error_zh=failure_reason(error)) if error else error
+    return dict(error, **reasons(error)) if error else error
 
 
 def build(code, *, details=None, request=None, validation=False, message=None, next_action=None,
