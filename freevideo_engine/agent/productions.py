@@ -177,7 +177,12 @@ class Productions:
         jobs.parent_allowed = self.allows
 
     def load(self):
-        for path in sorted(self.directory.glob('*.json')):
+        try:
+            paths = sorted(self.directory.glob('*.json'))
+        except OSError:
+            logging.getLogger(__name__).warning('Could not list saved films; starting without them')
+            return
+        for path in paths:
             try:
                 record = json.loads(path.read_text(encoding='utf-8'))
                 state = record['state']
@@ -209,8 +214,13 @@ class Productions:
                                                         record['stalled']['code'])
                 self.records[state['id']] = record
             except (ValueError, KeyError, TypeError, AttributeError, IndexError, RecursionError, OSError):
-                path.replace(path.with_name(path.name + '.bad-' + uuid.uuid4().hex))
-                logging.getLogger(__name__).warning('Isolated an invalid production receipt; other films remain available')
+                try:
+                    path.replace(path.with_name(path.name + '.bad-' + uuid.uuid4().hex))
+                except OSError:
+                    # A receipt that cannot be moved aside is left in place; the agent still starts.
+                    logging.getLogger(__name__).warning('Skipped an invalid production receipt that could not be renamed')
+                else:
+                    logging.getLogger(__name__).warning('Isolated an invalid production receipt; other films remain available')
 
     def _stalled(self, error):
         code = error.code if isinstance(getattr(error, 'code', None), str) and error.code in errors.ERRORS else 'internal_error'

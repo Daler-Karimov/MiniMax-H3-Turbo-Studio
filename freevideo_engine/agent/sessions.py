@@ -5,6 +5,7 @@ import asyncio
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -87,40 +88,56 @@ class Sessions:
         return self._meta[sid]
 
     def _load(self):
-        for path in sorted(self.root.glob('s*.jsonl')):
+        try:
+            paths = sorted(self.root.glob('s*.jsonl'))
+        except OSError:
+            logging.getLogger(__name__).warning('Could not list saved sessions; starting without them')
+            return
+        for path in paths:
             sid = path.stem
             if schema.issues(schema.SESSION, sid) or path.is_symlink():
                 continue
-            with path.open('rb') as stream:
-                first = stream.readline()
+            try:
+                self._load_file(path, sid)
+            except OSError:
+                # One unreadable file must not stop the agent from starting.
+                for table in (self._meta, self._ids, self._clients, self._acted, self._said, self._initial_seq, self._user_seq):
+                    table.pop(sid, None)
+                self._chosen.discard(sid)
+                self._partial.discard(sid)
+                logging.getLogger(__name__).warning('Skipped an unreadable session file')
+
+    def _load_file(self, path, sid):
+        with path.open('rb') as stream:
+            first = stream.readline()
+            try:
+                meta = json.loads(first)
+                if not first.endswith(b'\n') or meta.get('session') != sid:
+                    return
+                _check(schema.session_metadata(), meta)
+            except (ValueError, UnicodeDecodeError, SessionError, AttributeError):
+                return
+            self._meta[sid] = dict(id=sid, title=meta['title'], created_at=meta['created_at'],
+                updated_at=meta['created_at'], client=meta['client'], last_seq=0, stopped=False)
+            self._ids[sid] = {}
+            self._clients[sid] = {meta['client']} if meta['client'] else set()
+            self._acted[sid] = (meta['created_at'], 1)
+            if meta.get('by') == 'user':
+                self._chosen.add(sid)
+            for row in stream:
+                if not row.endswith(b'\n'):
+                    self._partial.add(sid)
+                    break
                 try:
-                    meta = json.loads(first)
-                    if not first.endswith(b'\n') or meta.get('session') != sid:
+                    event = json.loads(row)
+                    _check(schema.session_event(stored=True), event)
+                    if event['seq'] != self._meta[sid]['last_seq'] + 1:
                         continue
-                    _check(schema.session_metadata(), meta)
-                except (ValueError, UnicodeDecodeError, SessionError, AttributeError):
+                except (ValueError, UnicodeDecodeError, SessionError):
+                    # Also skips an interrupted tail separated by a later append.
                     continue
-                self._meta[sid] = dict(id=sid, title=meta['title'], created_at=meta['created_at'],
-                    updated_at=meta['created_at'], client=meta['client'], last_seq=0, stopped=False)
-                self._ids[sid] = {}
-                self._clients[sid] = {meta['client']} if meta['client'] else set()
-                self._acted[sid] = (meta['created_at'], 1)
-                if meta.get('by') == 'user':
-                    self._chosen.add(sid)
-                for row in stream:
-                    if not row.endswith(b'\n'):
-                        self._partial.add(sid)
-                        break
-                    try:
-                        event = json.loads(row)
-                        _check(schema.session_event(stored=True), event)
-                        if event['seq'] != self._meta[sid]['last_seq'] + 1:
-                            continue
-                    except (ValueError, UnicodeDecodeError, SessionError):
-                        # Also skips an interrupted tail separated by a later append.
-                        continue
-                    self._fold(sid, event)
-                self._initial_seq[sid] = self._meta[sid]['last_seq']
+                self._fold(sid, event)
+            self._initial_seq[sid] = self._meta[sid]['last_seq']
 
     def _fold(self, sid, event):
         meta = self._meta[sid]
