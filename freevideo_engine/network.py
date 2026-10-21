@@ -834,7 +834,44 @@ def _redirect_fields(text):
     return status.strip(), destination.strip()
 
 
-def download(candidates, path, expected, progress=None, *, network=None, env=None, size=None,
+DOWNLOAD_SIBLING_CHARS = 21  # '.partial.source.json' beside the file
+
+
+def move_file(source, destination):
+    """Move one file by the long-path entry; across volumes copy it and remove the source."""
+    source, destination = io_path(source), io_path(destination)
+    try:
+        source.replace(destination)
+    except OSError:
+        shutil.copy2(source, destination)
+        source.unlink()
+
+
+def download(candidates, path, expected, *args, **options):
+    """Fetch into `path`; where curl cannot name it (Windows, beyond 259 characters), in a short folder.
+
+    The file and what resumes it (partial bytes, source record) go to the short
+    folder first, and whatever is left there comes back, also after a failure.
+    """
+    path = Path(path)
+    scratch = None
+    if is_windows() and path_chars(plain(path)) + DOWNLOAD_SIBLING_CHARS > GIT_PATH_LIMIT:
+        scratch = git_scratch_folder()
+    if scratch is None:
+        return download_here(candidates, path, expected, *args, **options)
+    try:
+        io_path(path.parent).mkdir(parents=True, exist_ok=True)
+        for entry in io_path(path.parent).iterdir():
+            if entry.name == path.name or entry.name.startswith(path.name + '.partial'):
+                move_file(entry, scratch / entry.name)
+        return download_here(candidates, scratch / path.name, expected, *args, **options)
+    finally:
+        for entry in io_path(scratch).iterdir():
+            move_file(entry, path.parent / entry.name)
+        remove_tree(scratch)
+
+
+def download_here(candidates, path, expected, progress=None, *, network=None, env=None, size=None,
              algorithm='sha256', git_blob=False, headers_for=None, stall_seconds=None, category='download',
              low_speed_limit=1024, max_seconds=None, cycles=2, slow_seconds=None, keep_partial=False,
              validate_url=None, verify=None, fallbacks=None):
