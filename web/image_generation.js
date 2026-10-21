@@ -463,11 +463,13 @@ export function createImageGenSession({client, prepare, apply, onChange = () => 
     async function start(request) {
         if (state.running || disposed || !request.prompt.trim() || !state.info?.installed) return;
         const current = ++epoch;
-        emit({running: true, job: null, fraction: 0, stage: '', error: '', report_id: null, waiting: '', fitted: null});
+        // A picture that is edited sends its reference images first; there is no job to report on yet.
+        emit({running: true, job: null, fraction: 0, stage: request.mode === 'edit' ? 'upload' : '', error: '', report_id: null, waiting: '', fitted: null});
         const alive = () => current === epoch && !disposed;
         try {
             const {context, images = [], mask} = await prepare(request, alive);
             if (!alive()) return;
+            if (state.stage === 'upload') emit({stage: ''});
             const withImages = images.length > 0;
             const row = await client.generate({prompt: request.prompt, width: context.width, height: context.height, images, mask});
             const {job} = row;
@@ -736,7 +738,9 @@ export function createImageGeneration({client, renderer, t, getDoc, getSelection
                 : state.running && state.waiting ? t(...(QUEUE_LABELS[state.waiting] || QUEUE_LABELS.image))
                 : state.running && state.fitted ? t(...memoryWords([`Not enough GPU memory. Retrying at ${state.fitted.width}\u00a0×\u00a0${state.fitted.height}`,
                     `显存不足，改用 ${state.fitted.width}\u00a0×\u00a0${state.fitted.height} 重试`], state.info?.unified_memory)) + ' · ' + percent
-                : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' ' : '') + percent
+                : state.running && state.stage === 'upload' ? t('Uploading reference images', '正在上传参考图')
+                : state.running ? (state.stage === 'load' ? t('Loading the model', '加载模型') + ' '
+                    : state.stage === 'encode' ? t('Reading reference images', '读取参考图') + ' ' : '') + percent
                 : state.fitted ? fittedNote(state.fitted, t, state.info?.unified_memory) : '';
         }
         note.hidden = !note.textContent;

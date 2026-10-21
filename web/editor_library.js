@@ -80,8 +80,12 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         if (ready) picture.append(el('span', 'fv-ed-source-time', stamp(metadata(row, kind).frames)));
         else if (row.state === 'failed') {
             picture.append(el('span', 'fv-ed-source-preparing', row.reason === 'disk_full' ? t('Disk full', '磁盘已满') : t('Cannot open', '打不开')));
-        } else picture.append(el('span', 'fv-ed-source-preparing', t('Preparing', '准备中')
-            + (Number.isFinite(row.fraction) ? ` ${Math.round(Math.max(0, Math.min(1, row.fraction)) * 100)}%` : '')));
+        } else {
+            // Sending, then waiting behind another import, then being made; only the first and the last have a percentage.
+            const percent = Number.isFinite(row.fraction) ? ` ${Math.round(Math.max(0, Math.min(1, row.fraction)) * 100)}%` : '';
+            picture.append(el('span', 'fv-ed-source-preparing', row.sending ? t('Uploading', '上传中') + percent
+                : row.started ? t('Processing', '处理中') + percent : t('Queued', '排队中')));
+        }
         button.append(picture);
         const used = el('span', 'fv-ed-source-used'); used.append(editorIcon('check')); used.setAttribute('aria-label', t('Used', '已用')); used.hidden = true; picture.append(used);
         button.ondblclick = () => requestAdd(row, kind);
@@ -220,7 +224,7 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         const place = Number.isSafeInteger(at) && at >= 0 ? {at} : null;
         for (const value of files) {
             if (disposed) break;
-            const id = 'upload-' + Math.random(), row = {id, name: value.name, kind: value.type.startsWith('audio') ? 'audio' : 'video', state: 'preparing', fraction: 0};
+            const id = 'upload-' + Math.random(), row = {id, name: value.name, kind: value.type.startsWith('audio') ? 'audio' : 'video', state: 'preparing', fraction: 0, sending: true};
             uploading.set(id, row); render();
             try {
                 const item = await store.upload(value, fraction => { row.fraction = fraction; render(); });
