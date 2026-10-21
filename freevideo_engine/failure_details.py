@@ -567,6 +567,10 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('A video is still generating', '还有视频正在生成'),
          ('The update is installed. Click Connect again after the job finishes to restart ComfyUI with it.',
           '更新已装好。等当前任务完成后点“重新连接”，ComfyUI 会重启并使用新版。')),
+        (r'WinError 206|The filename or extension is too long', 'path-too-long',
+         ("The installation folder's path is too long", '安装文件夹的路径太长'),
+         ('Install FreeVideo in a folder with a shorter path, such as D:\\FreeVideo, then click "Retry installation".',
+          '请把 FreeVideo 安装到路径较短的文件夹，例如 D:\\FreeVideo，然后点击“重试安装”。')),
         (r'Installation paused: Windows commit headroom', 'memory-commit',
          ('Windows is low on available memory', 'Windows 可用内存不足'),
          ('Close memory-heavy applications, then retry. Downloaded files are retained.',
@@ -618,6 +622,18 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('Memory is unavailable for this step', '这一步可用内存不足'),
          ('Close other memory-heavy applications and retry. Copy the details if it continues.', '关闭占用内存较多的程序后重试；仍失败时可复制详情反馈。')),
     )
+    if re.search(r'Installation crossed its RAM budget', text):
+        # Only the installer's memory monitor says this. The sentence carries the amount; an
+        # older retained error does not, and then the card names none.
+        free = re.search(r'At least ([\d.]+) GiB of RAM must be free', text)
+        if free:
+            action = ('Close other applications until at least %s GiB of RAM is free, then click "Retry installation". Downloaded files are retained.' % free.group(1),
+                      '请关闭其他程序，直到至少有 %s GiB 内存空闲，然后点击“重试安装”。已下载的文件会保留。' % free.group(1))
+        else:
+            action = ('Close other applications to free memory, then click "Retry installation". Downloaded files are retained.',
+                      '请关闭其他程序以空出内存，然后点击“重试安装”。已下载的文件会保留。')
+        return dict(title=('There is not enough free memory to continue installing', '可用内存不足，无法继续安装')[zh],
+                    detail='', action=action[zh], kind='memory-budget')
     for pattern, kind, title, action in rules:
         if re.search(pattern, text, re.I):
             if kind in WITHOUT_REPAIR and not can_repair:
@@ -631,8 +647,38 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         if not line.startswith(('File ', 'Traceback', '^', 'All files retained.', 'Rerun the same setup command'))), '')
     detail = re.sub(r'^(?:ValueError|RuntimeError|OSError):\s*', '', detail)
     from .launcher_copy import lan_error
-    return dict(title='暂时未能完成' if zh else 'Couldn’t complete this step',
-                detail=lan_error(detail, zh), action='', kind='unknown')
+    title = '暂时未能完成' if zh else 'Couldn’t complete this step'
+    # The cause line is the last error line, which a traceback or pip's "ERROR:" can displace; the
+    # failed step's own line is found anywhere in the text.
+    step = re.search(r'^Failed step: ([\w.-]+) \(exit code (-?\w+)\)', text, re.M)
+    if step:
+        # The internal step id never reaches the card; the exit code stays as the detail.
+        name = _step_name(step.group(1), zh)
+        if name:
+            title = ('“%s”这一步没有完成' if zh else 'The step "%s" did not finish') % name
+        detail = ('退出码 %s' if zh else 'Exit code %s') % step.group(2)
+    # A message the launcher raised itself (a ValueError) is the next step already.
+    unexpected = 'Traceback' in text and not re.match(r'(?:[\w.]+\.)?ValueError:', causes[-1] if causes else '')
+    detail = lan_error(detail, zh)
+    if step or unexpected:
+        # The launcher's failure card shows the action only when there is no detail, so the next
+        # step goes under the detail rather than being hidden by it.
+        return dict(title=title, detail=(detail + '\n' if detail else '') + UNKNOWN_NEXT_STEP[zh], action='', kind='unknown')
+    return dict(title=title, detail=detail, action='', kind='unknown')
+
+
+UNKNOWN_NEXT_STEP = ('Try again. If it fails again, export the report, then use "Report a problem" and attach it.',
+                     '请重试。仍然失败时，请先导出报告，再点“提交问题”并附上报告。')
+
+
+def _step_name(label, zh):
+    """The name the progress card showed for a setup step, in the interface language, or ''."""
+    try:
+        from .bootstrap import setup_task
+        from .launcher_copy import display
+        return display(setup_task(label)[0], zh)
+    except Exception:
+        return ''
 
 
 def _read(path, limit, *, tail=False):

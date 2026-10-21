@@ -140,8 +140,14 @@ def setup_memory_failure(pressure):
         detail = 'Installation paused: system RAM is nearly exhausted (%.2f GiB available; %.2f GiB minimum).' % (
             pressure['available_bytes'] / GiB, pressure['emergency_floor_bytes'] / GiB)
     else:
-        detail = 'Installation crossed its RAM budget (%.2f GiB used; %.2f GiB budget; %s).' % (
-            pressure['working_bytes'] / GiB, pressure['budget_bytes'] / GiB, pressure['guard_metric'])
+        # The budget is the memory free at planning minus the reserve, and setup itself
+        # peaked near 1 GiB; so the free memory needed is the reserve plus that, rounded up to
+        # the next half GiB above it, which leaves some room.
+        needed = (pressure.get('planning_reserve_bytes') or 0) + max(pressure['working_bytes'], GiB)
+        detail = ('Installation crossed its RAM budget (%.2f GiB used; %.2f GiB budget; %s). '
+                  'At least %.1f GiB of RAM must be free when it starts.') % (
+            pressure['working_bytes'] / GiB, pressure['budget_bytes'] / GiB, pressure['guard_metric'],
+            (needed * 2 // GiB + 1) / 2)
     return detail + ' Downloaded files are retained.'
 
 

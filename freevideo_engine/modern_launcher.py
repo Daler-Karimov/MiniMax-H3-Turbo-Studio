@@ -294,10 +294,13 @@ def create_ui(session, *, show=True):
         @Slot(str, str)
         def reportProblem(self, error, title):
             from . import __version__
-            from .launcher_issue import issue_url
+            from .launcher_issue import environment_line, issue_url, machine_hardware, product_version
             from .windows_ux import open_browser
-            url = issue_url(error, session.installed_product_version() or __version__, title,
-                            zh=session.language.startswith('zh'))
+            # The release (0.4.x) is named, not the build number; only fields that carry no path or user name travel.
+            version = session.installed_product_version() or product_version(__version__)
+            engine = session.installation_engine()
+            url = issue_url(error, version, title, zh=session.language.startswith('zh'),
+                            environment=environment_line(version, machine_hardware(engine) if engine else {}))
             self.invoke(open_browser, url)
 
         @Slot()
