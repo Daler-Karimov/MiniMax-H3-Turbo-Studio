@@ -36,6 +36,9 @@ UV_FILE_LIST_OPTIONS = frozenset(('-c', '--constraint', '--constraints', '-b', '
 UV_BUILD_PATH_CHARS = 200
 
 
+UV_CHILD_MARKERS = ('--install-packages', 'freevideo_engine.comfy_host')
+
+
 def uv_build_environment(command, root, environ):
     """Windows uv pip builds use a short view of the existing cache and scratch.
 
@@ -44,8 +47,9 @@ def uv_build_environment(command, root, environ):
     installation settings, cache ownership and the parent's environment stay put.
     """
     # `venv` and `python` also write into the cache (interpreter records, downloads) below the same root.
-    if (not command or Path(command[0]).name.lower() not in ('uv', 'uv.exe')
-            or list(command[1:2]) not in (['pip'], ['venv'], ['python'])):
+    # The setup children that install the VDN and ComfyUI packages run `uv` themselves, with the same cache.
+    runs_uv = list(command[1:2]) in (['pip'], ['venv'], ['python']) and Path(command[0]).name.lower() in ('uv', 'uv.exe')
+    if not command or not (runs_uv or any(str(item) in UV_CHILD_MARKERS for item in command)):
         return environ
     from . import launch_view, runtime_alias
     from .long_paths import io_path, path_chars, plain
