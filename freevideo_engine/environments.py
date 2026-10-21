@@ -43,8 +43,9 @@ def uv_build_environment(command, root, environ):
     Mark only this child's view: processes.popen translates its paths, while
     installation settings, cache ownership and the parent's environment stay put.
     """
+    # `venv` and `python` also write into the cache (interpreter records, downloads) below the same root.
     if (not command or Path(command[0]).name.lower() not in ('uv', 'uv.exe')
-            or list(command[1:2]) != ['pip']):
+            or list(command[1:2]) not in (['pip'], ['venv'], ['python'])):
         return environ
     from . import launch_view, runtime_alias
     from .long_paths import io_path, path_chars, plain

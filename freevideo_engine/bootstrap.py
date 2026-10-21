@@ -1025,6 +1025,7 @@ def download(url, path, sha, progress=None, *, networking=None, env=None):
 
 
 def unpack(archive, destination):
+    from .long_paths import io_path
     destination.mkdir(parents=True, exist_ok=True)
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as zipped:
@@ -1034,7 +1035,7 @@ def unpack(archive, destination):
                 if (not path.is_relative_to(destination.resolve()) or ':' in name or
                         (member.external_attr >> 16) & 0o170000 == 0o120000):
                     raise ValueError('Unsafe ZIP member: ' + member.filename)
-            zipped.extractall(destination)
+            zipped.extractall(io_path(destination))
         return
     with tarfile.open(archive) as tar:
         # Python 3.9-compatible containment checks, including link targets.
@@ -1046,7 +1047,7 @@ def unpack(archive, destination):
                 target = (path.parent if member.issym() else destination) / member.linkname
                 if not target.resolve().is_relative_to(destination.resolve()):
                     raise ValueError('Unsafe archive link: ' + member.name)
-        tar.extractall(destination)
+        tar.extractall(io_path(destination))
 
 
 def unpack_folder(archive, destination, name):
