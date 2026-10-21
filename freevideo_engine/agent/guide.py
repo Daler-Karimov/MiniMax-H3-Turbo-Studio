@@ -52,7 +52,21 @@ GUIDE = {
     ],
     'sound': [
         'overall_soundscape: 1-4 sentences of ambience, action sounds and breaths; N/A only for silence.',
-        'non_diegetic_music: 1-3 sentences of instruments, tempo and dynamics, or N/A.',
+        'non_diegetic_music: 1-3 sentences of instruments, tempo and dynamics, or N/A. By default a long video or a '
+        'film of several shots has no music: write N/A in every shot, so each has only ambience, action sounds and '
+        'dialogue, and do not add music on your own. Whatever the case, never write a different non_diegetic_music '
+        'for each shot: the shots are generated separately, so the music would not be continuous and would jump at '
+        'every cut. Write music in a shot only when the user asks for it there.',
+        'When the user wants music over the film, keep every shot at N/A and lay one score on one sound track after '
+        'the cut is joined. If the user gives a music file, import it. If there is none, compose it yourself: write '
+        'a program that synthesizes one audio file (WAV, using the standard wave module and numpy or whatever is '
+        'already installed, nothing to install) as long as the finished cut, with its sections, changes and ending '
+        'on the cut points. Import it with POST /imports (MCP freevideo_import_media, CLI imports add), wait until it '
+        'is ready, and insert import:<id> at frame 0 of the project. There is no volume or fade operation, so build '
+        'them into the file: keep the music clearly quieter than the dialogue and ambience, lower it further while '
+        'someone speaks (take the line times from your own screenplay and shot lengths, or run a listen job in align '
+        'mode to time them), and fade it in at the start and out at the end. The audio goes onto a free sound track by '
+        'itself; read the project afterwards and check that one clip covers the whole film.',
     ],
     'references': [
         'Tags are numbered per kind in reference order: <Picture 1>, <Picture 2>, <Video 1>, <Audio 1>. '

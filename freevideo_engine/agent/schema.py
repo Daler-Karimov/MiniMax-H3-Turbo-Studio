@@ -504,9 +504,9 @@ DRAMA_OPERATIONS = {
 # The fields are checked when planning; the shape is told here so an agent does not guess it.
 SCREENPLAY = {'type': 'object', 'description': (
     'characters: {key: {card: cast card ID, or name, look, voice, language}}; '
-    'shots: [{id, seconds, action or prompt, camera, framing, sound, takes, seed, '
+    'shots: [{id, seconds, action or prompt, camera, framing, sound, music (N/A unless the user asks for music in this shot), takes, seed, '
     'cast: [character keys], lines: [{who: character key, line, how}], '
-    'continue: true to carry on from the previous shot}]; also title, style, aspect, quality, music.')}
+    'continue: true to carry on from the previous shot}]; also title, style, aspect, quality; a whole-film score is not written here but imported onto a sound track.')}
 
 
 def drama_schema(name):
