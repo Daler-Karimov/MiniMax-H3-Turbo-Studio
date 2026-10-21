@@ -87,7 +87,9 @@ def prepare_diffusers(root, dependencies):
             if len(patches) != 2:
                 raise RuntimeError('Expected the two pinned VDN Diffusers patches')
             for path in patches:
-                execution_paths.run(['git', '-c', 'core.longpaths=true', 'apply', '--index', str(path)], cwd=checkout, check=True)
+                # The patch path carries the long-path prefix, which Git cannot open; pass the content instead.
+                execution_paths.run(['git', '-c', 'core.longpaths=true', 'apply', '--index', '-'],
+                                    cwd=checkout, input=path.read_bytes(), check=True)
             tree = subprocess_output.output_external(['git', '-c', 'core.longpaths=true', 'write-tree'], cwd=checkout).strip()
             if tree != spec['patched_tree']:
                 raise RuntimeError('Patched Diffusers source tree does not match the tested dependency')
