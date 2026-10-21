@@ -1209,25 +1209,29 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
     env = proxy_environment(env)
     env.update(GIT_TERMINAL_PROMPT='0', GIT_HTTP_LOW_SPEED_LIMIT='1024', GIT_HTTP_LOW_SPEED_TIME='20')
     git = env.get('FREEVIDEO_GIT') or 'git'
-    version = git_version(git, env) if not target.exists() else None
+    version = git_version(git, env) if not io_path(target).exists() else None
     if version and version < MIN_GIT:
         raise RuntimeError(old_git_message(version))
     def execute(label, command):
-        command = [git, *command[1:]]
+        # Git makes its own folders with the ordinary limit unless told otherwise on the command line;
+        # the repository's config only exists after `init` has already made the folder.
+        command = [git, '-c', 'core.longpaths=true', *command[1:]]
         if run:
             return run(label, command, env=env)
         result = subprocess_output.run_external(list(map(str, command)), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **hidden_console())
         if result.returncode:
             raise RuntimeError(result.stdout[-2500:])
-    if target.exists():
-        if not (target / '.git').exists():
+    if io_path(target).exists():
+        if not io_path(target / '.git').exists():
             raise ValueError('Existing dependency is not a Git checkout of the pinned source: ' + str(target))
-        head = subprocess_output.output_external([git, '-C', str(target), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
-        dirty = subprocess_output.output_external([git, '-C', str(target), 'status', '--porcelain', '--untracked-files=no'], env=env, **hidden_console())
+        head = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(target), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
+        dirty = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(target), 'status', '--porcelain', '--untracked-files=no'], env=env, **hidden_console())
         if head != commit or dirty:
             raise ValueError('Existing dependency differs from the pinned clean source: ' + str(target))
         return target
-    target.parent.mkdir(parents=True, exist_ok=True)
+    io_path(target.parent).mkdir(parents=True, exist_ok=True)
+    from .environments import git_long_path_environment
+    env = git_long_path_environment(target.parent, env)
     candidates = urls(dict(network, sources=dict(network.get('sources', {}), github=network.get('sources', {}).get('git', [{'id': 'official'}]))), 'github', url, env)
     configured_env = env
     for name, endpoint, route in [(name, endpoint, route) for name, endpoint in candidates
@@ -1246,8 +1250,8 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
                 # set --no-cone` writes; every Git reads it at checkout.
                 execute(target.name + '-sparse', ['git', '-C', temporary, 'config', 'core.sparseCheckout', 'true'])
                 execute(target.name + '-sparse-cone', ['git', '-C', temporary, 'config', 'core.sparseCheckoutCone', 'false'])
-                (temporary / '.git' / 'info').mkdir(exist_ok=True)
-                (temporary / '.git' / 'info' / 'sparse-checkout').write_text(''.join(p + '\n' for p in sparse), encoding='utf-8')
+                io_path(temporary / '.git' / 'info').mkdir(exist_ok=True)
+                io_path(temporary / '.git' / 'info' / 'sparse-checkout').write_text(''.join(p + '\n' for p in sparse), encoding='utf-8')
             # The URL reaches Git the way `git -c` hands settings to its own
             # children, in every Git version: never in process arguments, logs
             # or the repository's config, even if the fetch is killed.
@@ -1259,10 +1263,10 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
             finally:
                 env = original
             execute(target.name + '-checkout', ['git', '-C', temporary, 'checkout', '--detach', commit])
-            actual = subprocess_output.output_external([git, '-C', str(temporary), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
+            actual = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(temporary), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
             if actual != commit:
                 raise ValueError('Downloaded source did not match its pinned commit')
-            temporary.rename(target)
+            io_path(temporary).rename(io_path(target))
             source_health(network, 'git', name, True)
             route_health(network, 'git', name, route)
             event(network, category='git', source=name, route=route, file=target.name, action='verified', commit=commit)
