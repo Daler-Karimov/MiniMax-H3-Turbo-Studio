@@ -1029,6 +1029,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         return level?.name === 'Medium' ? t('A continuation uses the Medium level.', '接着生成使用标准档。') : t('A continuation uses the Light level.', '接着生成使用轻量档。');
     }
     function showEffortEstimate(steps = Number(baseSteps.value), twoPassPlan = twoPass.checked, cache = stepCacheNow(), factor = upscaleNow()) {
+        effort.setWarning('');
         const parts = lengthControl.plan?.count > 1 ? t(`${lengthControl.plan.count} parts`, `分 ${lengthControl.plan.count} 段`) : '';
         // A request that fits one run keeps its own estimate while the longest run is unknown.
         if ((lengthControl.capabilityState === 'pending' || lengthControl.capabilityState === 'unavailable')
@@ -1048,7 +1049,11 @@ export function openStudio(node, {extendFrom = null} = {}) {
             return;
         }
         const rangeEstimate = capabilityView?.estimate(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache, factor);
-        if (rangeEstimate) { effort.setEstimate(rangeEstimate); return; }
+        if (rangeEstimate) {
+            effort.setEstimate(rangeEstimate);
+            effort.setWarning(capabilityView.warning(steps, twoPassPlan, arguments.length ? 3 : Number(refineSteps.value), cache, factor));
+            return;
+        }
         const mode = twoPassPlan ? 'two_pass' : 'single';
         // Keys: "<steps>[:<cache>][x<factor> when two-pass and not 2]".
         const estimate = effortEstimate[mode]?.[`${steps}${cache ? ':' + cache : ''}${twoPassPlan && factor !== 2 ? 'x' + factor : ''}`];
