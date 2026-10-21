@@ -34,7 +34,7 @@ import { continuationUpscale, createSamplingEffort, effortFor, effortsFrom, pass
 import { resultActions, previewBadge, icon, actionsUnavailable } from './result_actions.js';
 import { createPromptEnhancer } from './prompt_enhance.js';
 import { createRequestAssets, enabledLoras, referenceFiles } from './request_assets.js';
-import { rememberPromptDraft, trackPromptDraft } from './prompt_draft.js';
+import { promptDraftTrouble, rememberPromptDraft, restorePromptDraft, savePromptDraft, trackPromptDraft, watchPromptDraftTrouble } from './prompt_draft.js';
 import { canvasDimensions, imageSizeSelection } from './studio_size.js';
 import { createCapabilityView } from './capability_view.js';
 import { openEditorView } from './editor_loader.js';
@@ -45,7 +45,7 @@ import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-
 import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, composePartText, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261019-words';
 import { waitingText } from './chain_support.js';
-import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
+import { createExtendState, extendText, extendSourceProblem, extendSourceState, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -614,7 +614,9 @@ export function showNodes(node, dialog = null) {
 
 const studioQueues = new WeakMap();
 export async function extendVideo(record, node = current?.node || app.graph?._nodes?.find(row => row.type === 'FreeVideoGenerate')) {
-    if (!node || !await extendSourceExists(api, record)) throw new Error(extendText(t, 'unavailable'));
+    if (!node) throw new Error(extendText(t, 'unavailable'));
+    const state = await extendSourceState(api, record);
+    if (state !== 'ok') throw new Error(extendSourceProblem(t, state));
     return openStudio(node, {extendFrom: await readExtendRecord(api, record)});
 }
 
@@ -725,7 +727,28 @@ export function openStudio(node, {extendFrom = null} = {}) {
     mention.setAttribute('aria-label', t('Reference media (@)', '引用素材（@）'));
     mention.title = mention.getAttribute('aria-label');
     mention.disabled = prompt.disabled; mention.onpointerdown = e => e.preventDefault();
-    const promptTools = el('div', null, 'fv-prompt-tools'); promptTools.append(mention); promptEditor.append(promptTools);
+    // The prompt file could not be written, or the last prompt could not be read at launch.
+    const draftNote = button('', async () => {
+        draftNote.disabled = true;
+        draftNote.textContent = promptDraftTrouble().save ? t('Saving…', '正在保存…') : t('Loading…', '正在读取…');
+        try {
+            if (promptDraftTrouble().save) await savePromptDraft(api);
+            else {
+                // Read again into the open project; edits not yet saved still win over the file.
+                const current = app.graph.serialize(), target = app.extensionManager?.workflow?.activeWorkflow;
+                const restored = await restorePromptDraft(api, structuredClone(current), target?.path || '__existing__');
+                if (JSON.stringify(restored) !== JSON.stringify(current)) await app.loadGraphData(restored, true, true, target || 'FreeVideo');
+            }
+        } catch { /* The note stays with its retry. */ }
+        draftNote.disabled = false; showDraftTrouble(promptDraftTrouble());
+    }, 'fv-prompt-draft-note');
+    const showDraftTrouble = ({save, restore}) => {
+        if (draftNote.disabled) return;
+        draftNote.hidden = !save && !restore;
+        draftNote.textContent = save ? t('Prompt not saved · retry', '描述没能保存 · 重试') : t('Last prompt not loaded · retry', '上次的描述没能读取 · 重试');
+    };
+    showDraftTrouble(promptDraftTrouble()); cleanup.push(watchPromptDraftTrouble(showDraftTrouble));
+    const promptTools = el('div', null, 'fv-prompt-tools'); promptTools.append(draftNote, mention); promptEditor.append(promptTools);
     cleanup.push(() => references.dispose());
     const terms = attachTermSuggest(prompt, {t, host: dialog, suppressed: () => !!mentionAt(prompt.value, prompt.selectionStart, prompt.selectionEnd, handleNames(castChoices()))});
     cleanup.push(() => terms.dispose());
@@ -1709,7 +1732,8 @@ export function openStudio(node, {extendFrom = null} = {}) {
             if (lengthPlan?.count > 1 && chosenMode !== 'single') { status.textContent = t('Videos made in parts cannot use batch or loop.', '分段视频不能批量或循环生成。'); return; }
             const lengthOptions = lengthControl.options();
             const source = extension.source;
-            if (source && !await extendSourceExists(api, source)) throw new Error(extendText(t, 'unavailable'));
+            const sourceState = source ? await extendSourceState(api, source) : 'ok';
+            if (sourceState !== 'ok') throw new Error(extendSourceProblem(t, sourceState));
             if (source && lengthPlan?.count > 1) lengthOptions.after = {work: source.video};
             // Only serialization briefly locks the editor. Network submission
             // and all GPU execution leave the next draft fully editable.
