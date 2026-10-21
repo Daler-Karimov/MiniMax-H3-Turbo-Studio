@@ -31,7 +31,7 @@ from .install_tuning import build_parallelism, required_models, cache_compatible
 from .terminal_ui import TerminalUI, LogProgress
 from .locking import runtime_lock, LOCK_ENV
 from .environments import (ENVIRONMENTS, environment_names, select_layout, role_pythons, constraints_file,
-                           bootstrap_versions, uv_file_arguments, uv_build_environment, git_long_path_environment)
+                           bootstrap_versions, uv_file_arguments, uv_build_environment)
 from . import disk_space
 from . import network
 from . import processes
@@ -1407,9 +1407,6 @@ class Installer:
         env = dict(env, FREEVIDEO_INSTALL_PROGRESS='1')
         args, cwd = uv_file_arguments(args, cwd)
         env = uv_build_environment(args, self.root, env)
-        if label == 'vdn-source':
-            # Its Git folders are made below a deep root; see git_long_path_environment.
-            env = git_long_path_environment(self.root, env)
         with self.state_lock:
             index = len(self.state['steps'])
             log = self.run_dir / ('%02d-%s.log' % (index, label))
@@ -1478,6 +1475,12 @@ class Installer:
             row['error'] = repr(error)
             if child is not None and child.poll() is None:
                 processes.stop(child)
+            # A step stopped from outside leaves nothing else in its log to explain why.
+            try:
+                with log.open('a', encoding='utf-8') as stream:
+                    stream.write('\nStopped: %s\n' % error)
+            except OSError:
+                pass
             raise
         finally:
             update_progress(final=True)

@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 from types import SimpleNamespace
 from . import execution_paths
 from . import subprocess_output
@@ -23,7 +24,7 @@ import threading
 import time
 from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 from . import proxy
-from .long_paths import io_path, plain_errors
+from .long_paths import io_path, is_windows, path_chars, plain, plain_errors
 from .system import curl_executable, missing_curl_message, windows
 
 
@@ -1202,6 +1203,83 @@ def git_parameter(value):
     return "'" + value.replace("'", "'\\''").replace('!', "'\\!'") + "'"
 
 
+# Git for Windows cannot find a repository from a working folder deeper than
+# the ordinary path limit, with or without core.longpaths, and a junction does
+# not help: the folder it reports is the real one. Git therefore works in a short
+# real scratch folder and the finished checkout is moved into place.
+GIT_FOLDER_RESERVE = 140
+GIT_SCRATCH_BASE_CHARS = 80
+GIT_PATH_LIMIT = 259
+
+
+def git_folder_too_deep(path):
+    return is_windows() and path_chars(plain(path)) + GIT_FOLDER_RESERVE > GIT_PATH_LIMIT
+
+
+def git_scratch_folder():
+    """A new short real folder for Git to work in, or None where none can be made."""
+    bases = [tempfile.gettempdir()]
+    if os.environ.get('ProgramData'):
+        bases.append(os.path.join(os.environ['ProgramData'], 'FV'))
+    for base in bases:
+        if path_chars(plain(base)) > GIT_SCRATCH_BASE_CHARS:
+            continue
+        try:
+            os.makedirs(base, exist_ok=True)
+            return Path(tempfile.mkdtemp(prefix='fvgit-', dir=base))
+        except OSError:
+            continue
+    return None
+
+
+def remove_tree(path):
+    def writable(function, name, _):
+        os.chmod(name, 0o700)
+        function(name)
+    shutil.rmtree(io_path(path), onerror=writable)
+
+
+def relocate(source, destination):
+    """Move a finished folder; where a rename cannot (another volume) copy it."""
+    source, destination = io_path(source), io_path(destination)
+    try:
+        source.rename(destination)
+        return
+    except OSError:
+        pass
+    try:
+        shutil.copytree(source, destination, symlinks=True)
+    except BaseException:
+        if destination.exists():
+            remove_tree(destination)
+        raise
+    remove_tree(source)
+
+
+def repository_state(path, git, env, revision='HEAD', **options):
+    """What `revision` is and what local changes the checkout at `path` has."""
+    path = Path(path)
+    prefix = [git, '-c', 'core.longpaths=true']
+    hidden = dict(hidden_console(), **options)
+    if not git_folder_too_deep(path):
+        head = subprocess_output.output_external([*prefix, '-C', str(path), 'rev-parse', revision], env=env, **hidden).strip()
+        dirty = subprocess_output.output_external([*prefix, '-C', str(path), 'status', '--porcelain', '--untracked-files=no'], env=env, **hidden)
+        return head, dirty
+    # Name the repository instead of entering it. If Git cannot read it this
+    # way, HEAD is read from the file and local changes cannot be checked.
+    git_dir = '--git-dir=' + str(path / '.git')
+    folder = tempfile.gettempdir()
+    try:
+        head = subprocess_output.output_external([*prefix, git_dir, 'rev-parse', revision], cwd=folder, env=env, **hidden).strip()
+        dirty = subprocess_output.output_external([*prefix, git_dir, 'diff-index', '--cached', '--name-only', 'HEAD'], cwd=folder, env=env, **hidden)
+    except (subprocess.CalledProcessError, OSError):
+        if revision != 'HEAD':
+            raise
+        head = io_path(path / '.git' / 'HEAD').read_text(encoding='utf-8').strip()
+        dirty = ''
+    return head, dirty
+
+
 def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None):
     """Fetch only the pinned commit, atomically; never reset existing checkouts."""
     target = Path(target)
@@ -1213,8 +1291,6 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
     if version and version < MIN_GIT:
         raise RuntimeError(old_git_message(version))
     def execute(label, command):
-        # Git makes its own folders with the ordinary limit unless told otherwise on the command line;
-        # the repository's config only exists after `init` has already made the folder.
         command = [git, '-c', 'core.longpaths=true', *command[1:]]
         if run:
             return run(label, command, env=env)
@@ -1224,14 +1300,11 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
     if io_path(target).exists():
         if not io_path(target / '.git').exists():
             raise ValueError('Existing dependency is not a Git checkout of the pinned source: ' + str(target))
-        head = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(target), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
-        dirty = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(target), 'status', '--porcelain', '--untracked-files=no'], env=env, **hidden_console())
+        head, dirty = repository_state(target, git, env)
         if head != commit or dirty:
             raise ValueError('Existing dependency differs from the pinned clean source: ' + str(target))
         return target
     io_path(target.parent).mkdir(parents=True, exist_ok=True)
-    from .environments import git_long_path_environment
-    env = git_long_path_environment(target.parent, env)
     candidates = urls(dict(network, sources=dict(network.get('sources', {}), github=network.get('sources', {}).get('git', [{'id': 'official'}]))), 'github', url, env)
     configured_env = env
     for name, endpoint, route in [(name, endpoint, route) for name, endpoint in candidates
@@ -1239,19 +1312,21 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
         env = route_environment(network, 'git', name, configured_env, route)
         temporary = target.with_name(target.name + '.partial-' + str(time.time_ns()))
         event(network, category='git', source=name, route=route, file=target.name, action='attempt', commit=commit)
+        scratch = git_scratch_folder() if git_folder_too_deep(temporary) else None
+        work = scratch / 'repo' if scratch else temporary
         try:
-            execute(target.name + '-init-' + name, ['git', 'init', '--quiet', temporary])
+            execute(target.name + '-init-' + name, ['git', 'init', '--quiet', work])
             # Never depend on a user's global CRLF conversion or long-path
             # settings when constructing the exact official patched tree.
-            execute(target.name + '-line-endings', ['git', '-C', temporary, 'config', 'core.autocrlf', 'false'])
-            execute(target.name + '-long-paths', ['git', '-C', temporary, 'config', 'core.longpaths', 'true'])
+            execute(target.name + '-line-endings', ['git', '-C', work, 'config', 'core.autocrlf', 'false'])
+            execute(target.name + '-long-paths', ['git', '-C', work, 'config', 'core.longpaths', 'true'])
             if sparse:
                 # The patterns file with cone mode off is what `sparse-checkout
                 # set --no-cone` writes; every Git reads it at checkout.
-                execute(target.name + '-sparse', ['git', '-C', temporary, 'config', 'core.sparseCheckout', 'true'])
-                execute(target.name + '-sparse-cone', ['git', '-C', temporary, 'config', 'core.sparseCheckoutCone', 'false'])
-                io_path(temporary / '.git' / 'info').mkdir(exist_ok=True)
-                io_path(temporary / '.git' / 'info' / 'sparse-checkout').write_text(''.join(p + '\n' for p in sparse), encoding='utf-8')
+                execute(target.name + '-sparse', ['git', '-C', work, 'config', 'core.sparseCheckout', 'true'])
+                execute(target.name + '-sparse-cone', ['git', '-C', work, 'config', 'core.sparseCheckoutCone', 'false'])
+                io_path(work / '.git' / 'info').mkdir(exist_ok=True)
+                io_path(work / '.git' / 'info' / 'sparse-checkout').write_text(''.join(p + '\n' for p in sparse), encoding='utf-8')
             # The URL reaches Git the way `git -c` hands settings to its own
             # children, in every Git version: never in process arguments, logs
             # or the repository's config, even if the fetch is killed.
@@ -1259,13 +1334,15 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
             env = dict(env, GIT_CONFIG_PARAMETERS=' '.join(filter(None, (
                 env.get('GIT_CONFIG_PARAMETERS', '').strip(), git_parameter('remote.origin.url=' + endpoint)))))
             try:
-                execute(target.name + '-fetch-' + name, ['git', '-C', temporary, '-c', 'fetch.fsckObjects=true', 'fetch', '--depth=1', '--no-tags', 'origin', commit])
+                execute(target.name + '-fetch-' + name, ['git', '-C', work, '-c', 'fetch.fsckObjects=true', 'fetch', '--depth=1', '--no-tags', 'origin', commit])
             finally:
                 env = original
-            execute(target.name + '-checkout', ['git', '-C', temporary, 'checkout', '--detach', commit])
-            actual = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(temporary), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
+            execute(target.name + '-checkout', ['git', '-C', work, 'checkout', '--detach', commit])
+            actual = subprocess_output.output_external([git, '-c', 'core.longpaths=true', '-C', str(work), 'rev-parse', 'HEAD'], env=env, **hidden_console()).strip()
             if actual != commit:
                 raise ValueError('Downloaded source did not match its pinned commit')
+            if scratch:
+                relocate(work, temporary)
             io_path(temporary).rename(io_path(target))
             source_health(network, 'git', name, True)
             route_health(network, 'git', name, route)
@@ -1276,4 +1353,7 @@ def clone(target, url, commit, *, sparse=None, run=None, network=None, env=None)
                 raise
             source_health(network, 'git', name, False)
             event(network, category='git', source=name, route=route, file=target.name, action='fallback', reason='network-fetch-failed')
+        finally:
+            if scratch and scratch.exists():
+                remove_tree(scratch)
     raise RuntimeError('All Git sources failed. Check your network or connection mode in Downloads. Incomplete checkouts retained beside ' + str(target))

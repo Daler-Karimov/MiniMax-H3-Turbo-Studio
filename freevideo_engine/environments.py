@@ -36,36 +36,6 @@ UV_FILE_LIST_OPTIONS = frozenset(('-c', '--constraint', '--constraints', '-b', '
 UV_BUILD_PATH_CHARS = 200
 
 
-# Git creates and enters its own folders with the ordinary 259-character limit
-# even when core.longpaths lets it write deep files. Reserve the clone folder,
-# its ".partial-<ns>" name and the longest object path below it.
-GIT_PATH_CHARS = 140
-
-
-def _short_view(root, environ, reserve):
-    """The view that leaves `reserve` characters below `root`, or None when none can be had."""
-    from . import launch_view, runtime_alias
-    from .long_paths import path_chars, plain
-    from .package_paths import WINDOWS_PATH_LIMIT
-    if not runtime_alias._backend.windows():
-        return None
-    root = Path(os.path.abspath(plain(root)))
-    view = launch_view.current(environ)
-    if (view is None or not root.is_relative_to(view.real)
-            or path_chars(launch_view.value(root, view)) + 1 + reserve > WINDOWS_PATH_LIMIT):
-        try:
-            view = launch_view.View(root, runtime_alias.runtime_view(root, longest=reserve))
-        except OSError as error:
-            if (path_chars(root) + 1 + reserve <= WINDOWS_PATH_LIMIT
-                    and runtime_alias._backend.ansi_path(root)):
-                view = launch_view.View(root, root)
-            else:
-                return None  # No short entry: keep the old behaviour.
-    if path_chars(launch_view.value(root, view)) + 1 + reserve > WINDOWS_PATH_LIMIT:
-        return None
-    return view
-
-
 def uv_build_environment(command, root, environ):
     """Windows uv pip builds use a short view of the existing cache and scratch.
 
@@ -77,12 +47,26 @@ def uv_build_environment(command, root, environ):
             or list(command[1:2]) != ['pip']):
         return environ
     from . import launch_view, runtime_alias
-    from .long_paths import io_path
+    from .long_paths import io_path, path_chars, plain
+    from .package_paths import WINDOWS_PATH_LIMIT
     from .triton_compat import TEMP_KEYS, TEMP_ROOT_ENV, _writable_temporary
-    view = _short_view(root, environ, UV_BUILD_PATH_CHARS)
-    if view is None:
+    if not runtime_alias._backend.windows():
         return environ
-    temporary = Path(launch_view.value(Path(os.path.abspath(root)) / 'tmp' / 'uv', view))
+    root = Path(os.path.abspath(plain(root)))
+    view = launch_view.current(environ)
+    if (view is None or not root.is_relative_to(view.real)
+            or path_chars(launch_view.value(root, view)) + 1 + UV_BUILD_PATH_CHARS > WINDOWS_PATH_LIMIT):
+        try:
+            view = launch_view.View(root, runtime_alias.runtime_view(root, longest=UV_BUILD_PATH_CHARS))
+        except OSError as error:
+            if (path_chars(root) + 1 + UV_BUILD_PATH_CHARS <= WINDOWS_PATH_LIMIT
+                    and runtime_alias._backend.ansi_path(root)):
+                view = launch_view.View(root, root)
+            else:
+                return environ  # No short entry: keep the old behaviour; packages without source builds still install.
+    if path_chars(launch_view.value(root, view)) + 1 + UV_BUILD_PATH_CHARS > WINDOWS_PATH_LIMIT:
+        return environ
+    temporary = Path(launch_view.value(root / 'tmp' / 'uv', view))
     try:
         for path in (temporary.parent, temporary):
             folder = io_path(path)
@@ -96,23 +80,6 @@ def uv_build_environment(command, root, environ):
         return environ
     return dict(launch_view.environment_view(environ, view),
                 **{key: str(temporary) for key in (*TEMP_KEYS, TEMP_ROOT_ENV)})
-
-
-def git_long_path_environment(path, environ):
-    """Windows Git, and the Python that runs it, work from a short view of the install root.
-
-    `path` is any folder below the install root (the folder holding setup.lock,
-    which the short entry is verified through). Only this child's environment is
-    marked; paths on screen, in receipts and in the checkout keep their real spelling.
-    """
-    from . import launch_view
-    from .long_paths import path_chars, plain
-    path = Path(os.path.abspath(plain(path)))
-    root = next((parent for parent in (path, *path.parents) if os.path.isfile(parent / 'setup.lock')), None)
-    if root is None:
-        return environ
-    view = _short_view(root, environ, GIT_PATH_CHARS + path_chars(path) - path_chars(root))
-    return environ if view is None else launch_view.environment_view(environ, view)
 
 
 def uv_file_arguments(command, cwd=None):
