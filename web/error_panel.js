@@ -65,6 +65,10 @@ const PLAIN_ERRORS = [
             'Unsupported LoRA tensor (no patches are ignored): ', 'Adapter contains no LoRA factors', 'Expected matching 2-D LoRA factors', 'Incomplete LoRA pair'],
         title: ['This LoRA cannot be used', '此 LoRA 无法使用'],
         summary: ['This LoRA is not made for the FreeVideo model. Turn it off or remove it, then generate again.', '此 LoRA 不适用于 FreeVideo 的模型。请关闭或移除后重新生成。']},
+    {key: 'lora-acceleration', message: 'This acceleration LoRA was made for the original model and cannot be used. The FreeVideo model is already accelerated and does not need one.',
+        title: ['This LoRA cannot be used', '此 LoRA 无法使用'],
+        summary: ['The FreeVideo model is already accelerated and does not need an acceleration LoRA. Turn this LoRA off or remove it, then generate again.',
+            'FreeVideo 的模型已经加速，无需加速 LoRA。请关闭或移除此 LoRA 后重新生成。']},
     {key: 'lora-int8', message: 'This LoRA changes parts of the model that the int8 version cannot merge yet, so it cannot be used for now. LoRAs that change only linear layers work.',
         title: ['This LoRA cannot be used', '此 LoRA 无法使用'],
         summary: ['The int8 version cannot merge the layers this LoRA changes yet. Turn it off or remove it, then generate again.',
@@ -637,7 +641,7 @@ export function createErrorPanel(t) {
         copy.hidden = generated; copyInside.hidden = !generated; copyInside.textContent = copy.textContent;
         // For a generation failure the note on removed text sits in the technical details, beside the copy button.
         privacy.hidden = generated; privacyInside.hidden = !generated;
-        const lora = advice.kind === 'lora-unusable' || advice.kind === 'lora-int8';
+        const lora = ['lora-unusable', 'lora-acceleration', 'lora-int8'].includes(advice.kind);
         // An int8 limit is not a judgement, so there is no mistake to report.
         github.hidden = !generated || advice.kind === 'lora-int8'; githubLora = lora;
         github.textContent = lora ? t('Report a mistake', '报告误判') : t('Report a problem', '提交问题');
