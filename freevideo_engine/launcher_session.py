@@ -479,6 +479,8 @@ class Session:
         self.persist()
 
     def action(self, name, accepted=False, *, retry=None):
+        if self.action_notice == 'installation_unavailable':
+            self.action_notice = ''
         if name == 'stop':
             self.pending_action = None
             if self.action_notice == 'setup_queued':
@@ -557,7 +559,11 @@ class Session:
             self.page = 'comfy'; return
         if name == 'launcher' and self.selected:
             if not self.controller.restore({'installation': self.selected}):
-                raise ValueError(self.t('Locate or repair this installation in Setup.', '请在安装设置中重新定位或修复这份安装。'))
+                # A moved, renamed or unplugged folder is expected: go to Setup
+                # with the saved paths filled in instead of a failure card.
+                self.action_notice = 'installation_unavailable'
+                self.page = 'comfy'
+                return
             self.page = 'launcher'
             return
         if name == 'update-engine' and self.selected:

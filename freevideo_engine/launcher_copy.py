@@ -11,6 +11,8 @@ ACTION_COPY = {
                          '下载目录已不存在，请重新导出清单'),
     'installation_missing': ('There is no installation information yet. Complete installation first.',
                              '还没有安装信息，请先完成安装'),
+    'installation_unavailable': ('The saved ComfyUI folder could not be opened. It may have been moved or renamed, or its drive may be disconnected. Choose its current location below, or install ComfyUI.',
+                                 '无法打开已保存的 ComfyUI 文件夹，它可能已被移动、改名，或所在磁盘未连接。请在下方选择它现在的位置，或安装 ComfyUI。'),
     'checking_update': ('Checking for updates. Please wait.', '正在检查更新，请稍候'),
     'update_install_failed': ('The update could not be installed. You can keep using the current version.',
                               '无法安装更新。当前版本可以照常使用。'),
