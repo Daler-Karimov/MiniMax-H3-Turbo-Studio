@@ -44,6 +44,7 @@ import { SHOWCASE_SCENE } from './entry_showcase.js';
 import { createStudioLength, savedSeconds } from './studio_length.js?v=20261011-length';
 import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, composePartText, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261019-words';
+import { waitingText } from './chain_support.js';
 import { createExtendState, extendText, extendSourceExists, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -1388,9 +1389,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
             const position = chainPosition(chain, message);
             const joining = readChainResult(chain).joining, waiting = chain.state === 'queued' && message.phase === 'prepare';
             setChainLine(joining ? t('Joining the parts.', '正在接合各段。')
-                : waiting ? t(`Waiting in queue · Part ${position.index + 1} of ${position.count}`, `正在排队 · 第 ${position.index + 1} 段，共 ${position.count} 段`)
+                : waiting ? (chain.waiting ? waitingText(chain.waiting, t) : t(`Waiting in queue · Part ${position.index + 1} of ${position.count}`, `正在排队 · 第 ${position.index + 1} 段，共 ${position.count} 段`))
                 : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`));
             progress.element.querySelector('.fv-generation-label').hidden = joining || waiting;
+            progress.element.classList.toggle('fv-generation-waiting', waiting);
             progress.updateReport(message); showProgress(message);
         },
         onState: chain => {
@@ -1409,7 +1411,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
                 : t(`Part ${position.index + 1} of ${position.count}`, `第 ${position.index + 1} 段，共 ${position.count} 段`));
             if (active && node.properties.freevideo_chain?.width) previewSize(node.properties.freevideo_chain.width, node.properties.freevideo_chain.height);
             if (!active) { cancelling = false; hideProgress(); }
-            if (!active) progress.element.querySelector('.fv-generation-label').hidden = false;
+            if (!active) { progress.element.querySelector('.fv-generation-label').hidden = false; progress.element.classList.remove('fv-generation-waiting'); }
             if (chain?.state === 'cancelled') status.textContent = t('Cancelled', '已取消');
             // After a stop with videos queued the next one starts at once; its line says so until something else is done.
             if (stopNote) { status.dataset.error = 'false'; status.textContent = stopNote; }
@@ -1552,7 +1554,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const chainWait = Boolean(chainController?.active && (!chainController.canQueue || !multiple));
         const chainReason = !chainWait ? '' : readChainResult(chain)?.joining
             ? t('Joining parts…', '正在拼接…')
-            : chain?.state === 'queued' ? t('Queued…', '排队中…')
+            : chain?.state === 'queued' ? (chain.waiting ? waitingText(chain.waiting, t) : t('Queued…', '排队中…'))
             : t(`Generating part ${position.index + 1}…`, `正在生成第 ${position.index + 1} 段…`);
         generate.disabled = submitting || chainWait || lengthControl.blocked || (runMode === 'loop' && queueState?.looping);
         generate.textContent = submitting ? t('Adding…', '正在添加…')
