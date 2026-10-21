@@ -221,7 +221,10 @@ class Service:
     def info(self, wait=True):
         """wait=False answers from the cheap check, for callers on an event loop or UI thread."""
         root, machine = self.installation()
-        spec = assets.catalog()
+        try:
+            spec = assets.catalog()
+        except (OSError, ValueError):
+            return dict(ready=False, model='', license='', bytes=0, busy=self.busy(), ram_bytes=self.ram_bytes(machine))
         return dict(ready=assets.settle(root) if wait else assets.ready(root), model=spec['repo'], license=spec['license'],
                     bytes=sum(row['bytes'] for row in spec['files']), busy=self.busy(),
                     ram_bytes=self.ram_bytes(machine))
@@ -435,7 +438,10 @@ class Service:
             report = {key: item for key, item in self.state.items()
                       if key in ('phase', 'error', 'exception', 'error_details', 'timings', 'diagnostics',
                                  'resources', 'cleanup', 'worker_returncode', 'output_rejection')}
-            spec = assets.catalog()
+            try:
+                spec = assets.catalog()
+            except (OSError, ValueError):
+                spec = dict(repo='', revision='')
             report.update(schema='freevideo.prompt-vlm', schema_version=2, action=action,
                           created_epoch=time.time(), report_id=uuid.uuid4().hex,
                           elapsed_seconds=time.monotonic() - started, model=spec['repo'],

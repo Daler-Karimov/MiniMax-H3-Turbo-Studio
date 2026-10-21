@@ -675,7 +675,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             objectName: "promptModelRow"
-                            visible: !!s.prompt_model && !s.prompt_model.ready && !s.prompt_model.checking
+                            visible: !!s.prompt_model && !s.prompt_model.ready && !s.prompt_model.checking && !s.prompt_model.unavailable
                             Layout.fillWidth: true; spacing: 14
                             FCheck {
                                 objectName: "promptModelSwitch"; Layout.fillWidth: true

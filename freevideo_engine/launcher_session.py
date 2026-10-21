@@ -822,7 +822,8 @@ class Session:
         if self.form['prompt_model'] and self.installation_engine() and self.controller.state.get('status') == 'open' \
                 and not self.controller.busy and not (self.prompt_installer and self.prompt_installer.busy):
             from .prompt_vlm import assets
-            if not assets.ready(self._image_location()[1]):
+            # Without its model list the download cannot start; the tick stays for a later start.
+            if assets.available() and not assets.ready(self._image_location()[1]):
                 self.prompt_model_action('install')
             if self.prompt_installer and self.prompt_installer.busy or assets.ready(self._image_location()[1]):
                 self.form['prompt_model'] = False
@@ -854,7 +855,7 @@ class Session:
         if self.prompt_installer and self.prompt_installer.busy:
             return
         from .prompt_vlm import assets
-        if assets.checking(engine):
+        if assets.checking(engine) or not assets.available():
             return
         if not (self.prompt_installer and self.prompt_installer.root == engine):
             self.prompt_installer = prompt_installer.Installer(engine, busy=self.generating)
@@ -863,7 +864,13 @@ class Session:
     def prompt_model_view(self):
         """The prompt model as a row of the download card and as the suggestion on the home page."""
         from .prompt_vlm import assets
-        spec = assets.catalog()
+        try:
+            spec = assets.catalog()
+        except (OSError, ValueError):
+            # Without its model list the row can neither be described nor offered, but
+            # a missing resource must not take the whole launcher page down with it.
+            return dict(ready=False, checking=False, unavailable=True, total_bytes=0, enough_disk=True, busy=False,
+                        install={}, failure='', downloaded_bytes=0, title=self.t(*NAMES['text']), suggest=False)
         total = sum(row['bytes'] for row in spec['files'])
         engine = self._image_location()[1] if self.installation_engine() else None
         ready = bool(engine) and assets.ready(engine)
