@@ -885,6 +885,13 @@ def download_here(candidates, path, expected, progress=None, *, network=None, en
     path = Path(path)
     updating = category == 'launcher-update'
     integrity_failed = False
+    attempts = {}
+
+    def note_failure(source, route, reason, status=''):
+        # The last reason each source and route gave, for the final error.
+        attempts.pop((source, route), None)  # a repeat moves to the end, so the last 8 are the latest
+        attempts[source, route] = reason + (' (HTTP %s)' % status if str(status).isdigit() and status != '000' else '')
+
     failed_sources = set()
     transferred, high_water, last_rate = 0, 0, 0.
     transfer_samples = deque([(time.monotonic(), 0)])
@@ -1141,6 +1148,7 @@ def download_here(candidates, path, expected, progress=None, *, network=None, en
                         integrity_failed = True
                         failed_sources.add(name)
                     source_health(network, category, name, False)
+                    note_failure(name, route, 'response-size-exceeded')
                     event(network, category=category, source=name, file=path.name, action='fallback',
                           method='curl', reason='response-size-exceeded', observed_bytes=oversized,
                           expected_bytes=size, resume_bytes=offset)
@@ -1168,10 +1176,12 @@ def download_here(candidates, path, expected, progress=None, *, network=None, en
                             continue
                         failed_sources.add(name)
                     source_health(network, category, name, False)
+                    note_failure(name, route, 'integrity-mismatch')
                     event(network, category=category, source=name, file=path.name, action='fallback', reason='integrity-mismatch')
                     break
                 if offset and (process.returncode == 33 or process.returncode == 22 and status == '416') and restart == 0:
                     if model or keep_partial:
+                        note_failure(name, route, 'source-does-not-support-range')
                         event(network, category=category, source=name, file=path.name,
                               action='resume-refused', resume_bytes=offset, reason='source-does-not-support-range')
                         break
@@ -1192,6 +1202,7 @@ def download_here(candidates, path, expected, progress=None, *, network=None, en
                 if updating and stalled:
                     failed_sources.add(name)
                 reason = 'no-progress' if stalled else 'slow-transfer' if slow else 'faster-source' if faster else 'curl-' + str(process.returncode)
+                note_failure(name, route, reason, status)
                 alternatives = route_order(network, category, name, env)
                 if alternatives.index(route) + 1 < len(alternatives):
                     event(network, category=category, source=name, route=alternatives[alternatives.index(route)+1],
@@ -1207,7 +1218,12 @@ def download_here(candidates, path, expected, progress=None, *, network=None, en
             event(network, category=category, source=name, file=path.name, action='restart-approved',
                   retained_bytes=partial.stat().st_size, reason='resume-unavailable')
             retain_partial(partial, 'restart-approved')
-    error = DownloadError('Every download source failed for %s. Check your network or choose another connection mode in Downloads. Partial files retained' % path.name)
+    message = 'Every download source failed for %s. Check your network or choose another connection mode in Downloads. Partial files retained' % path.name
+    if attempts:
+        message += '. Attempts: ' + '; '.join('%s/%s: %s' % (source, route, reason)
+                                              for (source, route), reason in list(attempts.items())[-8:])
+    error = DownloadError(message)
+    error.attempts = [dict(source=source, route=route, reason=reason) for (source, route), reason in attempts.items()]
     error.integrity = integrity_failed
     raise error
 
