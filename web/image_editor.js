@@ -231,7 +231,7 @@ export async function openImageEditor({source = null, name = source || '', targe
     const genClient = imageGenClient || createImageGenClient(api.fetchApi.bind(api));
     const generation = createImageGeneration({client: genClient,
         renderer, t, getDoc: () => doc, getSelection: () => selection, commit: commitInserted, el, button, segmented,
-        library, resolve, icon, onRatioChange: setBlankCanvasRatio, onPlace: (file, label) => addImageLayer(file, label), productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
+        library, resolve, icon, onRatioChange: setBlankCanvasRatio, onPlace: (file, label) => addImageLayer(file, label, {keepTool: true}), productVersion, fetchApi: (path, options) => api.fetchApi(path, options),
         resumeKey: `${role}|${source || ''}|${name}`});
 
     // ----- tools ----------------------------------------------------------------
@@ -916,12 +916,12 @@ export async function openImageEditor({source = null, name = source || '', targe
         const n = doc.layers.filter(l => l.kind === 'paint').length + 1;
         commitInserted(commands.addPaintLayer(doc, t(`Paint ${n}`, `绘画 ${n}`)));
     }
-    async function addImageLayer(file, label) {
+    async function addImageLayer(file, label, {keepTool = false} = {}) {
         try {
             const img = await renderer.image(file); renderer.images.get(file).value = img;
             commitInserted(commands.addImageLayer(doc, {src: file, nw: img.naturalWidth, nh: img.naturalHeight,
                 name: label || file.split('/').pop()}));
-            select('move');
+            if (!keepTool) select('move');
         } catch { message(t('The image could not be added. Choose another one.', '图片没能添加，请换一张。'), ['Image editor', '图片编辑器']); }
     }
     filePicker.onchange = async () => {
