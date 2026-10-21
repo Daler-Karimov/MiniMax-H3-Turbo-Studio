@@ -177,12 +177,12 @@ export function showReportTip(bar, anchor, t, {mode = 'invite', submit, onHide =
         title.textContent = t('Last step', '最后一步');
         lead.textContent = savedName?.endsWith('.zip')
             ? t(`The report is large, so it was saved as ${savedName}. Please drag it into "Diagnostic report", then select Submit new issue.`,
-                `报告较大，已保存为 ${savedName}。请将它拖入「诊断报告」，再点击 Submit new issue 即可。`)
+                `报告较大，已保存为 ${savedName}。请将它拖入「诊断报告」，再点击 Submit new issue。`)
             : savedName
             ? t(`Please drag ${savedName} into "Diagnostic report", then select Submit new issue.`,
-                `请将 ${savedName} 拖入「诊断报告」，再点击 Submit new issue 即可。`)
+                `请将 ${savedName} 拖入「诊断报告」，再点击 Submit new issue。`)
             : t('Please drag the downloaded report into "Diagnostic report", then select Submit new issue.',
-                '请将下载的诊断报告拖入「诊断报告」，再点击 Submit new issue 即可。');
+                '请将下载的诊断报告拖入「诊断报告」，再点击 Submit new issue。');
         const link = el('a', null, t("Page didn't open? Go to GitHub", '页面没有打开？点此前往 GitHub'));
         link.href = address; link.target = '_blank'; link.rel = 'noopener';
         note.replaceChildren(link);

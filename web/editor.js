@@ -32,7 +32,7 @@ import {createFirstRunGuide} from './first_run_guide.js';
 import {SHOWCASE_SCENE} from './entry_showcase.js';
 import {createEditorFailures} from './editor_failure.js';
 import {fitEditorHeader} from './editor_header_fit.js';
-import {optionalText} from './optional_inputs.js';
+import {optionalText, clonePrompt} from './optional_inputs.js';
 import {outputNotWritable} from './error_panel.js';
 import {repairAction} from './repair_hint.js';
 import {expandCast} from './cast_mention.js';
@@ -497,14 +497,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         title.title = state.record.name;
         exportButton.classList.toggle('fv-primary', !!model.exportFrames(state.record) && !state.selection && !jobActive() && !exportStatus);
         const running = exportPreparing || ['running', 'queued'].includes(exportStatus?.state);
-        if (['running', 'queued'].includes(exportStatus?.state)) exportButton.textContent = t(`Export ${Math.round((exportStatus.fraction || 0) * 100)}%`, `导出 ${Math.round((exportStatus.fraction || 0) * 100)}%`);
+        if (['running', 'queued'].includes(exportStatus?.state) && exportStatus.queued) exportButton.textContent = t('Queued', '排队中');
+        else if (['running', 'queued'].includes(exportStatus?.state)) exportButton.textContent = t(`Export ${Math.round((exportStatus.fraction || 0) * 100)}%`, `导出 ${Math.round((exportStatus.fraction || 0) * 100)}%`);
         else if (exportPreparing) exportButton.textContent = queue.dirty ? t('Saving changes…', '正在保存改动…') : t('Exporting', '正在导出');
         else exportButton.textContent = exportStatus?.state === 'done' && exportMatches() ? t('View', '查看') : t('Export', '导出');
         // Never disabled: a press that cannot export says why next to it.
         exportButton.disabled = false; exportButton.title = '';
     }
     async function snapshot() {
-        let value = panel.snapshot ? structuredClone(await panel.snapshot()) : structuredClone(await app.graphToPrompt());
+        let value = panel.snapshot ? clonePrompt(await panel.snapshot()) : clonePrompt(await app.graphToPrompt());
         if (value.output) {
             const node = String(panel.node?.id || panel.node || Object.keys(value.output).find(id => value.output[id].class_type === 'FreeVideoGenerate') || '');
             value = {node, prompt: value.output, extra_data: {extra_pnginfo: {workflow: value.workflow || {}}}};
@@ -1042,7 +1043,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             download: report => new Promise((resolve, reject) => {
                 const step = value => {
                     const install = value?.install;
-                    if (install?.state !== 'running') { resolve(install?.state === 'done'); return false; }
+                    if (install?.state !== 'running') { resolve(install?.state === 'done' || install?.reason || false); return false; }
                     report(install.total > 0 ? install.done / install.total : 0); return true;
                 };
                 store.installEars().then(value => { if (step(value)) store.watchEarsPack(step); }, reject);

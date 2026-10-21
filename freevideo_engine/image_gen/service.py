@@ -606,8 +606,10 @@ class Service:
                         except FailureError as error:
                             self.discard_queued(error.status)
                         except Exception as error:
-                            # A previously valid reference may disappear while waiting.
-                            code = ('generation_failed' if str(error) in INVALID_ERRORS
+                            # A previously valid reference may disappear while waiting; that keeps its
+                            # own reason. Other settings were already checked, so a change there is a fault.
+                            code = (str(error) if str(error) == 'invalid_media'
+                                    else 'generation_failed' if str(error) in INVALID_ERRORS
                                     else classify_exception(error))
                             self.discard_queued(self.failed(code, pending['context'], error=error))
                         else:
@@ -1087,6 +1089,8 @@ class Service:
                         raise RuntimeError('worker_exit')
                     result = dict(phase='complete', file='freevideo-image/' + path.name,
                                   seconds=seconds, plan=row.get('plan'))
+                    if isinstance(row.get('attention'), dict):
+                        result['attention'] = row['attention']
                 with self.mutex:
                     if 'fitted' in self.state:
                         result['fitted'] = self.state['fitted']
