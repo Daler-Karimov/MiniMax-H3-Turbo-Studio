@@ -1,5 +1,6 @@
 // H3 numbers each reference kind separately, in the order of comfy_media.export.
 import {caretRect} from './caret_rect.js';
+import {listenDialogKey} from './dialog_keys.js';
 const titles = {image: 'Picture', video: 'Video', audio: 'Audio'};
 const widget = (node, name) => node?.widgets?.find(w => w.name === name);
 const linkFor = (node, name) => node?.graph?.links?.[node.inputs?.find(i => i.name === name)?.link];
@@ -146,7 +147,10 @@ export function attachReferencePicker(input, {items, t = en => en, view, host, a
     input.setAttribute('aria-controls', list.id); input.setAttribute('aria-expanded', 'false');
     let matches = [], active = 0, range = null, composing = false, disposed = false;
     const listeners = [];
-    const listen = (target, name, fn, options) => { target.addEventListener(name, fn, options); listeners.push(() => target.removeEventListener(name, fn, options)); };
+    const listen = (target, name, fn, options) => {
+        if (name.startsWith('key')) { listeners.push(listenDialogKey(target, name, fn, options)); return; }
+        target.addEventListener(name, fn, options); listeners.push(() => target.removeEventListener(name, fn, options));
+    };
     function close() {
         if (popup.hidePopover && popup.matches(':popover-open')) popup.hidePopover();
         popup.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');

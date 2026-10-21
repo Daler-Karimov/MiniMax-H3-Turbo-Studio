@@ -1,6 +1,5 @@
 import {createLanAccess} from './lan_access.js';
 import { createErrorPanel, errorText, createErrorReport } from './error_panel.js';
-import {topDialog} from './dialog_keys.js';
 import {createExpandButton} from './editor_expand.js';
 import {cleanOptionalPrompt, clonePrompt} from './optional_inputs.js';
 import { app } from '../../scripts/app.js';
@@ -46,6 +45,7 @@ import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, composePartText, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261019-words';
 import { waitingText } from './chain_support.js';
 import { createExtendState, extendText, extendSourceProblem, extendSourceState, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
+import { topDialog, isolateDialogKeys, listenDialogKey, routeDialogKey } from './dialog_keys.js';
 
 const languageOverride = typeof location !== 'undefined'
     ? new URLSearchParams(location.search).get('freevideo_lang') : null;
@@ -156,7 +156,7 @@ function createChainPartList(t, save, {onShow = () => {}, onHide = () => {}, red
         editor.maxLength = 20000; editor.value = row.draft = row.part.text;
         editor.setAttribute('aria-label', t(`Part ${row.part.index + 1} description`, `第 ${row.part.index + 1} 段描述`));
         editor.addEventListener('input', () => { row.draft = editor.value; });
-        editor.addEventListener('keydown', event => {
+        listenDialogKey(editor, 'keydown', event => {
             // Escape leaves the edit, never the studio.
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(row, false); row.text.focus(); }
         });
@@ -845,7 +845,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         '先出半分辨率预览，满意后在结果里点“继续二采”，成片与直接生成一致。');
     const previewPassHint = passOptions[2].title;
     passMode.append(...passOptions);
-    passMode.addEventListener('keydown', event => {
+    cleanup.push(listenDialogKey(passMode, 'keydown', event => {
         const step = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[event.key];
         if (!step) return;
         event.preventDefault();
@@ -853,7 +853,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         const current = enabled.findIndex(option => option.getAttribute('aria-checked') === 'true');
         const next = enabled[(current + step + enabled.length) % enabled.length];
         if (next) { next.click(); next.focus(); }
-    });
+    }));
     twoPassLabel.append(el('span', t('Two-pass', '二次采样')), twoPassStatus, passMode);
     let effortEstimate = {}, effortEstimateKey = '', effortEstimateTimer = null, effortEstimateRequest = null, lengthControl = null, chainController = null;
     // A level's step cache; custom steps and workflows without the input sample every step.
@@ -1892,7 +1892,10 @@ export function openStudio(node, {extendFrom = null} = {}) {
             return;
         }
         generate.click();
-    } }; dialog.addEventListener('keydown', escape);
+    } };
+    cleanup.push(listenDialogKey(dialog, 'keydown', escape));
+    cleanup.push(isolateDialogKeys(dialog, event => routeDialogKey(event, dialog)));
+
     dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
     dialog.onclose = () => { disposed = true; for (const f of cleanup) f(); stage.querySelector('video')?.pause(); dialog.remove(); if (current?.dialog === dialog) { current = null; viewChanged('nodes', node); } };
     capabilityView = createCapabilityView({node, api, t, getState: () => ({ratio,
