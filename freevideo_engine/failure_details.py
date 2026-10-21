@@ -543,6 +543,10 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
          ('If this computer has an NVIDIA graphics card, install NVIDIA driver 580 or newer, '
           'restart the computer, then click Retry installation.',
           '如果这台电脑有 NVIDIA 显卡，请安装 580 或更新版本的 NVIDIA 显卡驱动，重启电脑后点击“重试安装”。')),
+        (r'NVIDIA driver [\w.]+(?: \([^)]*\))? is older than 580', 'gpu-driver-old',
+         ('The NVIDIA driver is too old', 'NVIDIA 显卡驱动版本过低'),
+         ('Update the NVIDIA driver to version 580 or newer, restart the computer, then click "Retry installation".',
+          '请将 NVIDIA 显卡驱动更新到 580 或更新版本，重启电脑后点击“重试安装”。')),
         (r'CUDA_ARCH_UNSUPPORTED', 'gpu-architecture',
          ('This GPU lacks the required compute support', '这张显卡不满足当前计算要求'),
          ('The detected GPU and compute capability are shown below. The CUDA runtime requires native BF16 computation (SM80 or newer). Use a compatible GPU; changing the driver does not change its hardware capability.',
@@ -638,7 +642,17 @@ def launcher_failure(value, *, zh=False, other_disk=False, disk_name='', can_rep
         if re.search(pattern, text, re.I):
             if kind in WITHOUT_REPAIR and not can_repair:
                 action = WITHOUT_REPAIR[kind].get(unavailable) or WITHOUT_REPAIR[kind].get('none', WITHOUT_REPAIR_NONE)
-            return dict(title=title[zh], detail='', action=action[zh], kind=kind)
+            detail = ''
+            if kind == 'gpu-driver-old':
+                version, model = re.search(r'NVIDIA driver ([\w.]+)(?: \(([^)]*)\))? is older than 580', text, re.I).groups()
+                if model:
+                    detail = ('检测到：%s，驱动 %s' if zh else 'Detected: %s, driver %s') % (model, version)
+                else:
+                    detail = ('当前驱动版本：' if zh else 'Installed driver: ') + version
+                # The launcher's failure card shows the action only when there is no detail, so the
+                # instruction goes under the detected driver instead of being hidden by it.
+                return dict(title=title[zh], detail=detail + '\n' + action[zh], action='', kind=kind)
+            return dict(title=title[zh], detail=detail, action=action[zh], kind=kind)
     # Validation messages are already actionable. Show the cause, not a stack
     # trace or a guessed hardware diagnosis, and leave long details expandable.
     lines = [line.strip() for line in text.splitlines() if line.strip()]

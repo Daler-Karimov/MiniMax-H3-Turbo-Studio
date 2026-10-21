@@ -532,8 +532,14 @@ def plan(args, *, local_progress=None, stage=None):
             layout = 'unified'
         if windows_target and getattr(args, 'rebuild_sage', False):
             errors.append('Windows uses the Sage2 wheel FreeVideo tests; --rebuild-sage is a Linux source-build option.')
-        if int(snapshot['selected_gpu']['driver_version'].split('.')[0]) < 580:
-            errors.append('NVIDIA driver 580 or newer is required by the CUDA 13 encoder FreeVideo tests; update the driver first.')
+        driver = str(snapshot['selected_gpu']['driver_version']).strip()
+        # An unreadable version is left to the later checks instead of blocking setup.
+        major = re.match(r'\d+', driver)
+        if major and int(major.group()) < 580:
+            # The card names the graphics card too; brackets would end its pattern early.
+            model = re.sub(r'[()\r\n]', '', str(snapshot['selected_gpu'].get('name') or '')).strip()
+            errors.append('NVIDIA driver %s%s is older than 580, the minimum for the CUDA 13 encoder; update the driver first.'
+                          % (driver, ' (%s)' % model if model else ''))
         compatibility = hardware.cuda_compatibility()
         if compatibility['error']:
             errors.append(compatibility['error'])
