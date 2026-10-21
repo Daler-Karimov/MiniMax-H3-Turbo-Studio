@@ -1413,9 +1413,9 @@ export function openStudio(node, {extendFrom = null} = {}) {
             updateRunButton();
         },
         onResult: (result, outcome) => { node.freevideoLastResult = result; showResult(result, {chosen: outcome.partial});
-            if (outcome.partial && !outcome.joined) status.textContent = t('Showing the last completed part.', '正在显示最后完成的一段。'); },
-        onError: error => showQueueError(new Error(error.joining ? t(`Could not join the parts: ${error.message}`, `未能接合各段：${error.message}`)
-            : t(`Part ${error.index + 1} failed: ${error.message}`, `第 ${error.index + 1} 段失败：${error.message}`)))});
+            // A part that failed keeps its sentence; the part list already marks which ones finished.
+            if (outcome.partial && !outcome.joined && status.dataset.error !== 'true') status.textContent = t('Showing the last completed part.', '正在显示最后完成的一段。'); },
+        onError: showPartError});
     cleanup.push(() => chainController.dispose());
     node.freevideoStudioChain = chainController;
     node.freevideoEditorLooping = () => queueController.state().looping;
@@ -1521,6 +1521,18 @@ export function openStudio(node, {extendFrom = null} = {}) {
         if (node.freevideoFailureReport?.stage !== 'queue') return;
         lastQueueError = null; failure.clear(); node.freevideoFailure = ''; node.freevideoFailureReport = null;
         status.dataset.error = 'false'; status.textContent = '';
+    }
+    // A part that stopped is one sentence on the status line; what ComfyUI said goes in the card, as a generation failure.
+    function showPartError(error) {
+        if (disposed) return;
+        status.dataset.error = 'true';
+        status.textContent = error.joining ? t('Could not join the parts. See the details below.', '未能接合各段，原因见下方。')
+            : t(`Part ${error.index + 1} could not be generated. See the details below.`, `第 ${error.index + 1} 段未能生成，原因见下方。`);
+        if (lastQueueError === error.message) return;
+        lastQueueError = error.message;
+        const report = failure.show(error.message, false,
+            {stage: 'execution', node, graph: app.graph, ...(error.joining ? {progress: {phase: 'save'}} : {})});
+        node.freevideoFailureReport = report; node.freevideoFailure = errorText(report);
     }
     function updateRunButton() {
         const submitting = capturing || queueState?.submitting;

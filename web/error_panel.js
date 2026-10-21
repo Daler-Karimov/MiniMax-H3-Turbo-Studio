@@ -103,6 +103,24 @@ function knownError(text) {
         || error.prefixes?.some(prefix => line.startsWith(prefix)))?.key ?? null;
 }
 
+// The media node's own check (comfy_assets.resolve_assets) names a file that is no longer in ComfyUI's
+// input folder. Only ComfyUI's custom-validation entry counts, so typed text quoting the sentence never does.
+// Returns the file's name, or null. A part of a long video carries the entry after its message (comfy_chain).
+function missingMedia(detail) {
+    if (reports.has(detail)) return null;   // A saved report holds no chosen input.
+    let nodes = record(record(detail?.response).node_errors ?? detail?.node_errors);
+    const part = /^Prompt outputs failed validation; (\{.*\})$/s.exec(typeof detail === 'string' ? detail : scalar(detail?.message));
+    if (!Object.keys(nodes).length && part) {
+        try { nodes = {part: JSON.parse(part[1])}; } catch { /* not the part's entry */ }
+    }
+    for (const node of Object.values(nodes)) for (const reason of list(node?.errors)) {
+        const found = reason?.type === 'custom_validation_failed'
+            && /^\w+ - Upload or select the missing media file: (.+)$/s.exec(scalar(reason.details));
+        if (found) return found[1].split(/[\\/]/).filter(Boolean).at(-1) || '';
+    }
+    return null;
+}
+
 // When a diagnostic report exists the card hides Export report; the same advice
 // then names Download report in the preview or node panel.
 const DOWNLOAD_ADVICE = ['If it still fails, use Download report in the preview and submit it in a GitHub issue.',
@@ -253,7 +271,8 @@ export function createErrorReport(detail, context = {}) {
     for (const key of ['done', 'total']) if (Number.isFinite(context.progress?.[key])) progress[key] = context.progress[key];
     const message = scalar(response.error?.message) || scalar(response.error) || scalar(response.message)
         || scalar(detail?.exception_message) || scalar(detail?.message) || scalar(detail) || 'FreeVideo generation failed.';
-    const known = knownError(message);
+    // The missing file's name is not kept: the report never holds typed or chosen input.
+    const known = knownError(message) ?? (missingMedia(detail) === null ? null : 'media-missing');
     const kind = failureAdvice(errorText(detail), (en) => en, known).kind;
     const found = detectBrowserExtension(detail, {kind, known, scrub: clean.inputsOnly});
     // A script name the report would redact is not shown or saved either.
@@ -329,6 +348,9 @@ export function failureAdvice(value, t, known = knownError(value)) {
         if (key === known)
             return {...row(key, title, summary, ['', '']), plain: true};
     }
+    if (known === 'media-missing')
+        return {...row('media-missing', ['A media file is missing', '找不到素材'],
+            ['Upload or select the missing media file again, then generate.', '请重新上传或选择缺少的素材后再生成。'], ['', '']), plain: true};
     if (/Prompt outputs failed validation|Required input is missing|Value not in list|Return type mismatch|Failed to validate prompt|value (?:\S+ )?(?:smaller|bigger) than/i.test(text))
         return row('validation', ['Check generation settings', '检查生成设置'],
             ['The generation settings did not pass validation; see the error details below.', '生成设置未通过检查，可查看下方错误详情。'],
@@ -458,9 +480,12 @@ export function adviceFor(report, t, value) {
         advice.title = t('The queue operation did not complete', '队列操作未完成');
         advice.summary = t('Check that ComfyUI is still running and connected, then retry.', '请确认 ComfyUI 仍在运行、连接正常后重试。');
     }
+    // The name comes from the error as it arrived; a card shown again from its report says it without one.
+    const media = advice.kind === 'media-missing' ? missingMedia(value) : null;
+    if (media) advice.summary = t(`"${media}" could not be found. Upload or select it again, then generate.`, `素材“${media}”已不存在，请重新上传或选择后再生成。`);
     // Every failure except a rejected input (which the user fixes in place) has one layout: written title,
     // Export report / Submit to GitHub, the raw error only inside the technical details.
-    const generated = advice.kind !== 'validation';
+    const generated = !['validation', 'media-missing'].includes(advice.kind);
     // A generation that stopped without a known cause is named by the stage it stopped in.
     if (generated && advice.kind === 'unknown' && report.stage === 'execution') {
         const stage = failureStage(report);
@@ -584,7 +609,8 @@ export function createErrorPanel(t) {
             `${node.type || t('Node', '节点')} #${node.id}${error.input ? ' · ' + error.input : ''}: ${error.message}${error.details ? ': ' + error.details : ''}`));
         const causeText = shownCause(reasons.length ? reasons.join('\n') : [report.message, report.error_details].filter(Boolean).join('\n'));
         const internal = advice.kind === 'unknown' && !['submission', 'queue'].includes(report.stage);
-        const causeInDetails = generated;
+        // A missing file is said in the explanation; where it happened and ComfyUI's wording stay in the technical details.
+        const causeInDetails = generated || advice.kind === 'media-missing';
         location.hidden = causeInDetails; detailLocation.hidden = !causeInDetails;
         detailLocation.textContent = causeInDetails ? location.textContent : '';
         if (causeInDetails) location.textContent = '';
