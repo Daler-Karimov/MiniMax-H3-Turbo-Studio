@@ -336,6 +336,7 @@ FAILURE_REASONS_EN = {
     'join_failed': 'The parts were generated, but joining them into one video failed',
     'invalid_output': 'The result could not be read or saved',
     'storage_unavailable': 'The task record or media could not be written to disk',
+    'disk_full': 'Saving the image failed: the disk is full',
     'submit_interrupted': 'The service stopped during submission, so it is not confirmed whether the task started',
     'timeout': 'Generation took too long without a result',
     'invalid_media': 'The reference media could not be read',
