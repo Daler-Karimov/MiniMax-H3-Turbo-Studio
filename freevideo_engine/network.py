@@ -1219,8 +1219,9 @@ def git_folder_too_deep(path):
 def git_scratch_folder():
     """A new short real folder for Git to work in, or None where none can be made."""
     bases = [tempfile.gettempdir()]
-    if os.environ.get('ProgramData'):
-        bases.append(os.path.join(os.environ['ProgramData'], 'FV'))
+    for key in ('ProgramData', 'LOCALAPPDATA'):
+        if os.environ.get(key):
+            bases.append(os.path.join(os.environ[key], 'FV'))
     for base in bases:
         if path_chars(plain(base)) > GIT_SCRATCH_BASE_CHARS:
             continue
