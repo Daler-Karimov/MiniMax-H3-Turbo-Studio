@@ -36,7 +36,7 @@ UV_FILE_LIST_OPTIONS = frozenset(('-c', '--constraint', '--constraints', '-b', '
 UV_BUILD_PATH_CHARS = 200
 
 
-UV_CHILD_MARKERS = ('--install-packages', 'freevideo_engine.comfy_host')
+PYTHON_NAMES = ('python.exe', 'python', 'pythonw.exe')
 
 
 def uv_build_environment(command, root, environ):
@@ -47,9 +47,10 @@ def uv_build_environment(command, root, environ):
     installation settings, cache ownership and the parent's environment stay put.
     """
     # `venv` and `python` also write into the cache (interpreter records, downloads) below the same root.
-    # The setup children that install the VDN and ComfyUI packages run `uv` themselves, with the same cache.
+    # A Python child also needs it: it runs `uv` itself (VDN and ComfyUI packages) and the loader
+    # refuses a DLL such as torch\\lib\\c10.dll whose full path exceeds the limit (WinError 206).
     runs_uv = list(command[1:2]) in (['pip'], ['venv'], ['python']) and Path(command[0]).name.lower() in ('uv', 'uv.exe')
-    if not command or not (runs_uv or any(str(item) in UV_CHILD_MARKERS for item in command)):
+    if not command or not (runs_uv or Path(str(command[0])).name.lower() in PYTHON_NAMES):
         return environ
     from . import launch_view, runtime_alias
     from .long_paths import io_path, path_chars, plain
