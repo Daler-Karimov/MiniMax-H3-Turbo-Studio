@@ -1042,7 +1042,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             download: report => new Promise((resolve, reject) => {
                 const step = value => {
                     const install = value?.install;
-                    if (install?.state !== 'running') { resolve(install?.state === 'done'); return false; }
+                    if (install?.state !== 'running') { resolve(install?.state === 'done' || install?.reason || false); return false; }
                     report(install.total > 0 ? install.done / install.total : 0); return true;
                 };
                 store.installEars().then(value => { if (step(value)) store.watchEarsPack(step); }, reject);

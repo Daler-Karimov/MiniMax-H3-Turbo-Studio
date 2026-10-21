@@ -1055,9 +1055,11 @@ class ImportManager:
     def prepare(self, identity):
         try:
             transcode(self.root, identity)
-        except Exception:
+        except Exception as error:
+            # A full disk is not the file's fault, so the page says so instead of listing formats.
+            reason = _disk_full(error).get('reason', 'unreadable')
             try:
-                _import_update(self.root, identity, state='failed', reason='unreadable')
+                _import_update(self.root, identity, state='failed', reason=reason)
             except (OSError, ValueError):
                 pass  # The terminal snapshot is retained and retried by the worker/reads.
 
