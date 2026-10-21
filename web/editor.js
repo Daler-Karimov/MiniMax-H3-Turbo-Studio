@@ -497,7 +497,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         title.title = state.record.name;
         exportButton.classList.toggle('fv-primary', !!model.exportFrames(state.record) && !state.selection && !jobActive() && !exportStatus);
         const running = exportPreparing || ['running', 'queued'].includes(exportStatus?.state);
-        if (['running', 'queued'].includes(exportStatus?.state)) exportButton.textContent = t(`Export ${Math.round((exportStatus.fraction || 0) * 100)}%`, `导出 ${Math.round((exportStatus.fraction || 0) * 100)}%`);
+        if (['running', 'queued'].includes(exportStatus?.state) && exportStatus.queued) exportButton.textContent = t('Queued', '排队中');
+        else if (['running', 'queued'].includes(exportStatus?.state)) exportButton.textContent = t(`Export ${Math.round((exportStatus.fraction || 0) * 100)}%`, `导出 ${Math.round((exportStatus.fraction || 0) * 100)}%`);
         else if (exportPreparing) exportButton.textContent = queue.dirty ? t('Saving changes…', '正在保存改动…') : t('Exporting', '正在导出');
         else exportButton.textContent = exportStatus?.state === 'done' && exportMatches() ? t('View', '查看') : t('Export', '导出');
         // Never disabled: a press that cannot export says why next to it.

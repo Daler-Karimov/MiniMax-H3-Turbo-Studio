@@ -990,9 +990,10 @@ class ExportQueue:
         self.pending = deque()
         self.worker = None
 
-    @staticmethod
-    def _view(job):
+    def _view(self, job):
+        # queued: still waiting for its turn; state stays 'running' for older readers.
         return {**{key: job[key] for key in ('id', 'state', 'fraction', 'work', 'reason')},
+                'queued': job['state'] == 'running' and job['id'] in self.pending,
                 **job['options'].status(), 'path': job.get('path'), 'url': job.get('url'),
                 'project_id': job['project'].get('id'), 'revision': job['project'].get('revision')}
 
