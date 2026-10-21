@@ -287,7 +287,10 @@ class Context:
         hardware = {key: clean(value, self.redactor) for key, value in hardware.items()}
         geometry = {key: self.request[key] for key in ('width', 'height') if key in self.request}
         plan = safe_plan(row.get('plan') if row.get('plan') is not None else self.plan, self.redactor)
-        return dict(schema='freevideo.image-report', schema_version=1,
+        # Macs only: which attention kernel ran and why it left MLX (mlx_attention.summary).
+        attention = row.get('attention')
+        extra = dict(attention=clean(attention, self.redactor)) if isinstance(attention, dict) else {}
+        return dict(schema='freevideo.image-report', schema_version=1, **extra,
                     created_at=datetime.now(timezone.utc).isoformat(), kind=self.kind,
                     analysis=dict(version=__version__, hardware=hardware, geometry=geometry),
                     summary=dict(request_seconds=self.timing.seconds()), request=dict(self.request),

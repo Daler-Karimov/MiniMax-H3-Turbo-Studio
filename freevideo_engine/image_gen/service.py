@@ -1089,6 +1089,8 @@ class Service:
                         raise RuntimeError('worker_exit')
                     result = dict(phase='complete', file='freevideo-image/' + path.name,
                                   seconds=seconds, plan=row.get('plan'))
+                    if isinstance(row.get('attention'), dict):
+                        result['attention'] = row['attention']
                 with self.mutex:
                     if 'fitted' in self.state:
                         result['fitted'] = self.state['fitted']
