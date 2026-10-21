@@ -531,7 +531,7 @@ def plan(args, *, local_progress=None, stage=None):
             errors.append('Native Windows uses the unified environment. Rerun with --environment unified.')
             layout = 'unified'
         if windows_target and getattr(args, 'rebuild_sage', False):
-            errors.append('Windows uses the Sage2 wheel FreeVideo tests; --rebuild-sage is a Linux source-build option.')
+            errors.append('Windows uses the tested Sage2 wheel; --rebuild-sage is a Linux source-build option.')
         driver = str(snapshot['selected_gpu']['driver_version']).strip()
         # An unreadable version is left to the later checks instead of blocking setup.
         major = re.match(r'\d+', driver)
@@ -811,9 +811,9 @@ def plan(args, *, local_progress=None, stage=None):
             'first_generation_note': 'Portable AdaLN tables follow model weights and the exact schedule, across GPUs and Torch/CUDA versions. New schedules or modulation-changing LoRAs require preparation. Existing environments stay on disk when switching.',
             'estimates_are_not_capacity_guarantees': True, 'errors': errors, 'warnings': warnings,
             'steps': ['Install isolated uv/Python and ' + ('one shared CUDA environment' if layout == 'unified' else 'two CUDA environments'),
-                      'Clone the VDN, patched Diffusers and native H3 text-encoder library versions FreeVideo tests',
+                      'Clone the tested versions of VDN, patched Diffusers and the native H3 text-encoder library',
                       'Install verified Windows Triton / Sage2 wheels' if windows_target else 'Install a local CUDA compiler and build Sage2 for the detected GPU only',
-                      'Download and verify the base, eight-step checkpoint and encoder weights FreeVideo tests',
+                      'Download and verify the tested base, eight-step checkpoint and encoder weights',
                       'Prepare or verify the architecture-compatible FP8 cache',
                       'Execute small attention/linear kernel probes and save machine configuration'],
             'licenses': ['https://huggingface.co/OpenVDN/vdn-minimax-h3/blob/751739ee5b9e3ac802dca5d5111075fdaeb47885/LICENSE',
@@ -2272,15 +2272,15 @@ def run_main(argv, shown):
                         help='With --prepared-format: download and verify that model beside the installed one, which stays '
                              'in use. No other setup step runs and machine.json is unchanged')
     parser.add_argument('--model-source', choices=('prepared', 'source'), default='prepared',
-                        help='Default: download a slim model FreeVideo tests matching the GPU format. source: explicitly download original weights and convert locally')
+                        help='Default: download the tested slim model matching the GPU format. source: explicitly download original weights and convert locally')
     parser.add_argument('--encoder-models', type=Path, help='Directory containing text_encoders/')
-    parser.add_argument('--reuse-models', type=Path, help='Scan an existing model library, verify content against the version FreeVideo tests and import matching files; only missing models are downloaded')
+    parser.add_argument('--reuse-models', type=Path, help='Scan an existing model library, verify content against the tested version and import matching files; only missing models are downloaded')
     parser.add_argument('--reuse-models-manifest', type=Path, help='Versioned JSON containing model library roots, including ComfyUI extra model paths')
     parser.add_argument('--copy-existing-models', action='store_true', help='Copy verified local models instead of using same-disk hardlinks; source files are kept')
     parser.add_argument('--allow-model-restart', action='store_true', help='Permit a fresh download when an incomplete model cannot resume; retains old data and may use extra download/disk space')
     cache_options = parser.add_mutually_exclusive_group()
     cache_options.add_argument('--cache', type=Path, help='Verify and reuse an existing FP8 cache')
-    cache_options.add_argument('--rebuild-cache', action='store_true', help='Recreate FP8 from the source weights FreeVideo tests, downloading missing sources; preserve failed caches')
+    cache_options.add_argument('--rebuild-cache', action='store_true', help='Recreate FP8 from the tested source weights, downloading missing sources; preserve failed caches')
     parser.add_argument('--storage', choices=('compact', 'retain'), help='Default compact: stream FP8 and remove installer-owned conversion sources after verification; retain keeps sources for re-quantization')
     parser.add_argument('--frontend-root', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--frontend-separate', action='store_true', help=argparse.SUPPRESS)
