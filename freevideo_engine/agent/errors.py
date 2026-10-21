@@ -132,6 +132,8 @@ IMAGE_REASONS = {
                            '显卡暂时用不了，稍后再试。'),
     'worker_exit': ('Image generation stopped unexpectedly. Try again.', '图像生成意外停止了，请再试一次。'),
     'timeout': ('This image took too long and was stopped. Try again.', '这一张用时太长，已停止。请再试一次。'),
+    'disk_full': ('Saving the image failed: the disk is full. Free some space, then generate again.',
+                  '保存图片时出错：磁盘空间不够，空出空间后再生成。'),
     'generation_failed': ('Image generation ran into an error. Try again.', '图像生成出错了，请再试一次。'),
     'invalid_media': ('The reference image could not be read. Choose another one.',
                       '参考图读不出来，请换一张。'),
@@ -149,7 +151,7 @@ def image_failure(code, report_id=None):
     valid = isinstance(report_id, str) and re.fullmatch(r'[0-9a-f]{32}', report_id)
     return dict(reason=dict(en=en, zh=zh), report_id=report_id if valid and code not in (
         'busy', 'cancelled', 'invalid_request', 'invalid_media', 'invalid_prompt', 'invalid_dimensions',
-        'invalid_seed', 'too_many_images') else None)
+        'invalid_seed', 'too_many_images', 'disk_full') else None)
 
 
 # Recovery is a function of the committed task and phase, not just an error code.
@@ -172,6 +174,7 @@ IMAGE_ERRORS = {
     'timeout': IMAGE_REASONS['timeout'][0],
     'generation_failed': IMAGE_REASONS['generation_failed'][0],
     'worker_exit': 'The image worker stopped before finishing this picture.',
+    'disk_full': IMAGE_REASONS['disk_full'][0],
     'cancelled': 'The picture job was cancelled.',
 }
 for _code, _message in IMAGE_ERRORS.items():
@@ -215,6 +218,8 @@ def recovery(code, *, kind=None, stage='request', resumable=True):
         return SESSION_GONE[1]
     if kind == 'image' and code == 'pack_missing':
         return ERRORS[code][3]
+    if kind == 'image' and code == 'disk_full':
+        return 'Tell the user to free disk space, then submit the picture again with a new ref.'
     if kind == 'image' and code == 'no_memory':
         return 'Lower the picture dimensions or use fewer reference pictures, then submit with a new ref.'
     if kind in RECOVERY and stage == 'terminal':
@@ -283,6 +288,7 @@ FAILURE_REASONS_ZH = {
     'join_failed': '片段已生成，但拼接成片时出错',
     'invalid_output': '生成的结果无法读取或保存',
     'storage_unavailable': '任务记录或素材无法写入磁盘',
+    'disk_full': '磁盘空间不够，图片没能保存',
     'submit_interrupted': '提交生成时服务中断，尚未确认任务是否开始',
     'timeout': '生成等了太久没有结果',
     'invalid_media': '参考素材无法读取',

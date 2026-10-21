@@ -147,6 +147,9 @@ async function workflowBackfill(collection, t) {
             ? t('Drag them onto the canvas to restore their workflow. The originals are kept next to them as video.before-workflow.mp4.', '把它们拖到画布上可还原工作流。原视频保留在各自目录，文件名为 video.before-workflow.mp4。')
             : t('Videos that could not be checked safely were left as they were.', '无法安全确认的视频都保持原样。');
         if (result.failed) text.textContent += ' ' + t(`${result.failed} videos were left unchanged and will be offered again.`, `另有 ${result.failed} 个视频未改动，之后会再次提示。`);
+        const full = Math.min(Number.isSafeInteger(result.no_space) ? result.no_space : 0, result.failed || 0);
+        if (full > 0) text.textContent += ' ' + t(full === result.failed ? 'The disk is full. Free some space first.' : `${full} of them could not be changed because the disk is full. Free some space first.`,
+            full === result.failed ? '磁盘空间不够，请先空出空间。' : `其中 ${full} 个因磁盘空间不够，请先空出空间。`);
         actions.replaceChildren(button(t('Got it', '知道了'), () => box.remove(), 'fv-quiet'));
     }
     if (value.state === 'running') { follow(); return; }
