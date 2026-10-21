@@ -36,7 +36,7 @@ ApplicationWindow {
     property bool compact: width < 1000
     property bool narrow: width < 640
     property bool shortWindow: height < 700
-    onModelInfoOpenChanged: if (modelInfoOpen) backend.prepareDownloadList()
+    onModelInfoOpenChanged: if (modelInfoOpen) backend.prepareDownloadList(); else backend.setDownloadScope("video")
     readonly property bool manualEnvironment: s.offline.runtime_supported !== false && s.form.new_comfy && s.form.environment_method === "manual"
     readonly property bool usingRuntime: manualEnvironment && s.offline.runtime
     readonly property bool needsRuntime: s.page === "comfy" && manualEnvironment && !s.offline.runtime
@@ -634,7 +634,7 @@ ApplicationWindow {
                                     delegate: FButton { required property var modelData; required property int index; objectName: "offlineShare-" + index; text: t("Download from Quark ↗", "打开夸克网盘 ↗"); onClicked: backend.link(modelData.url) }
                                 }
                                 FText { objectName: "offlinePackageGuide"; text: s.offline.guide; color: theme.muted; font.pixelSize: theme.micro; Layout.fillWidth: true }
-                                FButton { objectName: "otherModelLinks"; text: downloads.copy.title + "  ›"; flat: true; enabled: !s.busy; implicitHeight: theme.heightSm; leftPadding: 0; font.pixelSize: theme.micro + 1; onClicked: modelInfoOpen = true }
+                                FButton { objectName: "otherModelLinks"; text: downloads.copy.title + "  ›"; flat: true; enabled: !s.busy; implicitHeight: theme.heightSm; leftPadding: 0; font.pixelSize: theme.micro + 1; onClicked: { backend.setDownloadScope("video"); modelInfoOpen = true } }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; spacing: 10
@@ -800,7 +800,7 @@ ApplicationWindow {
                                 }
                                 // What this group downloads, as in the plan; nothing for one already here.
                                 FText { objectName: "modelSize-" + modelData.id; visible: modelData.download > 0; text: bytes(modelData.download).replace(" ", "\u00a0"); font.pixelSize: theme.micro; color: theme.muted; font.features: { "tnum": 1 } }
-                                FButton { objectName: "modelFiles-" + modelData.id; text: downloads.copy.title + "  ›"; implicitHeight: theme.heightSm; flat: true; font.pixelSize: theme.micro + 1; visible: s.form.model_method === "manual"; onClicked: modelInfoOpen = true }
+                                FButton { objectName: "modelFiles-" + modelData.id; text: downloads.copy.title + "  ›"; implicitHeight: theme.heightSm; flat: true; font.pixelSize: theme.micro + 1; visible: s.form.model_method === "manual"; onClicked: { backend.setDownloadScope(modelData.id === "image" ? "image" : "video"); modelInfoOpen = true } }
                             }
                         }
                     }
@@ -1617,13 +1617,13 @@ ApplicationWindow {
             RowLayout {
                 objectName: "downloadListActions"; Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 8
                 // The actions share what the Close button leaves, so a long label wraps instead of leaving the dialog.
-                readonly property int actionCount: checkDownloadList.visible ? 3 : 2
+                readonly property int actionCount: (checkDownloadList.visible ? 1 : 0) + (downloads.scope === "image" ? 1 : 2)
                 readonly property real actionWidth: Math.max(80, Math.floor((width - closeDownloadList.implicitWidth - (actionCount + 1) * spacing) / actionCount))
                 FButton { id: closeDownloadList; text: downloads.copy.close; flat: true; onClicked: modelInfoOpen = false }
                 Item { Layout.fillWidth: true }
-                FButton { id: checkDownloadList; objectName: "checkDownloadList"; Layout.maximumWidth: parent.actionWidth; visible: !downloads.available || s.download_list.needs_check; text: downloads.copy.check; enabled: !s.busy; onClicked: backend.prepareDownloadList() }
-                FButton { objectName: "useDownloadedFolder"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.use_folder; enabled: s.can_manage; onClicked: backend.useDownloadedFolder() }
-                FButton { objectName: "exportDownloadList"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.export; primary: true; enabled: downloads.available && !s.busy; onClicked: backend.exportDownloadList() }
+                FButton { id: checkDownloadList; objectName: "checkDownloadList"; Layout.maximumWidth: parent.actionWidth; visible: downloads.scope !== "image" && (!downloads.available || s.download_list.needs_check); text: downloads.copy.check; enabled: !s.busy; onClicked: backend.prepareDownloadList() }
+                FButton { objectName: "useDownloadedFolder"; visible: downloads.scope !== "image"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.use_folder; enabled: s.can_manage; onClicked: backend.useDownloadedFolder() }
+                FButton { objectName: "exportDownloadList"; Layout.maximumWidth: parent.actionWidth; text: downloads.copy.export; primary: true; enabled: downloads.available && (downloads.scope === "image" || !s.busy); onClicked: backend.exportDownloadList() }
             }
         }
     }

@@ -21,7 +21,8 @@ from .launcher_copy import ACTION_COPY, size_text
 from .launcher_terminal import Tail
 from .model_status import FAMILIES, NAMES
 from .model_guidance import (package_instructions, video_instructions, runtime_packages_supported, download_view,
-                             export_download_list, DownloadListError, DOWNLOAD_COPY)
+                             export_download_list, DownloadListError, DOWNLOAD_COPY,
+                             image_download_view, export_image_download_list, IMAGE_COPY)
 from .setup_progress import LineHold, ModelLine, progress_text
 from .terminal_ui import clean, duration
 from .model_upgrade import TARGET
@@ -145,6 +146,9 @@ class Session:
         self.image_installer = self.prompt_installer = None
         self.download_export = self.download_error = self.download_error_key = ''
         self._download_view = None
+        # 'image' opens the image model's own list, which needs no file check; any other value is the video list.
+        self.download_scope = 'video'
+        self._image_download_view = None
         self.browser_attempted = False
         self.browser_url = None
         self.port_notice_url = None
@@ -346,7 +350,15 @@ class Session:
         kept = [p for p in self.form['model_dirs'] if io_path(Path(p).expanduser()).is_dir()]
         self.edit('model_dirs', library_roots(kept + [folder]))
 
+    def set_download_scope(self, scope):
+        scope = 'image' if scope == 'image' else 'video'
+        if scope != self.download_scope:
+            self.download_scope = scope
+            self.download_export = self.download_error = self.download_error_key = ''
+
     def prepare_download_list(self):
+        if self.download_scope == 'image':
+            return
         if self.controller.busy or self.importer.busy or self.cleaner.busy:
             return
         if (self.controller.state.get('plan', {}).get('download_files_verified')
@@ -361,12 +373,14 @@ class Session:
     def export_downloads(self, folder):
         """The dialog shows a worded error; nothing raises into a traceback."""
         self.download_export = self.download_error = self.download_error_key = ''
-        if self.controller.busy or self.controller.state.get('status') != 'review':
+        image = self.download_scope == 'image'
+        if not image and (self.controller.busy or self.controller.state.get('status') != 'review'):
             self.download_error = self.t('Wait for the file check to finish.', '请等待文件检查完成。')
             return
         preferences = download_preferences(self.engine_root() / 'download-settings.json')
         try:
-            self.download_export = export_download_list(self.controller.state.get('plan', {}), folder, preferences['source'])
+            self.download_export = (export_image_download_list(folder, preferences['source'], self._image_location()[0]) if image else
+                                    export_download_list(self.controller.state.get('plan', {}), folder, preferences['source']))
         except DownloadListError as error:
             self.download_error_key = error.key
             reason = ''
@@ -376,7 +390,8 @@ class Session:
                 from .failure_details import redacted_launcher_error
                 print('Download list export failed (%s): %s' % (error.reason, redacted_launcher_error(error.original_error)),
                       file=sys.stderr)
-            self.download_error = self.t(*DOWNLOAD_COPY['error_' + error.key]).format(reason=reason)
+            texts = dict(DOWNLOAD_COPY, error_changed=IMAGE_COPY['error_changed']) if image else DOWNLOAD_COPY
+            self.download_error = self.t(*texts['error_' + error.key]).format(reason=reason)
 
     def use_downloaded_folder(self, folder):
         if not self.can_manage():
@@ -388,6 +403,12 @@ class Session:
         self.prepare_download_list()
 
     def downloads_view(self):
+        if self.download_scope == 'image':
+            zh, decimal_sizes = self.language.startswith('zh'), sys.platform == 'darwin'
+            key = (zh, decimal_sizes)
+            if self._image_download_view is None or self._image_download_view[0] != key:
+                self._image_download_view = (key, image_download_view(zh, decimal_sizes=decimal_sizes))
+            return self._image_download_view[1]
         row = self.controller.state
         plan = row.get('plan', {}) if row.get('status') == 'review' else {}
         if not plan.get('download_files_verified', True):

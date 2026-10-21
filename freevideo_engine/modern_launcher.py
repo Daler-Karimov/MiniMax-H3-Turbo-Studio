@@ -191,13 +191,17 @@ def create_ui(session, *, show=True):
             if path:
                 self.invoke(session.add_folder, path) if key == 'model_dirs' else self.invoke(session.edit, key, path)
 
+        @Slot(str)
+        def setDownloadScope(self, scope):
+            self.invoke(session.set_download_scope, scope)
+
         @Slot()
         def prepareDownloadList(self):
             self.invoke(session.prepare_download_list)
 
         @Slot()
         def exportDownloadList(self):
-            if session.controller.busy:
+            if session.controller.busy and session.download_scope != 'image':
                 return
             path = QFileDialog.getExistingDirectory(None, session.downloads_view()['copy']['export'], '', QFileDialog.ShowDirsOnly)
             if path:
