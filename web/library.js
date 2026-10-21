@@ -193,6 +193,8 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     const grid = el('div', null, 'fv-library-grid');
     const message = el('p', '', 'fv-library-message'); message.setAttribute('role', 'status');
     const more = button(t('Show more', '加载更多'), () => load(true), 'fv-quiet'); more.hidden = true;
+    // Creations whose saved record could not be read stay on disk; say how many the loaded pages skipped.
+    const unreadable = el('p', '', 'fv-library-skipped fv-library-unreadable'); let unread = 0;
     // Selecting several creations: a strip above the cards, the delete bar below them.
     const picking = el('div', null, 'fv-library-picking'); picking.hidden = true;
     const pickAll = button(t('Select all', '全选'), () => selectAll(), 'fv-quiet');
@@ -207,7 +209,7 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
     bar.append(barLabel, barText, barActions);
     // The undo note and the delete bar share one sticky dock so they stack instead of covering each other.
     const dock = el('div', null, 'fv-library-dock'); dock.append(undoBar, bar);
-    collection.append(picking, grid, message, more, dock);
+    collection.append(picking, grid, message, more, unreadable, dock);
     workflowBackfill(collection, t);
     const detail = el('section', null, 'fv-library-detail');
     const all = button(t('All creations', '全部作品'), () => {
@@ -661,7 +663,9 @@ export function openLibrary(t, {upscale = null, selectedWork = null, extend = nu
         message.textContent = rows.size ? '' : t('Loading your creations…', '正在读取作品…');
         try {
             const data = await libraryPage(t, {before: appendPage ? next : null, signal: abort.signal}); if (disposed) return;
-            if (!appendPage) { thumbnails.disconnect(); grid.replaceChildren(); cards.clear(); rows.clear(); }
+            if (!appendPage) { thumbnails.disconnect(); grid.replaceChildren(); cards.clear(); rows.clear(); unread = 0; }
+            unread += Number.isSafeInteger(data.unreadable) && data.unreadable > 0 ? data.unreadable : 0;
+            unreadable.textContent = unread ? t(`${unread} ${unread === 1 ? 'creation' : 'creations'} could not be read`, `另有 ${unread}\u00a0个作品无法读取`) : '';
             for (const row of data.items || []) append(row);
             for (const row of arrivals) append(row, true);
             next = data.next; more.hidden = !next;
