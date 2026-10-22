@@ -288,15 +288,42 @@ class Service:
         names = sorted(named, reverse=True) + [name for _, name in sorted(older, reverse=True)]
         return dict(items=[dict(file='freevideo-image/' + name, name=name) for name in names[:HISTORY_LIMIT]])
 
-    def history_delete(self, name):
+    def history_path(self, name):
+        """The picture a history name stands for; ValueError when it is none of ours, missing when it is already gone."""
         leaf = name.rpartition('/')[2] if isinstance(name, str) else ''
         if not (HISTORY_NAME.fullmatch(leaf) or LEGACY_NAME.fullmatch(leaf)) or name != 'freevideo-image/' + leaf:
             raise ValueError('invalid_media')
         path = self.output_directory() / leaf
-        if path.is_symlink() or not path.is_file() or (LEGACY_NAME.fullmatch(leaf) and not self.legacy_picture(path)):
+        if path.is_symlink() or (path.exists() and not path.is_file()) or (
+                LEGACY_NAME.fullmatch(leaf) and path.is_file() and not self.legacy_picture(path)):
+            raise ValueError('invalid_media')
+        return path
+
+    def history_delete(self, name):
+        path = self.history_path(name)
+        if not path.is_file():
             raise ValueError('invalid_media')
         path.unlink()
         return self.history()
+
+    def history_delete_many(self, names):
+        """Delete each picture on its own; the ones that stay are listed with why (busy, missing, invalid)."""
+        if not isinstance(names, list) or len(names) > HISTORY_LIMIT:
+            raise ValueError('invalid_request')
+        failed = []
+        for name in dict.fromkeys(names):
+            try:
+                path = self.history_path(name)
+            except ValueError:
+                failed.append(dict(file=name if isinstance(name, str) else '', reason='invalid'))
+                continue
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                failed.append(dict(file=name, reason='missing'))
+            except OSError:
+                failed.append(dict(file=name, reason='busy'))
+        return dict(self.history(), failed=failed)
 
     def history_open(self):
         """Show the folder in the file manager of this machine."""
@@ -1199,6 +1226,8 @@ def register():
                 result = service.history()
             elif name == 'history-delete':
                 result = service.history_delete(value.get('file'))
+            elif name == 'history-delete-many':
+                result = service.history_delete_many(value.get('files'))
             elif name == 'history-open':
                 if request.remote not in ('127.0.0.1', '::1'):
                     raise ValueError('invalid_request')
