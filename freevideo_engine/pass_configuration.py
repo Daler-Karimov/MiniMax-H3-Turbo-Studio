@@ -1,5 +1,4 @@
 """Change pass-local compute tiling while preserving loaded model weights."""
-import sys
 from contextlib import contextmanager
 
 
@@ -63,13 +62,6 @@ def configuration(engine, selected):
         attention.current_plan = attention.offsets = attention.batches = None
         # Canvas-specific host buffers must not survive alongside the next
         # pass's differently shaped buffers. Immutable weights remain untouched.
-        # Dropping them here without waiting for the device returned locked
-        # blocks that the pass's last copies could still be using, and the
-        # next pass's release then found nothing left to wait for.
-        from .head_chunk import release_readouts
-        pending = sys.exc_info()[0]
-        try:
-            release_readouts(attention)
-        except RuntimeError:
-            if pending is None:
-                raise
+        for name in ('host_outputs', 'host_output_key', 'group_readouts'):
+            if hasattr(attention, name):
+                delattr(attention, name)
