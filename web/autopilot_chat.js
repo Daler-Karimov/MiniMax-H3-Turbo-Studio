@@ -719,8 +719,10 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
                     status.append(error, retry, report); item.append(status);
                 }
                 quoted(error, entry.error || ''); error.hidden = !entry.error;
-                // Waiting for the agent to come back is not a fault.
-                report.hidden = !entry.error || !!entry.automatic;
+                // Waiting for the agent to come back, or the user editing a queued message, is not a fault.
+                const calm = !!entry.automatic || entry.errorCode === 'edited';
+                report.hidden = !entry.error || calm;
+                error.classList.toggle('fv-chat-calm', calm); error.setAttribute('role', calm ? 'status' : 'alert');
                 const full = entry.errorCode === 'session_full';
                 retry.textContent = full ? t('New chat', '新对话') : t('Retry', '重试');
                 retry.disabled = entry.sending || (full ? creating : !sendingAllowed());
@@ -1212,7 +1214,7 @@ export function agentChat(t, api, {open, edit, shown = () => true, changed = () 
         saveDraft();
         // Editing a queued draft cancels its automatic delivery. Its original message remains available for manual retry.
         for (const entry of pending) if (entry.automatic && entry.session === draftSession && entry.draft !== drafts.get(draftSession)) {
-            entry.automatic = false;
+            entry.automatic = false; entry.errorCode = 'edited';
             entry.error = t('The message changed. Click "Retry" to send the original.', '消息已修改，点“重试”发送原消息。');
             say('');
         }
