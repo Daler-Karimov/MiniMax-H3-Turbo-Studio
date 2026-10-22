@@ -12,7 +12,7 @@ import { viewSwitch, viewChanged, agentTabReady, openAutopilot } from './view_na
 import { agentInterfaceState } from './agent_connect.js';
 import { createUpdateNotice, createVersionInfo, productVersion } from './updates.js';
 import { createPortNotice } from './port_notice.js';
-import { reportIssue, reportTipClosed, showReportTip } from './report_issue.js';
+import { focusReportTip, hideReportTip, reportIssue, reportTipClosed, showReportTip } from './report_issue.js';
 import { issueButton } from './issue_button.js';
 import { createPreviewScene } from './preview_scene.js?v=20260929-swell';
 import { animateDetails, closeDialog } from './motion.js';
@@ -1211,7 +1211,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
         showReportTip(bar, anchor, t, {mode, animate, onHide: () => { reportTipFor = null; },
             submit: () => reportIssue(progress.fetchReport, productVersion(), {save: mode === 'invite'})});
     }
-    async function downloadReport() { await progress.downloadReport(); reportCard('downloaded'); }
+    async function downloadReport() { if (focusReportTip(links.querySelector('.fv-actions'))) return; await progress.downloadReport(); reportCard('downloaded'); }
     function placeReportTip(delay) {
         clearTimeout(reportTipTimer);
         reportTipTimer = setTimeout(() => {
@@ -1268,9 +1268,15 @@ export function openStudio(node, {extendFrom = null} = {}) {
     }
     const status = el('div', '', 'fv-status'); status.setAttribute('role', 'status');
     // A fault in the status line carries the report button; the next text written to the line removes it.
-    const statusIssue = issueButton(t, () => ({where: ['Generate', '生成'], message: status.firstChild?.textContent}), {className: 'fv-status-issue'});
+    // The run's diagnostic report: errors beside it go the report route instead of the feedback form.
+    const reportRoute = {has: () => progress.hasReport(), download: () => progress.downloadReport(), fetch: progress.fetchReport, version: productVersion};
+    const statusIssue = issueButton(t, () => ({where: ['Generate', '生成'], message: status.firstChild?.textContent}), {className: 'fv-status-issue', route: reportRoute});
     function fault(text) { status.dataset.error = 'true'; status.textContent = text; status.append(statusIssue); }
     const stats = el('div', null, 'fv-stats'), budget = el('div', '', 'fv-budget'), links = el('div', null, 'fv-result-links');
+    // New text in the status line replaces the report card under the result.
+    const statusWatch = new MutationObserver(() => { if (!status.textContent.trim()) return; hideReportTip(links.querySelector('.fv-actions')); hideReportTip(status); });
+    statusWatch.observe(status, {childList: true, characterData: true, subtree: true});
+    cleanup.push(() => statusWatch.disconnect());
     stats.hidden = true;
     const metrics = [], metricLabels = [];
     for (const label of [t('Generation', '生成用时'), t('Total time', '总用时'), t('Peak VRAM', '最高显存'), t('Peak RAM', '最高内存')]) { const box = el('div', null, 'fv-stat'), n = el('strong', '—'), caption = el('span', label); box.append(n, caption); stats.append(box); metrics.push(n); metricLabels.push(caption); }
@@ -1303,7 +1309,7 @@ export function openStudio(node, {extendFrom = null} = {}) {
     const sharedGpuNote = el('div', '', 'fv-note'); sharedGpuNote.hidden = true;
     const encoderNote = el('div', '', 'fv-note'); encoderNote.hidden = true;
     output.append(status, reuseRow, trimNote, memoryNote, thermalNote, sharedGpuNote, encoderNote, links, stats, budget, progress.stall, progress.report, prewarm);
-    const failure = createErrorPanel(t); output.append(failure.element);
+    const failure = createErrorPanel(t, reportRoute); output.append(failure.element);
     // With the picture, the result's actions and numbers form one block, centred below the header.
     output.append(el('div', null, 'fv-preview-end'));
     if (node.freevideoFailure) failure.show(node.freevideoFailureReport || node.freevideoFailure, false);

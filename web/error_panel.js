@@ -3,6 +3,7 @@ import {repairAction} from './repair_hint.js';
 import {detectBrowserExtension, browserExtensionAdvice, extensionSteps, isNetworkTypeError, connectionLostText} from './browser_extension.js';
 import {SAMPLING_EFFORTS, STEP_CACHES, UPSCALE_FACTORS, tableLevel} from './sampling_effort.js';
 import {failureIssue, failureStage} from './failure_issue.js';
+import {focusReportTip, reportIssue, showReportTip} from './report_issue.js';
 const reports = new WeakSet();
 const captured = new WeakMap();
 const diagnosticReports = new WeakSet();
@@ -441,6 +442,8 @@ function showFailureDialog(report, t) {
     dialog.freevideoError = identity;
     dialog.setAttribute('aria-label', t('FreeVideo error', 'FreeVideo 错误'));
     const panel = createErrorPanel(t); panel.show(report, false);
+    // The dialog has no run's report to download; submitting stays on the failure card.
+    if (diagnosticReports.has(report)) panel.element.querySelector('.fv-failure-github:not([data-lora])')?.remove();
     const close = document.createElement('button'); close.type = 'button';
     close.textContent = t('Got it', '知道了'); close.autofocus = true;
     close.onclick = () => dialog.close();
@@ -498,7 +501,9 @@ export function adviceFor(report, t, value) {
     return {advice, generated};
 }
 
-export function createErrorPanel(t) {
+// route: where a generation's diagnostic report comes from ({download, fetch, version, has}); without it the
+// button opens the feedback form.
+export function createErrorPanel(t, route = null) {
     if (!document.getElementById('freevideo-error-style')) {
         const style = document.createElement('style'); style.id = 'freevideo-error-style';
         style.textContent = `.fv-failure{border:1px solid var(--fv-danger,#dc7c7c);border-radius:var(--fv-r-md,12px);padding:12px 14px;margin:10px 0;text-align:left;min-width:0}
@@ -562,6 +567,13 @@ export function createErrorPanel(t) {
     const loadIssueModules = () => import('./feedback.js').then(feedback => import('./updates.js').then(updates => { issueModules = {feedback, updates}; })).catch(() => {});
     github.onclick = async () => {
         if (!currentReport) return;
+        // A generation with a diagnostic report goes the report route: save it, then the tip opens the form.
+        if (route?.has() && diagnosticReports.has(currentReport) && !githubLora) {
+            if (focusReportTip(head)) return;
+            try { await route.download(); } catch { return; }
+            showReportTip(head, github, t, {mode: 'downloaded', submit: () => reportIssue(route.fetch, route.version(), {save: false})});
+            return;
+        }
         if (!issueModules) await loadIssueModules();
         if (!issueModules) return;
         const draft = failureIssue(currentReport, element.freevideoKind, {lora: githubLora, t});
@@ -645,6 +657,7 @@ export function createErrorPanel(t) {
         // An int8 limit is not a judgement, so there is no mistake to report.
         github.hidden = !generated || advice.kind === 'lora-int8'; githubLora = lora;
         github.textContent = lora ? t('Report a mistake', '报告误判') : t('Report a problem', '提交问题');
+        github.toggleAttribute('data-lora', lora);
         if (generated && typeof window !== 'undefined') loadIssueModules();
         if (popup) showFailureDialog(report, t);
         return report;

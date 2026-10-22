@@ -2,7 +2,7 @@
 // owns its document/history; this module inserts a result through its commands.
 import * as commands from './image_commands.js';
 import {orientMatrix, rasterKinds, scaleSelection} from './image_editor_engine.js';
-import {saveReport, reportIssue, showReportTip} from './report_issue.js';
+import {saveReport, reportIssue, showReportTip, focusReportTip} from './report_issue.js';
 import {issueButton} from './issue_button.js';
 import {about} from './request_assets.js';
 
@@ -239,6 +239,7 @@ export function renderImageFailure(host, {error, report_id, stage, fitted, info}
     issue.hidden = true;
     anchor.onclick = async () => {
         if (anchor.disabled) return;
+        if (focusReportTip(bar)) return;
         const restoreFocus = doc.activeElement === anchor;
         issue.hidden = true;
         anchor.disabled = true; anchor.textContent = t(...REPORT_LABELS.preparing);
