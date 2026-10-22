@@ -148,7 +148,17 @@ def display_launcher_error(value, *, zh=False, replacements=()):
     from .offline_errors import alias_failure, guidance
     if alias_failure(value):
         return guidance('runtime-alias', zh)
-    return redacted_launcher_error(value, replacements)
+    text = redacted_launcher_error(value, replacements)
+    if zh:
+        text = re.sub(r'Missing curl, needed for downloads and proxy connections\. '
+                      r'(In a terminal, run: ([^\r\n]+?), then check again\.|'
+                      r'Ask your administrator to install curl, then check again\.)'
+                      r'( You can also run \./setup\.sh in the source folder\.)?',
+                      lambda match: '缺少 curl，下载和代理连接需要它。' +
+                      ('请在终端运行：' + match.group(2) + '，然后重新检查。' if match.group(2) else
+                       '请管理员安装 curl，然后重新检查。') +
+                      ('也可以在源码目录运行 ./setup.sh。' if match.group(3) else ''), text)
+    return text
 
 
 def setup_command_failure(label, log, exit_code):

@@ -25,7 +25,7 @@ import time
 from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 from . import proxy
 from .long_paths import io_path, is_windows, path_chars, plain, plain_errors
-from .system import curl_executable, missing_curl_message, windows
+from .system import curl_executable, curl_ca_arguments, missing_curl_message, windows
 
 
 SOURCES = {
@@ -156,6 +156,9 @@ def curl_command(timeout, env=None):
     command = [executable, '--config', '-', '--silent', '--show-error', '--no-location-trusted', '--location',
             '--max-redirs', '5', '--fail', '--proto', '=https,http', '--proto-redir', '=https,http',
             '--connect-timeout', str(timeout), '--user-agent', 'FreeVideo-Setup/1']
+    command += curl_ca_arguments(executable, env)
+    if '--proxy-cacert' not in command and (env or {}).get('FREEVIDEO_CURL_PROXY_CA'):
+        command += ['--proxy-cacert', env['FREEVIDEO_CURL_PROXY_CA']]
     if (env or {}).get('FREEVIDEO_PROXY_ROUTE') == 'direct':
         command += ['--proxy', '', '--noproxy', '*']
     return command
@@ -579,8 +582,11 @@ def _package_failure(error):
     value = re.sub(r'(?i)(\b[\w-]{0,64}(?:token|password|secret|api[_-]?key)\s*[=:]\s*)[^\s,;&]+',
                    r'\1<REDACTED>', value)
     # Keep a stable path marker without exposing usernames, drives or mounts.
-    value = re.sub(r'(?<![A-Za-z0-9_:/])(?:[A-Za-z]:[\\/]|/)([^\s"\'<>;,)\]}]*)',
-                   lambda match: '<PATH>/' + re.split(r'[\\/]', match.group(1).rstrip('\\/'))[-1], value)
+    value = re.sub(r'(?<![A-Za-z0-9_:/])(?:(?P<relative>\.{1,2}/[^\s"\'<>;,)\]}]*)|'
+                   r'(?:[A-Za-z]:[\\/]|/)([^\s"\'<>;,)\]}]*))',
+                   lambda match: match.group('relative') if match.group('relative') is not None
+                   and not re.search(r'[\\/]', match.group('relative').split('/', 1)[1]) else
+                   '<PATH>/' + re.split(r'[\\/]', match.group(0).rstrip('\\/'))[-1], value)
     lines = [line.strip() for line in value.splitlines() if line.strip()]
     detail = '\n'.join(lines[-12:])[-4096:] if lines else 'no package-manager output'
     summary = next((line for line in lines if line), detail).strip()[:320]

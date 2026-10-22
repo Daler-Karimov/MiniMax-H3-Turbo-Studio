@@ -229,7 +229,8 @@ function reportRedactor(detail, context) {
             .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<ADDRESS REMOVED>');
         // Keep traceback source basenames and line numbers, never drive names,
         // home directories or private media filenames. Spaces in paths count.
-        text = text.replace(/(^|[^A-Za-z0-9_:/<>])((?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/(?![\/\s]))[^\r\n"'<>;,\)\]]+)/gm, (_, prefix, path) => {
+        text = text.replace(/(^|[^A-Za-z0-9_:/<>])(\.\/setup\.sh(?![\w\/\\-]|\.\w)|\.{1,2}\/[^\r\n"'<>;,\)\]]*|(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/(?![\/\s]))[^\r\n"'<>;,\)\]]+)/gm, (_, prefix, path) => {
+            if (path === './setup.sh') return prefix + path;
             const source = path.replace(/\\/g, '/').match(/\/([A-Za-z0-9_.-]+\.(?:py|js|ts|mjs))(?=[:\s]|$)/);
             return prefix + (source ? '<PATH>/' + source[1] + path.slice(path.indexOf(source[1]) + source[1].length) : '<PATH REMOVED>');
         });

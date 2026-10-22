@@ -426,6 +426,16 @@ def smoke_test(app, engine, window, bridge, destination):
     try:
         payload = check_launcher_payload(session.source, destination)
         payload['reopen'] = check_launcher_reopen(destination)
+        from .linux_bundle import frozen_linux, child_environment
+        if frozen_linux():
+            import subprocess
+            from .network import curl_command
+            command = curl_command(5)
+            version = subprocess.run([command[0], '--version'], env=child_environment(),
+                                     capture_output=True, text=True, timeout=10, check=True).stdout
+            if 'https' not in version:
+                raise RuntimeError('Packaged curl lacks HTTPS support')
+            payload['curl'] = dict(executable=command[0], version=version.splitlines()[0])
         from PySide6.QtQuick import QQuickItem
         for page in ('comfy', 'models', 'progress', 'launcher'):
             session.page = page
