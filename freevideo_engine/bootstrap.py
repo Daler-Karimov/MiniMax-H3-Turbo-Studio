@@ -660,6 +660,15 @@ def plan(args, *, local_progress=None, stage=None):
         approved = getattr(args, 'approved_plan', None)
         if approved:
             previous_reuse = json.loads(Path(approved).read_text(encoding='utf-8')).get('local_models')
+        scan_cache = root / 'local-model-scan.json'
+        if not previous_reuse and scan_cache.is_file():
+            # What an earlier check hashed; scan() still hashes any file whose size, times or inode changed.
+            try:
+                previous_reuse = json.loads(scan_cache.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                previous_reuse = None
+            if not (isinstance(previous_reuse, dict) and isinstance(previous_reuse.get('matches'), dict)):
+                previous_reuse = None
         needed = [row for row in files if not model_target(row, model_dir, encoder_dir, prepared_dir).exists()]
         if local_manifest:
             if Path(local_manifest).stat().st_size > 512 * 1024:
@@ -687,6 +696,11 @@ def plan(args, *, local_progress=None, stage=None):
             if error.__cause__ is not None:
                 original += '\n' + str(error.__cause__)
             raise DownloadListError('read', original_error=original) from error
+        if local_reuse['matches'] and root.is_dir():
+            try:
+                save(scan_cache, dict(root=local_reuse['root'], matches=local_reuse['matches']))
+            except OSError:
+                pass  # The next check hashes again; nothing depends on this file.
         local_reuse['copy_mode'] = bool(getattr(args, 'copy_existing_models', False))
         local_reuse['copy_bytes'] = local_reuse['linked_bytes'] = 0
         for row in needed:
@@ -705,6 +719,16 @@ def plan(args, *, local_progress=None, stage=None):
     check_download_list = bool(getattr(args, 'download_list', False))
     stamps_path = root / 'verified-models.json'
     stamps = json.loads(stamps_path.read_text(encoding='utf-8')) if check_download_list and stamps_path.is_file() else {}
+    # The check leaves the installer's ledger alone and keeps what it hashed in a file of its own.
+    checked_path = root / 'download-list-checks.json'
+    try:
+        checked = json.loads(checked_path.read_text(encoding='utf-8')) if check_download_list and checked_path.is_file() else {}
+    except (OSError, ValueError):
+        checked = {}
+    ledger_stamps = dict(stamps)
+    # A record this check made is newer than the ledger's for the same file whenever the two differ.
+    stamps = dict(ledger_stamps, **(checked if isinstance(checked, dict) else {}))
+    checked_paths = set()
     for row in files:
         path = model_target(row, model_dir, encoder_dir, prepared_dir)
         replacement = model_repair.replacement(path, row, mismatches, reserved)
@@ -717,6 +741,7 @@ def plan(args, *, local_progress=None, stage=None):
             from .provision import verified
             hf_directory = Path(prepared_dir) if row.get('prepared') else model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir
             size_matches = verified(path, row, stamps, mode=getattr(args, 'verify', 'auto'), hf_directory=hf_directory)
+            checked_paths.add(str(path))
         present += row['bytes'] if size_matches else 0
         device = existing_parent(path.parent)
         entry = groups.setdefault(str(device), {'path': str(device), 'needed_bytes': 0,
@@ -729,6 +754,12 @@ def plan(args, *, local_progress=None, stage=None):
             # Only the streaming strategy can reuse this contiguous prefix.
             # Its completed content must still pass the pinned hash check.
             entry['resume_bytes'] = entry.get('resume_bytes', 0) + partial.stat().st_size
+    remembered = {name: value for name, value in stamps.items() if name in checked_paths and ledger_stamps.get(name) != value}
+    if check_download_list and root.is_dir() and remembered != checked:
+        try:
+            save(checked_path, remembered)  # The next check does not hash these files again unless they change.
+        except OSError:
+            pass
     # Stream directly into final FP8 groups. The pinned model occupies ~45.3
     # GiB; allow 52 GiB including the largest group in progress. Never credit
     # future source deletion toward the space needed to complete conversion.
