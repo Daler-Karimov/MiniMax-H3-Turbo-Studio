@@ -434,7 +434,7 @@ class Service:
                 self.progress(dict(phase='cancelled'))
             self.result_expires = time.monotonic() + 600
             # Allowlisted metadata only, never original/rewritten text or input paths.
-            # Output rejections contain condition IDs, character counts, picture numbers and retry flags only.
+            # Output rejections contain condition IDs, counts, typed media labels and retry flags only.
             report = {key: item for key, item in self.state.items()
                       if key in ('phase', 'error', 'exception', 'error_details', 'timings', 'diagnostics',
                                  'resources', 'cleanup', 'worker_returncode', 'output_rejection')}
@@ -609,7 +609,8 @@ class Service:
                         rules.validate_output(result.get('text'), value)
                     except rules.InvalidOutput as error:
                         stats = result.get('diagnostics') or {}
-                        error.details['retried'] = bool(stats.get('picture_retry') or stats.get('dialogue_retry'))
+                        error.details['retried'] = bool(stats.get('media_retry') or stats.get('picture_retry')
+                                                       or stats.get('dialogue_retry'))
                         self.progress(dict(diagnostics=stats))
                         raise
             self.progress(dict(result, worker_returncode=child.returncode))

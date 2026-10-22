@@ -420,19 +420,19 @@ def rewrite(folder, value, stats):
     text = processor.decode(ids, skip_special_tokens=True)
     missing = missing_lines(text, value['text'])
     rewritten, rejected = None, None
-    pictures = []
+    references = []
     try:
         rewritten = validate_rewrite(text, value, stats)
     except InvalidOutput as error:
         rejected = error
         if error.details['condition'] == 'missing_picture_reference':
-            pictures = error.details['missing_pictures']
-    if missing or pictures:
+            references = error.details['missing_references']
+    if missing or references:
         # Both corrections share one turn and the existing context/cache allowance.
         correction = ''
-        if pictures:
-            labels = ', '.join(f'<Picture {i}>' for i in pictures)
-            correction = (f'Your rewrite omitted these required image references: {labels}. '
+        if references:
+            labels = ', '.join(references)
+            correction = (f'Your rewrite omitted these required media references: {labels}. '
                           'Preserve all existing content and add each missing reference where it belongs. '
                           'Return the complete prompt in the same required section format.\n')
         if missing:
@@ -445,24 +445,28 @@ def rewrite(folder, value, stats):
             stats.update(retry_output_tokens=len(again), rewrite_seconds=time.monotonic() - loaded)
             if missing:
                 stats['dialogue_retry'] = True
-            if pictures:
-                stats['picture_retry'] = True
+            if references:
+                stats['media_retry'] = True
+                if any(each.startswith('<Picture ') for each in references):
+                    stats['picture_retry'] = True  # Retain the existing image diagnostic.
             try:
                 candidate = validate_rewrite(second, value, stats, retried=True)
-                if pictures and len(again) >= 1800:
+                if references and len(again) >= 1800:
                     error = InvalidOutput('output_token_limit', second, value)
                     error.details['retried'] = True
                     stats['output_rejections'].append(error.details)
                     raise error
-                if len(again) < 1800 and (pictures or len(missing_lines(second, value['text'])) < len(missing)):
+                if len(again) < 1800 and (references or len(missing_lines(second, value['text'])) < len(missing)):
                     rewritten = candidate
             except InvalidOutput:
-                if pictures:
+                if references:
                     raise
-        elif pictures:
-            stats['picture_retry_skipped'] = stats.get('dialogue_retry_skipped', 'context_length')
+        elif references:
+            stats['media_retry_skipped'] = stats.get('dialogue_retry_skipped', 'context_length')
+            if any(each.startswith('<Picture ') for each in references):
+                stats['picture_retry_skipped'] = stats['media_retry_skipped']
     if rewritten is None:
-        rejected.details = dict(rejected.details, retried=bool(stats.get('picture_retry') or stats.get('dialogue_retry')))
+        rejected.details = dict(rejected.details, retried=bool(stats.get('media_retry') or stats.get('dialogue_retry')))
         raise rejected
     stats['stage'] = 'complete'
     emit(phase='complete', text=rewritten, diagnostics=dict(stats))
