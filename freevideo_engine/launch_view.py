@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 
 from .long_paths import io_path, plain
 
@@ -91,6 +92,30 @@ def for_engine(engine_root) -> View:
     except OSError:  # Includes a junction that cannot be made: the checks after it name what fails.
         pass
     return View(engine, engine)
+
+
+def restart_arguments(arguments, prefix=None, environ=None):
+    """The command line and environment that run this command again from the engine's short folder.
+
+    None where the process is not an engine's own Python on Windows, already runs from a
+    short folder, or its folder needs none. A command-line run reaches the libraries
+    (torch\\lib\\c10.dll) by the interpreter's own path, so only a restart can shorten it.
+    """
+    from . import runtime_alias
+    environ = os.environ if environ is None else environ
+    if not runtime_alias._backend.windows() or current(environ) is not None:
+        return None
+    prefix = Path(plain(sys.prefix if prefix is None else prefix))
+    if prefix.parent.name.casefold() != 'envs':
+        return None
+    try:
+        view = for_engine(prefix.parent.parent)
+    except OSError:
+        return None
+    if not view.used:
+        return None
+    command, child, _ = execution([sys.executable, '-m', 'freevideo_engine', *arguments], environ, None, view)
+    return command, child
 
 
 def for_file(path):

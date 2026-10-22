@@ -301,16 +301,46 @@ def digest(path, algorithm='sha256', git_blob=False):
 
 
 def inventory(gpu=None):
-    smi = nvidia_smi()
     query = 'index,uuid,name,compute_cap,memory.total,memory.free,driver_version,pci.bus_id'
-    result = subprocess_output.run_external([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
-                            check=True, capture_output=True, timeout=20)
-    rows = [dict(zip(query.split(','), map(str.strip, row))) for row in csv.reader(result.stdout.splitlines())]
     selector = gpu if gpu is not None else os.environ.get('CUDA_VISIBLE_DEVICES', '0').split(',')[0]
-    matches = [r for r in rows if r['index'] == selector or r['uuid'] == selector]
-    if len(matches) != 1:
-        raise ValueError('Select one physical GPU by nvidia-smi index or full UUID with --gpu. MIG is not supported.')
-    selected = matches[0]
+    detection = {}
+    try:
+        smi = nvidia_smi()
+        result = subprocess_output.run_external([smi, '--query-gpu=' + query, '--format=csv,noheader,nounits'],
+                                check=True, capture_output=True, timeout=20)
+        rows = [dict(zip(query.split(','), map(str.strip, row))) for row in csv.reader(result.stdout.splitlines())]
+        if not rows or any(set(row) != set(query.split(',')) for row in rows):
+            raise ValueError('nvidia-smi returned an incomplete GPU inventory')
+        # Unsupported numeric fields are also a failed observation, not proof
+        # that the user has no GPU. Only the selected row has to be readable;
+        # another GPU reporting N/A must not block an installation that worked.
+        matches = [r for r in rows if r['index'] == selector or r['uuid'] == selector]
+        if len(matches) == 1:
+            row = matches[0]
+            float(row['memory.total']), float(row['memory.free'])
+            int(row['driver_version'].split('.')[0])
+            capability = tuple(map(int, row['compute_cap'].split('.')))
+            if len(capability) != 2 or capability[0] <= 0 or not 0 <= capability[1] <= 9:
+                raise ValueError('nvidia-smi returned an unknown compute capability: ' + row['compute_cap'])
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        from . import cuda_inventory
+        try:
+            fallback = cuda_inventory.probe(selector)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as fallback_error:
+            raise RuntimeError('GPU detection failed. nvidia-smi: %s; CUDA: %s. '
+                               'Check device access and the NVIDIA driver, then retry setup.' %
+                               (error, fallback_error)) from fallback_error
+        selected, rows = fallback['selected_gpu'], fallback['gpus']
+        detection = dict(cuda_driver_api_version=fallback['cuda_driver_api_version'],
+            warnings=[cuda_inventory.WARNING],
+            gpu_detection=dict(source='cuda-driver', nvidia_smi_error=str(error),
+                nvidia_smi_returncode=getattr(error, 'returncode', None),
+                nvidia_smi_stderr=getattr(error, 'stderr', None)))
+        logging.getLogger(__name__).info('%s nvidia-smi: %s', cuda_inventory.WARNING, error)
+    else:
+        if len(matches) != 1:
+            raise ValueError('Select one physical GPU by nvidia-smi index or full UUID with --gpu. MIG is not supported.')
+        selected = matches[0]
     try:
         capability = tuple(map(int, selected['compute_cap'].split('.')))
         if len(capability) != 2:
@@ -332,7 +362,7 @@ def inventory(gpu=None):
             'swap_free_bytes': ram.get('swap_free_bytes'), 'system_memory': ram,
             'compiler': shutil.which('cl' if platform.system() == 'Windows' else 'g++'), 'git': usable_git(),
             **({} if platform.system() == 'Windows' else {'make': shutil.which('make')}),
-            'git_found': shutil.which('git')}
+            'git_found': shutil.which('git'), **detection}
 
 
 # Windows reuses a detected Git from 2.35, the oldest tested there, and
@@ -522,6 +552,7 @@ def plan(args, *, local_progress=None, stage=None):
         if not args.hardware_json and (platform.system() not in ('Linux', 'Windows') or platform.machine().lower() not in ('x86_64', 'amd64')):
             raise RuntimeError('One-click setup supports Linux x86_64 and native Windows x64.')
         snapshot = json.loads(args.hardware_json.read_text(encoding='utf-8')) if args.hardware_json else inventory(args.gpu)
+        warnings.extend(snapshot.get('warnings', []))
         hardware = Hardware.from_dict(snapshot['hardware'])
         errors = []
         if snapshot.get('machine', '').lower() not in ('x86_64', 'amd64') or hardware.system not in ('Linux', 'Windows'):
@@ -535,7 +566,8 @@ def plan(args, *, local_progress=None, stage=None):
         driver = str(snapshot['selected_gpu']['driver_version']).strip()
         # An unreadable version is left to the later checks instead of blocking setup.
         major = re.match(r'\d+', driver)
-        if major and int(major.group()) < 580:
+        cuda_api = snapshot.get('cuda_driver_api_version')
+        if cuda_api < 13000 if cuda_api is not None else (major and int(major.group()) < 580):
             # The card names the graphics card too; brackets would end its pattern early.
             model = re.sub(r'[()\r\n]', '', str(snapshot['selected_gpu'].get('name') or '')).strip()
             errors.append('NVIDIA driver %s%s is older than 580, the minimum for the CUDA 13 encoder; update the driver first.'
@@ -628,6 +660,15 @@ def plan(args, *, local_progress=None, stage=None):
         approved = getattr(args, 'approved_plan', None)
         if approved:
             previous_reuse = json.loads(Path(approved).read_text(encoding='utf-8')).get('local_models')
+        scan_cache = root / 'local-model-scan.json'
+        if not previous_reuse and scan_cache.is_file():
+            # What an earlier check hashed; scan() still hashes any file whose size, times or inode changed.
+            try:
+                previous_reuse = json.loads(scan_cache.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                previous_reuse = None
+            if not (isinstance(previous_reuse, dict) and isinstance(previous_reuse.get('matches'), dict)):
+                previous_reuse = None
         needed = [row for row in files if not model_target(row, model_dir, encoder_dir, prepared_dir).exists()]
         if local_manifest:
             if Path(local_manifest).stat().st_size > 512 * 1024:
@@ -655,6 +696,11 @@ def plan(args, *, local_progress=None, stage=None):
             if error.__cause__ is not None:
                 original += '\n' + str(error.__cause__)
             raise DownloadListError('read', original_error=original) from error
+        if local_reuse['matches'] and root.is_dir():
+            try:
+                save(scan_cache, dict(root=local_reuse['root'], matches=local_reuse['matches']))
+            except OSError:
+                pass  # The next check hashes again; nothing depends on this file.
         local_reuse['copy_mode'] = bool(getattr(args, 'copy_existing_models', False))
         local_reuse['copy_bytes'] = local_reuse['linked_bytes'] = 0
         for row in needed:
@@ -673,6 +719,16 @@ def plan(args, *, local_progress=None, stage=None):
     check_download_list = bool(getattr(args, 'download_list', False))
     stamps_path = root / 'verified-models.json'
     stamps = json.loads(stamps_path.read_text(encoding='utf-8')) if check_download_list and stamps_path.is_file() else {}
+    # The check leaves the installer's ledger alone and keeps what it hashed in a file of its own.
+    checked_path = root / 'download-list-checks.json'
+    try:
+        checked = json.loads(checked_path.read_text(encoding='utf-8')) if check_download_list and checked_path.is_file() else {}
+    except (OSError, ValueError):
+        checked = {}
+    ledger_stamps = dict(stamps)
+    # A record this check made is newer than the ledger's for the same file whenever the two differ.
+    stamps = dict(ledger_stamps, **(checked if isinstance(checked, dict) else {}))
+    checked_paths = set()
     for row in files:
         path = model_target(row, model_dir, encoder_dir, prepared_dir)
         replacement = model_repair.replacement(path, row, mismatches, reserved)
@@ -685,6 +741,7 @@ def plan(args, *, local_progress=None, stage=None):
             from .provision import verified
             hf_directory = Path(prepared_dir) if row.get('prepared') else model_dir if row['repo'].startswith('OpenVDN/') else encoder_dir
             size_matches = verified(path, row, stamps, mode=getattr(args, 'verify', 'auto'), hf_directory=hf_directory)
+            checked_paths.add(str(path))
         present += row['bytes'] if size_matches else 0
         device = existing_parent(path.parent)
         entry = groups.setdefault(str(device), {'path': str(device), 'needed_bytes': 0,
@@ -697,6 +754,12 @@ def plan(args, *, local_progress=None, stage=None):
             # Only the streaming strategy can reuse this contiguous prefix.
             # Its completed content must still pass the pinned hash check.
             entry['resume_bytes'] = entry.get('resume_bytes', 0) + partial.stat().st_size
+    remembered = {name: value for name, value in stamps.items() if name in checked_paths and ledger_stamps.get(name) != value}
+    if check_download_list and root.is_dir() and remembered != checked:
+        try:
+            save(checked_path, remembered)  # The next check does not hash these files again unless they change.
+        except OSError:
+            pass
     # Stream directly into final FP8 groups. The pinned model occupies ~45.3
     # GiB; allow 52 GiB including the largest group in progress. Never credit
     # future source deletion toward the space needed to complete conversion.

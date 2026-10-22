@@ -823,9 +823,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         needsText(selection = state.selection) {
             const range = selectionRange(selection); if (!range) return true;
-            // Only a part pulled out of a finished one needs no description: it continues that one.
+            // Only a part pulled out of a finished one needs no description: it continues that one with the
+            // description it took over. A finished video without one (an exported edit) still needs it.
             const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
-            const before = !!head && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
+            const before = !!head && !!head.text?.trim() && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
                 clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
             return !before;
         },
@@ -965,6 +966,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 if (!found) return {say: [said, t('Write a description first.', '先写一句描述。')].filter(Boolean).join(' '), focus: true};
                 text = found.text; used = found.before ? t('Used the description of the part before.', '沿用了上一段的描述。')
                     : t('Used the latest description.', '沿用了最近一次的描述。');
+                state.setRangeText(text); genbar?.setText(text);
+            } else if (!text.trim()) {
+                // The box was emptied; the part keeps the description it took over, as an empty one cannot be generated.
+                text = state.record.tracks[0].clips.find(clip => clip.start === selectionRange(selection).start).text;
                 state.setRangeText(text); genbar?.setText(text);
             }
             const waiting = waitingFor(selection);

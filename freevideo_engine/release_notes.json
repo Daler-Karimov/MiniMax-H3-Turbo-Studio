@@ -1,41 +1,70 @@
 {
   "schema": 1,
-  "product_version": "0.4.18",
+  "product_version": "0.4.19",
   "en": {
-    "summary": "FreeVideo can be installed into deeply nested folders on Windows; many failure messages state the cause and the next step; Windows computers with little free memory can complete generation; consecutive requests run faster on computers with ample memory.",
+    "summary": "Several pictures can be deleted from the image history at once; prompt enhancement states the reason when it cannot finish.",
     "changes": [
-      "Install: FreeVideo can be installed into deeply nested folders on Windows; when an update cannot be installed and the previous version is restored, the notice follows the interface language.",
-      "Launcher: errors state the step that failed and what to do next, and Report a problem includes a line about the environment; when the saved installation folder cannot be opened, Start opens the setup page with the saved paths and an explanation; a graphics driver older than 580 gets a notice with the installed version and the update steps; a damaged launcher settings file is kept as a copy before it is replaced; the launcher keeps working when the prompt model file list is missing, and that row appears once the list is available.",
-      "Model downloads: slow sources are retried with a longer time limit, and the last failure reason of each source and route is listed; when a source has problems, the launcher shows a dedicated card with a button to switch sources; the image model has its own download list with links and checksums, exported to a separate folder.",
-      "Failure messages: a failed video generation names the stage where it stopped (loading, sampling or decoding); failure feedback starts with the last error; automatic subtitles, subtitle downloads, media import and subtitle import in the editor state the reason when they fail, and GBK-encoded SRT subtitles can be imported; image generation, adding workflows and share export state when the disk is full; an unreadable queued reference image prompts for a different image; a failed part of a long video shows a short status, with details in the error card and the name of any missing file.",
-      "Generation: fixed an error when submitting a generation; when first/last frames and references cannot be combined, the failure card says which media to turn off; Generate with AI explains when the media list is full at 32 items; the estimate before generation marks first-time preparation, and a slow estimate gives a reason and a remedy; a queued request shows its wait in minutes or the number of requests ahead; a queued export shows Queued on its button; LoRA files in more naming styles are recognized, and an acceleration LoRA made for the original model gets its own explanation.",
-      "Prompt enhancement: scenes with audio, connected nodes or videos can be enhanced, with audio and connected nodes skipped and one frame read from each video; with reference images, a rewrite that leaves out an image reference is sent back to the model once to add it.",
-      "Reference images: uploading and reading show Uploading reference image and Reading reference image N%; the + button in the editor shows a spinner while loading; library import shows uploading, queued and processing in turn, and finishes once progress reaches 100%.",
-      "Autopilot: it can be stopped while waiting for a reply and shows its current action; after three minutes without a progress update it says generation is still running; a background tab title starts with Confirmation needed, Failed or Done; Edit prompt puts the summary back in the input box; the confirmation card shows the size and duration; when the entry check fails, the entry stays and the check can be retried; an unreadable saved conversation or film leaves the rest available; failure reasons are readable in the English interface.",
-      "Multi-shot films: for long videos and multi-shot films made by Autopilot, music is added on request: when requested, one continuous score is laid over the whole film after the shots are joined, and a music file from the user can be used directly.",
-      "Create and Your creations: saving or loading a prompt can be retried after a failure; key presses stay inside the creation panel; in the image editor, the History entry stays visible after a picture is placed from the history; the end of the Your creations list shows how many records cannot be read.",
-      "Memory and speed: when a Windows computer is refused only because of the default memory reserve, part of the reserve is used, keeping at least 1 GiB, so generation can start with about 5 GiB free; on computers with ample memory, consecutive requests skip reloading the models and run faster.",
-      "Mac: encoding with many reference images is much faster; accelerated computation falls back to the standard method when its results look wrong; after a one-click update, a new version that starts slowly is kept."
+      "Install: setup no longer stops when some graphics card details cannot be read; command-line generation works on Windows when FreeVideo is installed in a very deep folder.",
+      "Image history: after Select, several pictures can be checked and deleted at once, with a second click to confirm; pictures that are in use or cannot be deleted stay in place with the reason shown.",
+      "Prompt enhancement: when enhancement cannot finish and the original prompt is used, the reason is shown; a rewrite that lacks the video or audio description is sent back to the model to add it.",
+      "Editor: Extend on a finished video without a description asks for a description first instead of showing an English validation error; when the description box is cleared, the description carried over for that segment is used.",
+      "The Linux package now includes curl, so installation and downloads work on systems without it.",
+      "Download list: the check no longer hashes every model file again each time it runs; files already hashed are skipped while their size, times and inode are unchanged.",
+      "Keeps the failed phase, step count, error type and memory readings of a GPU error that raised the compatibility level, so a diagnostic report sent after a later run still shows where it stopped.",
+      "The chat no longer shows the notice for an edited waiting message as an error with a report button; it is a plain status line."
     ]
   },
   "zh": {
-    "summary": "Windows 上可以安装到层级较深的文件夹；多处失败提示写明原因和下一步操作；可用内存较少的 Windows 电脑可以继续完成生成；内存宽裕的电脑连续生成时速度更快。",
+    "summary": "生图历史可以一次删除多张；提示词增强未能完成时写明原因。",
     "changes": [
-      "安装：Windows 上可以安装到层级较深的文件夹；更新未能装上并换回旧版时，提示按界面语言显示。",
-      "启动器：出错时写明出错的步骤和下一步操作，“报告问题”附带一行环境信息；已保存的安装文件夹无法打开时，点击“启动”会进入安装页，显示已保存的路径和说明；显卡驱动版本低于 580 时，显示当前驱动版本和更新步骤；启动设置文件损坏时，先保留一份副本再保存；提示词模型的文件清单缺失时，启动器照常工作，相应一行在清单可用后显示。",
-      "模型下载：下载源较慢时以更长的时限重试，并分别列出每个下载源和线路最近一次失败的原因；下载源出现问题时，启动器显示专门的卡片和切换下载源的按钮；图像模型有单独的下载清单，列出链接和校验值，并导出到单独的文件夹。",
-      "失败提示：视频生成失败时写明出错的阶段（载入、采样或解码）；生成失败后的反馈以最后一条错误开头；剪辑页的自动字幕、字幕下载、素材导入和字幕导入失败时写明原因，GBK 编码的 SRT 字幕可以导入；图像生成、补写工作流和分享导出遇到磁盘已满时写明原因；排队中的参考图无法读取时，提示更换图片；长视频的某一段失败时显示简短状态，详细内容在错误卡片中，并写出缺失文件的名称。",
-      "生成：修复了部分情况下提交生成时报错的问题；首尾帧与参考素材不能同时使用时，失败卡片说明原因并提示关闭哪一类素材；素材列表已满 32 项时，“AI 生成”说明原因；生成前的时间估计注明“含首次准备”，预计较慢时给出一个原因和一个处理办法；排队时显示“约 N 分钟后开始”或“前面还有 N 个”；导出排队时按钮显示“排队中”；更多命名方式的 LoRA 文件可以正确识别，为原版模型制作的加速 LoRA 会显示专门说明。",
-      "提示词增强：场景中有音频、连接节点或视频时也可以增强，音频和连接节点会被跳过，视频读取一帧画面；带参考图时，改写结果遗漏图片引用，会请模型补上一次。",
-      "参考图：上传和读取时显示“正在上传参考图”和“正在读取参考图 N%”；剪辑页的“+”按钮在加载时显示转圈；素材库导入依次显示上传中、排队中和处理中，进度到 100% 后直接完成。",
-      "AI 全自动：等待回复时可以停止，并显示当前动作；三分钟没有进度更新时，提示仍在生成中；后台标签页的标题前显示“待确认”“失败”或“已完成”；“改描述”会把摘要放回输入框；确认卡片显示尺寸和时长；入口检查失败时保留入口，可以重试；某个已保存的对话或影片无法读取时，其余内容照常可用；英文界面下的失败原因清楚可读。",
-      "多镜头作品：AI 全自动制作长视频和多镜头作品时，配乐按需添加：需要配乐时，在各镜头拼接完成后为整片铺一段连贯的配乐，用户提供的音乐文件也可以直接使用。",
-      "创作面板与我的作品：提示词保存或读取失败时可以重试；按键操作只作用于创作面板；图像编辑中从历史记录放入画布后，“历史”入口保持可见；“我的作品”列表末尾显示无法读取的记录数量。",
-      "内存与速度：Windows 电脑只因默认预留空间不足而无法开始生成时，会使用部分预留空间（至少保留 1 GiB），可用内存约 5 GiB 时也可以开始生成；连续生成多个请求时，内存宽裕的电脑无需重复加载模型，速度更快。",
-      "Mac：使用大量参考图时，编码速度明显提升；加速计算的结果异常时，自动改用标准计算；一键更新后，启动较慢的新版本同样会保留。"
+      "安装：部分显卡信息读不到时，安装不再中断；Windows 上 FreeVideo 安装在很深的文件夹时，命令行生成可以正常运行。",
+      "生图历史：点“选择”后可以勾选多张一次删除，删除前需要再次确认；被占用或无法删除的图片会保留并写明原因。",
+      "提示词增强：增强未能完成、改用原提示词时，写明原因；改写结果缺少视频或音频描述时，会请模型补上。",
+      "剪辑页：在没有描述的成片后“接着生成”时，会提示先写一句描述，不再显示英文校验错误；描述框被清空时，沿用这一段原有的描述。",
+      "Linux 安装包自带 curl，系统未安装 curl 时也能正常安装和下载。",
+      "下载清单：检查不再每次重新校验所有模型文件；已经校验过的文件在大小、时间和 inode 都没变时直接跳过。",
+      "保留导致兼容档位升高的显卡错误的出错阶段、步数、错误类型和内存读数，之后一次运行发送的诊断报告仍能看出它停在哪里。",
+      "对话中修改了正在等待 Agent 的消息后，提示不再按错误显示、不再带“报告问题”按钮，改为普通状态提示。"
     ]
   },
   "history": [
+    {
+      "product_version": "0.4.18",
+      "en": {
+        "summary": "FreeVideo can be installed into deeply nested folders on Windows; many failure messages state the cause and the next step; Windows computers with little free memory can complete generation; consecutive requests run faster on computers with ample memory.",
+        "changes": [
+          "Install: FreeVideo can be installed into deeply nested folders on Windows; when an update cannot be installed and the previous version is restored, the notice follows the interface language.",
+          "Launcher: errors state the step that failed and what to do next, and Report a problem includes a line about the environment; when the saved installation folder cannot be opened, Start opens the setup page with the saved paths and an explanation; a graphics driver older than 580 gets a notice with the installed version and the update steps; a damaged launcher settings file is kept as a copy before it is replaced; the launcher keeps working when the prompt model file list is missing, and that row appears once the list is available.",
+          "Model downloads: slow sources are retried with a longer time limit, and the last failure reason of each source and route is listed; when a source has problems, the launcher shows a dedicated card with a button to switch sources; the image model has its own download list with links and checksums, exported to a separate folder.",
+          "Failure messages: a failed video generation names the stage where it stopped (loading, sampling or decoding); failure feedback starts with the last error; automatic subtitles, subtitle downloads, media import and subtitle import in the editor state the reason when they fail, and GBK-encoded SRT subtitles can be imported; image generation, adding workflows and share export state when the disk is full; an unreadable queued reference image prompts for a different image; a failed part of a long video shows a short status, with details in the error card and the name of any missing file.",
+          "Generation: fixed an error when submitting a generation; when first/last frames and references cannot be combined, the failure card says which media to turn off; Generate with AI explains when the media list is full at 32 items; the estimate before generation marks first-time preparation, and a slow estimate gives a reason and a remedy; a queued request shows its wait in minutes or the number of requests ahead; a queued export shows Queued on its button; LoRA files in more naming styles are recognized, and an acceleration LoRA made for the original model gets its own explanation.",
+          "Prompt enhancement: scenes with audio, connected nodes or videos can be enhanced, with audio and connected nodes skipped and one frame read from each video; with reference images, a rewrite that leaves out an image reference is sent back to the model once to add it.",
+          "Reference images: uploading and reading show Uploading reference image and Reading reference image N%; the + button in the editor shows a spinner while loading; library import shows uploading, queued and processing in turn, and finishes once progress reaches 100%.",
+          "Autopilot: it can be stopped while waiting for a reply and shows its current action; after three minutes without a progress update it says generation is still running; a background tab title starts with Confirmation needed, Failed or Done; Edit prompt puts the summary back in the input box; the confirmation card shows the size and duration; when the entry check fails, the entry stays and the check can be retried; an unreadable saved conversation or film leaves the rest available; failure reasons are readable in the English interface.",
+          "Multi-shot films: for long videos and multi-shot films made by Autopilot, music is added on request: when requested, one continuous score is laid over the whole film after the shots are joined, and a music file from the user can be used directly.",
+          "Create and Your creations: saving or loading a prompt can be retried after a failure; key presses stay inside the creation panel; in the image editor, the History entry stays visible after a picture is placed from the history; the end of the Your creations list shows how many records cannot be read.",
+          "Memory and speed: when a Windows computer is refused only because of the default memory reserve, part of the reserve is used, keeping at least 1 GiB, so generation can start with about 5 GiB free; on computers with ample memory, consecutive requests skip reloading the models and run faster.",
+          "Mac: encoding with many reference images is much faster; accelerated computation falls back to the standard method when its results look wrong; after a one-click update, a new version that starts slowly is kept."
+        ]
+      },
+      "zh": {
+        "summary": "Windows 上可以安装到层级较深的文件夹；多处失败提示写明原因和下一步操作；可用内存较少的 Windows 电脑可以继续完成生成；内存宽裕的电脑连续生成时速度更快。",
+        "changes": [
+          "安装：Windows 上可以安装到层级较深的文件夹；更新未能装上并换回旧版时，提示按界面语言显示。",
+          "启动器：出错时写明出错的步骤和下一步操作，“报告问题”附带一行环境信息；已保存的安装文件夹无法打开时，点击“启动”会进入安装页，显示已保存的路径和说明；显卡驱动版本低于 580 时，显示当前驱动版本和更新步骤；启动设置文件损坏时，先保留一份副本再保存；提示词模型的文件清单缺失时，启动器照常工作，相应一行在清单可用后显示。",
+          "模型下载：下载源较慢时以更长的时限重试，并分别列出每个下载源和线路最近一次失败的原因；下载源出现问题时，启动器显示专门的卡片和切换下载源的按钮；图像模型有单独的下载清单，列出链接和校验值，并导出到单独的文件夹。",
+          "失败提示：视频生成失败时写明出错的阶段（载入、采样或解码）；生成失败后的反馈以最后一条错误开头；剪辑页的自动字幕、字幕下载、素材导入和字幕导入失败时写明原因，GBK 编码的 SRT 字幕可以导入；图像生成、补写工作流和分享导出遇到磁盘已满时写明原因；排队中的参考图无法读取时，提示更换图片；长视频的某一段失败时显示简短状态，详细内容在错误卡片中，并写出缺失文件的名称。",
+          "生成：修复了部分情况下提交生成时报错的问题；首尾帧与参考素材不能同时使用时，失败卡片说明原因并提示关闭哪一类素材；素材列表已满 32 项时，“AI 生成”说明原因；生成前的时间估计注明“含首次准备”，预计较慢时给出一个原因和一个处理办法；排队时显示“约 N 分钟后开始”或“前面还有 N 个”；导出排队时按钮显示“排队中”；更多命名方式的 LoRA 文件可以正确识别，为原版模型制作的加速 LoRA 会显示专门说明。",
+          "提示词增强：场景中有音频、连接节点或视频时也可以增强，音频和连接节点会被跳过，视频读取一帧画面；带参考图时，改写结果遗漏图片引用，会请模型补上一次。",
+          "参考图：上传和读取时显示“正在上传参考图”和“正在读取参考图 N%”；剪辑页的“+”按钮在加载时显示转圈；素材库导入依次显示上传中、排队中和处理中，进度到 100% 后直接完成。",
+          "AI 全自动：等待回复时可以停止，并显示当前动作；三分钟没有进度更新时，提示仍在生成中；后台标签页的标题前显示“待确认”“失败”或“已完成”；“改描述”会把摘要放回输入框；确认卡片显示尺寸和时长；入口检查失败时保留入口，可以重试；某个已保存的对话或影片无法读取时，其余内容照常可用；英文界面下的失败原因清楚可读。",
+          "多镜头作品：AI 全自动制作长视频和多镜头作品时，配乐按需添加：需要配乐时，在各镜头拼接完成后为整片铺一段连贯的配乐，用户提供的音乐文件也可以直接使用。",
+          "创作面板与我的作品：提示词保存或读取失败时可以重试；按键操作只作用于创作面板；图像编辑中从历史记录放入画布后，“历史”入口保持可见；“我的作品”列表末尾显示无法读取的记录数量。",
+          "内存与速度：Windows 电脑只因默认预留空间不足而无法开始生成时，会使用部分预留空间（至少保留 1 GiB），可用内存约 5 GiB 时也可以开始生成；连续生成多个请求时，内存宽裕的电脑无需重复加载模型，速度更快。",
+          "Mac：使用大量参考图时，编码速度明显提升；加速计算的结果异常时，自动改用标准计算；一键更新后，启动较慢的新版本同样会保留。"
+        ]
+      }
+    },
     {
       "product_version": "0.4.17",
       "en": {

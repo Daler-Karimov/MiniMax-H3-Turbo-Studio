@@ -143,6 +143,7 @@ class InvalidOutput(ValueError):
         indices = {int(i) for i in re.findall(r'<Picture (\d+)>', draft)}
         self.details = dict(condition=condition, output_characters=len(draft),
                             missing_pictures=sorted(i for i in pictures if f'<Picture {i}>' not in draft),
+                            missing_references=[each for each in required if each not in draft],
                             out_of_range_pictures=sorted(i for i in indices if i not in pictures),
                             retried=False)
 
