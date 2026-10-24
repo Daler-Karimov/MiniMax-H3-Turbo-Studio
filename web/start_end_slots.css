@@ -1,0 +1,196 @@
+/* Two-cell start and end media picker styles */
+.fv-slots-widget {
+    margin-top: 10px;
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.fv-slots-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.fv-slot {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    user-select: none;
+}
+
+.fv-slot:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.fv-slot.fv-slot-dragover {
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.12);
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+}
+
+.fv-slot.fv-slot-filled {
+    border-style: solid;
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(20, 30, 45, 0.5);
+}
+
+.fv-slot-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.fv-slot-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 0.2px;
+}
+
+.fv-slot-clear {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 4px;
+    min-height: auto;
+    border-radius: 4px;
+}
+
+.fv-slot-clear:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.fv-slot-dropzone {
+    cursor: pointer;
+    border-radius: 6px;
+    min-height: 86px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.fv-slot-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    text-align: center;
+    padding: 6px;
+}
+
+.fv-slot-icon {
+    font-size: 20px;
+    opacity: 0.7;
+}
+
+.fv-slot-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.75);
+    font-weight: 500;
+}
+
+.fv-slot-hint {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.fv-slot-preview {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+    max-height: 95px;
+}
+
+.fv-slot-preview img,
+.fv-slot-preview video {
+    max-width: 100%;
+    max-height: 95px;
+    object-fit: cover;
+    width: 100%;
+    display: block;
+}
+
+.fv-slot-filename {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    color: #fff;
+    font-size: 9px;
+    padding: 2px 4px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.fv-slots-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.fv-slots-status-badge {
+    font-weight: 600;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.fv-badge-text {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.fv-badge-start {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.fv-badge-end {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.fv-badge-morph {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.fv-slots-status-text {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

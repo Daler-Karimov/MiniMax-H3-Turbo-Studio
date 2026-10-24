@@ -1,12 +1,13 @@
 import {row, slider, number, button, disabledReason} from './editor_adjust.js';
 import {PICTURE_DEFAULTS, pictureFields} from './editor_picture_fields.js';
 import {pictureSession} from './editor_picture_session.js';
+import {createEditorGenCard} from './editor_generation_card.js';
 export const scaleFromSlider = value => Math.abs(value) < .025 ? 1 : 10 ** value;
 export const quarterTurn = (angle, delta) => ((angle + delta + 540) % 360) - 180;
 export function createAdjustPicture({state, sources, t, player, notes = null}) {
     const session = pictureSession(state, t), widgets = [], numbers = {};
     let visibilityObserver, inputError, invalidClip;
-    let context, container, clip, scale, reset, crop, cropActions, flips, scaleDrag = null;
+    let context, container, clip, scale, reset, crop, cropActions, flips, scaleDrag = null, genCard = null;
     const keep = node => { if (node.tagName === 'BUTTON') node.setAttribute('aria-label', node.textContent); widgets.push(node); return node; };
     const change = fields => { if (clip && !container.disabled) session.change(clip.id, fields); };
     const numeric = (key, label, min, max, factor = 1, suffix = '') => {
@@ -50,6 +51,7 @@ export function createAdjustPicture({state, sources, t, player, notes = null}) {
     function update(ctx = context) {
         if (!ctx || !container) return; context = ctx;
         notes?.update(ctx);
+        genCard?.update();
         clip = ctx.clips.find(c => c.track.kind === 'video' && c.source);
         const seen = new Set(); let count = 0;
         for (const item of ctx.clips) { if (!seen.has(item.id)) count++; seen.add(item.id); if (item.link) seen.add(item.link); }
@@ -82,6 +84,10 @@ export function createAdjustPicture({state, sources, t, player, notes = null}) {
             container = host; context = ctx; host.classList.add('fv-ed-adjust-picture');
             // The description stays editable on blocks the picture controls cannot change yet (drafts).
             if (notes) host.parentNode.insertBefore(notes.element, host);
+            if (!genCard) {
+                genCard = createEditorGenCard({state, t, actions: ctx.actions || {}});
+                host.parentNode.insertBefore(genCard.element, host);
+            }
             // Observe the shell's existing visibility contract without changing its
             // lifecycle API (the shell is owned by the adjustment-panel task).
             const pane = host.closest('[role=tabpanel]'), panel = host.closest('.fv-ed-adjust-host');

@@ -160,7 +160,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         firstFrame.update(busy);
         references?.update(busy, busy ? undefined : actions.references.visible() || false);
-        generate.textContent = t('Generate', '生成');
+        const btnName = isBridge ? t('Bridge transition', 'Склеить переход') : t('Generate', '生成');
+        generate.textContent = btnName;
         // Never disabled for a reason the press itself can explain or fix.
         generate.disabled = busy || !!previewSelection;
         resizeDescription();

@@ -45,6 +45,7 @@ import { firstFrameRow } from './first_frame_row.js';
 import { createStudioChain, chainPosition, chainParts, chainSplit, composePartText, readChainResult, sumPartEstimates, singleRunSnapshot } from './studio_chain.js?v=20261019-words';
 import { waitingText } from './chain_support.js';
 import { createExtendState, extendText, extendSourceProblem, extendSourceState, readExtendRecord, extendSnapshot, mountExtendThumbnail, videoUnavailableText } from './studio_extend.js';
+import { createStartEndSlots } from './start_end_slots.js';
 import { topDialog, isolateDialogKeys, listenDialogKey, routeDialogKey } from './dialog_keys.js';
 
 const languageOverride = typeof location !== 'undefined'
@@ -790,6 +791,16 @@ export function openStudio(node, {extendFrom = null} = {}) {
     promptHelp.title = t('Prompt guide', '提示词指南');
     promptSection.querySelector('.fv-label').append(promptHelp);
     promptSection.append(enhancer.element);
+    const startEndSlots = createStartEndSlots({
+        node,
+        getMediaNode: () => upstream(node, 'media'),
+        extension,
+        syncExtension,
+        t,
+        api
+    });
+    cleanup.push(startEndSlots.dispose);
+    promptSection.append(startEndSlots.element);
     const canvas = section(t('Frame & duration', '画幅与时长'));
     const canvasLock = el('span', null, 'fv-canvas-lock'); canvasLock.hidden = true; canvasLock.append(icon('lock'));
     canvas.querySelector('.fv-label').append(canvasLock);

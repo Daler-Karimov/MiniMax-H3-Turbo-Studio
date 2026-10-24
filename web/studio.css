@@ -1,3 +1,4 @@
+@import './start_end_slots.css';
 .fv-studio{box-sizing:border-box;position:fixed;inset:0;margin:auto;width:calc(100vw - 32px);height:calc(100dvh - 32px);max-width:none;max-height:none;padding:0;color:var(--fv-ink);background:var(--fv-bg);border:1px solid var(--fv-border);border-radius:var(--fv-r-lg);box-shadow:0 32px 110px #0008;font:14px/1.6 var(--fv-font);overflow:hidden;color-scheme:dark}
 .fv-studio::backdrop{background:#070a0db8;backdrop-filter:blur(8px)}
 .fv-studio *{box-sizing:border-box}.fv-studio [hidden]{display:none!important}

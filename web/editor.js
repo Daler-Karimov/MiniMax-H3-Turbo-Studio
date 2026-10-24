@@ -36,6 +36,8 @@ import {optionalText, clonePrompt} from './optional_inputs.js';
 import {outputNotWritable} from './error_panel.js';
 import {repairAction} from './repair_hint.js';
 import {expandCast} from './cast_mention.js';
+import {uploadMedia} from './media_upload.js';
+import {captureVideoFrame} from './frame_extractor.js';
 const editorStyles = Promise.all(['result_actions.css', 'editor.css', 'editor_expand.css', 'editor_tracks.css', 'editor_frame.css', 'editor_adjust.css', 'editor_adjust_picture.css', 'editor_preview_picture.css', 'editor_select.css', 'editor_menu.css', 'editor_text.css', 'editor_notes.css', 'editor_transport.css'].map(name => {
     const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = new URL(name, import.meta.url).href;
     const ready = 'sheet' in style ? new Promise(resolve => { style.onload = style.onerror = resolve; }) : Promise.resolve();
@@ -831,6 +833,14 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return !before;
         },
         // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
+        isTransitionBridge() {
+            if (!store.generationAvailable || !actions.supportedSelection()) return false;
+            const range = selectionRange(); if (!range) return false;
+            const videoClips = state.record.tracks[0].clips.filter(clip => clip.source);
+            const leftClip = videoClips.find(clip => clip.start + clip.frames === range.start);
+            const rightClip = videoClips.find(clip => clip.start === range.start + range.frames);
+            return Boolean(leftClip && rightClip);
+        },
         firstFrameVisible() {
             if (!store.generationAvailable || !actions.supportedSelection()) return false;
             const range = selectionRange(); if (!range) return false;
@@ -890,6 +900,57 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 }
                 const follow = continuedSize(beforeKeys, sizes), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
+
+                // Seamless bridge transition (Склейка) detection between bordering video clips
+                const videoClips = state.record.tracks[0].clips.filter(c => c.source);
+                const leftClip = videoClips.find(c => c.start + c.frames === range.start);
+                const rightClip = videoClips.find(c => c.start === range.start + range.frames);
+
+                if (leftClip && rightClip) {
+                    try {
+                        const leftKey = sourceKey(leftClip.source);
+                        const rightKey = sourceKey(rightClip.source);
+                        const leftSource = store.sources.get(leftKey);
+                        const rightSource = store.sources.get(rightKey);
+                        const leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
+                        const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                        if (leftUrl && rightUrl) {
+                            const leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
+                            const leftFrame = await captureVideoFrame(leftUrl, leftTime);
+                            const leftUp = await uploadMedia(api, leftFrame);
+
+                            const rightTime = Math.max(0, rightClip.in / 24);
+                            const rightFrame = await captureVideoFrame(rightUrl, rightTime);
+                            const rightUp = await uploadMedia(api, rightFrame);
+
+                            const nodeInputs = frozen.prompt[frozen.node].inputs;
+                            const lName = leftUp.name || leftUp.file;
+                            const rName = rightUp.name || rightUp.file;
+                            nodeInputs.first = lName;
+                            nodeInputs.last = rName;
+                            nodeInputs.media = { first: lName, last: rName, version: 1 };
+                        }
+                    } catch (bridgeErr) {
+                        console.warn('[FreeVideo] Could not build transition bridge frames:', bridgeErr);
+                    }
+                } else if (!leftClip && rightClip) {
+                    try {
+                        const rightKey = sourceKey(rightClip.source);
+                        const rightSource = store.sources.get(rightKey);
+                        const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                        if (rightUrl) {
+                            const rightTime = Math.max(0, rightClip.in / 24);
+                            const rightFrame = await captureVideoFrame(rightUrl, rightTime);
+                            const rightUp = await uploadMedia(api, rightFrame);
+                            const rName = rightUp.name || rightUp.file;
+                            const nodeInputs = frozen.prompt[frozen.node].inputs;
+                            nodeInputs.last = rName;
+                            nodeInputs.media = { last: rName, version: 1 };
+                        }
+                    } catch (leadErr) {
+                        console.warn('[FreeVideo] Could not build lead-in target frame:', leadErr);
+                    }
+                }
                 // Parts made at another size than the edit's have that size's limit.
                 const limit = (follow && (follow.width !== edit.width || follow.height !== edit.height)
                     ? await store.requestFrames(follow, state.record.settings) : null) ?? capability.maxRequestFrames;
