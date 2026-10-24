@@ -118,7 +118,8 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
         if conditioning is not None or first is not None or last is not None or references:
             raise ValueError('Use the Media panel or direct media/conditioning sockets; disable duplicate inputs')
         connected = assets.get('_connected', {})
-        media.update({key: value for key, value in assets.items() if key != '_connected'})
+        allowed_media_keys = {'version', 'first', 'last', 'references', 'loras', 'conditioning_info'}
+        media.update({key: value for key, value in assets.items() if key in allowed_media_keys})
         first, last = connected.get('first'), connected.get('last')
         references = []
         for name in REFERENCE_INPUTS:
@@ -204,5 +205,6 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
     if not continuing and media.get('references'):
         media['references'] = [_plain(row) for row in media['references']]
     if len(media) > 1:
-        result['media'] = media
+        allowed_media_keys = {'version', 'first', 'last', 'references', 'loras', 'conditioning_info'}
+        result['media'] = {k: v for k, v in media.items() if k in allowed_media_keys}
     return result

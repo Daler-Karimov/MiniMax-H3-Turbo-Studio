@@ -27,8 +27,8 @@ def read(path):
         raise ValueError('Expected a version 1 FreeVideo media request')
     if 'early_steps' in value:
         raise ValueError('early_steps is only allowed on video references')
-    if set(value) - {'version', 'first', 'last', 'references', 'loras', 'conditioning_info'}:
-        raise ValueError('Unknown media request fields')
+    allowed = {'version', 'first', 'last', 'references', 'loras', 'conditioning_info'}
+    value = {k: v for k, v in value.items() if k in allowed}
     result = {'version': 1}
     def file_info(name):
         if not isinstance(name, str) or not name:
@@ -56,8 +56,7 @@ def read(path):
             if field != 'references' and 'early_steps' in entry:
                 raise ValueError('early_steps is only allowed on video references')
             allowed = {'path', 'kind', 'early_steps', 'sound'} if field == 'references' else {'path', 'strength', 'alpha'}
-            if set(entry) - allowed:
-                raise ValueError('Unknown ' + field + ' fields')
+            entry = {k: v for k, v in entry.items() if k in allowed}
             row = file_info(entry.get('path'))
             if field == 'references':
                 if entry.get('kind') not in ('image', 'video', 'audio'):

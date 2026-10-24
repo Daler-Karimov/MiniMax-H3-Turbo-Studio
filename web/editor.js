@@ -833,15 +833,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return false;
         },
         // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
-        findSurroundingClips() {
-            const range = selectionRange();
+        findSurroundingClips(customRange = null) {
+            const range = customRange || selectionRange();
             if (!range || !state.record?.tracks?.[0]?.clips) return { leftClip: null, rightClip: null };
             const videoClips = state.record.tracks[0].clips.filter(clip => clip.source);
             // Must stand flush against range.start (<= 2 frames tolerance)
-            const leftClip = videoClips.find(c => Math.abs((c.start + c.frames) - range.start) <= 2) || null;
+            const leftClip = videoClips.find(c => Math.abs((c.start + c.frames) - range.start) <= 4) || null;
 
             // Must stand flush against range end (<= 2 frames tolerance)
-            const rightClip = videoClips.find(c => Math.abs(c.start - (range.start + range.frames)) <= 2) || null;
+            const rightClip = videoClips.find(c => Math.abs(c.start - (range.start + range.frames)) <= 4) || null;
 
             return { leftClip, rightClip };
         },
@@ -938,15 +938,15 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const nodeInputs = frozen.prompt[frozen.node].inputs;
                 delete nodeInputs.first;
                 delete nodeInputs.last;
-                if (slotMedia.first) {
-                    nodeInputs.media = { ...(nodeInputs.media || {}), first: slotMedia.first, version: 1 };
-                }
-                if (slotMedia.last) {
-                    nodeInputs.media = { ...(nodeInputs.media || {}), last: slotMedia.last, version: 1 };
+                let mediaPayload = null;
+                if (slotMedia.first || slotMedia.last) {
+                    mediaPayload = { version: 1 };
+                    if (slotMedia.first) mediaPayload.first = slotMedia.first;
+                    if (slotMedia.last) mediaPayload.last = slotMedia.last;
                 }
 
-                if (!slotMedia.first && !slotMedia.last) {
-                    const { leftClip, rightClip } = actions.findSurroundingClips();
+                if (!mediaPayload) {
+                    const { leftClip, rightClip } = actions.findSurroundingClips(range);
                     if (leftClip && rightClip) {
                         try {
                             const leftKey = sourceKey(leftClip.source);
@@ -966,7 +966,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
 
                                 const lName = leftUp.name || leftUp.file;
                                 const rName = rightUp.name || rightUp.file;
-                                nodeInputs.media = { ...(nodeInputs.media || {}), first: lName, last: rName, version: 1 };
+                                mediaPayload = { version: 1, first: lName, last: rName };
                             }
                         } catch (bridgeErr) {
                             console.warn('[FreeVideo] Could not build transition bridge frames:', bridgeErr);
@@ -981,12 +981,16 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                                 const rightFrame = await captureVideoFrame(rightUrl, rightTime);
                                 const rightUp = await uploadMedia(api, rightFrame);
                                 const rName = rightUp.name || rightUp.file;
-                                nodeInputs.media = { ...(nodeInputs.media || {}), last: rName, version: 1 };
+                                mediaPayload = { version: 1, last: rName };
                             }
                         } catch (leadErr) {
                             console.warn('[FreeVideo] Could not build lead-in target frame:', leadErr);
                         }
                     }
+                }
+
+                if (mediaPayload) {
+                    nodeInputs.media = mediaPayload;
                 }
                 // Parts made at another size than the edit's have that size's limit.
                 const limit = (follow && (follow.width !== edit.width || follow.height !== edit.height)
