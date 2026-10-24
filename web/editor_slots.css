@@ -4,7 +4,7 @@
     flex-direction: column;
     gap: 4px;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 4px;
     margin-bottom: 6px;
     box-sizing: border-box;
 }
@@ -123,8 +123,8 @@
 }
 
 .fv-ed-slot-thumb {
-    width: 36px;
-    height: 24px;
+    width: 46px;
+    height: 30px;
     border-radius: 3px;
     object-fit: cover;
     background: #000;
@@ -135,33 +135,40 @@
 .fv-ed-slot-info {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     min-width: 0;
     flex: 1;
-    gap: 1px;
+    gap: 2px;
 }
 
 .fv-ed-slot-label {
     font-size: 10px;
-    color: rgba(255, 255, 255, 0.85);
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.2;
 }
 
 .fv-ed-slot-tag {
-    font-size: 8px;
-    font-weight: 500;
-    padding: 0 4px;
-    border-radius: 3px;
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.35);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(59, 130, 246, 0.22);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.45);
     white-space: nowrap;
     align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    letter-spacing: 0.2px;
 }
 
 .fv-ed-slot-tag.fv-tag-custom {
-    background: rgba(16, 185, 129, 0.2);
-    color: #34d399;
-    border-color: rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.22);
+    color: #6ee7b7;
+    border-color: rgba(16, 185, 129, 0.45);
 }

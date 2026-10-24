@@ -83,8 +83,8 @@ export function createAdjustPicture({state, sources, t, player, notes = null, sl
     return {
         render(host, ctx) {
             container = host; context = ctx; host.classList.add('fv-ed-adjust-picture');
-            // The description stays editable on blocks the picture controls cannot change yet (drafts).
-            if (notes) host.parentNode.insertBefore(notes.element, host);
+            // Description is edited via the main bottom bar, remove notes from this panel per user request
+            if (notes?.element?.parentNode) notes.element.remove();
             if (slots) host.parentNode.insertBefore(slots.element, host);
             if (!genCard) {
                 genCard = createEditorGenCard({state, t, actions: ctx.actions || {}});

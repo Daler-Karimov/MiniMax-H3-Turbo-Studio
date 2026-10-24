@@ -13,7 +13,7 @@ const el = (tag, cls = null, text = null) => {
 export function createEditorSlots({ state, t, actions }) {
     const wrapper = el('div', 'fv-ed-slots-wrapper');
     const headerRow = el('div', 'fv-ed-slots-heading');
-    const heading = el('span', 'fv-ed-adjust-label', t('Transition Frames', 'Кадры (Начало / Конец)'));
+    const heading = el('span', 'fv-ed-adjust-label', 'Кадры (Начало / Конец)');
     headerRow.append(heading);
 
     const container = el('div', 'fv-ed-slots');
@@ -84,9 +84,25 @@ export function createEditorSlots({ state, t, actions }) {
                 } else if (data.url) {
                     thumb.src = data.url;
                 }
-                nameLabel.textContent = data.name || (data.file ? data.file.split('/').pop() : '');
-                tagBadge.textContent = data.isAuto ? 'Авто' : 'Свой';
-                tagBadge.className = `fv-ed-slot-tag ${data.isAuto ? 'fv-tag-auto' : 'fv-tag-custom'}`;
+
+                if (data.isAuto) {
+                    nameLabel.hidden = true;
+                    nameLabel.textContent = '';
+                    tagBadge.textContent = '⚡ Автокадр';
+                    tagBadge.className = 'fv-ed-slot-tag fv-tag-auto';
+                    const autoTitle = role === 'first' ? 'Автоматический кадр из видео слева' : 'Автоматический кадр из видео справа';
+                    slot.title = autoTitle;
+                    tagBadge.title = autoTitle;
+                } else {
+                    nameLabel.hidden = false;
+                    const fileName = data.name || (data.file ? data.file.split('/').pop() : 'Файл');
+                    nameLabel.textContent = fileName;
+                    nameLabel.title = fileName;
+                    tagBadge.textContent = 'Свой файл';
+                    tagBadge.className = 'fv-ed-slot-tag fv-tag-custom';
+                    slot.title = fileName;
+                    tagBadge.title = fileName;
+                }
             } else {
                 slot.classList.remove('fv-ed-slot-filled');
                 emptyArea.hidden = false;
@@ -94,6 +110,8 @@ export function createEditorSlots({ state, t, actions }) {
                 clearBtn.hidden = true;
                 thumb.src = '';
                 nameLabel.textContent = '';
+                nameLabel.hidden = false;
+                slot.title = role === 'first' ? 'Начальный кадр перехода (выберите файл)' : 'Конечный кадр перехода (выберите файл)';
             }
         }
 

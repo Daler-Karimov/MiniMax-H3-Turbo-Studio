@@ -12,12 +12,12 @@ export function createEditorGenCard({ state, t, actions }) {
     const container = el('div', 'fv-ed-gen-card');
 
     const header = el('div', 'fv-ed-gen-card-head');
-    const title = el('span', 'fv-ed-adjust-label', t('Generation Settings', 'Настройки генерации'));
+    const title = el('span', 'fv-ed-adjust-label', 'Настройки генерации');
     header.append(title);
 
     // Quality row
     const qRow = el('div', 'fv-ed-gen-row');
-    const qLabel = el('span', 'fv-ed-gen-sublabel', t('Quality', 'Качество'));
+    const qLabel = el('span', 'fv-ed-gen-sublabel', 'Качество');
     const qPills = el('div', 'fv-ed-pills');
     const qualities = [
         { id: 'Light', label: 'Light', base_steps: 8, refine_steps: 3, two_pass: true, desc: 'Быстрый (8+3 шага)' },
