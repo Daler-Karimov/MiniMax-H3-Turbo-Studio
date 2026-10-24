@@ -930,12 +930,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     try { slotMedia = await actions.ensureUploadedSlots(); } catch (e) { console.warn('[FreeVideo] Error uploading slots media:', e); }
                 }
                 const nodeInputs = frozen.prompt[frozen.node].inputs;
+                delete nodeInputs.first;
+                delete nodeInputs.last;
                 if (slotMedia.first) {
-                    nodeInputs.first = slotMedia.first;
                     nodeInputs.media = { ...(nodeInputs.media || {}), first: slotMedia.first, version: 1 };
                 }
                 if (slotMedia.last) {
-                    nodeInputs.last = slotMedia.last;
                     nodeInputs.media = { ...(nodeInputs.media || {}), last: slotMedia.last, version: 1 };
                 }
 
@@ -960,9 +960,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
 
                                 const lName = leftUp.name || leftUp.file;
                                 const rName = rightUp.name || rightUp.file;
-                                nodeInputs.first = lName;
-                                nodeInputs.last = rName;
-                                nodeInputs.media = { first: lName, last: rName, version: 1 };
+                                nodeInputs.media = { ...(nodeInputs.media || {}), first: lName, last: rName, version: 1 };
                             }
                         } catch (bridgeErr) {
                             console.warn('[FreeVideo] Could not build transition bridge frames:', bridgeErr);
@@ -977,8 +975,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                                 const rightFrame = await captureVideoFrame(rightUrl, rightTime);
                                 const rightUp = await uploadMedia(api, rightFrame);
                                 const rName = rightUp.name || rightUp.file;
-                                nodeInputs.last = rName;
-                                nodeInputs.media = { last: rName, version: 1 };
+                                nodeInputs.media = { ...(nodeInputs.media || {}), last: rName, version: 1 };
                             }
                         } catch (leadErr) {
                             console.warn('[FreeVideo] Could not build lead-in target frame:', leadErr);
@@ -999,8 +996,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 // An @name in a description becomes <Subject N> and its definition, as in the creative panel; a part that
                 // continues carries only the pictures the engine keeps for it, and is numbered among them.
                 const castRows = panel.references?.available() ? panel.references.rows?.() ?? [] : [];
-                const hasFirst = Boolean(nodeInputs.first || slotMedia.first);
-                const hasLast = Boolean(nodeInputs.last || slotMedia.last);
+                const hasFirst = Boolean(nodeInputs.media?.first);
+                const hasLast = Boolean(nodeInputs.media?.last);
                 let fallbackPrompt = 'smooth seamless transition between scenes';
                 if (hasFirst && hasLast) {
                     fallbackPrompt = 'smooth seamless transition between scenes, continuous motion';

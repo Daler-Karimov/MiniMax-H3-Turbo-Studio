@@ -95,8 +95,26 @@ def continued_note(pictures, keyframes, used):
 def export(run, canvas, *, first=None, last=None, references=None, loras=None, conditioning=None, assets=None,
            continuing=False):
     """continuing: the request continues a video, so keyframes and references may be mixed (see continued)."""
+    import folder_paths
+    input_dir = Path(folder_paths.get_input_directory()).resolve()
+    output_dir = Path(folder_paths.get_output_directory()).resolve()
     media = {'version': 1}
     if assets:
+        # If first or last was passed as string or duplicates assets, merge/deduplicate without failing
+        if isinstance(first, str):
+            if 'first' not in assets:
+                assets['first'] = first
+            first = None
+        elif first is not None and ('first' in assets or (assets.get('_connected') and 'first' in assets['_connected'])):
+            first = None
+
+        if isinstance(last, str):
+            if 'last' not in assets:
+                assets['last'] = last
+            last = None
+        elif last is not None and ('last' in assets or (assets.get('_connected') and 'last' in assets['_connected'])):
+            last = None
+
         if conditioning is not None or first is not None or last is not None or references:
             raise ValueError('Use the Media panel or direct media/conditioning sockets; disable duplicate inputs')
         connected = assets.get('_connected', {})
@@ -112,6 +130,19 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
             references.extend({'kind': 'image', 'value': frame} for frame in frames)
         if connected.get('reference_audio') is not None:
             references.append({'kind': 'audio', 'value': connected['reference_audio']})
+
+    # Resolve any string paths in media['first'] / media['last'] to absolute paths
+    for anchor in ('first', 'last'):
+        if anchor in media and isinstance(media[anchor], str):
+            p = Path(media[anchor])
+            if not p.is_absolute():
+                candidate_in = (input_dir / p).resolve()
+                candidate_out = (output_dir / p).resolve()
+                if candidate_in.is_file():
+                    media[anchor] = str(candidate_in)
+                elif candidate_out.is_file():
+                    media[anchor] = str(candidate_out)
+
     if conditioning is not None and (first is not None or last is not None or references):
         raise ValueError('Preencoded conditioning already includes media; do not connect a second set')
     keyframes = first is not None or last is not None or any(name in media for name in ('first', 'last'))
@@ -121,9 +152,20 @@ def export(run, canvas, *, first=None, last=None, references=None, loras=None, c
     run = Path(run)
     for anchor, value in (('first', first), ('last', last)):
         if value is not None:
-            path = run / (anchor + '.png')
-            _image(value, path)
-            media[anchor] = str(path)
+            if isinstance(value, str):
+                p = Path(value)
+                if not p.is_absolute():
+                    candidate_in = (input_dir / p).resolve()
+                    candidate_out = (output_dir / p).resolve()
+                    if candidate_in.is_file():
+                        p = candidate_in
+                    elif candidate_out.is_file():
+                        p = candidate_out
+                media[anchor] = str(p)
+            else:
+                path = run / (anchor + '.png')
+                _image(value, path)
+                media[anchor] = str(path)
     if references:
         media['references'] = list(media.get('references', []))
         for index, reference in enumerate(references):
