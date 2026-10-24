@@ -138,7 +138,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         const isBridge = Boolean(actions.isTransitionBridge?.());
         const writable = selected || !previewSelection && !!selection && !!actions.selectionMovable?.();
         input.disabled = !writable || busy;
-        input.placeholder = writable ? (isBridge ? t('Describe transition between clips (Fill)…', 'Опишите переход между видео (Заполнить)…') : t('Describe this scene…', 'Опишите эту сцену…'))
+        input.placeholder = writable ? (isBridge ? 'Опишите переход между видео (необязательно)…' : 'Опишите эту сцену…')
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);
@@ -170,7 +170,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         firstFrame.update(busy);
         references?.update(busy, busy ? undefined : actions.references.visible() || false);
-        const btnBaseText = isBridge ? t('Fill transition', 'Заполнить') : t('Fill', 'Заполнить');
+        const btnBaseText = 'Заполнить';
         generate.textContent = btnBaseText;
         // Never disabled for a reason the press itself can explain or fix.
         generate.disabled = busy || !!previewSelection;
@@ -204,7 +204,18 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         width = next; resizeDescription();
     }) : null;
     resize?.observe(description);
-    input.oninput = () => { state.setRangeText(input.value); render(); };
+    input.oninput = () => {
+        state.setRangeText(input.value);
+        if (state.selection?.kind === 'clip') {
+            const selClips = state.record?.tracks?.flatMap(track => track.clips).filter(clip => state.selection.ids.includes(clip.id) && clip.pending);
+            if (selClips?.length) {
+                for (const c of selClips) {
+                    c.text = input.value;
+                }
+            }
+        }
+        render();
+    };
     input.onkeydown = event => {
         // The former text input did not submit or insert a line on Enter.
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) event.preventDefault();
@@ -243,7 +254,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         if (event.type === 'selection' && state.selection?.kind === 'clip') {
             const selected = state.record.tracks.flatMap(track => track.clips).find(clip => state.selection.ids.includes(clip.id) && clip.pending);
             // A part with no description of its own keeps what is typed, as a new range does.
-            if (selected?.text) input.value = selected.text;
+            if (selected) input.value = selected.text || '';
         }
         if (event.type === 'selection' || event.type === 'record') render();
     });

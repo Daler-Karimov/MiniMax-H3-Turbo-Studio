@@ -37,7 +37,7 @@ export function createEditorSlots({ state, t, actions }) {
         const title = el('span', 'fv-ed-slot-title', titleText);
         const clearBtn = el('button', 'fv-ed-slot-clear', '✕');
         clearBtn.type = 'button';
-        clearBtn.title = t('Clear', 'Очистить');
+        clearBtn.title = 'Очистить';
         clearBtn.hidden = true;
         header.append(title, clearBtn);
 
@@ -50,7 +50,7 @@ export function createEditorSlots({ state, t, actions }) {
 
         const emptyArea = el('div', 'fv-ed-slot-empty');
         const iconSpan = el('span', 'fv-ed-slot-icon', iconChar);
-        const labelSpan = el('span', 'fv-ed-slot-label', t('Drag & drop or click', 'Перетащите или нажмите'));
+        const labelSpan = el('span', 'fv-ed-slot-label', 'Перетащите или нажмите');
         emptyArea.append(iconSpan, labelSpan);
 
         const previewArea = el('div', 'fv-ed-slot-preview');
@@ -77,7 +77,7 @@ export function createEditorSlots({ state, t, actions }) {
                     thumb.src = data.url;
                 }
                 nameLabel.textContent = data.name || (data.file ? data.file.split('/').pop() : '');
-                tagBadge.textContent = data.isAuto ? t('Auto', 'Авто') : t('Custom', 'Свой');
+                tagBadge.textContent = data.isAuto ? 'Авто' : 'Свой';
                 tagBadge.className = `fv-ed-slot-tag ${data.isAuto ? 'fv-tag-auto' : 'fv-tag-custom'}`;
             } else {
                 slot.classList.remove('fv-ed-slot-filled');
@@ -143,8 +143,8 @@ export function createEditorSlots({ state, t, actions }) {
         return { slot, updateUI };
     }
 
-    const slotStart = makeSlot('first', t('Start', 'Начало'), '📁');
-    const slotEnd = makeSlot('last', t('End', 'Конец'), '🏁');
+    const slotStart = makeSlot('first', 'Начало', '📁');
+    const slotEnd = makeSlot('last', 'Конец', '🏁');
 
     container.append(slotStart.slot, slotEnd.slot);
 
@@ -170,7 +170,7 @@ export function createEditorSlots({ state, t, actions }) {
                         blob,
                         url: URL.createObjectURL(blob),
                         isAuto: true,
-                        name: t('From left clip', 'Кадр из левого видео')
+                        name: 'Кадр из левого видео'
                     };
                 } catch (e) {
                     console.warn('[FreeVideo] Could not capture left frame for slot:', e);
@@ -186,7 +186,7 @@ export function createEditorSlots({ state, t, actions }) {
                         blob,
                         url: URL.createObjectURL(blob),
                         isAuto: true,
-                        name: t('From right clip', 'Кадр из правого видео')
+                        name: 'Кадр из правого видео'
                     };
                 } catch (e) {
                     console.warn('[FreeVideo] Could not capture right frame for slot:', e);

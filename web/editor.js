@@ -821,10 +821,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         // Another part generating is no reason: the server runs parts one after another.
         canGenerate(text, selection = state.selection) {
-            return store.generationAvailable && actions.supportedSelection(selection) && (!!text.trim() || !actions.needsText(selection));
+            return store.generationAvailable && actions.supportedSelection(selection) && (!!text.trim() || !actions.needsText(selection) || Boolean(actions.isTransitionBridge?.()));
         },
         needsText(selection = state.selection) {
             const range = selectionRange(selection); if (!range) return true;
+            if (actions.isTransitionBridge?.()) return false;
+            const activeSlots = actions.getActiveSlots?.();
+            if (activeSlots?.first && activeSlots?.last) return false;
             // Only a part pulled out of a finished one needs no description: it continues that one with the
             // description it took over. A finished video without one (an exported edit) still needs it.
             const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
@@ -854,13 +857,13 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (leftClip) {
                 const leftKey = sourceKey(leftClip.source);
                 const leftSource = store.sources.get(leftKey);
-                leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
+                leftUrl = leftSource ? mediaURL(api, leftSource.output || leftSource.path) : null;
                 leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
             }
             if (rightClip) {
                 const rightKey = sourceKey(rightClip.source);
                 const rightSource = store.sources.get(rightKey);
-                rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                rightUrl = rightSource ? mediaURL(api, rightSource.output || rightSource.path) : null;
                 rightTime = Math.max(0, rightClip.in / 24);
             }
             return { leftClip, rightClip, leftUrl, rightUrl, leftTime, rightTime };
@@ -953,8 +956,8 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                             const rightKey = sourceKey(rightClip.source);
                             const leftSource = store.sources.get(leftKey);
                             const rightSource = store.sources.get(rightKey);
-                            const leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
-                            const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                            const leftUrl = leftSource ? mediaURL(api, leftSource.output || leftSource.path) : null;
+                            const rightUrl = rightSource ? mediaURL(api, rightSource.output || rightSource.path) : null;
                             if (leftUrl && rightUrl) {
                                 const leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
                                 const leftFrame = await captureVideoFrame(leftUrl, leftTime);
@@ -977,7 +980,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                         try {
                             const rightKey = sourceKey(rightClip.source);
                             const rightSource = store.sources.get(rightKey);
-                            const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                            const rightUrl = rightSource ? mediaURL(api, rightSource.output || rightSource.path) : null;
                             if (rightUrl) {
                                 const rightTime = Math.max(0, rightClip.in / 24);
                                 const rightFrame = await captureVideoFrame(rightUrl, rightTime);
@@ -1062,16 +1065,28 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 selection = state.select(moved); said = t('Moved to the next empty spot.', '已挪到后面的空位。'); genbar?.say(said);
             }
             let used = null;
-            if (!text.trim() && actions.needsText(selection)) {
+            const isBridge = Boolean(actions.isTransitionBridge?.());
+            if (!text.trim() && !isBridge && actions.needsText(selection)) {
                 const found = nearbyText(selectionRange(selection).start);
                 if (!found) return {say: [said, t('Write a description first.', '先写一句描述。')].filter(Boolean).join(' '), focus: true};
                 text = found.text; used = found.before ? t('Used the description of the part before.', '沿用了上一段的描述。')
                     : t('Used the latest description.', '沿用了最近一次的描述。');
                 state.setRangeText(text); genbar?.setText(text);
-            } else if (!text.trim()) {
-                // The box was emptied; the part keeps the description it took over, as an empty one cannot be generated.
-                text = state.record.tracks[0].clips.find(clip => clip.start === selectionRange(selection).start).text;
-                state.setRangeText(text); genbar?.setText(text);
+            } else if (!text.trim() && !isBridge) {
+                // The box was emptied; non-bridge keeps the description it took over
+                const foundClip = state.record.tracks[0].clips.find(clip => clip.start === selectionRange(selection).start);
+                if (foundClip?.text) {
+                    text = foundClip.text;
+                    state.setRangeText(text); genbar?.setText(text);
+                }
+            } else if (isBridge && !text.trim()) {
+                // Bridge transition intentionally left empty: clear text on selected clips so it does not reappear
+                const targetClips = selectionClips(selection);
+                for (const clip of targetClips) {
+                    clip.text = '';
+                }
+                state.setRangeText('');
+                text = '';
             }
             const waiting = waitingFor(selection);
             if (waiting) {
