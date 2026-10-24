@@ -82,4 +82,5 @@ engine-gpu-*.lock
 download-speed.json
 encoder-workspace.json
 kernel-capabilities.json
+precompile.json
 

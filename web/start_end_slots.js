@@ -11,10 +11,6 @@ const el = (tag, cls = null, text = null) => {
 export function createStartEndSlots({ node, getMediaNode, extension, syncExtension, t, api }) {
     const container = el('div', 'fv-slots-widget');
     const grid = el('div', 'fv-slots-grid');
-    const statusLine = el('div', 'fv-slots-status');
-    const statusBadge = el('span', 'fv-slots-status-badge');
-    const statusText = el('span', 'fv-slots-status-text');
-    statusLine.append(statusBadge, statusText);
 
     function viewURL(file, type = 'input') {
         if (!file) return '';
@@ -49,7 +45,7 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
         }
     }
 
-    function makeSlot(role, titleText, hintText, iconChar) {
+    function makeSlot(role, titleText, iconChar) {
         const slot = el('div', `fv-slot fv-slot-${role}`);
         slot.dataset.role = role;
 
@@ -72,8 +68,7 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
         const emptyArea = el('div', 'fv-slot-empty');
         const iconSpan = el('span', 'fv-slot-icon', iconChar);
         const labelSpan = el('span', 'fv-slot-label', t('Drag & drop or click', 'Перетащите или кликните'));
-        const hintSpan = el('span', 'fv-slot-hint', hintText);
-        emptyArea.append(iconSpan, labelSpan, hintSpan);
+        emptyArea.append(iconSpan, labelSpan);
 
         const previewArea = el('div', 'fv-slot-preview');
         previewArea.hidden = true;
@@ -175,11 +170,11 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
         return { slot, setContent };
     }
 
-    const slotStart = makeSlot('first', '🎬 1. Начало (фото или видео)', 'Точка старта сцены', '📁');
-    const slotEnd = makeSlot('last', '🏁 2. Конец (фото или видео)', 'Целевой финал / склейка', '🏁');
+    const slotStart = makeSlot('first', 'Начало', '📁');
+    const slotEnd = makeSlot('last', 'Конец', '🏁');
 
     grid.append(slotStart.slot, slotEnd.slot);
-    container.append(grid, statusLine);
+    container.append(grid);
 
     function updateUI() {
         const rows = getRows();
@@ -188,24 +183,6 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
 
         slotStart.setContent(first);
         slotEnd.setContent(last);
-
-        if (first && last) {
-            statusBadge.textContent = '🔄 Склейка / Морфинг';
-            statusBadge.className = 'fv-slots-status-badge fv-badge-morph';
-            statusText.textContent = 'Генерация бесшовного перехода из Начала в Конец (FL2V)';
-        } else if (first && !last) {
-            statusBadge.textContent = '🎬 Точка старта';
-            statusBadge.className = 'fv-slots-status-badge fv-badge-start';
-            statusText.textContent = 'Генерация начинается с исходного кадра/видео (I2V / Продление)';
-        } else if (!first && last) {
-            statusBadge.textContent = '🏁 Целевой финал';
-            statusBadge.className = 'fv-slots-status-badge fv-badge-end';
-            statusText.textContent = 'Генерация разворачивается с приходом в финальный кадр (L2V)';
-        } else {
-            statusBadge.textContent = '📝 Текст в видео';
-            statusBadge.className = 'fv-slots-status-badge fv-badge-text';
-            statusText.textContent = 'Обе ячейки свободны — генерация с чистого листа по описанию';
-        }
     }
 
     window.addEventListener('freevideo-media', updateUI);
