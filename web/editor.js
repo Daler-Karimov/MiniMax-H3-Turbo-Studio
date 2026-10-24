@@ -815,7 +815,12 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const selected = selectionClips(selection);
                 if (selected.length && selected.every(clip => clip.pending && !clip.source))
                     model.prepare(state.record, selected.map(clip => clip.id));
-                else model.planRange(state.record, {...range, target: 'both'});
+                else {
+                    const videoClips = state.record.tracks[0]?.clips || [];
+                    const hasOverlap = videoClips.some(c => c.start < range.start + range.frames && c.start + c.frames > range.start);
+                    if (!hasOverlap) return true;
+                    model.planRange(state.record, {...range, target: 'both'});
+                }
                 return true;
             }
             catch (value) { if (value instanceof model.EditError) return value.code === 'busy'; throw value; }
@@ -1064,8 +1069,38 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             if (!selectionRange(selection)) return {say: t('Drag on the timeline to choose a part first.', '先在时间线上拖出一段。')};
             if (actions.selectionHeld()) return {say: t('Queued', '排队中')};
             if (busySelection(selection)) return {say: t('This part is generating.', '这一段正在生成。')};
+
+            // If user selected a gap or an empty range between clips:
+            if (selection?.kind === 'gap' || selection?.kind === 'range') {
+                const range = selectionRange(selection);
+                if (range && state.record?.tracks?.[0]?.clips) {
+                    const videoClips = state.record.tracks[0].clips.filter(c => c.source || c.pending);
+                    const hasOverlap = videoClips.some(c => c.start < range.start + range.frames && c.start + c.frames > range.start);
+                    if (!hasOverlap) {
+                        const rightClips = videoClips.filter(c => c.start >= range.start).sort((a, b) => a.start - b.start);
+                        const rightClip = rightClips[0] || null;
+                        const currentGap = rightClip ? rightClip.start - range.start : range.frames;
+                        const minFrames = model.RULES.minSeconds * model.FPS;
+                        const targetFrames = Math.max(minFrames, Math.ceil(currentGap / model.FPS) * model.FPS);
+                        if (rightClip) {
+                            const needed = targetFrames - currentGap;
+                            if (needed > 0) {
+                                try {
+                                    state.apply(t('Make room for transition', 'Освободить место для перехода'), record => {
+                                        return model.makeRoom(record, rightClip.start, needed);
+                                    });
+                                } catch (e) {
+                                    console.warn('[FreeVideo] Could not make room for transition:', e);
+                                }
+                            }
+                        }
+                        selection = state.select({kind: 'range', start: range.start, frames: targetFrames, tracks: ['v1', 'a1']});
+                    }
+                }
+            }
+
             const flush = flushSpot(selection);
-            if (flush) { selection = state.select(flush); said = t('Moved right after the previous part.', '已接在上一段后面。'); genbar?.say(said); }
+            if (flush && flush.start !== selection?.start) { selection = state.select(flush); said = t('Moved right after the previous part.', '已接在上一段后面。'); genbar?.say(said); }
             else if (!actions.supportedSelection(selection)) {
                 const moved = emptySpot(selection);
                 if (!moved) return {say: t('Choose an empty spot on the timeline.', '请在时间线上选一段空白。')};

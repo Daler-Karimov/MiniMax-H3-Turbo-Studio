@@ -801,7 +801,11 @@ export function planRange(record, {start, frames, parts, target = 'both', text =
     check(validText(text), 'text');
     check(typeof maxSeconds === 'number' && Number.isFinite(maxSeconds) && maxSeconds >= RULES.minSeconds, 'range');
     check(target === 'both', 'unsupported');
-    if (!record.tracks.some(track => track.clips.some(clip => overlaps(clip, start, frames)))) frames = Math.max(RULES.minSeconds, Math.round(frames / FPS)) * FPS;
+    if (!record.tracks.some(track => track.clips.some(clip => overlaps(clip, start, frames)))) {
+        const nextClip = trackBy(record, 'v1').clips.filter(clip => clip.start >= start).sort((a, b) => a.start - b.start)[0];
+        const maxRoom = nextClip ? nextClip.start - start : Infinity;
+        frames = Math.min(maxRoom, Math.max(RULES.minSeconds, Math.round(frames / FPS)) * FPS);
+    }
     const videoHits = trackBy(record, 'v1').clips.filter(clip => overlaps(clip, start, frames));
     const audioHits = trackBy(record, 'a1').clips.filter(clip => overlaps(clip, start, frames));
     const otherHits = record.tracks.find(track => track.id === 'a2')?.clips.filter(clip => overlaps(clip, start, frames)) || [];
@@ -828,7 +832,11 @@ export function planRange(record, {start, frames, parts, target = 'both', text =
     const affected = () => targetTracks.flatMap(track => trackBy(next, track).clips.filter(clip => overlaps(clip, start, frames)));
     // A completed segment may be 362 rather than 360 frames. Selecting that
     // entire segment must not round off two frames and become a partial edit.
-    if (!affected().length) frames = Math.max(RULES.minSeconds, Math.round(frames / FPS)) * FPS;
+    if (!affected().length) {
+        const nextClip = trackBy(next, 'v1').clips.filter(clip => clip.start >= start).sort((a, b) => a.start - b.start)[0];
+        const maxRoom = nextClip ? nextClip.start - start : Infinity;
+        frames = Math.min(maxRoom, Math.max(RULES.minSeconds, Math.round(frames / FPS)) * FPS);
+    }
 
     let touched = affected();
     busy(touched);
