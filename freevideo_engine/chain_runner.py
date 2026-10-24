@@ -292,8 +292,8 @@ class ChainRunner:
 
     def set_text(self, chain_id, block_id, text):
         """The description of a part that has not started; the user's own words, used as written."""
-        if not isinstance(text, str) or not text.strip() or len(text) > 20000:
-            raise ValueError('Text must be a nonempty string of at most 20000 characters')
+        if not isinstance(text, str) or len(text) > 20000:
+            raise ValueError('Text must be a string of at most 20000 characters')
         with self.lock:
             record = self.records[chain_id]
             block = next((row for row in record['blocks'] if row['id'] == block_id), None)
@@ -360,8 +360,8 @@ class ChainRunner:
         """A new chain that keeps the parts before `block_id` and makes that part and every later one
         again with new seeds. Later parts continue the part before them, so redoing one part alone would
         break the next seam. The original chain, its parts and its joined video stay as they are."""
-        if text is not None and (not isinstance(text, str) or not text.strip() or len(text) > 20000):
-            raise ValueError('Text must be a nonempty string of at most 20000 characters')
+        if text is not None and (not isinstance(text, str) or len(text) > 20000):
+            raise ValueError('Text must be a string of at most 20000 characters')
         if client_id is not None and not isinstance(client_id, str):
             raise ValueError('Client ID must be a string')
         from .lora_triggers import apply_chain_triggers
@@ -703,6 +703,8 @@ class ChainRunner:
                 self._save(record)
                 prompt = deepcopy(record['snapshot']['prompt'])
                 block_inputs = dict(block['inputs'])
+                if not block_inputs.get('text') or not str(block_inputs['text']).strip():
+                    block_inputs['text'] = 'smooth transition between scenes'
                 block_inputs.update(index=block['index'], count=len(record['blocks']))
                 sources = self._sources(record, block)
                 extra = deepcopy(record['snapshot']['extra_data'])

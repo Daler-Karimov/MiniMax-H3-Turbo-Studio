@@ -857,7 +857,7 @@ def installation(source=None, environ=None):
 
 def validate_request(prompt, width, height, seconds, seed, *, continue_from=None, frames=None,
                      two_pass=True, preview=False, refine_from=None, media=None):
-    if not isinstance(prompt, str) or not prompt.strip():
+    if not isinstance(prompt, str):
         raise ValueError('Enter a prompt describing the video and its audio.')
     if type(seed) is not int or not 0 <= seed <= 2**53 - 1:
         raise ValueError('Seed must be an integer between 0 and 9007199254740991.')
@@ -1229,6 +1229,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
     validate_flags(preview, upscale, two_pass, base_steps)
     from .two_pass import validate_steps
     validate_steps(base_steps, refine_steps, two_pass)
+    if not isinstance(prompt, str) or not prompt.strip():
+        prompt = 'smooth continuous motion, seamless scene continuation' if continue_from else 'smooth transition, seamless cinematic scene, high quality'
     canvas = validate_request(prompt, width, height, seconds, seed, continue_from=continue_from, frames=frames)
     source = Path(source or source_root()).resolve()
     root, machine = installation(source, environ)

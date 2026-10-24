@@ -131,7 +131,7 @@ def encode(prompt, output, *, root, budget_bytes=3 * 2**30, reserve_bytes=2 * 2*
     if sys.platform != 'darwin' or os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK', '0') not in ('', '0'):
         raise RuntimeError('This encoder requires native Mac with CPU fallback disabled')
     if not isinstance(prompt, str) or not prompt.strip():
-        raise ValueError('A nonempty prompt is required')
+        prompt = 'smooth cinematic scene, high quality'
     if media_budget_bytes is not None and (type(media_budget_bytes) is not int or media_budget_bytes <= 0):
         raise ValueError('Native media encoding requires a positive byte allowance')
     from .media_request import task_for, TASKS

@@ -821,19 +821,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         },
         // Another part generating is no reason: the server runs parts one after another.
         canGenerate(text, selection = state.selection) {
-            return store.generationAvailable && actions.supportedSelection(selection) && (!!text.trim() || !actions.needsText(selection) || Boolean(actions.isTransitionBridge?.()));
+            return store.generationAvailable && actions.supportedSelection(selection);
         },
         needsText(selection = state.selection) {
-            const range = selectionRange(selection); if (!range) return true;
-            if (actions.isTransitionBridge?.()) return false;
-            const activeSlots = actions.getActiveSlots?.();
-            if (activeSlots?.first && activeSlots?.last) return false;
-            // Only a part pulled out of a finished one needs no description: it continues that one with the
-            // description it took over. A finished video without one (an exported edit) still needs it.
-            const head = state.record.tracks[0].clips.find(clip => clip.start === range.start);
-            const before = !!head && !!head.text?.trim() && model.continuesBefore(state.record, head.id) && state.record.tracks[0].clips.some(clip =>
-                clip.start + clip.frames === range.start && clip.source && clip.extend && clip.in + clip.frames === clip.length);
-            return !before;
+            return false;
         },
         // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
         findSurroundingClips() {
@@ -869,7 +860,9 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         isTransitionBridge() {
             if (!store.generationAvailable || !actions.supportedSelection()) return false;
             const { leftClip, rightClip } = actions.findSurroundingClips();
-            return Boolean(leftClip && rightClip);
+            const activeSlots = actions.getActiveSlots?.();
+            const hasSlots = Boolean(activeSlots?.first && activeSlots?.last);
+            return Boolean((leftClip && rightClip) || hasSlots);
         },
         firstFrameVisible() {
             if (!store.generationAvailable || !actions.supportedSelection()) return false;
@@ -1006,8 +999,26 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 // An @name in a description becomes <Subject N> and its definition, as in the creative panel; a part that
                 // continues carries only the pictures the engine keeps for it, and is numbered among them.
                 const castRows = panel.references?.available() ? panel.references.rows?.() ?? [] : [];
+                const hasFirst = Boolean(nodeInputs.first || slotMedia.first);
+                const hasLast = Boolean(nodeInputs.last || slotMedia.last);
+                let fallbackPrompt = 'smooth seamless transition between scenes';
+                if (hasFirst && hasLast) {
+                    fallbackPrompt = 'smooth seamless transition between scenes, continuous motion';
+                } else if (hasFirst) {
+                    fallbackPrompt = 'smooth cinematic motion continuing from the start frame';
+                } else if (hasLast) {
+                    fallbackPrompt = 'smooth cinematic motion leading into the end frame';
+                } else if (follow) {
+                    fallbackPrompt = 'smooth continuation of the scene';
+                } else {
+                    fallbackPrompt = 'smooth cinematic scene, high quality';
+                }
+                const effectivePrompt = (text && text.trim()) ? text.trim() : fallbackPrompt;
+                nodeInputs.text = effectivePrompt;
                 const blocks = request.blocks.map(({before, ...block}, i) => ({...block, seed: seed + i,
-                    text: expandCast(block.text, castRows, {continued: Boolean(block.after)}).text}));
+                    text: (block.text && block.text.trim())
+                        ? expandCast(block.text, castRows, {continued: Boolean(block.after)}).text
+                        : effectivePrompt}));
                 const job = await store.startChain({...frozen, blocks, queue: true});
                 if (!job && !store.generationAvailable) {
                     if (epoch === projectEpoch) {
@@ -1063,22 +1074,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 selection = state.select(moved); said = t('Moved to the next empty spot.', '已挪到后面的空位。'); genbar?.say(said);
             }
             let used = null;
-            const isBridge = Boolean(actions.isTransitionBridge?.());
-            if (!text.trim() && !isBridge && actions.needsText(selection)) {
-                const found = nearbyText(selectionRange(selection).start);
-                if (!found) return {say: [said, t('Write a description first.', '先写一句描述。')].filter(Boolean).join(' '), focus: true};
-                text = found.text; used = found.before ? t('Used the description of the part before.', '沿用了上一段的描述。')
-                    : t('Used the latest description.', '沿用了最近一次的描述。');
-                state.setRangeText(text); genbar?.setText(text);
-            } else if (!text.trim() && !isBridge) {
-                // The box was emptied; non-bridge keeps the description it took over
-                const foundClip = state.record.tracks[0].clips.find(clip => clip.start === selectionRange(selection).start);
-                if (foundClip?.text) {
-                    text = foundClip.text;
-                    state.setRangeText(text); genbar?.setText(text);
-                }
-            } else if (isBridge && !text.trim()) {
-                // Bridge transition intentionally left empty
+            if (!text.trim()) {
                 state.setRangeText('');
                 text = '';
             }

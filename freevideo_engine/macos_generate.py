@@ -271,7 +271,7 @@ def run(args):
                 save(output.with_suffix('.request.json'), report)
                 prompt = Path(args.prompt_file).read_text(encoding='utf-8')
                 if not prompt.strip():
-                    raise ValueError('A nonempty prompt is required')
+                    prompt = 'smooth cinematic scene, high quality'
                 prompt_file = Path(args.prompt_file).resolve()
                 if report.get('first_frame_reference', {}).get('used'):
                     from .continuation import first_frame_prompt

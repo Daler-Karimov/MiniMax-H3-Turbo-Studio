@@ -104,7 +104,7 @@ def validate(payload):
         # from the start in every part. Without texts the runner splits it before the first part.
         texts = payload.get('texts')
         if texts is not None and (not isinstance(texts, list) or len(texts) != len(planned['blocks'])
-                                  or any(not isinstance(row, str) or not row.strip() for row in texts)):
+                                  or any(not isinstance(row, str) for row in texts)):
             raise ValueError('Texts must give one description for each planned part')
         rows = [dict(id='b%s' % (index + 1), after='b%s' % index if index else source,
                      frames=row['frames'], text=texts[index] if texts else text, seed=seed + index)

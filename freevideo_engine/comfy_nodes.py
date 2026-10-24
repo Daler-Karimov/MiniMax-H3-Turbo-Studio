@@ -193,6 +193,17 @@ class FreeVideoGenerate(io.ComfyNode):
         node_id = cls.hidden.unique_id
         chain = block_context(PromptServer.instance, node_id)
         options = request_options(continue_from, node_frames(frames))
+        if not isinstance(text, str) or not text.strip():
+            if first and last:
+                text = 'seamless smooth transition between scenes'
+            elif first:
+                text = 'smooth cinematic scene continuing from the start frame'
+            elif last:
+                text = 'smooth cinematic scene leading into the end frame'
+            elif options.get('continue_from'):
+                text = 'smooth seamless continuation of the video'
+            else:
+                text = 'smooth cinematic video scene, high quality'
         notes = []
         if options.get('continue_from') or chain is not None and chain.get('count', 1) > 1:
             base_steps, refine_steps, step_cache, note = part_steps(base_steps, refine_steps, step_cache)

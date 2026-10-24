@@ -288,7 +288,7 @@ def _encode(args, request, resident, trace):
         raise ValueError('GPU preloading requires the managed resident worker')
     prompt = request.get('prompt', 'library check')
     if not isinstance(prompt, str) or not prompt.strip():
-        raise ValueError('A nonempty prompt is required')
+        prompt = 'smooth cinematic scene, high quality'
     started = time.perf_counter()
     import torch
     torch.set_num_threads(8)

@@ -136,10 +136,13 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         // The description and Generate stay where they are while a part is made, greyed, so nothing around them moves.
         input.hidden = generate.hidden = false;
         // A choice that will move to an empty spot can still be described first.
-        const isBridge = Boolean(actions.isTransitionBridge?.());
+        const activeSlots = actions.getActiveSlots?.();
+        const hasSlots = Boolean(activeSlots?.first || activeSlots?.last);
+        const { leftClip, rightClip } = actions.findSurroundingClips ? actions.findSurroundingClips() : {};
+        const isBridge = Boolean(actions.isTransitionBridge?.() || (activeSlots?.first && activeSlots?.last) || (leftClip && rightClip));
         const writable = selected || !previewSelection && !!selection && !!actions.selectionMovable?.();
         input.disabled = !writable || busy;
-        input.placeholder = writable ? (isBridge ? 'Опишите переход между видео (необязательно)…' : 'Опишите эту сцену…')
+        input.placeholder = writable ? (isBridge ? 'Опишите переход между видео (необязательно)…' : (hasSlots || leftClip || rightClip) ? 'Опишите эту сцену (необязательно)…' : 'Опишите эту сцену…')
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);
