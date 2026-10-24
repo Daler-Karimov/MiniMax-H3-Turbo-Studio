@@ -280,7 +280,9 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
         }
         playButton.setAttribute('aria-label', playing ? t('Pause', '暂停') : t('Play', '播放'));
         const shown = Math.min(position, Math.max(0, model.duration(record) - 1));
-        const map = located(record, shown), videoRow = pictureEdit.previewRow(map.get('v1'), shown), clip = videoRow?.clip;
+        const map = located(record, shown);
+        const videoRow = playing ? map.get('v1') : pictureEdit.previewRow(map.get('v1'), shown, playing);
+        const clip = videoRow?.clip;
         const source = clip?.source && sources.get(sourceKey(clip.source));
         const hasPicture = !!source?.video && !source.missing;
         const fallbackSize = record.size_mode === 'fixed' || record.tracks[0].clips.some(c => c.source) ? record : {width: 1344, height: 768};
@@ -432,7 +434,7 @@ export function createEditorPlayer(host, transport, {state, sources, api, t, err
     const stopPictureEdit = pictureEdit.subscribe(() => {
         // Draft geometry updates in picturePreview; only a changed preview part
         // needs media routing, otherwise slider/crop movement would re-seek video.
-        const row = pictureEdit.previewRow(located(state.record, state.playhead).get('v1'), state.playhead);
+        const row = playing ? located(state.record, state.playhead).get('v1') : pictureEdit.previewRow(located(state.record, state.playhead).get('v1'), state.playhead, playing);
         if (preview && pictureEdit.panelOpen && pictureEdit.selected()) { clearPreview(); render(); }
         else if ((row?.clip.id || null) !== clipId) render();
     });

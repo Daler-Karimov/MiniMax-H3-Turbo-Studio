@@ -22,9 +22,15 @@ export function pictureSession(state, t) {
                 && ids.every(id => id === c.id || id === c.link)) || null;
         },
         output(clip) { return !!clip && (panelOpen && session.selected()?.id === clip.id || draft?.id === clip.id); },
-        previewRow(row, position) {
-            const clip = panelOpen ? session.selected() : draft && find(state.record, draft.id);
-            return clip ? {clip, frame: clip.in + Math.max(0, Math.min(clip.frames - 1, position - clip.start))} : row;
+        previewRow(row, position, playing = false) {
+            if (playing) return row;
+            if (draft) {
+                const clip = find(state.record, draft.id);
+                if (clip) return {clip, frame: clip.in + Math.max(0, Math.min(clip.frames - 1, position - clip.start))};
+            }
+            if (row) return row;
+            const clip = panelOpen ? session.selected() : null;
+            return clip ? {clip, frame: clip.in + Math.max(0, Math.min(clip.frames - 1, position - clip.start))} : null;
         },
         editReason(clip) {
             if (!clip?.source) return t('This part has no video', '这一段没有画面');
