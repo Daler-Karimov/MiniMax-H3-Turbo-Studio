@@ -70,3 +70,16 @@ engine-gpu-*.lock
 /optional/
 *.gguf
 /out/
+
+/SwarmUI/
+/cache/
+/chains/
+/logs/
+/sessions/
+/workflows/
+/agent/
+*.sqlite3*
+download-speed.json
+encoder-workspace.json
+kernel-capabilities.json
+

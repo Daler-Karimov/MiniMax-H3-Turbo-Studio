@@ -77,18 +77,24 @@ def child(command, env, descriptor, log, *, ram_budget_bytes=None, gpu=None, on_
                             telemetry['ram_budget_warning'] = dict(pressure)
                             print(json.dumps(dict(event='ram_budget_warning', **pressure)), flush=True)
                     if pressure['enforced_reasons']:
-                        detail = ''
-                        if pressure.get('commit_available_bytes') is not None:
-                            if pressure.get('physical_available_bytes') is not None:
-                                detail = ' Physical RAM available %.2f GiB;' % (pressure['physical_available_bytes']/2**30)
-                            detail += ' Windows commit headroom %.3f GiB.' % (pressure['commit_available_bytes']/2**30)
-                            if pressure['commit_available_bytes'] <= pressure['emergency_floor_bytes']:
-                                detail += ' Windows commit headroom exhausted; this is separate from physical RAM usage.'
-                        raise MemoryError(('RAM guard: %s. Working RAM %.2f GiB / budget %.2f GiB; '
-                            'available physical/commit headroom %.2f GiB / emergency floor %.3f GiB.' %
-                            (', '.join(pressure['enforced_reasons']), pressure['working_bytes']/2**30,
-                             ram_budget_bytes/2**30, pressure['available_bytes']/2**30,
-                             pressure['emergency_floor_bytes']/2**30)) + detail)
+                        phys = pressure.get('physical_available_bytes')
+                        if phys is not None and phys > 1024 * 1024 * 1024 and pressure['enforced_reasons'] == ['system_or_commit_pressure']:
+                            if 'commit_pressure_warning' not in telemetry:
+                                telemetry['commit_pressure_warning'] = dict(pressure)
+                                print(json.dumps(dict(event='commit_pressure_warning', **pressure)), flush=True)
+                        else:
+                            detail = ''
+                            if pressure.get('commit_available_bytes') is not None:
+                                if pressure.get('physical_available_bytes') is not None:
+                                    detail = ' Physical RAM available %.2f GiB;' % (pressure['physical_available_bytes']/2**30)
+                                detail += ' Windows commit headroom %.3f GiB.' % (pressure['commit_available_bytes']/2**30)
+                                if pressure['commit_available_bytes'] <= pressure['emergency_floor_bytes']:
+                                    detail += ' Windows commit headroom exhausted; this is separate from physical RAM usage.'
+                            raise MemoryError(('RAM guard: %s. Working RAM %.2f GiB / budget %.2f GiB; '
+                                'available physical/commit headroom %.2f GiB / emergency floor %.3f GiB.' %
+                                (', '.join(pressure['enforced_reasons']), pressure['working_bytes']/2**30,
+                                 ram_budget_bytes/2**30, pressure['available_bytes']/2**30,
+                                 pressure['emergency_floor_bytes']/2**30)) + detail)
                 try:
                     process.wait(timeout=.5)
                 except subprocess.TimeoutExpired:

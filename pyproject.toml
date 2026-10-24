@@ -8,7 +8,7 @@ version = "2026.9.16.41444"
 description = "FreeVideo video and audio generation with automatic GPU and memory optimization"
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
-license = "Apache-2.0"
+license = { text = "Apache-2.0" }
 dependencies = ["psutil>=6", "safetensors>=0.8.0", "numpy>=2", "pillow>=11", "av>=14"]
 
 [project.optional-dependencies]

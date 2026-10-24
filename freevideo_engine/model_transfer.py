@@ -413,7 +413,8 @@ def run_sdk(source, row, path, plan, progress_callback, networking, transfer_com
     resources = plan.get('installation_resources') or plan.get('policy_estimate') or {}
     selected = dict(plan.get('model_transfer') or policy(resources.get('ram_budget_bytes', 16*GiB)))
     # The compiler and desktop can consume RAM after preflight. Recheck here.
-    available = system_memory()['available_bytes']
+    mem = system_memory()
+    available = mem.get('physical_available_bytes') or mem['available_bytes']
     _, group_available = cgroup_capacity()
     if group_available is not None:
         available = min(available, group_available)
@@ -499,7 +500,8 @@ def run_sdk(source, row, path, plan, progress_callback, networking, transfer_com
                 networking['resource_check']()
             sample = memory.sample(process.pid)
             guard = sample['guard_bytes']
-            if guard is None or guard > selected['ram_guard_bytes'] or sample.get('effective_available_bytes', sample['system_available_bytes']) < 2*GiB:
+            sample_avail = sample.get('system_physical_available_bytes') or sample.get('effective_available_bytes', sample['system_available_bytes'])
+            if guard is None or guard > selected['ram_guard_bytes'] or sample_avail < 2*GiB:
                 failure = 'memory-guard'
                 break
             with state_lock:

@@ -271,8 +271,11 @@ def inference_environment(environment, ram_budget_bytes):
 
 def inference_headroom(record):
     """Available RAM including reclaimable clean model cache, never swap."""
+    phys = record.get('system_physical_available_bytes')
+    if phys is not None and phys > 1024 * 1024 * 1024:
+        return phys
     return record.get('inference_available_bytes',
-                      record.get('effective_available_bytes', record['system_available_bytes']))
+                      record.get('effective_available_bytes', record.get('system_available_bytes', 0)))
 
 
 def inference_emergency_floor(budget_bytes, reserve_gib=None):
@@ -307,7 +310,7 @@ def inference_pressure(record, budget_bytes, minimum_available_bytes=None, *, bu
     reasons = []
     if used > budget_bytes:
         reasons.append('working_memory_budget')
-    if available <= 0 or available < floor:
+    if available <= 0 or (available < floor and (record.get('system_physical_available_bytes') or 0) < floor):
         reasons.append('system_or_commit_pressure')
     return dict(reasons=reasons, enforced_reasons=[r for r in reasons
                     if r != 'working_memory_budget' or not budget_is_estimate],

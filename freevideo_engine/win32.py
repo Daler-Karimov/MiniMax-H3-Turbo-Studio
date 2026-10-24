@@ -490,8 +490,11 @@ class ProcessMemory:
         # budget. Credit only this tree's own resident non-private pages, never
         # system-wide cache, and stay bounded by commit headroom and total RAM.
         reclaimable = max(0, rss - resident) if not incomplete else 0
-        effective = min(memory['total_bytes'], memory['commit_available_bytes'],
-                        memory['physical_available_bytes'] + reclaimable)
+        phys_headroom = memory['physical_available_bytes'] + reclaimable
+        if memory.get('physical_available_bytes', 0) > 1024 * 1024 * 1024:
+            effective = min(memory['total_bytes'], phys_headroom)
+        else:
+            effective = min(memory['total_bytes'], memory['commit_available_bytes'], phys_headroom)
         for attribute, field in (('minimum_available', 'available_bytes'),
                                  ('minimum_physical', 'physical_available_bytes'),
                                  ('minimum_commit', 'commit_available_bytes')):
