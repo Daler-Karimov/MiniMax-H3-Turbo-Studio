@@ -87,7 +87,7 @@ export function createAdjustPicture({state, sources, t, player, notes = null, sl
             if (notes?.element?.parentNode) notes.element.remove();
             if (slots) host.parentNode.insertBefore(slots.element, host);
             if (!genCard) {
-                genCard = createEditorGenCard({state, t, actions: ctx.actions || {}});
+                genCard = createEditorGenCard({state, t, actions: { ...(ctx.actions || {}), sources, getActiveSlots: () => slots?.getActiveMedia?.() }});
                 host.parentNode.insertBefore(genCard.element, host);
             }
             // Observe the shell's existing visibility contract without changing its

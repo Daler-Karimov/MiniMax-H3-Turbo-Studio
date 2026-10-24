@@ -104,6 +104,13 @@ export function setFlag(record, key, value) {
     if (JSON.stringify(next.settings) !== JSON.stringify(record.settings)) next.keep_empty = true;
     return parse(next);
 }
+export function setSettings(record, delta) {
+    check(object(delta), 'settings');
+    const next = serialize(record), settings = {...(next.settings || {}), ...delta};
+    next.settings = Object.keys(settings).length ? settings : null;
+    if (JSON.stringify(next.settings) !== JSON.stringify(record.settings)) next.keep_empty = true;
+    return parse(next);
+}
 export function addAudioTrack(record) {
     const next = serialize(record);
     check(!next.tracks.some(track => track.id === 'a2'), 'track');

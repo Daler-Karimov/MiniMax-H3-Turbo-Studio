@@ -56,16 +56,55 @@ export function createRecentVideos(t, {body, onSelect}) {
             // The library API returns newest first, with the same preview metadata.
             const rows = (data.items || []).filter(row => row?.video).slice(0, 24);
             for (const row of rows) {
-                const card = el('button', null, 'fv-recent-card'); card.type = 'button';
+                const card = el('div', null, 'fv-recent-card');
+                card.setAttribute('role', 'button');
+                card.setAttribute('tabindex', '0');
                 const date = videoTimestamp(row, t), dimensions = videoDimensions(row);
                 card.setAttribute('aria-label', `${date} · ${dimensions}`);
-                card.onclick = () => onSelect(row);
+                card.onclick = event => {
+                    if (event.target.closest('.fv-recent-delete')) return;
+                    onSelect(row);
+                };
+                card.onkeydown = event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        if (event.target.closest('.fv-recent-delete')) return;
+                        event.preventDefault();
+                        onSelect(row);
+                    }
+                };
                 const picture = el('div', null, 'fv-library-picture');
                 const image = el('img'); image.alt = ''; image.decoding = 'async';
                 image.dataset.src = videoThumbnailURL(row);
                 image.onerror = () => { image.hidden = true; };
                 picture.append(image);
-                card.append(picture, el('span', date), el('small', dimensions));
+
+                const delBtn = el('button', null, 'fv-recent-delete');
+                delBtn.type = 'button';
+                delBtn.title = t('Delete', 'Удалить');
+                delBtn.setAttribute('aria-label', t('Delete', 'Удалить'));
+                delBtn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg>';
+                delBtn.onclick = async event => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    if (!confirm(t('Delete this video?', 'Удалить это видео?'))) return;
+                    try {
+                        const resp = await fetch('/freevideo/library/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({id: row.id})
+                        });
+                        const res = await resp.json().catch(() => ({}));
+                        if (!resp.ok || !res.deleted) throw new Error(res.reason || 'Failed');
+                        window.dispatchEvent(new CustomEvent('freevideo-library-deleted', {detail: {video: row.video}}));
+                        card.remove();
+                        cards.delete(row.video);
+                        refresh();
+                    } catch (err) {
+                        alert(t('Could not delete video: ', 'Не удалось удалить видео: ') + (err.message || err));
+                    }
+                };
+
+                card.append(picture, el('span', date), el('small', dimensions), delBtn);
                 cards.set(row.video, card); list.append(card); thumbnails.observe(image);
             }
             message.textContent = t('Videos you generate appear here.', '生成的视频会显示在这里。');

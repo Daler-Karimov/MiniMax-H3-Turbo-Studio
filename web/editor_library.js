@@ -106,6 +106,34 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         plus.ondblclick = event => { event.preventDefault(); event.stopPropagation(); };
         plus.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') insert(event); };
         container.append(button, plus);
+        if (kind === 'work') {
+            const del = el('button', 'fv-ed-source-delete');
+            del.type = 'button';
+            del.title = t('Delete', 'Удалить');
+            del.setAttribute('aria-label', `${t('Delete', 'Удалить')}: ${label}`);
+            del.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg>';
+            del.onclick = async event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!confirm(t('Delete this creation?', 'Удалить это видео?'))) return;
+                try {
+                    const resp = await fetch('/freevideo/library/delete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id: row.id})
+                    });
+                    const res = await resp.json().catch(() => ({}));
+                    if (!resp.ok || !res.deleted) throw new Error(res.reason || 'Failed');
+                    window.dispatchEvent(new CustomEvent('freevideo-library-deleted', {detail: {video: row.video}}));
+                    rows = rows.filter(r => r.id !== row.id);
+                    container.remove();
+                    store.sources.delete(`work:${row.id}`);
+                } catch (err) {
+                    actions.notify?.(t('Could not delete: ', 'Не удалось удалить: ') + (err.message || err));
+                }
+            };
+            container.append(del);
+        }
         if (kind !== 'work' && row.state === 'failed' && row.reason !== 'disk_full') container.append(issueButton(t, () => ({where: LIBRARY_ISSUE, message: t('Cannot open', '打不开')})));
         return container;
     }
@@ -249,6 +277,13 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
         placeReady(imported); startPending(imported);
     });
     const stopUsed = state?.subscribe(event => { if (event.type === 'record') updateUsed(); });
+    const onLibraryDeleted = event => {
+        const video = event.detail?.video;
+        if (!video || disposed) return;
+        rows = rows.filter(r => r.video !== video);
+        render();
+    };
+    window.addEventListener('freevideo-library-deleted', onLibraryDeleted);
     render(); load();
-    return {element: host, importFiles, refresh, dispose() { disposed = true; pendingAdds.clear(); host.removeEventListener('scroll', scheduleMore); resize.disconnect(); cancelAnimationFrame(moreFrame); stop(); stopUsed?.(); clearTimeout(retryTimer); finishRetry?.(); }};
+    return {element: host, importFiles, refresh, dispose() { disposed = true; pendingAdds.clear(); host.removeEventListener('scroll', scheduleMore); resize.disconnect(); cancelAnimationFrame(moreFrame); stop();  stopUsed?.(); window.removeEventListener('freevideo-library-deleted', onLibraryDeleted); clearTimeout(retryTimer); finishRetry?.(); }};
 }
