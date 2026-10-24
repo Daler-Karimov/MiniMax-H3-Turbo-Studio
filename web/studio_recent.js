@@ -88,12 +88,30 @@ export function createRecentVideos(t, {body, onSelect}) {
                     event.preventDefault();
                     if (!confirm(t('Delete this video?', 'Удалить это видео?'))) return;
                     try {
-                        const resp = await fetch('/freevideo/library/delete', {
+                        let resp = await fetch('/freevideo/library/delete', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({id: row.id})
+                            body: JSON.stringify({id: row.id, force: true})
                         });
-                        const res = await resp.json().catch(() => ({}));
+                        let res = await resp.json().catch(() => ({}));
+                        if (!resp.ok && res.reason === 'editor-in-use') {
+                            const edits = (res.kept || []).join(', ');
+                            const msg = edits
+                                ? t(`This video is used in saved project (${edits}). Delete anyway?`,
+                                    `Это видео упоминается в проекте (${edits}). Все равно удалить?`)
+                                : t('This video is used in a saved project. Delete anyway?',
+                                    'Это видео используется в проекте. Все равно удалить?');
+                            if (confirm(msg)) {
+                                resp = await fetch('/freevideo/library/delete', {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({id: row.id, force: true})
+                                });
+                                res = await resp.json().catch(() => ({}));
+                            } else {
+                                return;
+                            }
+                        }
                         if (!resp.ok || !res.deleted) throw new Error(res.reason || 'Failed');
                         window.dispatchEvent(new CustomEvent('freevideo-library-deleted', {detail: {video: row.video}}));
                         card.remove();

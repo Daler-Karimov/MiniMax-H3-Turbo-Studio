@@ -506,7 +506,7 @@ class RecordUnsaved(Exception):
     """The record that names a folder before it moves could not be written, so nothing moved."""
 
 
-def _trash_creation(output_directory, identity, queue, cache, announce=None):
+def _trash_creation(output_directory, identity, queue, cache, announce=None, force=False):
     """Check that a creation may go, and rename its folder into FreeVideo/.deleted.
 
     Returns the trash folder and the content identifier of its video. Nothing is
@@ -528,7 +528,7 @@ def _trash_creation(output_directory, identity, queue, cache, announce=None):
             users = reference_users(output_directory, identity)
         except (OSError, ValueError):
             raise DeleteRefused('editor-unavailable') from None
-        if users:
+        if users and not force:
             raise DeleteRefused('editor-in-use', users)
         kept = _foreign(folder)
         if kept:
@@ -595,7 +595,7 @@ def _forget_results(identities, root):
             pass
 
 
-def delete_video(output_directory, identity, *, queue=None):
+def delete_video(output_directory, identity, *, queue=None, force=False):
     """Delete one saved creation: its whole run folder, only when FreeVideo wrote everything in it.
 
     The folder is first renamed into FreeVideo/.deleted, so it leaves the
@@ -606,7 +606,7 @@ def delete_video(output_directory, identity, *, queue=None):
     except AliasUnavailable as error:
         raise DeleteRefused('not-freevideo') from error
     root = Path(output_directory).resolve() / 'FreeVideo'
-    target, identifier = _trash_creation(output_directory, identity, queue, {})
+    target, identifier = _trash_creation(output_directory, identity, queue, {}, force=force)
     try:
         _forget([identifier], root)
         freed, left = _remove(target)
@@ -761,7 +761,7 @@ def _restore_moved(root, rows):
     return failed
 
 
-def delete_videos(output_directory, identities, *, queue=None, batch=None, extend=()):
+def delete_videos(output_directory, identities, *, queue=None, batch=None, extend=(), force=False):
     """Delete several creations at once, each under the single delete's checks.
 
     A creation that is in use is skipped with its reason, never forced. The rest
@@ -1177,9 +1177,11 @@ def register():
     async def delete(request):
         try:
             body = await request.json()
+            force = bool(body.get('force', False)) if isinstance(body, dict) else False
             result = await asyncio.to_thread(delete_video, folder_paths.get_output_directory(),
                                              body.get('id') if isinstance(body, dict) else None,
-                                             queue=getattr(server, 'prompt_queue', None))
+                                             queue=getattr(server, 'prompt_queue', None),
+                                             force=force)
         except DeleteRefused as error:
             return web.json_response(dict(deleted=False, reason=error.reason, kept=error.kept[:20]), status=409)
         except (OSError, ValueError, TypeError):
@@ -1190,11 +1192,13 @@ def register():
     async def delete_batch(request):
         try:
             body = await request.json()
+            force = bool(body.get('force', False)) if isinstance(body, dict) else False
             result = await asyncio.to_thread(delete_videos, folder_paths.get_output_directory(),
                                              body.get('ids') if isinstance(body, dict) else None,
                                              queue=getattr(server, 'prompt_queue', None),
                                              batch=body.get('batch') if isinstance(body, dict) else None,
-                                             extend=body.get('extend') or () if isinstance(body, dict) else ())
+                                             extend=body.get('extend') or () if isinstance(body, dict) else (),
+                                             force=force)
         except (DeleteRefused, OSError, ValueError, TypeError):
             raise web.HTTPBadRequest(text='Invalid selection') from None
         return web.json_response(result)
