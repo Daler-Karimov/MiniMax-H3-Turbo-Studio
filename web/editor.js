@@ -840,13 +840,11 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             const range = selectionRange();
             if (!range || !state.record?.tracks?.[0]?.clips) return { leftClip: null, rightClip: null };
             const videoClips = state.record.tracks[0].clips.filter(clip => clip.source);
-            const leftCandidates = videoClips.filter(c => c.start + c.frames <= range.start + 2);
-            leftCandidates.sort((a, b) => (b.start + b.frames) - (a.start + a.frames));
-            const leftClip = leftCandidates[0] || null;
+            // Must stand flush against range.start (<= 2 frames tolerance)
+            const leftClip = videoClips.find(c => Math.abs((c.start + c.frames) - range.start) <= 2) || null;
 
-            const rightCandidates = videoClips.filter(c => c.start >= range.start + range.frames - 2);
-            rightCandidates.sort((a, b) => a.start - b.start);
-            const rightClip = rightCandidates[0] || null;
+            // Must stand flush against range end (<= 2 frames tolerance)
+            const rightClip = videoClips.find(c => Math.abs(c.start - (range.start + range.frames)) <= 2) || null;
 
             return { leftClip, rightClip };
         },
@@ -1080,11 +1078,7 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     state.setRangeText(text); genbar?.setText(text);
                 }
             } else if (isBridge && !text.trim()) {
-                // Bridge transition intentionally left empty: clear text on selected clips so it does not reappear
-                const targetClips = selectionClips(selection);
-                for (const clip of targetClips) {
-                    clip.text = '';
-                }
+                // Bridge transition intentionally left empty
                 state.setRangeText('');
                 text = '';
             }

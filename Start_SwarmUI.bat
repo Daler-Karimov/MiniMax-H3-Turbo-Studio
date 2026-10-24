@@ -39,8 +39,11 @@ echo   Web Interface  : http://localhost:7801
 echo ======================================================================
 echo.
 
+: Launch browser only AFTER ComfyUI on port 7821 is fully started
+start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_ROOT%\tools\wait_comfy.ps1"
+
 cd /d "%PROJECT_ROOT%\SwarmUI"
-call launch-windows.bat
+call launch-windows.bat --launch_mode none %*
 
 if %ERRORLEVEL% neq 0 (
     echo.

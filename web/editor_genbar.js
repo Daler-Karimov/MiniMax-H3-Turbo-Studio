@@ -1,3 +1,4 @@
+import * as model from './editor_model.js';
 // The editor owns its generation controls; progress can use the optional component.
 import {createEditorSlots} from './editor_slots.js';
 import {createFirstFrameSwitch} from './editor_first_frame.js';
@@ -206,12 +207,11 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     resize?.observe(description);
     input.oninput = () => {
         state.setRangeText(input.value);
-        if (state.selection?.kind === 'clip') {
-            const selClips = state.record?.tracks?.flatMap(track => track.clips).filter(clip => state.selection.ids.includes(clip.id) && clip.pending);
-            if (selClips?.length) {
-                for (const c of selClips) {
-                    c.text = input.value;
-                }
+        if (state.selection?.kind === 'clip' && state.selection.ids?.length) {
+            try {
+                state.apply('', record => model.describe(record, state.selection.ids, input.value));
+            } catch (e) {
+                // Ignore transient errors
             }
         }
         render();
