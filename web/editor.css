@@ -1,3 +1,4 @@
+@import './editor_slots.css';
 /* Share the studio shell and header geometry; only the editor rows differ. */
 .fv-studio.fv-editor{--fv-ed-generation-row:max-content;display:grid;grid-template-columns:264px minmax(0,1fr);grid-template-rows:auto minmax(max(96px,calc(272px - var(--fv-ed-description-growth,0px))),1fr) 40px var(--fv-ed-generation-row,56px) 40px minmax(var(--fv-ed-tracks-min,174px),clamp(174px,calc(100dvh - 704px),236px));animation:none}
 .fv-studio.fv-editor[data-generation-ready=false]{--fv-ed-generation-row:0px}
@@ -63,7 +64,11 @@
 .fv-ed-transport{grid-column:2;grid-row:3;display:flex;align-items:center;justify-content:center;gap:12px}
 .fv-editor .fv-ed-play{width:36px;height:36px;border-radius:50%;padding:0;background:transparent}
 .fv-ed-time{font-size:13px;font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace;min-width:100px}
-.fv-ed-genbar{grid-column:1/-1;grid-row:4;display:flex;align-items:center;gap:12px;min-height:56px;padding:9px 16px;border-top:1px solid var(--fv-border);border-bottom:1px solid var(--fv-border);background:var(--fv-card);min-width:0}
+.fv-ed-genbar{grid-column:1/-1;grid-row:4;display:flex;flex-direction:column;gap:8px;padding:8px 16px;border-top:1px solid var(--fv-border);border-bottom:1px solid var(--fv-border);background:var(--fv-card);min-width:0}
+.fv-ed-genbar-main{display:flex;align-items:center;gap:12px;width:100%;min-width:0}
+.fv-editor .fv-ed-genbar .fv-ed-generate{flex:none;min-width:120px;height:38px;padding:0 18px;font-size:13px;font-weight:600;white-space:nowrap;border-radius:var(--fv-r-sm,6px);background:#3b82f6;color:#fff;cursor:pointer;box-shadow:0 1px 4px rgba(59,130,246,0.4);transition:background .15s,opacity .15s;border:none;display:inline-flex;align-items:center;justify-content:center}
+.fv-editor .fv-ed-genbar .fv-ed-generate:hover:not(:disabled){background:#2563eb}
+.fv-editor .fv-ed-genbar .fv-ed-generate:disabled{opacity:.45;cursor:default;box-shadow:none}
 .fv-ed-genbar .fv-ed-description{width:auto}
 .fv-ed-clip[data-state=running] .fv-block-progress.fv-ed-block-progress{display:grid}
 .fv-ed-gen-hint{display:flex;font-size:13px;color:var(--fv-muted);flex:1;min-width:0;overflow:hidden;white-space:pre}

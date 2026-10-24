@@ -44,7 +44,7 @@ export function createEditorGenCard({ state, t, actions }) {
     qRow.append(qLabel, qPills);
 
     // Two-pass row
-    const tpRow = el('div', 'fv-ed-gen-row');
+    const tpRow = el('div', 'fv-ed-gen-row fv-ed-gen-row-inline');
     const tpLabel = el('span', 'fv-ed-gen-sublabel', 'Two-pass');
     const tpButtons = el('div', 'fv-ed-toggle-group');
     const btnOn = el('button', 'fv-ed-toggle-btn', 'On');

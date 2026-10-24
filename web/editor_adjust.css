@@ -36,7 +36,7 @@
 
 /* Generation Settings Card in Edit Mode */
 .fv-ed-gen-card {
-    margin-top: 10px;
+    margin-top: 8px;
     margin-bottom: 12px;
     padding: 10px;
     background: rgba(255, 255, 255, 0.03);
@@ -44,7 +44,10 @@
     border-radius: 8px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 .fv-ed-gen-card-head {
     display: flex;
@@ -56,32 +59,58 @@
 }
 .fv-ed-gen-row {
     display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.fv-ed-gen-row.fv-ed-gen-row-inline {
+    flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 6px;
 }
 .fv-ed-gen-sublabel {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(255, 255, 255, 0.65);
+    font-weight: 500;
+    white-space: nowrap;
 }
-.fv-ed-pills, .fv-ed-toggle-group {
-    display: flex;
-    gap: 4px;
-    background: rgba(0, 0, 0, 0.25);
+.fv-ed-pills {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 3px;
+    background: rgba(0, 0, 0, 0.3);
     padding: 2px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    width: 100%;
+    box-sizing: border-box;
+}
+.fv-ed-toggle-group {
+    display: flex;
+    gap: 3px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .fv-ed-pill-btn, .fv-ed-toggle-btn {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(255, 255, 255, 0.65);
     font-size: 10px;
     font-weight: 500;
-    padding: 3px 6px;
+    padding: 4px 2px;
+    text-align: center;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.fv-ed-toggle-btn {
+    padding: 3px 10px;
 }
 .fv-ed-pill-btn:hover, .fv-ed-toggle-btn:hover {
     color: #fff;

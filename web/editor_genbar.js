@@ -1,4 +1,5 @@
 // The editor owns its generation controls; progress can use the optional component.
+import {createEditorSlots} from './editor_slots.js';
 import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
 import {createExpandButton} from './editor_expand.js';
@@ -49,7 +50,15 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     const generate = el('button', 'fv-ed-generate'), cancel = el('button', null, t('Cancel', '取消')), resume = el('button', null, t('Continue', '继续'));
     input.dataset.fvGuide = 'editor-describe'; generate.dataset.fvGuide = 'editor-generate';
     for (const button of [generate, cancel, resume]) button.type = 'button';
-    host.append(hint, note, description, generate, cancel, resume);
+    const mainBar = el('div', 'fv-ed-genbar-main');
+    mainBar.append(hint, note, description, generate, cancel, resume);
+
+    const slots = createEditorSlots({ state, t, actions });
+    actions.ensureUploadedSlots = () => slots.ensureUploaded();
+    actions.getActiveSlots = () => slots.getActiveMedia();
+    actions.onSlotsChanged = () => render();
+
+    host.append(mainBar, slots.element);
     // What this part will download first, above the bar like the studio's line above Generate.
     const assets = actions.assets ? createRequestAssets({t, api: actions.assets.api, request: () => actions.assets.query()}) : null;
     if (assets) host.prepend(assets.element);
@@ -126,9 +135,10 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         // The description and Generate stay where they are while a part is made, greyed, so nothing around them moves.
         input.hidden = generate.hidden = false;
         // A choice that will move to an empty spot can still be described first.
+        const isBridge = Boolean(actions.isTransitionBridge?.());
         const writable = selected || !previewSelection && !!selection && !!actions.selectionMovable?.();
         input.disabled = !writable || busy;
-        input.placeholder = writable ? t('Describe this part', '描述这一段')
+        input.placeholder = writable ? (isBridge ? t('Describe transition between clips (Fill)…', 'Опишите переход между видео (Заполнить)…') : t('Describe this scene…', 'Опишите эту сцену…'))
             : '';
         input.setAttribute('aria-label', t('Description', '描述'));
         generate.classList.toggle('fv-primary', selected && !busy);
@@ -160,8 +170,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         }
         firstFrame.update(busy);
         references?.update(busy, busy ? undefined : actions.references.visible() || false);
-        const btnName = isBridge ? t('Bridge transition', 'Склеить переход') : t('Generate', '生成');
-        generate.textContent = btnName;
+        const btnBaseText = isBridge ? t('Fill transition', 'Заполнить') : t('Fill', 'Заполнить');
+        generate.textContent = btnBaseText;
         // Never disabled for a reason the press itself can explain or fix.
         generate.disabled = busy || !!previewSelection;
         resizeDescription();
@@ -170,13 +180,14 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
         if (assets) { if (selected && !busy) assets.refresh(); else assets.element.hidden = true; }
         if (selected && !busy) {
             const key = JSON.stringify(selection);
-            if (estimateCache?.key === key) generate.textContent += estimateCache.label;
+            if (estimateCache?.key === key) generate.textContent = btnBaseText + estimateCache.label;
             const seconds = await actions.estimate(selection);
             if (disposed || current !== serial) return;
             const label = seconds == null ? '' : ' · ' + timeEstimate(seconds, t);
             estimateCache = {key, label};
-            generate.textContent = t('Generate', '生成') + label;
+            generate.textContent = btnBaseText + label;
         }
+        await slots.sync();
     }
     function resizeDescription() {
         // 18 px lines + 16 px padding + 2 px border: one line is still 36 px, five lines 108 px.
@@ -238,7 +249,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); clearTimeout(refNoticeTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); clearTimeout(refNoticeTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); slots?.dispose(); references?.dispose(); assets?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.

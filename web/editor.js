@@ -833,12 +833,41 @@ export function openEditor({api, app, from = null, panel = {}, components: given
             return !before;
         },
         // Only where earlier footage is continued: a part right after an extendable clip, or a range split into several parts.
+        findSurroundingClips() {
+            const range = selectionRange();
+            if (!range || !state.record?.tracks?.[0]?.clips) return { leftClip: null, rightClip: null };
+            const videoClips = state.record.tracks[0].clips.filter(clip => clip.source);
+            const leftCandidates = videoClips.filter(c => c.start + c.frames <= range.start + 2);
+            leftCandidates.sort((a, b) => (b.start + b.frames) - (a.start + a.frames));
+            const leftClip = leftCandidates[0] || null;
+
+            const rightCandidates = videoClips.filter(c => c.start >= range.start + range.frames - 2);
+            rightCandidates.sort((a, b) => a.start - b.start);
+            const rightClip = rightCandidates[0] || null;
+
+            return { leftClip, rightClip };
+        },
+        getSurroundingMedia() {
+            if (!store.generationAvailable) return null;
+            const { leftClip, rightClip } = actions.findSurroundingClips();
+            let leftUrl = null, rightUrl = null, leftTime = 0, rightTime = 0;
+            if (leftClip) {
+                const leftKey = sourceKey(leftClip.source);
+                const leftSource = store.sources.get(leftKey);
+                leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
+                leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
+            }
+            if (rightClip) {
+                const rightKey = sourceKey(rightClip.source);
+                const rightSource = store.sources.get(rightKey);
+                rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                rightTime = Math.max(0, rightClip.in / 24);
+            }
+            return { leftClip, rightClip, leftUrl, rightUrl, leftTime, rightTime };
+        },
         isTransitionBridge() {
             if (!store.generationAvailable || !actions.supportedSelection()) return false;
-            const range = selectionRange(); if (!range) return false;
-            const videoClips = state.record.tracks[0].clips.filter(clip => clip.source);
-            const leftClip = videoClips.find(clip => clip.start + clip.frames === range.start);
-            const rightClip = videoClips.find(clip => clip.start === range.start + range.frames);
+            const { leftClip, rightClip } = actions.findSurroundingClips();
             return Boolean(leftClip && rightClip);
         },
         firstFrameVisible() {
@@ -901,54 +930,65 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                 const follow = continuedSize(beforeKeys, sizes), edit = capability.generationSize || generationSize(state.record);
                 Object.assign(frozen.prompt[frozen.node].inputs, follow || {});
 
-                // Seamless bridge transition (Склейка) detection between bordering video clips
-                const videoClips = state.record.tracks[0].clips.filter(c => c.source);
-                const leftClip = videoClips.find(c => c.start + c.frames === range.start);
-                const rightClip = videoClips.find(c => c.start === range.start + range.frames);
+                // Apply Start/End media from slots or auto-extracted bridge
+                let slotMedia = {};
+                if (actions.ensureUploadedSlots) {
+                    try { slotMedia = await actions.ensureUploadedSlots(); } catch (e) { console.warn('[FreeVideo] Error uploading slots media:', e); }
+                }
+                const nodeInputs = frozen.prompt[frozen.node].inputs;
+                if (slotMedia.first) {
+                    nodeInputs.first = slotMedia.first;
+                    nodeInputs.media = { ...(nodeInputs.media || {}), first: slotMedia.first, version: 1 };
+                }
+                if (slotMedia.last) {
+                    nodeInputs.last = slotMedia.last;
+                    nodeInputs.media = { ...(nodeInputs.media || {}), last: slotMedia.last, version: 1 };
+                }
 
-                if (leftClip && rightClip) {
-                    try {
-                        const leftKey = sourceKey(leftClip.source);
-                        const rightKey = sourceKey(rightClip.source);
-                        const leftSource = store.sources.get(leftKey);
-                        const rightSource = store.sources.get(rightKey);
-                        const leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
-                        const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
-                        if (leftUrl && rightUrl) {
-                            const leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
-                            const leftFrame = await captureVideoFrame(leftUrl, leftTime);
-                            const leftUp = await uploadMedia(api, leftFrame);
+                if (!slotMedia.first && !slotMedia.last) {
+                    const { leftClip, rightClip } = actions.findSurroundingClips();
+                    if (leftClip && rightClip) {
+                        try {
+                            const leftKey = sourceKey(leftClip.source);
+                            const rightKey = sourceKey(rightClip.source);
+                            const leftSource = store.sources.get(leftKey);
+                            const rightSource = store.sources.get(rightKey);
+                            const leftUrl = leftSource ? store.mediaURL(leftSource.output || leftSource.path) : null;
+                            const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                            if (leftUrl && rightUrl) {
+                                const leftTime = Math.max(0, (leftClip.in + leftClip.frames - 1) / 24);
+                                const leftFrame = await captureVideoFrame(leftUrl, leftTime);
+                                const leftUp = await uploadMedia(api, leftFrame);
 
-                            const rightTime = Math.max(0, rightClip.in / 24);
-                            const rightFrame = await captureVideoFrame(rightUrl, rightTime);
-                            const rightUp = await uploadMedia(api, rightFrame);
+                                const rightTime = Math.max(0, rightClip.in / 24);
+                                const rightFrame = await captureVideoFrame(rightUrl, rightTime);
+                                const rightUp = await uploadMedia(api, rightFrame);
 
-                            const nodeInputs = frozen.prompt[frozen.node].inputs;
-                            const lName = leftUp.name || leftUp.file;
-                            const rName = rightUp.name || rightUp.file;
-                            nodeInputs.first = lName;
-                            nodeInputs.last = rName;
-                            nodeInputs.media = { first: lName, last: rName, version: 1 };
+                                const lName = leftUp.name || leftUp.file;
+                                const rName = rightUp.name || rightUp.file;
+                                nodeInputs.first = lName;
+                                nodeInputs.last = rName;
+                                nodeInputs.media = { first: lName, last: rName, version: 1 };
+                            }
+                        } catch (bridgeErr) {
+                            console.warn('[FreeVideo] Could not build transition bridge frames:', bridgeErr);
                         }
-                    } catch (bridgeErr) {
-                        console.warn('[FreeVideo] Could not build transition bridge frames:', bridgeErr);
-                    }
-                } else if (!leftClip && rightClip) {
-                    try {
-                        const rightKey = sourceKey(rightClip.source);
-                        const rightSource = store.sources.get(rightKey);
-                        const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
-                        if (rightUrl) {
-                            const rightTime = Math.max(0, rightClip.in / 24);
-                            const rightFrame = await captureVideoFrame(rightUrl, rightTime);
-                            const rightUp = await uploadMedia(api, rightFrame);
-                            const rName = rightUp.name || rightUp.file;
-                            const nodeInputs = frozen.prompt[frozen.node].inputs;
-                            nodeInputs.last = rName;
-                            nodeInputs.media = { last: rName, version: 1 };
+                    } else if (!leftClip && rightClip) {
+                        try {
+                            const rightKey = sourceKey(rightClip.source);
+                            const rightSource = store.sources.get(rightKey);
+                            const rightUrl = rightSource ? store.mediaURL(rightSource.output || rightSource.path) : null;
+                            if (rightUrl) {
+                                const rightTime = Math.max(0, rightClip.in / 24);
+                                const rightFrame = await captureVideoFrame(rightUrl, rightTime);
+                                const rightUp = await uploadMedia(api, rightFrame);
+                                const rName = rightUp.name || rightUp.file;
+                                nodeInputs.last = rName;
+                                nodeInputs.media = { last: rName, version: 1 };
+                            }
+                        } catch (leadErr) {
+                            console.warn('[FreeVideo] Could not build lead-in target frame:', leadErr);
                         }
-                    } catch (leadErr) {
-                        console.warn('[FreeVideo] Could not build lead-in target frame:', leadErr);
                     }
                 }
                 // Parts made at another size than the edit's have that size's limit.
