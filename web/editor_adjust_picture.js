@@ -4,7 +4,7 @@ import {pictureSession} from './editor_picture_session.js';
 import {createEditorGenCard} from './editor_generation_card.js';
 export const scaleFromSlider = value => Math.abs(value) < .025 ? 1 : 10 ** value;
 export const quarterTurn = (angle, delta) => ((angle + delta + 540) % 360) - 180;
-export function createAdjustPicture({state, sources, t, player, notes = null}) {
+export function createAdjustPicture({state, sources, t, player, notes = null, slots = null}) {
     const session = pictureSession(state, t), widgets = [], numbers = {};
     let visibilityObserver, inputError, invalidClip;
     let context, container, clip, scale, reset, crop, cropActions, flips, scaleDrag = null, genCard = null;
@@ -51,6 +51,7 @@ export function createAdjustPicture({state, sources, t, player, notes = null}) {
     function update(ctx = context) {
         if (!ctx || !container) return; context = ctx;
         notes?.update(ctx);
+        slots?.sync();
         genCard?.update();
         clip = ctx.clips.find(c => c.track.kind === 'video' && c.source);
         const seen = new Set(); let count = 0;
@@ -84,6 +85,7 @@ export function createAdjustPicture({state, sources, t, player, notes = null}) {
             container = host; context = ctx; host.classList.add('fv-ed-adjust-picture');
             // The description stays editable on blocks the picture controls cannot change yet (drafts).
             if (notes) host.parentNode.insertBefore(notes.element, host);
+            if (slots) host.parentNode.insertBefore(slots.element, host);
             if (!genCard) {
                 genCard = createEditorGenCard({state, t, actions: ctx.actions || {}});
                 host.parentNode.insertBefore(genCard.element, host);

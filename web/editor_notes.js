@@ -35,6 +35,12 @@ export function createBlockNotes({state, t, actions}) {
     const versions = el('div', 'fv-ed-notes-versions'), versionsLabel = el('span', 'fv-ed-adjust-label', t('Version', '版本'));
     head.append(label, again); element.append(head, box, versions);
     let block = null, editing = null, picker = null, pickerKey = null, context = null;
+    actions.setNotesText = val => {
+        if (document.activeElement !== box) {
+            box.value = val || '';
+            grow();
+        }
+    };
     const grow = () => { box.style.height = 'auto'; if (box.scrollHeight) box.style.height = `${box.scrollHeight + 2}px`; };
     function selectedBlock() {
         const ids = state.selection?.kind === 'clip' ? state.selection.ids : [];
@@ -49,8 +55,20 @@ export function createBlockNotes({state, t, actions}) {
         if (!clip || text === clip.text) return;
         try { state.apply(t('Edit description', '修改说明'), record => model.describe(record, [id], text)); } catch (value) { actions.editError?.(value); }
     }
-    function commit() { const id = editing; editing = null; if (id) save(id, box.value); }
-    box.oninput = () => { editing ||= block?.id || null; grow(); };
+    function commit() {
+        const id = editing; editing = null;
+        if (id) save(id, box.value);
+        else if (state.selection?.kind === 'range') state.setRangeText(box.value);
+    }
+    box.oninput = () => {
+        grow();
+        actions.setGenbarText?.(box.value);
+        if (state.selection?.kind === 'range') {
+            state.setRangeText(box.value);
+        } else if (block) {
+            editing ||= block?.id || null;
+        }
+    };
     box.onblur = commit;
     box.onkeydown = event => {
         if (event.isComposing || event.keyCode === 229) return;
@@ -87,13 +105,24 @@ export function createBlockNotes({state, t, actions}) {
         const next = selectedBlock();
         if (editing && next?.id !== editing) commit();
         block = next;
-        const off = !block || !!ctx?.busy || generating(block);
+        const isRange = state.selection?.kind === 'range';
+        const off = (!block && !isRange) || !!ctx?.busy || (block && generating(block));
         box.disabled = off;
-        if (document.activeElement !== box || editing !== block?.id) { box.value = block?.text || ''; grow(); }
-        again.hidden = actions.generationAvailable?.() === false;
-        again.disabled = off || !block.text.trim() || !actions.canGenerate?.(block.text);
+        box.placeholder = isRange ? 'Опишите переход между видео (необязательно)…' : '';
+        if (document.activeElement !== box && (!editing || editing !== block?.id)) {
+            if (block) {
+                box.value = block.text || '';
+            } else if (isRange) {
+                box.value = state.rangeText ?? actions.genbarText?.() ?? '';
+            } else {
+                box.value = '';
+            }
+            grow();
+        }
+        again.hidden = !block || actions.generationAvailable?.() === false;
+        again.disabled = off || !block || !block.text?.trim() || !actions.canGenerate?.(block.text);
         // Blue once the description no longer matches the one the version in use was made from.
-        again.classList.toggle('fv-primary', !again.disabled && model.describedSince(block));
+        again.classList.toggle('fv-primary', !again.disabled && block && model.describedSince(block));
         paintVersions(off);
     }
     // Timeline blocks: description strip, block number, and the pencil on the user's own blocks.

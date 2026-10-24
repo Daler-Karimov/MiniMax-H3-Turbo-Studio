@@ -11,7 +11,13 @@ const el = (tag, cls = null, text = null) => {
 };
 
 export function createEditorSlots({ state, t, actions }) {
+    const wrapper = el('div', 'fv-ed-slots-wrapper');
+    const headerRow = el('div', 'fv-ed-slots-heading');
+    const heading = el('span', 'fv-ed-adjust-label', t('Transition Frames', 'Кадры (Начало / Конец)'));
+    headerRow.append(heading);
+
     const container = el('div', 'fv-ed-slots');
+    wrapper.append(headerRow, container);
 
     // Internal state for slots: role -> { file, url, blob, isAuto, name }
     const slotState = { first: null, last: null };
@@ -50,15 +56,17 @@ export function createEditorSlots({ state, t, actions }) {
 
         const emptyArea = el('div', 'fv-ed-slot-empty');
         const iconSpan = el('span', 'fv-ed-slot-icon', iconChar);
-        const labelSpan = el('span', 'fv-ed-slot-label', 'Перетащите или нажмите');
+        const labelSpan = el('span', 'fv-ed-slot-empty-label', 'Выбрать файл');
         emptyArea.append(iconSpan, labelSpan);
 
         const previewArea = el('div', 'fv-ed-slot-preview');
         previewArea.hidden = true;
         const thumb = el('img', 'fv-ed-slot-thumb');
+        const infoBox = el('div', 'fv-ed-slot-info');
         const nameLabel = el('span', 'fv-ed-slot-label');
         const tagBadge = el('span', 'fv-ed-slot-tag');
-        previewArea.append(thumb, nameLabel, tagBadge);
+        infoBox.append(nameLabel, tagBadge);
+        previewArea.append(thumb, infoBox);
 
         dropzone.append(fileInput, emptyArea, previewArea);
         slot.append(header, dropzone);
@@ -199,7 +207,7 @@ export function createEditorSlots({ state, t, actions }) {
     }
 
     return {
-        element: container,
+        element: wrapper,
         sync: syncWithTimeline,
         getActiveMedia() {
             return {

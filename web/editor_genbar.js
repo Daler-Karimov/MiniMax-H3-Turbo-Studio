@@ -1,6 +1,5 @@
 import * as model from './editor_model.js';
 // The editor owns its generation controls; progress can use the optional component.
-import {createEditorSlots} from './editor_slots.js';
 import {createFirstFrameSwitch} from './editor_first_frame.js';
 import {createEditorReferences} from './editor_references.js';
 import {createExpandButton} from './editor_expand.js';
@@ -53,13 +52,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     for (const button of [generate, cancel, resume]) button.type = 'button';
     const mainBar = el('div', 'fv-ed-genbar-main');
     mainBar.append(hint, note, description, generate, cancel, resume);
-
-    const slots = createEditorSlots({ state, t, actions });
-    actions.ensureUploadedSlots = () => slots.ensureUploaded();
-    actions.getActiveSlots = () => slots.getActiveMedia();
-    actions.onSlotsChanged = () => render();
-
-    host.append(mainBar, slots.element);
+    host.append(mainBar);
     // What this part will download first, above the bar like the studio's line above Generate.
     const assets = actions.assets ? createRequestAssets({t, api: actions.assets.api, request: () => actions.assets.query()}) : null;
     if (assets) host.prepend(assets.element);
@@ -191,7 +184,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
             estimateCache = {key, label};
             generate.textContent = btnBaseText + label;
         }
-        await slots.sync();
+        await actions.syncSlots?.();
     }
     function resizeDescription() {
         // 18 px lines + 16 px padding + 2 px border: one line is still 36 px, five lines 108 px.
@@ -210,6 +203,7 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     resize?.observe(description);
     input.oninput = () => {
         state.setRangeText(input.value);
+        actions.setNotesText?.(input.value);
         if (state.selection?.kind === 'clip' && state.selection.ids?.length) {
             try {
                 state.apply('', record => model.describe(record, state.selection.ids, input.value));
@@ -263,7 +257,8 @@ export function createEditorGenbar(host, {state, t, actions, text = ''}) {
     });
     render();
     return {element: host, say, downloadFailure, getText() { expand.commit(); return input.value; }, update(value) { status = value; render(); }, preview(selection) { previewSelection = selection; render(); }, setText(value) { input.value = value || ''; state.setRangeText(input.value); render(); },
-        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); clearTimeout(refNoticeTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); slots?.dispose(); references?.dispose(); assets?.dispose(); }};
+        render,
+        dispose() { disposed = true; ++serial; clearTimeout(noteTimer); clearTimeout(refNoticeTimer); unsubscribe(); resize?.disconnect(); expand.dispose(); references?.dispose(); assets?.dispose(); }};
 }
 
 // A missing optional module leaves the editor's existing progress in place.

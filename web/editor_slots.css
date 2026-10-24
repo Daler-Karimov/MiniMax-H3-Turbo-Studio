@@ -1,10 +1,25 @@
-/* Two-cell start and end media picker in Editor (Edit mode) */
+/* Start/End media picker in Edit mode right sidebar */
+.fv-ed-slots-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    margin-top: 8px;
+    margin-bottom: 6px;
+    box-sizing: border-box;
+}
+
+.fv-ed-slots-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
 .fv-ed-slots {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
-    margin-top: 4px;
     box-sizing: border-box;
 }
 
@@ -12,15 +27,16 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px dashed rgba(255, 255, 255, 0.16);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 6px 8px;
     display: flex;
     flex-direction: column;
     gap: 4px;
     transition: all 0.2s ease;
     user-select: none;
     position: relative;
-    min-height: 58px;
+    min-height: 52px;
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 .fv-ed-slot:hover {
@@ -57,8 +73,8 @@
     border: none;
     color: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    font-size: 12px;
-    padding: 0 4px;
+    font-size: 11px;
+    padding: 0 3px;
     border-radius: 4px;
     line-height: 1;
 }
@@ -72,59 +88,76 @@
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-height: 32px;
+    min-height: 28px;
     border-radius: 4px;
 }
 
 .fv-ed-slot-empty {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
+    gap: 5px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.45);
+    width: 100%;
 }
 
 .fv-ed-slot-icon {
-    font-size: 14px;
+    font-size: 13px;
     opacity: 0.8;
+}
+
+.fv-ed-slot-empty-label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.45);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .fv-ed-slot-preview {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
+    min-width: 0;
 }
 
 .fv-ed-slot-thumb {
-    width: 44px;
-    height: 28px;
-    border-radius: 4px;
+    width: 36px;
+    height: 24px;
+    border-radius: 3px;
     object-fit: cover;
     background: #000;
     flex-shrink: 0;
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.fv-ed-slot-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    gap: 1px;
+}
+
 .fv-ed-slot-label {
-    font-size: 11px;
+    font-size: 10px;
     color: rgba(255, 255, 255, 0.85);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
 }
 
 .fv-ed-slot-tag {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 500;
-    padding: 1px 5px;
+    padding: 0 4px;
     border-radius: 3px;
     background: rgba(59, 130, 246, 0.2);
     color: #60a5fa;
     border: 1px solid rgba(59, 130, 246, 0.35);
     white-space: nowrap;
+    align-self: flex-start;
 }
 
 .fv-ed-slot-tag.fv-tag-custom {

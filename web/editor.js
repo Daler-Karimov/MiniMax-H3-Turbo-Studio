@@ -18,6 +18,7 @@ import {createEditorPlayer} from './editor_player.js';
 import {createEditorTransport, registerEditorShortcuts} from './editor_transport.js';
 import {createAdjustPanel} from './editor_adjust.js';
 import {createAdjustPicture} from './editor_adjust_picture.js';
+import {createEditorSlots} from './editor_slots.js';
 import {pictureSession} from './editor_picture_session.js';
 import {createPictureTools} from './editor_frame.js';
 import {openExportDialog} from './editor_export_dialog.js';
@@ -1221,11 +1222,19 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         return running;
     }
 
+    const slots = createEditorSlots({ state, t, actions });
+    actions.ensureUploadedSlots = () => slots.ensureUploaded();
+    actions.getActiveSlots = () => slots.getActiveMedia();
+    actions.syncSlots = () => slots.sync();
+    actions.onSlotsChanged = () => { genbar?.render?.(); slots.sync(); };
+    actions.genbarText = () => genbar?.getText?.() || '';
+    actions.setGenbarText = val => genbar?.setText?.(val);
+
     genbar = createEditorGenbar(genHost, {state, t, actions, text: ''});
     const adjust = adjustPanel = createAdjustPanel(adjustHost, {state, t, actions});
     const pictureEdit = pictureSession(state, t);
     const notes = createBlockNotes({state, t, actions}); actions.blockNote = notes.decorate; actions.describedTrack = describedTrack;
-    adjust.register('video', createAdjustPicture({state, sources: store.sources, t, player, notes}));
+    adjust.register('video', createAdjustPicture({state, sources: store.sources, t, player, notes, slots}));
     const toolbar = el('div', 'fv-ed-toolbar'); toolbar.setAttribute('role', 'toolbar'); toolbar.setAttribute('aria-label', t('Track tools', '轨道工具')); toolbar.inert = true; toolbar.classList.add('fv-ed-pending');
     const historyTools = el('div', 'fv-ed-tool-group'), editTools = el('div', 'fv-ed-tool-group');
     const toolButton = (label, path, action, cls, iconOnly = false) => {
