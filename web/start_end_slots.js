@@ -1,5 +1,6 @@
 // Two-cell start and end media picker directly under "Describe your scene".
 import { uploadMedia } from './media_upload.js';
+import { captureVideoFrame } from './frame_extractor.js';
 
 const el = (tag, cls = null, text = null) => {
     const e = document.createElement(tag);
@@ -123,12 +124,30 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
 
         async function handleFile(file) {
             emptyArea.style.opacity = '0.5';
-            labelSpan.textContent = t('Uploading…', 'Загрузка…');
+            const isVideo = file.type?.startsWith('video/') || /\.(mp4|webm|mov|mkv|m4v)$/i.test(file.name);
+            labelSpan.textContent = isVideo ? t('Extracting frame…', 'Извлечение кадра…') : t('Uploading…', 'Загрузка…');
             try {
-                const res = await uploadMedia(api, file);
+                let fileToUpload = file;
+                let frameMode = null;
+                if (isVideo) {
+                    frameMode = role === 'first' ? 'last' : 'first';
+                    const videoUrl = URL.createObjectURL(file);
+                    try {
+                        fileToUpload = await captureVideoFrame(videoUrl, frameMode);
+                    } finally {
+                        URL.revokeObjectURL(videoUrl);
+                    }
+                }
+                labelSpan.textContent = t('Uploading…', 'Загрузка…');
+                const res = await uploadMedia(api, fileToUpload);
                 const fileName = res.name || res.file;
                 let rows = getRows().filter(r => r.role !== role);
-                rows.push({ file: fileName, role, enabled: true });
+                const row = { file: fileName, role, enabled: true };
+                if (isVideo) {
+                    row.sourceVideo = file.name;
+                    row.frame = frameMode;
+                }
+                rows.push(row);
                 setRows(rows);
             } catch (err) {
                 console.error('[FreeVideo] Slot upload error:', err);
@@ -151,7 +170,7 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
                 previewArea.hidden = false;
                 clearBtn.hidden = false;
                 slot.classList.add('fv-slot-filled');
-                const isVideo = /\.(mp4|webm|mov|mkv)$/i.test(item.file);
+                const isVideo = /\.(mp4|webm|mov|mkv|m4v)$/i.test(item.file);
                 const url = viewURL(item.file);
                 if (isVideo) {
                     img.hidden = true;
@@ -162,8 +181,9 @@ export function createStartEndSlots({ node, getMediaNode, extension, syncExtensi
                     img.hidden = false;
                     img.src = url;
                 }
-                const shortName = item.file.split('/').pop().split('\\').pop();
-                nameBadge.textContent = shortName;
+                const shortName = (item.sourceVideo || item.file).split('/').pop().split('\\').pop();
+                const frameTag = item.frame ? (item.frame === 'last' ? ` (${t('end', 'конец')})` : ` (${t('start', 'начало')})`) : '';
+                nameBadge.textContent = shortName + frameTag;
             }
         }
 

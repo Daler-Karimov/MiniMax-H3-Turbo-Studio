@@ -23,11 +23,12 @@ export function createEditorLibrary(host, {store, t, actions, state}) {
     let listRead = Promise.resolve(), refreshTask = null, retryTimer = null, finishRetry = null, refreshAgain = false;
     const expectedOutputs = new Set();
     const uploading = new Map(), recentImports = new Map(), pendingAdds = new Map();
-    const preparing = () => t('Preparing this clip. It goes on the timeline when ready.', '素材准备好后会自动放到时间线上。');
-    const cannotOpen = () => t('This file cannot be opened. Supported formats: ', '这个文件打不开。支持的格式：') + FORMATS;
+    const preparing = () => t('Preparing this clip. It goes on the timeline when ready.', 'Подготовка клипа. Он появится на таймлайне после обработки.');
+    const cannotOpen = () => t('This file cannot be opened. Supported formats: ', 'Этот файл не удалось открыть. Поддерживаемые форматы: ') + FORMATS;
     // Why an import did not work, and where to report it: only a file that could not be read lists the formats and asks for a report.
-    const importFailure = (reason, status) => status === 413 ? [t('This file is over 8 GiB. Trim or compress it, then try again.', '文件超过 8 GiB，请先剪短或压缩后再导入。')]
-        : reason === 'disk_full' ? [t('The disk is full. Free some space, then import again.', '磁盘空间不足，请清理出空间后再导入。')]
+    const importFailure = (reason, status) => status === 413 ? [t('This file is over 8 GiB. Trim or compress it, then try again.', 'Файл превышает 8 ГБ. Обрежьте или сожмите его и попробуйте снова.')]
+        : reason === 'disk_full' ? [t('The disk is full. Free some space, then import again.', 'Диск заполнен. Освободите место и попробуйте снова.')]
+        : status === 403 ? [t('Access denied (cross-origin error).', 'Доступ отклонен (ошибка источника запроса / CORS).')]
         : reason === 'import_failed' ? [connectionLostText(t)] : [cannotOpen(), LIBRARY_ISSUE];
     function metadata(row, kind) {
         const g = row.geometry || row, cached = store.sources.get(`${kind}:${row.id}`);

@@ -23,7 +23,14 @@ export async function captureVideoFrame(videoUrl, timeSeconds = 0) {
 
         v.onloadedmetadata = () => {
             const duration = v.duration || 1;
-            const targetTime = Math.max(0, Math.min(timeSeconds, duration - 0.05));
+            let targetTime = 0;
+            if (timeSeconds === 'last') {
+                targetTime = Math.max(0, duration - 0.05);
+            } else if (timeSeconds === 'first') {
+                targetTime = 0;
+            } else if (typeof timeSeconds === 'number') {
+                targetTime = Math.max(0, Math.min(timeSeconds, duration - 0.05));
+            }
             v.currentTime = targetTime;
         };
 

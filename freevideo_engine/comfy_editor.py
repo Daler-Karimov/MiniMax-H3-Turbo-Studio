@@ -1057,6 +1057,7 @@ class ImportManager:
         try:
             transcode(self.root, identity)
         except Exception as error:
+            _LOG.exception('Editor transcode failed for import %s', identity)
             # A full disk is not the file's fault, so the page says so instead of listing formats.
             reason = _disk_full(error).get('reason', 'unreadable')
             try:
@@ -1176,17 +1177,26 @@ def waveform(root, key, points=200):
     return result
 
 
+def _is_loopback(hostname):
+    if not hostname:
+        return False
+    h = hostname.lower()
+    return h in ('localhost', '127.0.0.1', '::1', '[::1]') or h.startswith('127.')
+
+
 def _local_page(request):
     """Keep normal same-origin requests; reject cross-site browser requests."""
     headers = request.headers
-    if headers.get('Sec-Fetch-Site') == 'cross-site':
-        return False
     origin = headers.get('Origin')
     if origin is None:
         return True  # Same-origin GET/video requests usually have no Origin.
     try:
         parsed = urlsplit(origin)
         host = urlsplit('//' + request.host)
+        if _is_loopback(parsed.hostname) and _is_loopback(host.hostname):
+            return True
+        if headers.get('Sec-Fetch-Site') == 'cross-site':
+            return False
         return (parsed.scheme in ('http', 'https') and parsed.scheme == request.scheme and not parsed.username
                 and not parsed.password and not parsed.path and not parsed.query and not parsed.fragment
                 and parsed.hostname == host.hostname
@@ -1196,8 +1206,6 @@ def _local_page(request):
 
 
 def _same_origin_audio(request):
-    if request.headers.get('Sec-Fetch-Site') in ('same-site', 'cross-site'):
-        return False
     if not _local_page(request):
         return False
     referer = request.headers.get('Referer')
@@ -1205,6 +1213,10 @@ def _same_origin_audio(request):
         try:
             page = urlsplit(referer)
             origin = urlsplit(request.scheme + '://' + request.host)
+            if _is_loopback(page.hostname) and _is_loopback(origin.hostname):
+                return True
+            if request.headers.get('Sec-Fetch-Site') in ('same-site', 'cross-site'):
+                return False
             return (page.scheme == origin.scheme and page.hostname == origin.hostname
                     and (page.port or (443 if page.scheme == 'https' else 80)) ==
                         (origin.port or (443 if origin.scheme == 'https' else 80))
@@ -1242,25 +1254,52 @@ def register():
     def endpoint(method, path):
         def decorate(handler):
             async def guarded(request):
+                origin = request.headers.get('Origin', '')
+                cors_headers = dict(_HEADERS)
+                if origin:
+                    cors_headers['Access-Control-Allow-Origin'] = origin
+                    cors_headers['Access-Control-Allow-Credentials'] = 'true'
+                    cors_headers['Access-Control-Allow-Headers'] = '*'
+                    cors_headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, DELETE'
                 if not _local_page(request):
-                    return web.json_response(dict(error='Local page required'), status=403, headers=_HEADERS)
+                    return web.json_response(dict(error='Local page required'), status=403, headers=cors_headers)
                 try:
-                    return await handler(request)
+                    resp = await handler(request)
+                    if hasattr(resp, 'headers') and origin:
+                        resp.headers.setdefault('Access-Control-Allow-Origin', origin)
+                        resp.headers.setdefault('Access-Control-Allow-Credentials', 'true')
+                    return resp
                 except DeleteRefused as error:
-                    return web.json_response(dict(error='Cannot delete this edit', reason=error.reason), status=409, headers=_HEADERS)
+                    return web.json_response(dict(error='Cannot delete this edit', reason=error.reason), status=409, headers=cors_headers)
                 except Conflict as error:
-                    return web.json_response(dict(revision=error.revision, **({'id': error.identity} if error.identity else {})), status=409, headers=_HEADERS)
+                    return web.json_response(dict(revision=error.revision, **({'id': error.identity} if error.identity else {})), status=409, headers=cors_headers)
                 except TooLarge:
-                    return web.json_response(dict(error='Editor request is too large'), status=413, headers=_HEADERS)
+                    return web.json_response(dict(error='Editor request is too large'), status=413, headers=cors_headers)
                 except FileNotFoundError:
-                    return web.json_response(dict(error='Editor item unavailable'), status=404, headers=_HEADERS)
+                    return web.json_response(dict(error='Editor item unavailable'), status=404, headers=cors_headers)
                 except OSError as error:
-                    return web.json_response(dict(saved=False, retry=True, **_disk_full(error)), status=503, headers=_HEADERS)
+                    return web.json_response(dict(saved=False, retry=True, **_disk_full(error)), status=503, headers=cors_headers)
                 except (ValueError, TypeError, KeyError, RecursionError):
-                    return web.json_response(dict(error='Invalid editor request'), status=400, headers=_HEADERS)
+                    return web.json_response(dict(error='Invalid editor request'), status=400, headers=cors_headers)
                 except Exception:
-                    return web.json_response(dict(error='Editor media unavailable'), status=404, headers=_HEADERS)
+                    return web.json_response(dict(error='Editor media unavailable'), status=404, headers=cors_headers)
+
             getattr(server.routes, method)(path)(guarded)
+
+            async def options_handler(request):
+                origin = request.headers.get('Origin', '')
+                headers = dict(_HEADERS)
+                if origin:
+                    headers['Access-Control-Allow-Origin'] = origin
+                    headers['Access-Control-Allow-Credentials'] = 'true'
+                    headers['Access-Control-Allow-Headers'] = '*'
+                    headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, DELETE'
+                return web.Response(status=204, headers=headers)
+            try:
+                server.routes.options(path)(options_handler)
+            except Exception:
+                pass
+
             return guarded
         return decorate
 

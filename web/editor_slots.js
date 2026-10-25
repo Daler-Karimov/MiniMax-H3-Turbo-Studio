@@ -116,14 +116,27 @@ export function createEditorSlots({ state, t, actions }) {
         async function handleFile(file) {
             try {
                 slot.style.opacity = '0.5';
-                const res = await uploadMedia(api, file);
+                let fileToUpload = file;
+                const isVideo = file.type?.startsWith('video/') || /\.(mp4|webm|mov|mkv|m4v)$/i.test(file.name);
+                let frameMode = null;
+                if (isVideo) {
+                    frameMode = role === 'first' ? 'last' : 'first';
+                    const videoUrl = URL.createObjectURL(file);
+                    try {
+                        fileToUpload = await captureVideoFrame(videoUrl, frameMode);
+                    } finally {
+                        URL.revokeObjectURL(videoUrl);
+                    }
+                }
+                const res = await uploadMedia(api, fileToUpload);
                 const fileName = res.file || res.name;
+                const frameTag = isVideo ? (frameMode === 'last' ? ' (конец)' : ' (начало)') : '';
                 slotState[role] = {
                     file: fileName,
                     url: viewURL(fileName),
-                    blob: null,
+                    blob: isVideo ? fileToUpload : null,
                     isAuto: false,
-                    name: file.name
+                    name: file.name + frameTag
                 };
                 manualCleared[role] = null;
                 updateUI();

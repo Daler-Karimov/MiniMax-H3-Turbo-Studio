@@ -65,6 +65,47 @@ def media_kind(filename):
     raise ValueError('Choose a supported image, video or audio file')
 
 
+def extract_video_frame(path, which='first'):
+    """Extract a frame ('first' or 'last') from a video file and return as a PIL Image."""
+    import av
+    with av.open(str(path)) as container:
+        stream = next(iter(container.streams.video), None)
+        if stream is None:
+            raise ValueError(f'No video stream found in {Path(path).name}')
+        if which == 'first':
+            for frame in container.decode(stream):
+                return frame.to_image().convert('RGB')
+        elif which == 'last':
+            duration = stream.duration
+            if duration and duration > 0 and stream.time_base:
+                tb = float(stream.time_base)
+                sec = duration * tb
+                seek_sec = max(0.0, sec - 0.5)
+                try:
+                    container.seek(int(seek_sec / tb), stream=stream)
+                except Exception:
+                    pass
+            last_frame = None
+            for frame in container.decode(stream):
+                last_frame = frame
+            if last_frame is not None:
+                return last_frame.to_image().convert('RGB')
+            # Fallback if seeking went past EOF
+            try:
+                container.seek(0)
+            except Exception:
+                pass
+            for frame in container.decode(stream):
+                last_frame = frame
+            if last_frame is not None:
+                return last_frame.to_image().convert('RGB')
+            raise ValueError(f'Could not decode frames from {Path(path).name}')
+        else:
+            for frame in container.decode(stream):
+                return frame.to_image().convert('RGB')
+            raise ValueError(f'Could not decode frames from {Path(path).name}')
+
+
 def resolve_assets(serialized, input_directory):
     serialized = optional_text(serialized, '[]')
     if not isinstance(serialized, str) or len(serialized) > 128 * 1024:
@@ -75,7 +116,7 @@ def resolve_assets(serialized, input_directory):
     root = Path(input_directory).resolve()
     result = {}
     for row in rows:
-        if not isinstance(row, dict) or set(row) - {'file', 'role', 'enabled', 'cast', 'early_steps', 'sound'}:
+        if not isinstance(row, dict) or set(row) - {'file', 'role', 'enabled', 'cast', 'early_steps', 'sound', 'frame', 'sourceVideo'}:
             raise ValueError('Invalid media item')
         # The character an @ mention added the row for; a continued part keeps one picture per character.
         if 'cast' in row and (set(row['cast'] if isinstance(row['cast'], dict) else ('?',)) != {'id'}
@@ -99,8 +140,24 @@ def resolve_assets(serialized, input_directory):
             raise ValueError('Upload or select the missing media file: ' + name)
         kind = media_kind(name)
         if role in ('first', 'last'):
-            if kind != 'image':
-                raise ValueError('First and last frames must be images')
+            if kind == 'video':
+                # Automatic extraction: a video used as a keyframe extracts an image frame.
+                # 'first' slot (transition start) uses the LAST frame of that video by default.
+                # 'last' slot (transition end) uses the FIRST frame of that video by default.
+                which = row.get('frame') or ('last' if role == 'first' else 'first')
+                import hashlib
+                mtime = path.stat().st_mtime_ns if path.is_file() else 0
+                h = hashlib.sha256(f"{str(path)}:{which}:{mtime}".encode()).hexdigest()[:12]
+                cache_dir = root / 'freevideo' / 'extracted_frames'
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                frame_path = cache_dir / f"{path.stem}_{which}_{h}.png"
+                if not frame_path.is_file():
+                    img = extract_video_frame(path, which)
+                    img.save(frame_path, format='PNG')
+                path = frame_path
+                kind = 'image'
+            elif kind != 'image':
+                raise ValueError('First and last frames must be images or videos')
             if role in result:
                 raise ValueError('Select only one ' + role + ' frame')
             result[role] = str(path)
