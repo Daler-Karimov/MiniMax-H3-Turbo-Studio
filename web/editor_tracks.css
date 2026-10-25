@@ -71,8 +71,8 @@
 .fv-ed-zoom-slider{width:64px;height:24px;margin:0;accent-color:var(--fv-accent);cursor:pointer}
 .fv-ed-track-zoom .fv-ed-fit{padding:0 7px;white-space:nowrap;font-size:12px;margin-left:4px}
 .fv-ed-drag-label{position:absolute;z-index:9;padding:4px 7px;background:var(--fv-card);color:var(--fv-ink);border:1px solid var(--fv-border);border-radius:6px;font-size:12px;white-space:pre;line-height:1.5;pointer-events:none}
-.fv-ed-clip-popover{position:absolute;z-index:10;width:280px;max-width:calc(100% - 16px);padding:10px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-card)}
-.fv-ed-clip-popover p{margin:0 0 8px;font-size:13px;overflow-wrap:anywhere}
+.fv-ed-clip-popover{position:absolute;z-index:10;width:300px;max-width:calc(100% - 16px);padding:12px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-card);box-shadow:0 8px 24px rgba(0,0,0,0.6);backdrop-filter:blur(8px)}
+.fv-ed-clip-popover p{margin:0 0 10px;font-size:12px;line-height:1.45;color:var(--fv-warning, #f59e0b);overflow-wrap:break-word;word-break:break-word;max-height:120px;overflow-y:auto}
 .fv-ed-clip-popover button{min-height:32px;padding:4px 10px;border:1px solid var(--fv-border);border-radius:8px;background:var(--fv-raised);cursor:pointer}
 .fv-ed-clip-popover button+button{margin-left:6px}
 .fv-ed-clip-popover{max-height:calc(100% - 16px);overflow:auto}

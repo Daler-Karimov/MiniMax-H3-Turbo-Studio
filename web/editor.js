@@ -52,38 +52,72 @@ export function editorErrorText(value, t = en => en) {
     // The worker's own "FreeVideo generation failed (exit 1)" header names nothing the user can act on.
     const oneLine = value => typeof value === 'string' ? value.trim().split(/[\r\n]+/).find(line => line.trim() && !/^\s*FreeVideo generation failed(?: \(exit -?\d+\))?\s*$/.test(line))?.trim() || '' : '';
     const detail = value?.detail || (value?.error && typeof value.error === 'object' ? value.error : value);
-    const raw = [detail?.response?.error?.message, detail?.response?.error, detail?.response?.message,
+    let raw = [detail?.response?.error?.message, detail?.response?.error, detail?.response?.message,
         detail?.exception_message, detail?.message, value?.error?.message, value?.error, value].map(oneLine).find(Boolean) || '';
+
+    // Unpack ComfyUI custom validation errors / JSON envelopes if present
+    if (typeof raw === 'string' && (raw.includes('"errors"') || /validation failed/i.test(raw))) {
+        const jsonMatch = raw.match(/\{[\s\S]*"errors"[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                const data = JSON.parse(jsonMatch[0]);
+                if (Array.isArray(data.errors) && data.errors.length) {
+                    const unique = new Set();
+                    for (const err of data.errors) {
+                        let d = err.details || err.message || '';
+                        const dashIdx = d.indexOf(' - ');
+                        if (dashIdx !== -1) d = d.slice(dashIdx + 3).trim();
+                        if (d) unique.add(d);
+                    }
+                    if (unique.size > 0) raw = Array.from(unique).join('; ');
+                }
+            } catch {}
+        }
+        raw = raw.replace(/^Prompt (?:outputs )?failed validation;?\s*/i, '').trim();
+    }
+
+    if (/Second-pass steps must be an integer/i.test(raw)) {
+        raw = t('Second-pass steps must be an integer between 1 and 31.', 'Шаги второго прохода должны быть числом от 1 до 31.');
+    } else if (/First-pass steps must be an integer/i.test(raw)) {
+        raw = t('First-pass steps must be an integer between 1 and 32.', 'Шаги первого прохода должны быть числом от 1 до 32.');
+    } else if (/Two-pass generation must be a boolean/i.test(raw)) {
+        raw = t('Two-pass setting must be enabled or disabled.', 'Параметр двойного прохода должен быть включен или выключен.');
+    } else if (/Unknown media request fields/i.test(raw)) {
+        raw = t('Unknown media format. Re-select the frame.', 'Неверный формат медиафайла. Выберите кадр заново.');
+    } else if (/Use the Media panel or direct media\/conditioning sockets/i.test(raw)) {
+        raw = t('Duplicate media inputs. Remove extra images.', 'Дублирование входных медиафайлов. Удалите лишние изображения.');
+    }
+
     const whole = (() => { try { return JSON.stringify(value?.detail ?? value?.error ?? value ?? '').slice(0, 65536); } catch { return ''; } })();
     const code = value?.code || detail?.code || value?.reason || detail?.reason || raw;
     const node = oneLine(detail?.node_type), step = `${value?.phase || ''} ${value?.stage || ''} ${node}`;
     const part = Number.isInteger(value?.index) ? value.index + 1 : null;
-    const generating = part ? t(`Generating part ${part}`, `生成第 ${part} 段`) : t('Generation', '生成');
-    const stage = /encod|编码/i.test(step) ? t('Preparing', '准备生成') : /decod|解码/i.test(step) ? t('Making the video', '合成视频')
-        : /load|model|加载/i.test(step) ? t('Loading the model', '加载模型') : generating;
+    const generating = part ? t(`Generating part ${part}`, `Генерация части ${part}`) : t('Generation', 'Генерация');
+    const stage = /encod|编码/i.test(step) ? t('Preparing', 'Подготовка к генерации') : /decod|解码/i.test(step) ? t('Making the video', 'Сборка видео')
+        : /load|model|加载/i.test(step) ? t('Loading the model', 'Загрузка модели') : generating;
     if (code === 'gpu_memory' || /out of memory|cuda.*memory|显存不足|显存不够/i.test(raw))
-        return t(`${stage}: not enough GPU memory.`, `${stage}时显存不足。`);
+        return t(`${stage}: not enough GPU memory.`, `${stage}: недостаточно видеопамяти.`);
     const known = {
-        chain_part_too_short: t('Each continued part needs at least 10 seconds.', '接续的每段至少 10 秒。'),
-        chain_too_long: t('A video can have up to 5 parts.', '一条视频最多 5 段。'),
-        too_long: t('This part is longer than the maximum length. Shorten it and try again.', '这一段超过了最长时长，请缩短后再试。'),
-        missing_node: t('Generation is not ready. Restart FreeVideo.', '生成功能没有就绪，请重新启动 FreeVideo。'),
-        chain_missing: t('Generation could not start. Choose "Generate" again.', '生成没能开始，请再点“生成”。'),
-        result_mismatch: t('Could not read the result. Choose "Generate" again.', '没能读取结果，请再点“生成”。'),
-        no_material: t('The media this part uses is missing. Import it again from the library.', '找不到这一段用到的素材，请在素材库重新导入。'),
+        chain_part_too_short: t('Each continued part needs at least 10 seconds.', 'Каждая следующая часть должна длиться не менее 10 секунд.'),
+        chain_too_long: t('A video can have up to 5 parts.', 'Видео может содержать не более 5 частей.'),
+        too_long: t('This part is longer than the maximum length. Shorten it and try again.', 'Длительность части превышает допустимый максимум. Укоротите ее и попробуйте снова.'),
+        missing_node: t('Generation is not ready. Restart FreeVideo.', 'Генерация не готова. Перезапустите FreeVideo.'),
+        chain_missing: t('Generation could not start. Choose "Generate" again.', 'Не удалось запустить генерацию. Нажмите «Сгенерировать» снова.'),
+        result_mismatch: t('Could not read the result. Choose "Generate" again.', 'Не удалось прочитать результат. Попробуйте сгенерировать снова.'),
+        no_material: t('The media this part uses is missing. Import it again from the library.', 'Исходные медиафайлы не найдены. Импортируйте их заново.'),
     };
     if (known[code]) return known[code];
     if (outputNotWritable(whole))
-        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', '输出目录不可写，视频没能保存。请检查这个文件夹的写入权限后重试。');
+        return t('The output folder cannot be written to, so the video was not saved. Check that the folder can be written to, then retry.', 'Папка для сохранения недоступна для записи. Проверьте права и повторите попытку.');
     if (/manifest\.json/i.test(whole) && /No such file|not found|Errno 2\b|FileNotFoundError/i.test(whole))
-        return t('The model is not fully installed. ', '模型没有装全。') + t(...repairAction());
+        return t('The model is not fully installed. ', 'Модель не установлена полностью. ') + t(...repairAction());
     if (['model_missing', 'missing_model', 'model_not_found'].includes(code) || /(?:model|checkpoint|模型).*(?:not found|missing|不存在|缺失)/i.test(raw))
-        return t(`Loading the model failed: ${raw || code}`, `加载模型时出错：${raw || code}`);
+        return t(`Loading the model failed: ${raw || code}`, `Ошибка загрузки модели: ${raw || code}`);
     if (['timeout', 'timed_out', 'generation_timeout'].includes(code) || /timed?\s*out|timeout|超时/i.test(raw))
-        return t(`${stage} timed out. Try again.`, `${stage}时等待超时，请再试一次。`);
+        return t(`${stage} timed out. Try again.`, `${stage}: время ожидания истекло. Попробуйте снова.`);
     const received = raw || (/^[a-z_]+$/.test(code) ? '' : code);
-    return received ? t(`${generating} failed: ${received}`, `${generating}时出错：${received}`)
-        : t(`${generating} failed. Try again.`, `${generating}时出错，请再试一次。`);
+    return received ? t(`${generating} failed: ${received}`, `${generating} не удалось: ${received}`)
+        : t(`${generating} failed. Try again.`, `${generating} не удалось, попробуйте еще раз.`);
 }
 function exportErrorText(value, t) {
     if (isNetworkTypeError(value)) return connectionLostText(t);
@@ -516,6 +550,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         if (!value.node || !value.prompt?.[value.node]) throw new Error('missing_node');
         const inputs = value.prompt[value.node].inputs;
         Object.assign(inputs, state.record.settings || {}, capability.generationSize || generationSize(state.record));
+        if (inputs.refine_steps == null || Number(inputs.refine_steps) < 1) {
+            inputs.refine_steps = 3;
+        } else {
+            inputs.refine_steps = Math.max(1, Math.min(31, Math.round(Number(inputs.refine_steps))));
+        }
+        if (inputs.base_steps == null || Number(inputs.base_steps) < 1) {
+            inputs.base_steps = 8;
+        } else {
+            inputs.base_steps = Math.max(1, Math.min(32, Math.round(Number(inputs.base_steps))));
+        }
+        inputs.two_pass = inputs.two_pass !== false;
         // The media panel's pictures guide every part (the engine keeps only the references for a part that continues);
         // without a panel to show them they stay out of the request.
         if (!panel.references?.available()) delete inputs.media;
@@ -885,8 +930,10 @@ export function openEditor({api, app, from = null, panel = {}, components: given
         // The sampling data and models the next generated part would still download first.
         assets: {api, query: () => {
             const size = capability.generationSize || generationSize(state.record), set = state.record.settings || {};
+            const base = Math.max(1, Math.min(32, Number(set.base_steps) || 8));
+            const refine = Math.max(1, Math.min(31, Number(set.refine_steps) || 3));
             return new URLSearchParams({width: size.width, height: size.height, seconds: 5, task: 't2va', enhance: '0',
-                base_steps: set.base_steps ?? 8, refine_steps: set.refine_steps ?? 3, two_pass: set.two_pass === false ? '0' : '1'});
+                base_steps: base, refine_steps: refine, two_pass: set.two_pass === false ? '0' : '1'});
         }},
         previewRange: selection => genbar?.preview(selection),
         async estimate(selection) {
@@ -936,6 +983,17 @@ export function openEditor({api, app, from = null, panel = {}, components: given
                     try { slotMedia = await actions.ensureUploadedSlots(); } catch (e) { console.warn('[FreeVideo] Error uploading slots media:', e); }
                 }
                 const nodeInputs = frozen.prompt[frozen.node].inputs;
+                if (nodeInputs.refine_steps == null || Number(nodeInputs.refine_steps) < 1) {
+                    nodeInputs.refine_steps = 3;
+                } else {
+                    nodeInputs.refine_steps = Math.max(1, Math.min(31, Math.round(Number(nodeInputs.refine_steps))));
+                }
+                if (nodeInputs.base_steps == null || Number(nodeInputs.base_steps) < 1) {
+                    nodeInputs.base_steps = 8;
+                } else {
+                    nodeInputs.base_steps = Math.max(1, Math.min(32, Math.round(Number(nodeInputs.base_steps))));
+                }
+                nodeInputs.two_pass = nodeInputs.two_pass !== false;
                 delete nodeInputs.first;
                 delete nodeInputs.last;
                 let mediaPayload = null;

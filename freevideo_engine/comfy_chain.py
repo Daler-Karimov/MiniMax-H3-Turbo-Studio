@@ -127,7 +127,22 @@ class ComfyHost:
                 parts = [(value.get('error') or {}).get('message') or 'Prompt validation failed']
                 first = next(iter((value.get('node_errors') or {}).values()), None)
                 if first:
-                    parts.append(json.dumps(first, ensure_ascii=False))
+                    errors = first.get('errors') if isinstance(first, dict) else None
+                    if isinstance(errors, list) and errors:
+                        unique_msgs = []
+                        for err in errors:
+                            if isinstance(err, dict):
+                                d = err.get('details') or err.get('message') or ''
+                                if ' - ' in d:
+                                    d = d.split(' - ', 1)[1].strip()
+                                if d and d not in unique_msgs:
+                                    unique_msgs.append(d)
+                        if unique_msgs:
+                            parts.append('; '.join(unique_msgs))
+                        else:
+                            parts.append(json.dumps(first, ensure_ascii=False))
+                    else:
+                        parts.append(json.dumps(first, ensure_ascii=False))
                 raise RuntimeError('; '.join(parts)) from None
             except (ValueError, TypeError, AttributeError):
                 raise RuntimeError('Prompt validation failed') from None

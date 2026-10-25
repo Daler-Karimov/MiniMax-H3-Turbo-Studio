@@ -26,16 +26,19 @@ export function createEditorGenCard({ state, t, actions }) {
     const shapeButtons = new Map();
 
     const shapeDefs = [
-        ...frameShapes(t),
-        ['input', t('Match image', 'По картинке'), null]
+        ['16:9', '16:9', 16 / 9, t('Landscape (16:9)', 'Горизонтально (16:9)')],
+        ['9:16', '9:16', 9 / 16, t('Portrait (9:16)', 'Вертикально (9:16)')],
+        ['1:1', '1:1', 1, t('Square (1:1)', 'Квадрат (1:1)')],
+        ['input', t('Image', 'По фото'), null, t('Match image ratio', 'По пропорциям кадра')]
     ];
 
-    for (const [id, label, r] of shapeDefs) {
+    for (const [id, label, r, tooltip] of shapeDefs) {
         const btn = el('button', 'fv-shape');
         btn.type = 'button';
         btn.dataset.ratio = id;
-        btn.setAttribute('aria-label', label);
-        btn.append(el('span', 'fv-shape-icon'), el('span', null, label));
+        btn.title = tooltip;
+        btn.setAttribute('aria-label', tooltip);
+        btn.append(el('span', 'fv-shape-icon'), el('span', 'fv-shape-label', label));
         btn.onclick = async () => {
             try {
                 if (id === 'input') {
@@ -77,7 +80,7 @@ export function createEditorGenCard({ state, t, actions }) {
 
     // Duration input
     const durField = el('label', 'fv-field');
-    durField.append(el('span', null, t('Duration · seconds', 'Длительность · сек')));
+    durField.append(el('span', null, t('Duration, s', 'Длительность, с')));
     const secondsInput = el('input');
     secondsInput.type = 'number';
     secondsInput.min = '1.625';
@@ -111,10 +114,10 @@ export function createEditorGenCard({ state, t, actions }) {
     qualitySection.append(qualityHead);
 
     const qualities = [
-        { id: 'Light', label: 'Light', base_steps: 8, refine_steps: 3, two_pass: true, desc: 'Быстрый (8+3 шага)' },
-        { id: 'Medium', label: 'Medium', base_steps: 12, refine_steps: 3, two_pass: true, desc: 'Баланс (12+3 шага)' },
-        { id: 'High', label: 'High', base_steps: 16, refine_steps: 0, two_pass: false, desc: 'Высокое (16 шагов)' },
-        { id: 'Max', label: 'Max', base_steps: 20, refine_steps: 0, two_pass: false, desc: 'Максимум (20 шагов)' }
+        { id: 'Light', label: 'Light', base_steps: 8, refine_steps: 3, two_pass: true, desc: t('Fast (8+3 steps)', 'Быстрый (8+3 шага)') },
+        { id: 'Medium', label: 'Medium', base_steps: 8, refine_steps: 3, two_pass: true, desc: t('Balanced (8+3 steps)', 'Баланс (8+3 шага)') },
+        { id: 'High', label: 'High', base_steps: 16, refine_steps: 3, two_pass: false, desc: t('High (16 steps)', 'Высокое (16 шагов)') },
+        { id: 'Max', label: 'Max', base_steps: 20, refine_steps: 3, two_pass: false, desc: t('Maximum (20 steps)', 'Максимум (20 шагов)') }
     ];
     const qualityPills = el('div', 'fv-quality-pills');
     const qualityButtons = new Map();
@@ -142,7 +145,7 @@ export function createEditorGenCard({ state, t, actions }) {
     const passOptions = [
         ['off', t('Off', 'Откл.')],
         ['on', t('On', 'Вкл.')],
-        ['preview', t('Preview first', 'Превью')]
+        ['preview', t('Preview', 'Превью')]
     ].map(([mode, label]) => {
         const btn = el('button', null, label);
         btn.type = 'button';
@@ -268,7 +271,7 @@ export function createEditorGenCard({ state, t, actions }) {
         const delta = {};
         if (mode === 'off') {
             delta.two_pass = false;
-            delta.refine_steps = 0;
+            delta.refine_steps = 3;
             delta.preview = false;
         } else if (mode === 'on') {
             delta.two_pass = true;
