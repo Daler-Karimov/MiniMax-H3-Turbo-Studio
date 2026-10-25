@@ -14,22 +14,30 @@ const el = (tag, cls = null, text = null) => {
 export function createEditorGenCard({ state, t, actions }) {
     const container = el('div', 'fv-ed-gen-card');
 
+    const isRu = () => {
+        try {
+            const lang = new URLSearchParams(location.search).get('freevideo_lang') || navigator.language;
+            return String(lang).toLowerCase().startsWith('ru');
+        } catch { return false; }
+    };
+    const tr = (en, ru) => isRu() ? ru : t(en, en);
+
     // ==========================================
     // Section 1: Frame & duration (Формат и длительность)
     // ==========================================
     const frameSection = el('section', 'fv-section');
     const frameHead = el('div', 'fv-section-head');
-    frameHead.append(el('span', 'fv-label', t('Frame & duration', 'Кадр и длительность')));
+    frameHead.append(el('span', 'fv-label', tr('Frame & duration', 'Формат и длительность')));
     frameSection.append(frameHead);
 
     const shapes = el('div', 'fv-shapes');
     const shapeButtons = new Map();
 
     const shapeDefs = [
-        ['16:9', '16:9', 16 / 9, t('Landscape (16:9)', 'Горизонтально (16:9)')],
-        ['9:16', '9:16', 9 / 16, t('Portrait (9:16)', 'Вертикально (9:16)')],
-        ['1:1', '1:1', 1, t('Square (1:1)', 'Квадрат (1:1)')],
-        ['input', t('Image', 'По фото'), null, t('Match image ratio', 'По пропорциям кадра')]
+        ['16:9', '16:9', 16 / 9, tr('Landscape (16:9)', 'Горизонтально (16:9)')],
+        ['9:16', '9:16', 9 / 16, tr('Portrait (9:16)', 'Вертикально (9:16)')],
+        ['1:1', '1:1', 1, tr('Square (1:1)', 'Квадрат (1:1)')],
+        ['input', tr('Image', 'По фото'), null, tr('Match image ratio', 'По пропорциям кадра')]
     ];
 
     for (const [id, label, r, tooltip] of shapeDefs) {
@@ -60,27 +68,38 @@ export function createEditorGenCard({ state, t, actions }) {
 
     // Resolution dropdown
     const resField = el('label', 'fv-field');
-    resField.append(el('span', null, t('Resolution', 'Четкость')));
+    resField.append(el('span', null, tr('Resolution', 'Четкость')));
     const resSelectWrap = el('div', 'fv-resolution-select');
     const mpSelect = el('select');
-    mpSelect.setAttribute('aria-label', t('Resolution', 'Четкость'));
+    mpSelect.setAttribute('aria-label', tr('Resolution', 'Четкость'));
     for (const n of [.5, .75, .98, 1.5, 2]) {
-        const opt = el('option', null, n === .98 ? `${n} MP · ${t('Recommended', 'Рекоменд.')}` : `${n} MP`);
+        const opt = el('option', null, n === .98 ? `${n} MP · ${tr('Recommended', 'Рекоменд.')}` : `${n} MP`);
         opt.value = String(n);
         mpSelect.append(opt);
     }
     mpSelect.value = '0.98';
+
+    const resolutionValue = el('span', 'fv-resolution-value');
+    resolutionValue.setAttribute('aria-hidden', 'true');
+    function syncResolutionLabel() {
+        const val = Number(mpSelect.value);
+        resolutionValue.textContent = isNaN(val) ? (mpSelect.value || '0.98 MP') : `${val.toFixed(2)} MP`;
+    }
+    syncResolutionLabel();
+
     const chevron = icon('chevron');
-    resSelectWrap.append(mpSelect, chevron);
+    resSelectWrap.append(mpSelect, resolutionValue, chevron);
     resField.append(resSelectWrap);
 
     mpSelect.onchange = () => {
+        syncResolutionLabel();
         applyResolution(Number(mpSelect.value) || 0.98);
     };
+    mpSelect.oninput = syncResolutionLabel;
 
     // Duration input
     const durField = el('label', 'fv-field');
-    durField.append(el('span', null, t('Duration, s', 'Длительность, с')));
+    durField.append(el('span', null, tr('Duration, s', 'Длительность, с')));
     const secondsInput = el('input');
     secondsInput.type = 'number';
     secondsInput.min = '1.625';
@@ -110,14 +129,14 @@ export function createEditorGenCard({ state, t, actions }) {
     // ==========================================
     const qualitySection = el('section', 'fv-section');
     const qualityHead = el('div', 'fv-section-head');
-    qualityHead.append(el('span', 'fv-label', t('Quality', 'Качество')));
+    qualityHead.append(el('span', 'fv-label', tr('Quality', 'Качество')));
     qualitySection.append(qualityHead);
 
     const qualities = [
-        { id: 'Light', label: 'Light', base_steps: 8, refine_steps: 3, two_pass: true, desc: t('Fast (8+3 steps)', 'Быстрый (8+3 шага)') },
-        { id: 'Medium', label: 'Medium', base_steps: 8, refine_steps: 3, two_pass: true, desc: t('Balanced (8+3 steps)', 'Баланс (8+3 шага)') },
-        { id: 'High', label: 'High', base_steps: 16, refine_steps: 3, two_pass: false, desc: t('High (16 steps)', 'Высокое (16 шагов)') },
-        { id: 'Max', label: 'Max', base_steps: 20, refine_steps: 3, two_pass: false, desc: t('Maximum (20 steps)', 'Максимум (20 шагов)') }
+        { id: 'Light', label: 'Light', base_steps: 8, refine_steps: 3, two_pass: true, desc: tr('Fast (8+3 steps)', 'Быстрый (8+3 шага)') },
+        { id: 'Medium', label: 'Medium', base_steps: 8, refine_steps: 3, two_pass: true, desc: tr('Balanced (8+3 steps)', 'Баланс (8+3 шага)') },
+        { id: 'High', label: 'High', base_steps: 16, refine_steps: 3, two_pass: false, desc: tr('High (16 steps)', 'Высокое (16 шагов)') },
+        { id: 'Max', label: 'Max', base_steps: 20, refine_steps: 3, two_pass: false, desc: tr('Maximum (20 steps)', 'Максимум (20 шагов)') }
     ];
     const qualityPills = el('div', 'fv-quality-pills');
     const qualityButtons = new Map();
@@ -137,15 +156,15 @@ export function createEditorGenCard({ state, t, actions }) {
 
     // Two-pass row
     const twoPassRow = el('div', 'fv-two-pass fv-pass-row');
-    twoPassRow.append(el('span', null, t('Two-pass', 'Двойной проход')));
+    twoPassRow.append(el('span', null, tr('Two-pass', 'Двойной проход')));
     const passMode = el('div', 'fv-pass-mode');
     passMode.setAttribute('role', 'radiogroup');
-    passMode.setAttribute('aria-label', t('Two-pass sampling', 'Двойной проход'));
+    passMode.setAttribute('aria-label', tr('Two-pass sampling', 'Двойной проход'));
 
     const passOptions = [
-        ['off', t('Off', 'Откл.')],
-        ['on', t('On', 'Вкл.')],
-        ['preview', t('Preview', 'Превью')]
+        ['off', tr('Off', 'Откл.')],
+        ['on', tr('On', 'Вкл.')],
+        ['preview', tr('Preview', 'Превью')]
     ].map(([mode, label]) => {
         const btn = el('button', null, label);
         btn.type = 'button';
@@ -321,6 +340,7 @@ export function createEditorGenCard({ state, t, actions }) {
             }
             mpSelect.value = nearestStr;
         }
+        syncResolutionLabel();
 
         // Update dimension text
         dimSpan.textContent = `${width} × ${height}`;
