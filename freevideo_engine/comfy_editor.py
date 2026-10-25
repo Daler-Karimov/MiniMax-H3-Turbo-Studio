@@ -1250,6 +1250,7 @@ def register():
     manager = ImportManager(folder_paths.get_output_directory())
     server._freevideo_editor = manager
     previews = asyncio.Semaphore(1)
+    registered_options = set()
 
     def endpoint(method, path):
         def decorate(handler):
@@ -1286,19 +1287,22 @@ def register():
 
             getattr(server.routes, method)(path)(guarded)
 
-            async def options_handler(request):
-                origin = request.headers.get('Origin', '')
-                headers = dict(_HEADERS)
-                if origin:
-                    headers['Access-Control-Allow-Origin'] = origin
-                    headers['Access-Control-Allow-Credentials'] = 'true'
-                    headers['Access-Control-Allow-Headers'] = '*'
-                    headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, DELETE'
-                return web.Response(status=204, headers=headers)
-            try:
-                server.routes.options(path)(options_handler)
-            except Exception:
-                pass
+            already_has_options = any(r.method == 'OPTIONS' and getattr(r, 'path', None) == path for r in server.routes if isinstance(r, web.RouteDef))
+            if path not in registered_options and not already_has_options:
+                registered_options.add(path)
+                async def options_handler(request):
+                    origin = request.headers.get('Origin', '')
+                    headers = dict(_HEADERS)
+                    if origin:
+                        headers['Access-Control-Allow-Origin'] = origin
+                        headers['Access-Control-Allow-Credentials'] = 'true'
+                        headers['Access-Control-Allow-Headers'] = '*'
+                        headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, DELETE'
+                    return web.Response(status=204, headers=headers)
+                try:
+                    server.routes.options(path)(options_handler)
+                except Exception:
+                    pass
 
             return guarded
         return decorate
