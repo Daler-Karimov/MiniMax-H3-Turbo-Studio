@@ -33,9 +33,9 @@ WHOLE_BLOCK_TOKENS = 1024
 # card, for text from 480 to 2880 tokens, one to eight reference images up to
 # 1920x1080 and reference videos up to two 15 s clips (34k tokens). Per sequence
 # token and per patch of the largest image or video block, which the vision
-# tower runs alone. Measured peaks: whole 0.49-15.17 GiB, blocks 0.76-8.11 GiB.
-FORMULA = {'whole': (1.5 * GiB, 0.45 * MiB, 0.30 * MiB),
-           'blocks': (1.5 * GiB, 0.20 * MiB, 0.30 * MiB)}
+# tower runs alone. Sized with realistic headroom for 27 ViT layers + deepstack (1.1-1.2 MiB/patch).
+FORMULA = {'whole': (1.5 * GiB, 0.45 * MiB, 1.10 * MiB),
+           'blocks': (1.5 * GiB, 0.20 * MiB, 1.00 * MiB)}
 HEADROOM, MARGIN = 1.1, 256 * MiB
 SPILL_MARGIN = 256 * MiB
 HISTORY_NAME = 'encoder-workspace.json'
@@ -243,7 +243,12 @@ def plan(workspace, size, capacity, attempt=0, failed=None):
     # Ensure 'whole' mode does not starve the model weights of VRAM.
     # On GPUs with >= 12 GiB, keep at least 6 GiB free for the 32B NVFP4 weights.
     min_model_room = min(6 * GiB, int(capacity * 0.4))
+    has_vision = size.get('largest_patches', 0) > 0 or size.get('vision_tokens', 0) > 0
     fits_whole = failed is None and whole <= capacity and (capacity - whole >= min_model_room or whole <= blocks)
+    # For vision inputs (image/video references), if remaining room for weights is less than 7 GiB,
+    # prefer blocks mode which uses significantly less activation memory and runs without OOM risk.
+    if has_vision and fits_whole and (capacity - whole < 7 * GiB):
+        fits_whole = False
     mode = 'whole' if fits_whole else 'blocks'
     need = whole if mode == 'whole' else blocks
     if failed == 'blocks':

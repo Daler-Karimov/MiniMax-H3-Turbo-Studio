@@ -502,6 +502,28 @@ def _encode(args, request, resident, trace):
             _safe_soft_empty._freevideo_safe = True
             memory.soft_empty_cache = _safe_soft_empty
 
+        try:
+            import comfy_kitchen.tensor.base as ck_base
+            if not getattr(ck_base._handle_to, '_freevideo_safe', False):
+                _orig_handle_to = ck_base._handle_to
+                def _safe_handle_to(qt, args, kwargs, force_copy=False):
+                    try:
+                        return _orig_handle_to(qt, args, kwargs, force_copy=force_copy)
+                    except Exception as err:
+                        target_dev, _ = ck_base._parse_to_args(args, kwargs)
+                        if target_dev is not None and getattr(target_dev, 'type', str(target_dev)) == 'cpu':
+                            try:
+                                clear_cuda_errors()
+                                torch.cuda.empty_cache()
+                                return _orig_handle_to(qt, args, kwargs, force_copy=force_copy)
+                            except Exception:
+                                pass
+                        raise err
+                _safe_handle_to._freevideo_safe = True
+                ck_base._handle_to = _safe_handle_to
+        except Exception:
+            pass
+
         if current.get('need') is not None:
             # The native planner keeps 0.8 GiB beside the reserve; leave this attempt's room.
             reserved = current['need'] - int(.8 * 2**30)
@@ -509,6 +531,10 @@ def _encode(args, request, resident, trace):
                 total_gpu = budget_bytes or torch.cuda.get_device_properties(0).total_memory
                 # Don't let reserve starve model weights below half the GPU
                 reserved = min(reserved, int(total_gpu * 0.5))
+            # When processing visual inputs (images or videos), ensure at least 5.5 GiB headroom
+            # so the 27-layer ViT vision tower and cross-attention have enough working memory
+            if size.get('largest_patches', 0) > 0 or size.get('vision_tokens', 0) > 0:
+                reserved = max(reserved, int(5.5 * 2**30))
             memory.EXTRA_RESERVED_VRAM = max(memory.EXTRA_RESERVED_VRAM, reserved)
         result = native_load(*values, **kwargs)
         try:

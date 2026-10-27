@@ -285,6 +285,14 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
 
             cleanup_errors = []
             try:
+                # Force-reset patcher loaded memory counter and detach cleanly
+                if hasattr(clip, 'patcher') and clip.patcher is not None:
+                    try:
+                        if hasattr(clip.patcher, 'model') and clip.patcher.model is not None:
+                            clip.patcher.model.model_loaded_weight_memory = 0
+                        clip.patcher.detach(unpatch_all=True)
+                    except Exception as e:
+                        cleanup_errors.append(f"patcher_detach: {e}")
                 manager.unload_all_models()
                 manager.soft_empty_cache()
             except Exception as cleanup:
@@ -296,6 +304,8 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
                     for loaded in list(getattr(manager, 'current_loaded_models', [])):
                         try:
                             if hasattr(loaded, 'model') and loaded.model is not None:
+                                if hasattr(loaded.model, 'model') and loaded.model.model is not None:
+                                    loaded.model.model.model_loaded_weight_memory = 0
                                 loaded.model.detach(unpatch_all=False)
                         except Exception:
                             pass
