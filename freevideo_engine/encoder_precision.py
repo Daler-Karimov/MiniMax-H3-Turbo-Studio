@@ -65,18 +65,32 @@ def single_concat_image_inputs(wrapper):
 def compact_vision_outputs(wrapper):
     """preprocess_embed that returns each block's cached memory before the next block.
 
-    The vision tower runs once per image or video block. Without expandable
-    segments (Windows), PyTorch kept every block's freed activation memory
-    instead of reusing it: 33 blocks of two 15 s references grew reserved memory
-    from 12.7 to 26.5 GiB while live tensors grew by 2.7 GiB, and on a 16 GB
-    card the encode overflowed into shared memory before the language model
-    started. Returning the cache after each block kept the whole encode at 18.2
-    GiB including 12.3 GiB of weights. DeepStack features are kept in BF16, the
-    dtype the language model casts them to anyway (exact).
+    The vision tower runs once per image or video block. Running it in BF16 on CUDA
+    halves activation memory and uses Tensor Cores. DeepStack features are kept in BF16,
+    the dtype the language model casts them to anyway (exact).
     """
     original = wrapper.preprocess_embed
 
     def preprocess_embed(self, embed, device):
+        if embed.get("type") == "image":
+            import comfy.text_encoders.qwen_vl
+            from comfy.text_encoders.minimax import process_video_block
+            dtype = torch.bfloat16 if (torch.cuda.is_available() and str(device).startswith('cuda')) else torch.float32
+            if hasattr(self, 'visual') and hasattr(self.visual, 'to'):
+                try:
+                    self.visual.to(dtype=dtype)
+                except Exception:
+                    pass
+            if embed.get("minimax_video_block", False):
+                pixels, grid = process_video_block(embed["data"])
+            else:
+                pixels, grid = comfy.text_encoders.qwen_vl.process_qwen2vl_images(
+                    embed["data"], patch_size=16, image_mean=[0.5, 0.5, 0.5], image_std=[0.5, 0.5, 0.5])
+            merged, deepstack = self.visual(pixels.to(device, dtype=dtype), grid)
+            if deepstack is not None:
+                deepstack = [v.to(torch.bfloat16) for v in deepstack]
+            torch.cuda.empty_cache()
+            return merged, {"grid": grid, "deepstack": deepstack}
         merged, extra = original(embed, device)
         if merged is None or not merged.is_cuda:
             return merged, extra

@@ -27,7 +27,7 @@ GiB, MiB = 2**30, 2**20
 LOW_MEMORY_CHUNK = 2048
 # From here the block-wise forward runs even when the whole sequence fits: the same
 # math without the dense causal mask, 15.7k tokens in 7.2 s instead of 9.9 s in BF16.
-WHOLE_BLOCK_TOKENS = 4096
+WHOLE_BLOCK_TOKENS = 1024
 # Upper bounds of the measured working memory (allocator peak above the loaded
 # weights) of the 32B H3 encoder running in BF16, partially loaded as on a 16 GB
 # card, for text from 480 to 2880 tokens, one to eight reference images up to
@@ -168,7 +168,15 @@ def dedicated_room(torch, reader=None, budget=None, detail=None):
     `budget` is what this process may hold in total under FreeVideo's plan.
     `detail`, when given, receives each reading and which bound decided.
     """
-    free = torch.cuda.mem_get_info()[0]
+    try:
+        free = torch.cuda.mem_get_info()[0]
+    except Exception:
+        try:
+            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
+                torch.cuda.cudart().cudaGetLastError()
+            free = torch.cuda.mem_get_info()[0]
+        except Exception:
+            free = 0
     bound = 'cuda_free'
     if detail is not None:
         detail['cuda_free_bytes'] = int(free)

@@ -259,6 +259,21 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
             if cleanup_errors:
                 retry_error.cleanup_errors = cleanup_errors
             del retry_error
+            # Always ensure CUDA error state is pristine before planning the next attempt
+            if hasattr(manager, 'discard_cuda_async_error'):
+                try:
+                    manager.discard_cuda_async_error()
+                except Exception:
+                    pass
+            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
+                try:
+                    torch.cuda.cudart().cudaGetLastError()
+                except Exception:
+                    pass
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             previous = failure['kind']
             manager.EXTRA_RESERVED_VRAM = original_reserve + (index + 1) * GiB
             phase('encoder_retry', gpu=snapshot(torch, clip, manager), encoder_attempts=list(attempts))

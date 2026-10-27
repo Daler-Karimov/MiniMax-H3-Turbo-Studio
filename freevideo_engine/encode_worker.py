@@ -555,7 +555,7 @@ def _encode(args, request, resident, trace):
         if mode == 'blocks':
             phase('encoder_low_memory', **details)
             context = low_memory(clip.cond_stage_model, LOW_MEMORY_CHUNK)
-        elif size['sequence'] >= WHOLE_BLOCK_TOKENS:
+        elif size['sequence'] >= WHOLE_BLOCK_TOKENS or size.get('vision_tokens', 0) > 0:
             # One block: the whole sequence at once, without the native dense T x T mask.
             context = low_memory(clip.cond_stage_model, 1 << 30)
         else:
