@@ -219,12 +219,45 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
                 raise retry_error from cleanup
             if failure['kind'] not in ('gpu_oom', 'shared_memory_spill') and not native_oom:
                 raise retry_error
+            # Clear CUDA error before memory inspection / model unloading
+            if hasattr(manager, 'discard_cuda_async_error'):
+                try:
+                    manager.discard_cuda_async_error()
+                except Exception:
+                    pass
+            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
+                try:
+                    torch.cuda.cudart().cudaGetLastError()
+                except Exception:
+                    pass
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+            cleanup_errors = []
             try:
                 manager.unload_all_models()
                 manager.soft_empty_cache()
             except Exception as cleanup:
-                retry_error.cleanup_errors = [repr(cleanup)]
-                raise retry_error from cleanup
+                cleanup_errors.append(repr(cleanup))
+                # If unload_all_models failed (e.g. mem_get_info threw AcceleratorError),
+                # forcibly detach loaded models and clear allocator cache rather than crashing recovery.
+                try:
+                    if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
+                        torch.cuda.cudart().cudaGetLastError()
+                    for loaded in list(getattr(manager, 'current_loaded_models', [])):
+                        try:
+                            if hasattr(loaded, 'model') and loaded.model is not None:
+                                loaded.model.detach(unpatch_all=False)
+                        except Exception:
+                            pass
+                    getattr(manager, 'current_loaded_models', []).clear()
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            if cleanup_errors:
+                retry_error.cleanup_errors = cleanup_errors
             del retry_error
             previous = failure['kind']
             manager.EXTRA_RESERVED_VRAM = original_reserve + (index + 1) * GiB

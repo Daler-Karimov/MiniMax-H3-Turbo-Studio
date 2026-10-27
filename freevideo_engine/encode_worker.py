@@ -473,9 +473,29 @@ def _encode(args, request, resident, trace):
         print(json.dumps({'event': 'encoder_device_reuse' if encoder_on_gpu(clip) else 'encoder_device_load_start'}), flush=True)
         tick = time.perf_counter()
         import comfy.model_management as memory
+        if not getattr(memory.get_free_memory, '_freevideo_safe', False):
+            _orig_get_free = memory.get_free_memory
+            def _safe_get_free(device=None, torch_free_too=False):
+                try:
+                    return _orig_get_free(device, torch_free_too=torch_free_too)
+                except Exception:
+                    try:
+                        if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
+                            torch.cuda.cudart().cudaGetLastError()
+                        return _orig_get_free(device, torch_free_too=torch_free_too)
+                    except Exception:
+                        return (0, 0) if torch_free_too else 0
+            _safe_get_free._freevideo_safe = True
+            memory.get_free_memory = _safe_get_free
+
         if current.get('need') is not None:
             # The native planner keeps 0.8 GiB beside the reserve; leave this attempt's room.
-            memory.EXTRA_RESERVED_VRAM = max(memory.EXTRA_RESERVED_VRAM, current['need'] - int(.8 * 2**30))
+            reserved = current['need'] - int(.8 * 2**30)
+            if torch.cuda.is_available():
+                total_gpu = budget_bytes or torch.cuda.get_device_properties(0).total_memory
+                # Don't let reserve starve model weights below half the GPU
+                reserved = min(reserved, int(total_gpu * 0.5))
+            memory.EXTRA_RESERVED_VRAM = max(memory.EXTRA_RESERVED_VRAM, reserved)
         result = native_load(*values, **kwargs)
         torch.cuda.synchronize()
         stop_read_ahead(trace)

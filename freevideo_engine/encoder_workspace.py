@@ -127,12 +127,13 @@ class Workspace:
         overflow stops reserving extra memory after a few encodes.
         """
         rows = self.data['machines'].get(self.machine, {}).get(mode, [])[-RECENT:]
-        return max([1.] + [row[2] for row in rows if isinstance(row, list) and len(row) > 2
-                           and isinstance(row[2], (int, float)) and math.isfinite(row[2])])
+        valid = [min(2.0, float(row[2])) for row in rows if isinstance(row, list) and len(row) > 2
+                 and isinstance(row[2], (int, float)) and math.isfinite(row[2]) and row[2] > 0]
+        return max([1.] + valid)
 
     def need(self, mode, size):
         fixed = FORMULA[mode][0]
-        variable = (formula(mode, size) - fixed) * min(4., self.scale(mode))
+        variable = (formula(mode, size) - fixed) * min(2., self.scale(mode))
         return int((fixed + variable) * HEADROOM + MARGIN)
 
     def learn(self, mode, size, used, spilled=False):
@@ -140,9 +141,15 @@ class Workspace:
             return
         fixed = FORMULA[mode][0]
         variable = formula(mode, size) - fixed
-        ratio = (used - fixed) / variable if variable > 0 else 1.
+        # PyTorch allocator granularity causes tiny text prompts with small variable
+        # memory to report false ratios (10x-40x). Only learn ratio when variable >= 256 MiB.
+        if variable >= 256 * MiB:
+            ratio = (used - fixed) / variable
+        else:
+            ratio = 1.0
+        ratio = min(2.0, max(0.0, ratio))
         rows = self.data['machines'].setdefault(self.machine, {}).setdefault(mode, [])
-        rows.append([int(size['sequence']), int(used), round(max(0., ratio), 4), bool(spilled), round(time.time())])
+        rows.append([int(size['sequence']), int(used), round(float(ratio), 4), bool(spilled), round(time.time())])
         del rows[:-KEEP]
         if self.history is not None:
             try:
@@ -219,7 +226,11 @@ def plan(workspace, size, capacity, attempt=0, failed=None):
     forwards ask for half again as much room.
     """
     whole, blocks = workspace.need('whole', size), workspace.need('blocks', size)
-    mode = 'whole' if failed is None and whole <= capacity else 'blocks'
+    # Ensure 'whole' mode does not starve the model weights of VRAM.
+    # On GPUs with >= 12 GiB, keep at least 6 GiB free for the 32B NVFP4 weights.
+    min_model_room = min(6 * GiB, int(capacity * 0.4))
+    fits_whole = failed is None and whole <= capacity and (capacity - whole >= min_model_room or whole <= blocks)
+    mode = 'whole' if fits_whole else 'blocks'
     need = whole if mode == 'whole' else blocks
     if failed == 'blocks':
         need = int(need * 1.5 ** attempt)
