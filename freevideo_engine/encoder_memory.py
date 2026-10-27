@@ -2,6 +2,53 @@
 import gc
 import os
 import sys
+import glob
+import ctypes
+
+_CUDART_LIB = None
+
+def get_cudart_lib():
+    global _CUDART_LIB
+    if _CUDART_LIB is not None:
+        return _CUDART_LIB
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+        dlls = glob.glob(os.path.join(torch_lib, 'cudart64_*.dll'))
+        if dlls:
+            _CUDART_LIB = ctypes.CDLL(dlls[0])
+        elif sys.platform != 'win32':
+            _CUDART_LIB = ctypes.CDLL('libcudart.so')
+    except Exception:
+        pass
+    return _CUDART_LIB
+
+def clear_cuda_errors():
+    """Clear any pending or asynchronous CUDA error from the driver/runtime."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return
+        lib = get_cudart_lib()
+        if lib is not None:
+            try:
+                while lib.cudaGetLastError() != 0:
+                    pass
+            except Exception:
+                pass
+        try:
+            torch.cuda.synchronize()
+        except Exception:
+            if lib is not None:
+                try:
+                    while lib.cudaGetLastError() != 0:
+                        pass
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 GiB = 2**30
 GPU_FIELDS = ('free_bytes', 'total_bytes', 'allocated_bytes', 'reserved_bytes',
@@ -34,7 +81,12 @@ def snapshot(torch, clip=None, manager=None, *, windows_memory=False):
         free, total = torch.cuda.mem_get_info()
         result.update(free_bytes=int(free), total_bytes=int(total))
     except Exception as error:
-        failed('cuda_memory', error)
+        clear_cuda_errors()
+        try:
+            free, total = torch.cuda.mem_get_info()
+            result.update(free_bytes=int(free), total_bytes=int(total))
+        except Exception as error:
+            failed('cuda_memory', error)
     try:
         stats = torch.cuda.memory_stats()
         for target, source in (
@@ -220,14 +272,10 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
             if failure['kind'] not in ('gpu_oom', 'shared_memory_spill') and not native_oom:
                 raise retry_error
             # Clear CUDA error before memory inspection / model unloading
+            clear_cuda_errors()
             if hasattr(manager, 'discard_cuda_async_error'):
                 try:
                     manager.discard_cuda_async_error()
-                except Exception:
-                    pass
-            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
-                try:
-                    torch.cuda.cudart().cudaGetLastError()
                 except Exception:
                     pass
             try:
@@ -244,8 +292,7 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
                 # If unload_all_models failed (e.g. mem_get_info threw AcceleratorError),
                 # forcibly detach loaded models and clear allocator cache rather than crashing recovery.
                 try:
-                    if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
-                        torch.cuda.cudart().cudaGetLastError()
+                    clear_cuda_errors()
                     for loaded in list(getattr(manager, 'current_loaded_models', [])):
                         try:
                             if hasattr(loaded, 'model') and loaded.model is not None:
@@ -260,14 +307,10 @@ def encode_with_recovery(clip, tokens, manager, torch, phase, *, max_attempts=3,
                 retry_error.cleanup_errors = cleanup_errors
             del retry_error
             # Always ensure CUDA error state is pristine before planning the next attempt
+            clear_cuda_errors()
             if hasattr(manager, 'discard_cuda_async_error'):
                 try:
                     manager.discard_cuda_async_error()
-                except Exception:
-                    pass
-            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
-                try:
-                    torch.cuda.cudart().cudaGetLastError()
                 except Exception:
                     pass
             try:

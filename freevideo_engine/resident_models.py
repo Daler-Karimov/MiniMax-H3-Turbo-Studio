@@ -129,7 +129,15 @@ def release_encoder(clip, manager):
                 # None is native unpatch_model's supported "do not move" mode.
                 return _native(device_to=None, unpatch_weights=unpatch_weights)
             target.unpatch_model = discard
-        manager.unload_all_models()
+        try:
+            manager.unload_all_models()
+        except Exception:
+            try:
+                from .encoder_memory import clear_cuda_errors
+                clear_cuda_errors()
+                manager.unload_all_models()
+            except Exception:
+                pass
         # Unloading leaves the native streaming buffers allocated; see
         # encoder_memory.release_cast_buffers. The caller empties the cache.
         reset = getattr(manager, 'reset_cast_buffers', None)
@@ -248,7 +256,15 @@ class ModelBank:
             torch.cuda.empty_cache()
 
     def available(self):
-        free, _ = torch.cuda.mem_get_info()
+        try:
+            free, _ = torch.cuda.mem_get_info()
+        except Exception:
+            try:
+                from .encoder_memory import clear_cuda_errors
+                clear_cuda_errors()
+                free, _ = torch.cuda.mem_get_info()
+            except Exception:
+                free = 0
         allocated = torch.cuda.memory_allocated()
         return max(0, min(free + torch.cuda.memory_reserved() - allocated - self.gpu_reserve,
                           self.gpu_budget - allocated))

@@ -172,8 +172,8 @@ def dedicated_room(torch, reader=None, budget=None, detail=None):
         free = torch.cuda.mem_get_info()[0]
     except Exception:
         try:
-            if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
-                torch.cuda.cudart().cudaGetLastError()
+            from .encoder_memory import clear_cuda_errors
+            clear_cuda_errors()
             free = torch.cuda.mem_get_info()[0]
         except Exception:
             free = 0
@@ -219,7 +219,13 @@ def make_room(patcher, torch, need, reader=None, budget=None):
     result = dict(need_bytes=int(need), room_before_bytes=before, loaded_before_bytes=int(patcher.loaded_size()),
                   readings=readings)
     if before < need:
-        unloaded = patcher.partially_unload(patcher.offload_device, need - before)
+        try:
+            unloaded = patcher.partially_unload(patcher.offload_device, need - before)
+        except Exception:
+            if hasattr(torch.cuda, 'is_available') and torch.cuda.is_available():
+                from .encoder_memory import clear_cuda_errors
+                clear_cuda_errors()
+            unloaded = 0
         after = {}
         result.update(unloaded_bytes=int(unloaded or 0), room_after_bytes=dedicated_room(torch, reader, budget, after),
                       loaded_after_bytes=int(patcher.loaded_size()), readings_after=after)

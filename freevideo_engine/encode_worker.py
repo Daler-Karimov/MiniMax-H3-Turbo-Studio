@@ -473,6 +473,7 @@ def _encode(args, request, resident, trace):
         print(json.dumps({'event': 'encoder_device_reuse' if encoder_on_gpu(clip) else 'encoder_device_load_start'}), flush=True)
         tick = time.perf_counter()
         import comfy.model_management as memory
+        from .encoder_memory import clear_cuda_errors
         if not getattr(memory.get_free_memory, '_freevideo_safe', False):
             _orig_get_free = memory.get_free_memory
             def _safe_get_free(device=None, torch_free_too=False):
@@ -480,13 +481,26 @@ def _encode(args, request, resident, trace):
                     return _orig_get_free(device, torch_free_too=torch_free_too)
                 except Exception:
                     try:
-                        if hasattr(torch.cuda, 'cudart') and hasattr(torch.cuda.cudart(), 'cudaGetLastError'):
-                            torch.cuda.cudart().cudaGetLastError()
+                        clear_cuda_errors()
                         return _orig_get_free(device, torch_free_too=torch_free_too)
                     except Exception:
                         return (0, 0) if torch_free_too else 0
             _safe_get_free._freevideo_safe = True
             memory.get_free_memory = _safe_get_free
+
+        if not getattr(memory.soft_empty_cache, '_freevideo_safe', False):
+            _orig_soft_empty = memory.soft_empty_cache
+            def _safe_soft_empty(force=False):
+                try:
+                    _orig_soft_empty(force=force)
+                except Exception:
+                    clear_cuda_errors()
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+            _safe_soft_empty._freevideo_safe = True
+            memory.soft_empty_cache = _safe_soft_empty
 
         if current.get('need') is not None:
             # The native planner keeps 0.8 GiB beside the reserve; leave this attempt's room.
@@ -497,7 +511,10 @@ def _encode(args, request, resident, trace):
                 reserved = min(reserved, int(total_gpu * 0.5))
             memory.EXTRA_RESERVED_VRAM = max(memory.EXTRA_RESERVED_VRAM, reserved)
         result = native_load(*values, **kwargs)
-        torch.cuda.synchronize()
+        try:
+            torch.cuda.synchronize()
+        except Exception:
+            clear_cuda_errors()
         stop_read_ahead(trace)
         if not encoder_cache_hit:
             start_model_read_ahead(trace, request)

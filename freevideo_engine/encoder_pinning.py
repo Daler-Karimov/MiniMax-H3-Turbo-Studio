@@ -86,9 +86,8 @@ def readonly_pinning(torch, manager):
         if callable(drain):
             drain()
         else:
-            clear = getattr(runtime, 'cudaGetLastError', None)
-            if callable(clear):
-                clear()
+            from .encoder_memory import clear_cuda_errors
+            clear_cuda_errors()
 
     def failed(runtime, code):
         nonlocal unsupported
